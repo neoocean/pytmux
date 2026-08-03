@@ -580,6 +580,96 @@ async def test_resize_keeps_content():
         await teardown(srv, task, sock)
 
 
+async def test_resize_shrink_keeps_content_and_cursor_line():
+    """**줄이는** 리사이즈도 내용을 지키고, 커서는 제 줄에 남는다(§10-21ⓙ3·ⓨ).
+
+    제보는 "창 크기를 바꾸면 패널 내용이 사라진다"였다. 뿌리는 화면 모델의 행 축소가
+    줄어드는 수만큼 **위에서** 걷어 냈다는 것 — 셸 배너처럼 내용이 위쪽에 몰리고
+    아래가 빈 화면(= 방금 띄운 cmd)은 그 한 번에 통째로 지워졌다. 30행→26행이면 위
+    4줄이고, 그것이 배너 전부다. 게다가 커서는 옛 y 로 복원돼(내용만 위로 가고 커서는
+    안 따라간다) 이어 친 글자가 프롬프트보다 한참 아래에 찍혔다(ⓨ 제보의 그림).
+
+    ⚠ 바로 위 `test_resize_keeps_content` 는 **키우는 쪽만** 재고 있어 이 자리를 못
+    봤다 — 자를 반대쪽으로도 대는 오라클이다."""
+    from pytmuxlib.model import Pane
+
+    p = Pane(-1, -1, 100, 30, vt_parser="native")
+    p.feed(b"BANNER_ONE\r\nBANNER_TWO\r\n\r\nPROMPT>")
+    p.resize(90, 26)                      # 제보 동선: 폭·행이 함께 줄어든다
+    assert p.screen.columns == 90 and p.screen.lines == 26
+    text = pane_text(p)
+    for mark in ("BANNER_ONE", "BANNER_TWO", "PROMPT>"):
+        assert mark in text, f"{mark} 가 축소에서 사라졌다:\n{text}"
+    # ⓨ: 커서가 프롬프트 줄을 떠나지 않았어야 이어 친 글자가 그 자리에 붙는다.
+    p.feed(b"dir")
+    rows, _ = _full_render(p)
+    line3 = "".join(t for t, _ in rows[3]).rstrip()
+    assert line3 == "PROMPT>dir", repr(line3)
+
+
+async def test_resize_shrink_scrolls_only_what_the_cursor_needs():
+    """커서가 맨 아래면 **커서를 화면에 두는 만큼만** 위에서 걷고, 걷은 줄은 버리지
+    않고 스크롤백으로 넘긴다(xterm/tmux 규칙). 종전 경로는 delete_lines 라 스크롤백에
+    아무것도 안 남기고 그냥 잘랐다 — 위로 스크롤해도 되찾을 수 없었다."""
+    from pytmuxlib.model import Pane
+
+    p = Pane(-1, -1, 40, 10, vt_parser="native")
+    p.feed(b"".join(b"LINE%02d\r\n" % i for i in range(10)))
+    hist_before = len(p.screen.history.top)
+    p.resize(40, 6)                       # 10행 → 6행, 커서는 맨 아래
+    assert len(p.screen.history.top) - hist_before == 4, "걷은 4줄이 스크롤백으로"
+    text = pane_text(p)
+    assert "LINE09" in text and "LINE05" in text, text
+    # 걷힌 줄도 소실이 아니다 — 스크롤백에서 되찾을 수 있다.
+    top = ["".join(line[x].data for x in range(8)).strip()
+           for line in p.screen.history.top]
+    assert "LINE00" in top and "LINE04" in top, top
+    # 내용이 위로 갔으면 커서도 같이 간다 — 안 따라가면 이어 치는 글자가 화면 밖
+    # (또는 한참 아래)에 찍힌다. 화면에 남은 마지막 줄 바로 다음 줄에 붙어야 한다.
+    p.feed(b"NEXT")
+    rows, _ = _full_render(p)
+    body = [("".join(t for t, _ in rows[y])).rstrip() for y in range(6)]
+    assert body[5] == "NEXT", body
+
+
+async def test_resize_shrunk_rows_do_not_come_back():
+    """화면 밖으로 나간 줄은 다시 키워도 **되살아나지 않는다**.
+
+    행 축소를 아래에서 하면 그 줄들은 버퍼(희소 dict)에 그대로 남을 수 있다 — 안 지우면
+    다음에 창을 키울 때 옛 글자가 유령처럼 되돌아온다(ⓠ "치지 않은 글자가 패널 한가운데"
+    와 같은 부류의 그림). 그래서 축소가 그 줄들을 실제로 지우는지 잰다."""
+    from pytmuxlib.model import Pane
+
+    p = Pane(-1, -1, 40, 10, vt_parser="native")
+    p.feed(b"".join(b"ROW%02d\r\n" % i for i in range(9)))
+    p.feed(b"\x1b[1;1H")                  # 커서를 맨 위로 — 축소가 전부 아래에서 난다
+    p.resize(40, 5)
+    p.resize(40, 10)                      # 도로 키운다
+    rows, _ = _full_render(p)
+    tail = [("".join(t for t, _ in rows[y])).rstrip() for y in range(5, 10)]
+    assert not any(tail), f"화면 밖으로 나갔던 줄이 되살아났다: {tail}"
+
+
+async def test_resize_shrink_ignores_scroll_region():
+    """앱이 세운 스크롤 영역(DECSTBM)에 축소가 갇히면 안 된다.
+
+    리사이즈는 마진을 푼다(이 함수 끝의 `set_margins()` 가 하는 일). 걷어 내는 스크롤을
+    그보다 **먼저** 하면서 마진을 안 풀면 영역 안쪽만 밀려 — 실측: ROW02~05 이 스크롤백에도
+    안 남고 사라지고 남은 줄 순서까지 어긋난다. 화면 전체가 한 덩이로 밀려야 한다."""
+    from pytmuxlib.nativescreen import NativeScrollbackScreen, Margins
+    from pytmuxlib.vtparse import VTTokenizer
+
+    scr = NativeScrollbackScreen(40, 10, history=2000, ratio=0.5)
+    VTTokenizer(scr).feed(b"".join(b"ROW%02d\r\n" % i for i in range(9)))
+    scr.margins = Margins(2, 7)           # 앱이 세운 영역
+    scr.cursor.y = 9                      # 커서가 맨 아래 → 위에서 걷는 경로
+    scr.resize(6, 40)
+    body = ["".join(scr.buffer[y][x].data
+                    for x in range(scr.columns)).rstrip() for y in range(6)]
+    assert body[:5] == ["ROW04", "ROW05", "ROW06", "ROW07", "ROW08"], body
+    assert len(scr.history.top) == 4, len(scr.history.top)
+
+
 async def test_respawn_pane():
     srv, task, sock = await server_only()
     try:
