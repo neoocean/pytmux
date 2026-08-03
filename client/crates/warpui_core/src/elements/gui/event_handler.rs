@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::ops::Range;
 
 use pathfinder_geometry::vector::Vector2F;
 
@@ -27,6 +28,16 @@ type KeyHandler = Box<dyn FnMut(&mut EventContext, &AppContext, &Keystroke) -> D
 /// 통째로 사라진다.
 type TypedHandler =
     Box<dyn FnMut(&mut EventContext, &AppContext, &str) -> DispatchEventResult>;
+/// 입력기가 **조합 중인** 글자를 받는 콜백(`Event::SetMarkedText`/`ClearMarkedText`).
+///
+/// [`TypedHandler`] 의 짝이다. 확정만 받으면 사람이 `ㅎ`→`하`→`한` 을 만들어 가는 동안
+/// **화면에 아무것도 없다** — 자기가 무엇을 치고 있는지 못 본다. 상류는 그 상태를 이미
+/// 이벤트로 주고 있는데(winit `Ime::Preedit` → `SetMarkedText`) 이 크레이트에 받는 자리가
+/// 없어 소비자가 닿을 수 없었다(pytmux-15 · `ModifierKeyChanged` 와 같은 모양의 구멍).
+///
+/// 조합이 끝나거나 취소되면 빈 문자열로 부른다 — 소비자는 "지우기"를 따로 안 다뤄도 된다.
+type MarkedTextHandler =
+    Box<dyn FnMut(&mut EventContext, &AppContext, &str, Range<usize>) -> DispatchEventResult>;
 /// 휠 콜백. **커서 위치를 함께 준다** — 휠은 "무엇 위에서 굴렸나"가 뜻의 일부인
 /// 제스처라(터미널 클라는 커서 아래 패널을 굴린다) 델타만으로는 해석할 수 없다.
 /// 이벤트(`Event::ScrollWheel`)는 처음부터 위치를 싣고 있었고, 콜백만 그것을 버렸다.
@@ -80,6 +91,7 @@ pub struct EventHandler {
     scroll_wheel: Option<RefCell<ScrollHandler>>,
     keydown: Option<RefCell<KeyHandler>>,
     typed_characters: Option<RefCell<TypedHandler>>,
+    marked_text: Option<RefCell<MarkedTextHandler>>,
     modifier_state_changed: Option<RefCell<ModifierStateChangedHandler>>,
     origin: Option<Point>,
     // This is a short-term solution for properly handling events on stacks. A stack will always
@@ -108,6 +120,7 @@ impl EventHandler {
             scroll_wheel: None,
             keydown: None,
             typed_characters: None,
+            marked_text: None,
             modifier_state_changed: None,
             origin: None,
             child_max_z_index: None,
@@ -134,6 +147,16 @@ impl EventHandler {
         F: 'static + FnMut(&mut EventContext, &AppContext, &str) -> DispatchEventResult,
     {
         self.typed_characters = Some(RefCell::new(Box::new(callback)));
+        self
+    }
+
+    /// 입력기가 **조합 중인** 글자. 확정 콜백([`on_typed_characters`](Self::on_typed_characters))의
+    /// 짝이고, 조합이 끝나거나 취소되면 **빈 문자열**로 한 번 더 불린다.
+    pub fn on_marked_text<F>(mut self, callback: F) -> Self
+    where
+        F: 'static + FnMut(&mut EventContext, &AppContext, &str, Range<usize>) -> DispatchEventResult,
+    {
+        self.marked_text = Some(RefCell::new(Box::new(callback)));
         self
     }
 
@@ -462,6 +485,25 @@ impl Element for EventHandler {
             Some(Event::TypedCharacters { chars }) => {
                 if let Some(callback) = self.typed_characters.as_ref() {
                     return match callback.borrow_mut()(ctx, app, chars) {
+                        DispatchEventResult::PropagateToParent => false,
+                        DispatchEventResult::StopPropagation => true,
+                    };
+                }
+            }
+            Some(Event::SetMarkedText { marked_text, selected_range }) => {
+                if let Some(callback) = self.marked_text.as_ref() {
+                    return match callback.borrow_mut()(ctx, app, marked_text, selected_range.clone()) {
+                        DispatchEventResult::PropagateToParent => false,
+                        DispatchEventResult::StopPropagation => true,
+                    };
+                }
+            }
+            // 조합이 끝났다(확정 또는 취소). 소비자가 "지우기"를 따로 안 다뤄도 되게
+            // **빈 문자열**로 같은 콜백을 부른다 — 두 경로로 나누면 한쪽만 배선해 조합
+            // 잔상이 화면에 남는 날이 온다.
+            Some(Event::ClearMarkedText) => {
+                if let Some(callback) = self.marked_text.as_ref() {
+                    return match callback.borrow_mut()(ctx, app, "", 0..0) {
                         DispatchEventResult::PropagateToParent => false,
                         DispatchEventResult::StopPropagation => true,
                     };

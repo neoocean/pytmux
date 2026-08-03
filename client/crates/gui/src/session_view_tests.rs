@@ -4298,3 +4298,93 @@ fn no_korean_survives_on_the_common_screens() {
         bad.join("\n  ")
     );
 }
+
+// ── 조합 중인 글자(preedit) · §10-21ⓞ2 ⑵ ─────────────────────────────────────
+//
+// 확정만 받으면 사람이 `ㅎ`→`하`→`한` 을 만드는 동안 **화면이 비어 있다**. 상류는 그
+// 상태를 이미 주고 있었고(winit `Ime::Preedit` → `SetMarkedText`) 받는 자리가 없었다.
+// 라이브로도 확인했지만 조합은 1초 안에 확정돼 캡처 타이밍에 걸리므로, 판정은 여기서 한다.
+
+/// 조합 중인 글자를 얹은 캔버스. 그림이 아니라 **칸의 내용**을 본다.
+fn canvas_with_preedit(preedit: &str, cursor: (u16, u16)) -> proto::canvas::Canvas {
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(cursor.0, cursor.1)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.handle_preedit(preedit);
+    let mut canvas = view.state.composite().expect("합성이 없다");
+    view.overlay_preedit(&mut canvas);
+    canvas
+}
+
+#[test]
+fn the_composing_text_is_drawn_at_the_cursor() {
+    let canvas = canvas_with_preedit("한", (3, 2));
+    let cell = canvas.cell(3, 2).expect("칸이 없다");
+    assert_eq!(cell.ch, '한', "조합 중인 글자가 커서 자리에 없다 — 사람은 자기가 무엇을 치는지 못 본다");
+    // ⚠ 표시는 **이 클라가 실제로 그리는 것**이라야 한다. 밑줄이 자연스러운 선택이지만
+    //    `colors()` 는 fg·bg·reverse 만 본다 — 밑줄만 세우면 조합 글자가 확정 글자와
+    //    똑같이 보이고, 오라클은 초록인데 화면은 아무 말도 안 하는 상태가 된다.
+    assert!(cell.style.reverse, "그려지는 표시가 없으면 확정된 글자와 구분되지 않는다");
+    // 넓은 글자의 뒤 칸은 연속 셀이라야 한다(pytmux-17 과 같은 규칙 — 안 그러면 런이 끊긴다).
+    assert!(canvas.cell(4, 2).is_some_and(|c| c.continuation), "뒤 칸을 안 잡았다");
+}
+
+#[test]
+fn clearing_the_composition_removes_it_from_the_screen() {
+    // 확정·취소되면 상류가 빈 문자열로 부른다. 안 지우면 **조합 잔상**이 화면에 남는다.
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(3, 2)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert!(view.handle_preedit("한"), "첫 조합이 상태를 안 세웠다");
+    assert!(view.handle_preedit(""), "지우기가 상태를 안 바꿨다");
+    let mut canvas = view.state.composite().unwrap();
+    view.overlay_preedit(&mut canvas);
+    assert_ne!(canvas.cell(3, 2).map(|c| c.ch), Some('한'), "조합 잔상이 남았다");
+}
+
+#[test]
+fn the_composing_text_never_reaches_the_pane() {
+    // ⛔ 이것이 이 기능의 안전 조건이다. 조합 중 문자열을 흘리면 셸이 **자모를** 받아
+    //    `치명ㄷ` 부류가 된다(`ime.rs` 머리말의 사고). 그릴 뿐 보내지 않는다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    for step in ["ㅎ", "하", "한"] {
+        view.handle_preedit(step);
+        view.pump_headless();
+    }
+    assert!(sent.lock().unwrap().is_empty(), "조합 중인 글자가 서버로 샜다: {:?}", sent.lock().unwrap());
+}
+
+#[test]
+fn the_same_composition_twice_does_not_redraw() {
+    // 조합은 자판마다 **같은 문자열**로 여러 번 온다(실측: 한 음절에 3회). 매번 다시
+    // 그리면 프레임이 헛돈다.
+    let (mut view, _tx, _sent) = harness();
+    assert!(view.handle_preedit("한"));
+    assert!(!view.handle_preedit("한"), "같은 조합인데 다시 그린다고 했다");
+}
+
+#[test]
+fn the_composition_is_clipped_at_the_panes_right_edge() {
+    // 좌우 분할에서 넘겨 쓰면 **옆 패널을 침범한다**. 경계는 화면 폭이 아니라 그 패널의 것이다.
+    let (mut view, tx, _sent) = harness();
+    let split = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 4, "active": 1,
+        "panes": [{"id": 1, "x": 0, "y": 0, "w": 10, "h": 4, "title": "sh", "active": true},
+                  {"id": 2, "x": 10, "y": 0, "w": 70, "h": 4, "title": "sh2"}]
+    })).unwrap();
+    for msg in [split, screen_with_cursor(8, 0)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.handle_preedit("한글");
+    let mut canvas = view.state.composite().unwrap();
+    view.overlay_preedit(&mut canvas);
+    assert_eq!(canvas.cell(8, 0).map(|c| c.ch), Some('한'), "첫 글자는 들어가야 한다");
+    assert_ne!(canvas.cell(10, 0).map(|c| c.ch), Some('글'), "패널 경계를 넘어 그렸다");
+}

@@ -222,6 +222,12 @@ pub struct SessionView {
     last_status: Instant,
     /// 입력기 배지(`한`/`EN`) — OS 에 물어본 값. 모르면 `None`(배지를 안 그린다).
     ime_badge: Option<&'static str>,
+    /// **조합 중인** 글자(`ㅎ`→`하`→`한`). 비어 있으면 조합 중이 아니다.
+    ///
+    /// ⛔ 이것을 패널로 보내지 않는다 — 보내면 셸이 자모를 받아 `치명ㄷ` 부류가 된다
+    /// (`ime.rs` 머리말이 그 사고를 적어 뒀다). 확정될 때 상류가 `TypedCharacters` 로
+    /// 따로 주고, 그것만 평소 경로로 나간다. 여기 있는 동안은 **그림일 뿐**이다.
+    preedit: String,
     /// 입력기를 마지막으로 물어본 시각. **매 프레임 묻지 않는다** — 창 밖 프로세스에
     /// 메시지를 보내는 일이라, 30Hz 로 두드리면 그만큼 남의 입력기 창을 괴롭힌다.
     last_ime: Instant,
@@ -391,6 +397,7 @@ impl SessionView {
             tab_drag_over: None,
             last_status: Instant::now(),
             ime_badge: None,
+            preedit: String::new(),
             last_ime: Instant::now(),
             hook_watch: Default::default(),
             pending_restart: None,
@@ -1459,6 +1466,75 @@ impl SessionView {
                 }
                 any
             }
+        }
+    }
+
+    /// 조합 중인 글자를 **들고만 있는다**(§10-21ⓞ2 ⑵). 그림은 `overlay_preedit` 가 그린다.
+    ///
+    /// # 왜 패널로 안 보내나
+    ///
+    /// 조합 중 문자열은 매 자판마다 통째로 바뀐다(`ㅎ` → `하` → `한`). 그대로 흘리면 셸이
+    /// 자모를 **글자로** 받아 `치명ㄷ` 부류가 된다 — `ime.rs` 머리말이 그 사고를 적어 뒀다.
+    /// 확정되면 상류가 `TypedCharacters` 로 따로 주고, 그것만 평소 경로로 나간다.
+    ///
+    /// # 왜 모드를 안 보나
+    ///
+    /// `handle_typed` 는 모드에 따라 패널/판/버림으로 갈리지만, 이건 **아무 데도 안 보낸다**.
+    /// 어느 모드에서 조합하든 "지금 무엇을 치고 있나"는 보여야 하고, 그 그림이 향하는 곳은
+    /// 커서 자리 하나뿐이다.
+    pub fn handle_preedit(&mut self, text: &str) -> bool {
+        if self.preedit == text {
+            return false;
+        }
+        // ★ 창을 볼 수 없는 자리에서 이 경로의 **유일한 관측점**이다(붙여넣기와 같은
+        //   판단). 헤드리스 오라클은 이 함수를 **직접** 부르므로 구독(`on_marked_text`)이
+        //   빠져도 초록이다 — 그 층은 라이브만 잡는다. 조합이 1초 안에 확정돼 스크린샷
+        //   타이밍에 걸리므로, 실제로 배선을 확인한 것은 이 줄이었다.
+        log::debug!("조합 중: {:?}({}자)", text, text.chars().count());
+        text.clone_into(&mut self.preedit);
+        true
+    }
+
+    /// 조합 중인 글자를 **커서 자리에 겹쳐** 캔버스에 얹는다.
+    ///
+    /// 서버 화면에는 이 글자가 없다(확정 전이라 안 간다) — 그릴 사람은 클라뿐이다.
+    /// 밑줄로 "아직 확정 안 됐다"를 말한다(정본 터미널의 조합 표시와 같은 관례).
+    /// 패널 오른쪽 끝을 넘기면 거기서 자른다 — 넘겨 쓰면 옆 패널을 침범한다.
+    fn overlay_preedit(&self, canvas: &mut proto::canvas::Canvas) {
+        if self.preedit.is_empty() {
+            return;
+        }
+        let Some(cur) = self.cursor_cell() else {
+            return;
+        };
+        // 오른쪽 경계는 **활성 패널**의 것이다(화면 폭이 아니다 — 좌우 분할에서 옆 패널을
+        // 덮어쓴다). 못 얻으면 캔버스 폭으로 떨어진다.
+        let (cols, _) = canvas.size();
+        let right = self
+            .state
+            .active_pane()
+            .and_then(|p| self.state.pane_rect(p))
+            .map_or(cols, |(px, _, w, _)| (px as usize + w as usize).min(cols));
+        // "아직 확정 안 됐다"를 **반전**으로 말한다.
+        //
+        // ⚠ 원래는 밑줄(터미널의 조합 표시 관례)로 하려 했는데, **이 클라는 밑줄을 아예
+        //   안 그린다** — `colors()` 가 fg·bg·reverse 만 본다(SGR 4 가 통째로 버려지는
+        //   것은 이 배지와 무관한 별개 결함이다). 안 그려지는 표시를 고르면 조합 글자가
+        //   확정 글자와 **똑같아 보이고**, 그건 이 기능의 절반을 잃는 것이다.
+        //   `underline` 도 함께 세워 둔다 — 나중에 그리게 되면 그때 뜻이 맞는다.
+        let style = proto::style::CellStyle {
+            reverse: true,
+            underline: true,
+            ..Default::default()
+        };
+        let mut x = cur.x as usize;
+        for ch in self.preedit.chars() {
+            let cells = proto::compose::char_cells(ch).max(1);
+            if x + cells > right {
+                break;
+            }
+            canvas.put(x, cur.y as usize, ch, style.clone());
+            x += cells;
         }
     }
 
@@ -5890,7 +5966,10 @@ impl View for SessionView {
         // 캔버스는 **항상** 그린다(N2) — 떠 있는 화면은 딤 스크림과 함께 위에 얹는다.
         // 종전의 "대체" 방식은 팝업을 여는 순간 화면 상황이 통째로 사라졌다.
         match self.state.composite() {
-            Some(canvas) => {
+            Some(mut canvas) => {
+                // 조합 중인 글자는 **서버 화면에 없다**(확정 전이라 안 간다). 합성이 끝난
+                // 캔버스 위에 클라가 직접 얹는다 — 넓은 글자 뒤 칸도 `put` 이 잡아 준다.
+                self.overlay_preedit(&mut canvas);
                 let (_, height) = canvas.size();
                 // 자리표는 **딱 한 번만** 남긴다 — 같은 id 를 여러 줄이 쓰면 마지막에
                 // 그려진 줄의 값이 남아 원점이 화면 아래로 밀린다. 그 한 번이 몇
@@ -6042,6 +6121,13 @@ impl View for SessionView {
                 evt.dispatch_typed_action(ViewAction::Typed(chars.to_owned()));
                 DispatchEventResult::StopPropagation
             })
+            // ★ **조합 중**인 글자를 받는다(§10-21ⓞ2 ⑵). 상류는 이걸 계속 주고 있었는데
+            //   이 크레이트에 받는 자리가 없어 소비자가 닿을 수 없었다 — 그래서 사람이
+            //   `ㅎ`→`하`→`한` 을 만드는 동안 **화면이 비어 있었다**. 확정 콜백의 짝이다.
+            .on_marked_text(|evt, _app, text, _sel| {
+                evt.dispatch_typed_action(ViewAction::Preedit(text.to_owned()));
+                DispatchEventResult::StopPropagation
+            })
             .on_scroll_wheel(|evt, _app, position, delta, _mods| {
                 // 가로 스크롤(트랙패드 옆쓸기)은 세로 델타가 0 이다. 그걸 "아래로"로
                 // 읽으면 옆으로 쓸 때마다 화면이 흘러내린다.
@@ -6143,6 +6229,8 @@ pub enum ViewAction {
     Paste(String),
     /// 입력기가 확정한 글자(한글 등). 키가 아니라 **조합 결과**다.
     Typed(String),
+    /// 입력기가 **조합 중인** 글자. 빈 문자열이면 조합이 끝났거나 취소됐다.
+    Preedit(String),
     /// 왼쪽 버튼을 눌렀다(캔버스 셀 좌표 · Shift 를 함께 눌렀나).
     ///
     /// Shift 를 여기서 싣는 이유: 넘김 판정은 **누름 시점의** 수정키로 정해진다. 뗌에서
@@ -6197,6 +6285,7 @@ impl TypedActionView for SessionView {
             }
             ViewAction::Paste(text) => self.handle_paste(text),
             ViewAction::Typed(text) => self.handle_typed(text),
+            ViewAction::Preedit(text) => self.handle_preedit(text),
             ViewAction::PasteRequest => {
                 // GUI 에는 bracketed paste 를 대신 해 줄 바깥 터미널이 없다. 창 계층이
                 // 아는 클립보드를 읽어 같은 경로(`handle_paste`)로 흘린다 — 마커를
