@@ -232,3 +232,78 @@ fn the_block_table_has_no_duplicate_characters() {
     seen.dedup();
     assert_eq!(before, seen.len(), "블록 표에 중복 문자가 있다");
 }
+
+// ── 넓은 글자를 `put` 으로 놓기 (pytmux-17) ────────────────────────────────
+
+/// 플러그인 런이 캔버스에 놓이는 방식 그대로. `session.rs` 의 루프와 **같은 모양**이라야
+/// 이 오라클이 그 경로를 잰다(글자마다 `put`, 그 다음 표시폭만큼 건너뛴다).
+fn put_run(canvas: &mut Canvas, x: usize, y: usize, text: &str, style: CellStyle) {
+    let mut cx = x;
+    for ch in text.chars() {
+        canvas.put(cx, y, ch, style);
+        cx += crate::compose::display_width(&ch.to_string()).max(1);
+    }
+}
+
+fn green() -> CellStyle {
+    CellStyle {
+        bg: Some(Color::Named(NamedColor::BrightGreen)),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_wide_char_run_stays_one_run_so_the_badge_does_not_split() {
+    // pytmux-17 의 **가장 작은 재현**: 입력기 배지 `[한]`.
+    //
+    // 종전에는 `put` 이 `한` 의 뒷칸을 안 건드려, 부르는 쪽이 건너뛴 그 칸이 **배지
+    // 스타일이 아닌 채로** 남았다. `row_runs` 는 스타일이 다르면 런을 끊으므로 배지가
+    // `[한` / ` ` / `]` 세 조각이 되고, 화면에서는 바탕이 끊긴 `[한 ]` 로 보였다.
+    // 실측(1924×1247 캡처): 초록 2.98칸 → 빈틈 1.03칸 → 초록 1칸.
+    let mut canvas = Canvas::new(10, 1);
+    put_run(&mut canvas, 0, 0, "[한]", green());
+
+    let runs = canvas.row_runs(0);
+    let badge: Vec<&(String, CellStyle)> = runs.iter().filter(|(_, s)| *s == green()).collect();
+    assert_eq!(
+        badge.len(),
+        1,
+        "배지가 {}조각으로 갈렸다 — 넓은 글자 뒤 칸이 남았다는 뜻이다: {runs:?}",
+        badge.len()
+    );
+    assert_eq!(badge[0].0, "[한]", "{runs:?}");
+}
+
+#[test]
+fn the_cell_after_a_wide_char_is_a_continuation() {
+    // `row_runs` 가 건너뛸 수 있으려면 **연속 셀**로 표시돼야 한다. 공백을 그냥 써 넣는
+    // 것으로는 안 된다 — 그러면 그 칸이 진짜 글자가 되어 뒤가 한 칸 밀린다.
+    let mut canvas = Canvas::new(6, 1);
+    canvas.put(1, 0, '한', green());
+    let after = canvas.cell(2, 0).expect("칸이 있어야 한다");
+    assert!(after.continuation, "넓은 글자 뒤 칸이 연속 셀이 아니다");
+    assert_eq!(after.style, green(), "연속 셀의 스타일이 앞칸과 달라 런이 끊긴다");
+    // 화면에 나오는 글자 수는 그대로 — 연속 셀은 런에 안 실린다.
+    assert_eq!(canvas.row_text(0), " 한   ");
+}
+
+#[test]
+fn overwriting_the_tail_of_a_wide_char_does_not_leave_half_a_glyph() {
+    // 반대 방향. 이미 놓인 넓은 글자의 **뒤 칸**을 좁은 글자로 덮으면 앞칸은 짝을 잃는다.
+    // 그대로 두면 두 칸짜리 글자가 한 칸에 그려져 그 줄이 밀린다.
+    let mut canvas = Canvas::new(6, 1);
+    canvas.put(0, 0, '한', CellStyle::default());
+    canvas.put(1, 0, 'X', CellStyle::default());
+    assert_eq!(canvas.row_text(0), " X    ", "앞칸이 반쪽 글자로 남았다");
+}
+
+#[test]
+fn a_narrow_run_is_unchanged_by_the_wide_char_rule() {
+    // 회귀 가드: 좁은 글자만 있는 런(테두리·ASCII)은 종전과 **완전히 같아야** 한다.
+    let mut canvas = Canvas::new(8, 1);
+    put_run(&mut canvas, 0, 0, "[EN]", green());
+    let runs = canvas.row_runs(0);
+    let badge: Vec<&(String, CellStyle)> = runs.iter().filter(|(_, s)| *s == green()).collect();
+    assert_eq!(badge.len(), 1, "{runs:?}");
+    assert_eq!(badge[0].0, "[EN]");
+}

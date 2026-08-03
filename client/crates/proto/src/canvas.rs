@@ -252,9 +252,26 @@ impl Canvas {
     /// **경계 문자끼리 만나면 변을 합친다** — 좌우로 나뉜 두 패널이 맞닿으면 그 자리에
     /// `│` 가 두 번 그려지는 게 아니라, 위아래 이웃과 만나 `┬`·`┴`·`┼` 가 되어야 한 장의
     /// 격자처럼 보인다. 파이썬 클라의 `_composite` 도 같은 비트 합성을 한다.
+    /// **넓은 글자는 뒤 칸을 연속 셀로 채운다** — [`put_text`](Self::put_text) 와 같은
+    /// 규칙이다. 종전에는 이 함수만 그걸 안 해서 `[한]` 입력기 배지가 `[한 ]` 로 갈렸다
+    /// (pytmux-17, 2026-08-03 실측). 플러그인 런은 글자마다 이 함수를 부르고 부르는 쪽이
+    /// `x += display_width` 로 건너뛰는데, **건너뛴 칸은 손대지 않은 채 남는다.** 그 칸은
+    /// 배지 스타일이 아니므로 [`row_runs`](Self::row_runs) 가 **별도 런**으로 뱉고,
+    /// 화면에서는 배지 바탕이 끊긴 빈 칸 하나가 된다. 화소로 재면 이렇다:
+    ///
+    /// ```text
+    /// 초록 1847..1878 = 2.98칸 ([한)   빈틈 11px = 1.03칸   초록 1890..1900 = 1칸 (])
+    /// ```
+    ///
+    /// ⚠ 반대 방향도 막는다: 이미 놓인 넓은 글자의 **뒤 칸**을 좁은 글자로 덮으면 앞칸이
+    /// 반쪽짜리로 남는다. `put_cell` 이 하는 것과 같이 앞칸을 공백으로 되돌린다.
     pub fn put(&mut self, x: usize, y: usize, ch: char, style: CellStyle) {
         if y >= self.rows || x >= self.cols {
             return;
+        }
+        // 남의 넓은 글자의 뒤 칸을 밟는 경우 — 그 글자의 앞칸을 비운다(반쪽 글자 방지).
+        if self.cells[y][x].continuation && x > 0 {
+            self.cells[y][x - 1].ch = ' ';
         }
         let merged = match (box_bits(self.cells[y][x].ch), box_bits(ch)) {
             (Some(cur), Some(new)) => box_char(cur | new).unwrap_or(ch),
@@ -265,6 +282,13 @@ impl Canvas {
             style,
             continuation: false,
         };
+        if char_cells(ch) == 2 && x + 1 < self.cols {
+            self.cells[y][x + 1] = Cell {
+                ch: ' ',
+                style,
+                continuation: true,
+            };
+        }
     }
 
     /// 사각형 `(x, y, w, h)` 에 테두리를 그린다.
