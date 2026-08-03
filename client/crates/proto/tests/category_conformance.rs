@@ -765,7 +765,9 @@ static DEAD_PLUGIN_COMMANDS: &[&str] = &[
     "prompt-clear-message",
     "prompt-clear-queue",
     "prompt-history-lines",
-    "usage-panel",
+    // `usage-panel` 은 2026-08-03(pytmux-20)에 여기서 나갔다 — 정본에서 팝업인 것을
+    // **Tier B 화면 스펙**으로 내는 첫 사례다. 리포트가 나눈 셋 중 그 갈래의 본보기라,
+    // 남은 넷(claude-settings·model·claude-rules·claude-token-log)도 같은 길을 탄다.
 ];
 
 #[test]

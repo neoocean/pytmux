@@ -4467,6 +4467,102 @@ fn the_composition_is_clipped_at_the_panes_right_edge() {
     assert_ne!(canvas.cell(10, 0).map(|c| c.ch), Some('글'), "패널 경계를 넘어 그렸다");
 }
 
+// ── 상태줄 표식을 누르면 그 판이 열린다 · pytmux-20 ──────────────────────────
+//
+// 종전에는 이 칩들이 **그리기만** 했다(누르는 자리는 Tier C 화면이 와야 생긴다고 적혀
+// 있었다). 한도 판이 그 화면을 내면서 조건이 섰다. ⚠ 우리는 **무엇이 열리는지 모른다** —
+// 표식이 실어 온 이름을 그대로 되돌려 보낸다. 그 무지가 이 설계의 요점이다.
+
+/// 상태줄 표식 둘을 실은 status — 하나는 누를 수 있고(`do`) 하나는 아니다.
+fn status_with_plugin_badges() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "plugin_badges": [
+            {"name": "rec", "text": " REC ", "theme": {"b": "error"}},
+            {"name": "claude-code", "kind": "usage", "text": "12%/5h 사용",
+             "theme": {"b": "secondary"}, "do": "usage-panel"}
+        ]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn clicking_a_plugin_badge_asks_the_server_for_the_screen_it_named() {
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), status_with_plugin_badges()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert_eq!(view.state.plugin_badges().len(), 2, "표식이 안 들어왔다(전제 실패)");
+    view.chrome_click(base::chrome::ClickTarget::PluginBadge(1));
+    view.pump_headless();
+    let asked: Vec<String> = sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::Command(Command::PluginOpen { name, .. }) => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, vec!["usage-panel".to_owned()], "표식이 실어 온 이름으로 안 물었다");
+}
+
+#[test]
+fn a_badge_without_a_screen_is_not_a_button() {
+    // ⚠ `do` 가 없는 표식(REC·모델·경고)을 눌러도 아무 일이 없어야 한다 — 눌리는
+    //   것처럼 보이고 아무 일도 안 나는 칸을 안 만드는 것이 이 규약의 절반이다.
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), status_with_plugin_badges()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.chrome_click(base::chrome::ClickTarget::PluginBadge(0));
+    view.pump_headless();
+    assert!(
+        !sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|o| matches!(o, Outgoing::Command(Command::PluginOpen { .. }))),
+        "화면이 없는 표식을 눌렀는데 서버에 물었다"
+    );
+}
+
+#[test]
+fn a_stale_badge_index_does_nothing_instead_of_opening_the_wrong_thing() {
+    // 프레임 사이에 목록이 바뀌면 낡은 자리를 누를 수 있다. 그때 **짐작하지 않는다** —
+    // 엉뚱한 판이 열리는 것은 아무 일도 안 일어나는 것보다 나쁘다.
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), status_with_plugin_badges()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.chrome_click(base::chrome::ClickTarget::PluginBadge(99));
+    view.pump_headless();
+    assert!(
+        !sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|o| matches!(o, Outgoing::Command(Command::PluginOpen { .. }))),
+        "없는 자리를 눌렀는데 무언가를 열었다"
+    );
+}
+
+#[test]
+fn the_limit_bars_are_pinned_to_the_cell_grid_too() {
+    // 한도 막대(`█▏▎…░`)도 글자 그림이다 — 밀리면 **값을 잘못 읽게 만든다**(pytmux-9 ⑵
+    // 와 같은 규칙이 이 판에도 걸려야 한다).
+    let segs = SessionView::grid_segments("Session 5h ███░░  42%");
+    let boxed: Vec<&str> = segs
+        .iter()
+        .filter(|(p, _)| p.chars().any(|c| !c.is_ascii()))
+        .map(|(p, _)| p.as_str())
+        .collect();
+    assert_eq!(boxed, vec!["█", "█", "█", "░", "░"], "막대 칸을 못 골랐다: {segs:?}");
+}
+
 // ── 팔레트 입력줄이 인자를 먹는다 · pytmux-7 ─────────────────────────────────
 //
 // 제보: *"명령 인자는 정본 TUI 처럼 그 줄에서 이어 친다 — 별도 입력 팝업을 띄우지 않는다."*

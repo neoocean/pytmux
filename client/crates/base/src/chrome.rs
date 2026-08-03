@@ -141,6 +141,15 @@ pub enum ClickTarget {
     /// 액션 표를 안 지난다 — 지우는 것은 **이 클라의 표시**이고 서버도 정본도 그런
     /// 명령을 갖지 않는다(같은 이유로 종전 `FooterFold` 도 여기 있었다).
     DismissMessage,
+    /// 플러그인이 낸 상태줄 표식 `i` 번째(pytmux-20).
+    ///
+    /// 액션 표를 안 지난다 — **무엇이 열리는지는 서버가 정한다**(그 표식의 `do` 가
+    /// 플러그인 명령 이름을 싣는다). 우리 액션 열거형에 넣으면 그 표가 서버와 갈리고,
+    /// 플러그인을 지워도 이름이 여기 남는다(INV5 가 빚이라 부르는 것).
+    ///
+    /// 자리로 가리키는 이유: 이름은 `String` 이라 이 열거형의 `Copy` 를 깬다. 자리는
+    /// 그린 프레임 안의 것이고, 뷰가 누른 즉시 그 프레임의 목록에서 되찾는다.
+    PluginBadge(usize),
 }
 
 /// 클릭 하나를 액션으로 — **Enter 와 같은 길**이다(파이썬 `on_mouse_down`/`_hit` 도
@@ -155,7 +164,9 @@ pub fn click(target: ClickTarget, ctx: &ChromeCtx) -> Option<Action> {
         ClickTarget::Spot(TabSpot::New) => Action::NewTab,
         ClickTarget::Spot(TabSpot::Close) => Action::KillTab,
         ClickTarget::Badge(badge) => badge.action(),
-        ClickTarget::TabScroll { .. } | ClickTarget::DismissMessage => return None,
+        ClickTarget::TabScroll { .. }
+        | ClickTarget::DismissMessage
+        | ClickTarget::PluginBadge(_) => return None,
     })
 }
 

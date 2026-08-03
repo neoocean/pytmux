@@ -140,6 +140,8 @@
   },
   "wire_literals": [],
   "wire_scanned": [
+    "pytmuxlib/plugins/claude-code/__init__.py:_usage_panel_spec",
+    "pytmuxlib/plugins/claude-code/__init__.py:plugin_screen",
     "pytmuxlib/plugins/claude-prompt-history/__init__.py:_open_spec",
     "pytmuxlib/plugins/claude-prompt-history/__init__.py:plugin_screen",
     "pytmuxlib/plugins/claude-resume/__init__.py:_list_sessions",

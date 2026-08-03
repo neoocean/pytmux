@@ -48,11 +48,13 @@ _WARN = ({"bo": 1, "f": "black"}, {"b": "warning"})
 _ERR = ({"bo": 1, "f": "white"}, {"b": "error"})
 
 
-def _badge(kind, text, st, phrase=None):
+def _badge(kind, text, st, phrase=None, do=None):
     style, theme = st
     out = {"kind": kind, "text": text, "style": dict(style), "theme": dict(theme)}
     if phrase is not None:
         out["i18n"] = {"text": phrase}
+    if do is not None:
+        out["do"] = do
     return out
 
 
@@ -108,7 +110,14 @@ def badges(fields) -> list:
             # 모델 이름은 번역하지 않는다 — `opus-5` 는 철자 그 자체다.
             out.append(_badge("model", str(model), _SEC))
         text, spec = _limit_badge(fields)
-        out.append(_badge("usage", text, _SEC, spec))
+        # ★ **누르면 열리는 이름**을 싣는다(pytmux-20). 이 칸을 오래 비워 둔 이유는
+        #   "선언은 있고 배선이 없는 칸"을 안 만들려는 것이었다 — 그 화면(Tier C)이
+        #   없었으니까. 이제 `usage-panel` 이 화면 스펙을 내므로 조건이 섰다.
+        #   클라는 이 이름의 뜻을 모른 채 `plugin_open` 으로 되돌려 보낸다(오버레이의
+        #   `do` 와 같은 규약 — 행동은 서버가 정한다).
+        #   ⚠ 나머지 셋(model·pending·warn)에는 아직 안 싣는다. 정본에서 그 클릭이
+        #   여는 화면들은 여전히 Tier C 가 없다.
+        out.append(_badge("usage", text, _SEC, spec, do="usage-panel"))
     pending = fields.get("claude_pending")
     if isinstance(pending, dict):
         # 라벨을 **포맷 안에** 둔 판을 쓴다 — 인자로 넘기면 클라가 자기 포맷에 서버

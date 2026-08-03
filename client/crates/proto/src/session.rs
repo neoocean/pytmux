@@ -440,12 +440,31 @@ pub struct PluginBadge {
     /// 의미 색 이름 — 런과 같은 규약이다(hex 는 안 온다).
     #[serde(default)]
     pub theme: ThemeRef,
+    /// 이 표식의 **갈래**(`model`·`usage`·`pending`·`warn`). 정본이 클릭존을 붙이는 데
+    /// 쓰는 이름이고, 서버는 처음부터 실어 보내고 있었다.
+    ///
+    /// 우리는 이 값으로 **판단하지 않는다** — 무엇이 열리는지는 [`open`](Self::open) 이
+    /// 말한다. 갈래를 보고 클라가 화면을 고르면 그 표가 서버와 갈리기 시작한다.
+    #[serde(default)]
+    pub kind: String,
+    /// 누르면 열 **플러그인 명령 이름**(없으면 이 표식은 안 눌린다).
+    ///
+    /// 뜻은 모른 채 그대로 `plugin_open` 으로 되돌려 보낸다 — 오버레이의 `do` 와 같은
+    /// 규약이다(설계 §4.4: 행동은 서버가 정한다). 서버는 **그 화면이 실제로 있을 때만**
+    /// 싣는다: 안 그러면 눌리는 것처럼 보이고 아무 일도 안 나는 칸이 생긴다.
+    #[serde(default, rename = "do")]
+    pub open: String,
 }
 
 impl PluginBadge {
     /// 보일 글자 — **이 클라의 로케일로**. `text` 를 직접 읽으면 서버 로케일이 샌다.
     pub fn say(&self) -> String {
         i18n_say(&self.i18n, "text", &self.text)
+    }
+
+    /// 누르면 열 플러그인 명령(없으면 `None` — 그리기만 하는 표식이다).
+    pub fn opens(&self) -> Option<&str> {
+        (!self.open.is_empty()).then_some(self.open.as_str())
     }
 }
 

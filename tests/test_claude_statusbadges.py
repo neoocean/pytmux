@@ -111,3 +111,72 @@ def test_the_english_locale_is_actually_reachable():
     assert _texts({"claude_active": True, "tok5h_pct": 12}, lang="en") == [
         ("usage", "12%/5h used")
     ]
+
+
+# ---- 누르는 자리 (pytmux-20) ------------------------------------------------
+#
+# 이 칸은 오래 비어 있었고 그 이유가 적혀 있었다: *"`do` 를 실어 두면 선언은 있고 배선이
+# 없는 칸이 하나 더 생긴다."* 한도 판(`usage-panel`)이 Tier C 화면을 내면서 조건이 섰다.
+
+def test_only_the_badge_with_a_screen_is_clickable():
+    """`do` 는 **그 화면이 실제로 있는 표식에만** 실린다.
+
+    넓게 실으면 눌리는 것처럼 보이고 아무 일도 안 나는 칸이 생긴다 — 종전에 이 칸을
+    통째로 비워 둔 바로 그 이유다."""
+    got = _mod().badges({"claude_active": True, "claude_model": "opus-5",
+                         "tok5h_pct": 12,
+                         "claude_pending": {"eta": 9},
+                         "claude_warn": "⚠ x"})
+    opens = {b["kind"]: b.get("do") for b in got}
+    assert opens["usage"] == "usage-panel", opens
+    for kind in ("model", "pending", "warn"):
+        assert opens[kind] is None, f"{kind} 에 화면이 없는데 누를 자리를 만들었다: {opens}"
+
+
+def test_the_name_it_carries_is_one_the_plugin_actually_opens():
+    """실어 보내는 이름이 **그 플러그인이 여는 이름**이라야 한다.
+
+    한 글자만 달라도 눌러도 아무 일이 안 난다(그리고 그건 조용하다) — 죽은 명령
+    (pytmux-35)이 정확히 그 부류다. 그래서 표를 눈으로 옮기지 않고 **양쪽에 물어** 맞춘다.
+    """
+    import importlib
+    plug = importlib.import_module("pytmuxlib.plugins.claude-code").PLUGIN
+    got = _mod().badges({"claude_active": True, "tok5h_pct": 12})
+    name = next(b["do"] for b in got if b["kind"] == "usage")
+    assert name in plug._USAGE_PANEL, (name, plug._USAGE_PANEL)
+    # 정본의 명령 갈래도 같은 이름을 받는다(팔레트에서 되는 것이 여기서도 돼야 한다).
+    assert name in importlib.import_module('pytmuxlib.plugins.claude-code').NOARG, name
+
+
+def test_the_usage_panel_hands_out_a_screen_spec():
+    """Tier C — 서버가 한도 판을 **자료로** 낸다(정본 `_open_usage_panel` 과 같은 함수)."""
+    import importlib
+    plug = importlib.import_module("pytmuxlib.plugins.claude-code").PLUGIN
+
+    class _Srv:
+        _usage = {"session": {"pct": 42, "reset": "3:00 PM (Asia/Seoul)"},
+                  "week_all": {"pct": 7, "reset": "Mon"}}
+        _usage_ts = None
+
+    spec = plug.plugin_screen(_Srv(), None, {"do": "open", "name": "usage-panel"})
+    assert spec["kind"] == "text" and spec["id"] == "claude-usage-panel", spec
+    assert spec["note"] == "", "값이 있는데 '데이터 없음'을 적었다"
+    # 제보가 든 세 값이 실제로 담겼나 — 사용 비율 · 리셋 시각 · (한도별) 사용량.
+    assert "42%" in spec["text"], spec["text"]
+    assert "3:00 PM" in spec["text"], spec["text"]
+    # 내 이름이 아니면 안 받는다(첫 비-None 채택 규약).
+    assert plug.plugin_screen(_Srv(), None, {"do": "open", "name": "ncd"}) is None
+
+
+def test_no_limit_data_is_a_note_not_an_empty_panel():
+    """**빈 목록과 실패는 다르다** — 한도를 아직 못 재 왔으면 이유를 보인다."""
+    import importlib
+    plug = importlib.import_module("pytmuxlib.plugins.claude-code").PLUGIN
+
+    class _Srv:
+        _usage = None
+        _usage_ts = None
+
+    spec = plug.plugin_screen(_Srv(), None, {"do": "open", "name": "limits"})
+    assert spec["text"] == "", spec
+    assert spec["note"], "빈 판만 띄우면 사용자는 무엇이 잘못됐는지 모른다"

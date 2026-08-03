@@ -2961,6 +2961,27 @@ impl SessionView {
             self.flash = None;
             return true;
         }
+        // ★ 플러그인 표식(pytmux-20)도 액션 표를 안 지난다 — **무엇이 열리는지는 서버가
+        //   정한다**. 표식이 실어 온 이름을 그대로 되돌려 보내고, 그 이름의 뜻은 우리가
+        //   모른다(오버레이의 `do` 와 같은 규약). 이름이 없으면 아무 일도 안 한다 —
+        //   그런 표식은 애초에 클릭 대상으로 안 감쌌지만, 프레임 사이에 목록이 바뀌면
+        //   낡은 자리를 누를 수 있다.
+        if let base::chrome::ClickTarget::PluginBadge(i) = target {
+            let Some(name) = self
+                .state
+                .plugin_badges()
+                .get(i)
+                .and_then(|b| b.opens())
+                .map(str::to_owned)
+            else {
+                return false;
+            };
+            self.pending.push(Outgoing::Command(Command::PluginOpen {
+                name,
+                args: Vec::new(),
+            }));
+            return true;
+        }
         let tabs = self.chrome_tabs();
         let badges = self.state.badges();
         let ctx = self.chrome_ctx(&tabs, &badges);
@@ -3312,9 +3333,13 @@ impl SessionView {
         // 배지(Z·SYNC·AR·**REC**)를 두는 자리"라고 적어 둔 그 자리다. REC 는 우리에게
         // 없었다(플러그인이 채우는 칸이라 `Badge` 열거형에 넣을 수 없었다).
         // 이제 서버가 자료로 준다 — 글자와 **의미 색 이름**만 받아 우리 테마로 푼다.
-        // 감시류와 같은 이유로 **클릭존 없이 칩으로만** 그린다(누르는 자리는 Tier C
-        // 화면이 와야 생긴다 — 그래서 서버도 `do` 를 안 싣는다).
-        for badge in self.state.plugin_badges() {
+        //
+        // ★ **누르는 자리가 생겼다**(pytmux-20). 종전 주석은 *"누르는 자리는 Tier C
+        //   화면이 와야 생긴다 — 그래서 서버도 `do` 를 안 싣는다"* 였는데, 한도 판
+        //   (`usage-panel`)이 그 화면을 내면서 조건이 섰다. 우리는 **무엇이 열리는지
+        //   모른다** — 표식이 실어 온 이름을 그대로 `plugin_open` 으로 되돌려 보낸다.
+        //   `do` 가 없는 표식(REC·모델·경고)은 종전대로 그리기만 한다.
+        for (i, badge) in self.state.plugin_badges().iter().enumerate() {
             // 색 이름은 런과 **같은 표**로 푼다(`proto::session::theme`) — 배지라고
             // 다른 표를 두면 같은 이름이 두 자리에서 다른 색이 된다.
             // 칩은 배경이 고정(HOVER)이라 글자색 한 칸만 쓴다: 바탕색 이름이 왔으면
@@ -3325,7 +3350,18 @@ impl SessionView {
                 .and_then(proto::session::theme::color)
                 .map(|c| to_gui_color(&c))
                 .unwrap_or(palette::FG);
-            left = left.with_child(self.chip(badge.say().trim(), color));
+            let chip = self.chip(badge.say().trim(), color);
+            left = left.with_child(match badge.opens() {
+                // 눌리는 자리는 hover 로 그 사실을 보인다(N4 — 다른 클릭존과 같은 규율).
+                // 색인은 위 배지 자리들 **뒤**에서 이어진다 — 한 프레임의 렌더 순서가
+                // 곧 색인이라 겹치면 hover 가 엉뚱한 칩에 붙는다.
+                Some(_) => self.clickable_chrome(
+                    self.state.tabs().tabs.len() + 2 + badges.len() + i,
+                    base::chrome::ClickTarget::PluginBadge(i),
+                    chip,
+                ),
+                None => chip,
+            });
         }
         // ★ Claude 모델·한도 배지는 **여기 없다** — 위 `plugin_badges` 줄이 그린다
         //   (M4 P6 후반). 종전에는 우리가 날 필드(`claude_model`·`tok5h_pct`)로 자기
@@ -3765,7 +3801,11 @@ impl SessionView {
                     //   그 부류다(제보: "판이 화면을 통째로 가린다"). 자를 때 `…` 를
                     //   붙이는 것은 요약 구역이 쓰던 규칙 그대로다(`footer::elide`).
                     let line = footer::elide(line, Self::PANEL_COLS);
-                    column = column.with_child(self.text(line, 13., palette::FG));
+                    // ★ **격자에 못박아** 그린다(pytmux-9 ⑵ 와 같은 규칙). 이 판에는
+                    //   글자 그림이 온다 — 한도 막대(`█▏▎…░`)가 그렇고, 그 글자들은
+                    //   폴백 글꼴에서 와 진폭이 다르다. 통짜로 넘기면 막대 길이가
+                    //   행마다 어긋나 보이고, 그건 **값을 잘못 읽게 만드는** 어긋남이다.
+                    column = column.with_child(self.mono_row(&line, 13., palette::FG));
                 }
                 column = self.pad_rows(column, drawn, budget);
             }

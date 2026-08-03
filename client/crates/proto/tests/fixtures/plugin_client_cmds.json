@@ -43,7 +43,8 @@
     "mdir",
     "ncd",
     "p4changes",
-    "prompt-history"
+    "prompt-history",
+    "usage-panel"
   ],
   "stateful": [
     "auto-launch",
@@ -76,7 +77,6 @@
     "prompt-clear-message",
     "prompt-clear-queue",
     "prompt-history-lines",
-    "usage-panel",
     "usage-view"
   ]
 }

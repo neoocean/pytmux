@@ -204,6 +204,8 @@ i18n.register({
         "ccmsg.perm_switching": "권한모드 → {target} 전환 중…",
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
         "ccmsg.usage_title": "Claude 사용 한도 (/usage)",
+        # Tier C 한도 판(pytmux-20) — 읽는 판이라 키가 스크롤·닫기뿐이다.
+        "cusage.hint": "↑↓ 스크롤 · Esc 닫기",
         "ccmsg.no_warn": "표시할 Claude 경고가 없습니다(이미 해소됨).",
         "ccmsg.rc_title": "원격 제어(Remote Control)",
         "ccmsg.rc_body":
@@ -237,6 +239,7 @@ i18n.register({
         "ccmsg.usage_no_data":
             "No /usage limit data — run /usage in a Claude panel first",
         "ccmsg.usage_title": "Claude usage limit (/usage)",
+        "cusage.hint": "↑↓ scroll · Esc close",
         "ccmsg.no_warn": "No Claude warning to show (already cleared).",
         "ccmsg.rc_title": "Remote Control",
         "ccmsg.rc_body":
@@ -1528,6 +1531,62 @@ class _ClaudeCodePlugin:
         만든다**(rec 배지와 같은 판단 · 08-02b)."""
         from .statusbadges import badges
         return badges(msg)
+
+    # 이 이름들이 한도 팝업을 연다 — 정본의 `handle_command` 갈래와 **같은 표**다
+    # (아래 `elif c in (…)` 와 갈라지면 팔레트에서 되던 이름이 네이티브에서만 죽는다).
+    _USAGE_PANEL = ("usage-panel", "usage-limits", "limits")
+
+    def plugin_screen(self, server, sess, req):
+        """Tier C — `usage-panel` 의 한도 화면을 **자료로** 준다(pytmux-20).
+
+        # 무엇을 옮겼나
+
+        제보는 *"토큰 사용량 표시를 눌러 여는 팝업이 GUI 에 없다"* 였고, 이슈가 물어 둔
+        범위 물음("팝업 전체를 옮길까, 제보가 말한 세 값만 담은 작은 판을 먼저 낼까")의
+        답은 **후자**다: 제보가 든 것은 *시간당 사용량 · 사용 비율 · 리셋 시각* 셋이고,
+        그 셋이 곧 `/usage` 한도 막대(`usage-panel`)다. 계층 타임라인·`[한도]` 탭·대사
+        뷰가 있는 `claude-token-log` 는 스펙이 훨씬 커서 별도 슬라이스로 남긴다.
+
+        # 왜 줄을 서버가 짓나
+
+        `usage_bar_lines` 는 **UI 무의존**(`usagebar.py` — P3 가 그러라고 빼 둔 자리)이라
+        서버가 부를 수 있고, 정본의 `_open_usage_panel` 이 부르는 것과 **같은 함수**다.
+        그래서 두 클라의 한도 화면이 글자까지 같다 — 여기서 다시 지으면 그 순간 두 벌이
+        된다.
+
+        ⚠ 폭은 **고정 76칸**이다. 진짜 폭은 클라만 아는데 스펙에는 그 칸이 없고, 막대는
+        폭이 바뀌면 눈금이 바뀐다 — 판마다 다른 눈금을 보이느니 한 벌로 고정하는 편이
+        낫다(정본도 창이 좁으면 같은 계단으로 떨어진다). `right_align` 은 안 켠다:
+        그건 usage-view 오버레이가 켜는 것이고, 이 판은 정본 팝업과 같은 모양이어야 한다.
+        """
+        do = req.get("do")
+        if do == "open":
+            if req.get("name") not in self._USAGE_PANEL:
+                return None                 # 내 이름이 아니다
+            return self._usage_panel_spec(server)
+        if req.get("id") != "claude-usage-panel":
+            return None
+        if do == "close":
+            return {"t": "plugin_screen_close", "id": "claude-usage-panel"}
+        return None
+
+    @staticmethod
+    def _usage_panel_spec(server):
+        from pytmuxlib.usagebar import usage_bar_lines
+        import time as _t
+        uts = getattr(server, "_usage_ts", None)
+        lines = usage_bar_lines(
+            getattr(server, "_usage", None), 76,
+            age_sec=(max(0, int(_t.time() - uts)) if uts is not None else None))
+        # ⚠ **빈 목록과 실패는 다르다**(스펙의 `note`). 한도를 아직 못 재 왔으면
+        #    빈 판이 아니라 이유를 보인다 — 정본도 같은 문구로 알린다.
+        return {
+            "t": "plugin_screen", "id": "claude-usage-panel", "kind": "text",
+            "title": i18n.t("ccmsg.usage_title"),
+            "hint": i18n.t("cusage.hint"),
+            "text": "\n".join(lines or []),
+            "note": "" if lines else i18n.t("ccmsg.usage_no_data"),
+        }
 
     # (client_status_tabs 훅 — 통합 상태 팝업의 '토큰 사용량' 탭 — 은 token-log 통합
     #  (2026-06-12)으로 제거. 통합 상태 팝업은 REC·서버 두 탭, 토큰은 token-log 팝업.)
