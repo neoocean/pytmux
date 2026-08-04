@@ -5164,3 +5164,107 @@ fn the_fullscreen_action_leaves_a_request_not_a_state() {
     //   (`fullscreen_state()`). 사본을 들면 OS 가 바꾼 상태와 갈려 토글이 헛돈다.
     assert!(view.fullscreen_requested_for_test(), "요청이 안 남았다");
 }
+
+// ── 우클릭 = 메뉴로 가는 **두 번째 입구**(§10-21ⓕ3) ───────────────────────────
+
+fn view_on_one_pane() -> SessionView {
+    let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view
+}
+
+#[test]
+fn a_right_click_on_a_pane_opens_the_same_menu_as_the_key() {
+    // ★ 새 화면이 아니라 새 입구다 — 항목표도 실행 경로도 `prefix Enter` 와 한 벌이다.
+    let mut view = view_on_one_pane();
+    assert_eq!(view.screens.top(), None);
+    assert!(view.handle_right_mouse_down(Some((2, 2))), "우클릭이 아무 일도 안 했다");
+    assert_eq!(view.screens.top(), Some(Screen::Menu));
+    // 그리고 그 판은 키로 연 것과 같은 줄을 갖는다(표가 갈리지 않았다는 양성 오라클).
+    assert!(!view.screens.menu_rows().is_empty());
+}
+
+#[test]
+fn a_right_click_outside_the_canvas_does_nothing() {
+    // 정본도 패널 위에서만 연다 — 탭바에서 열면 "이 패널"이 없는 메뉴가 된다.
+    let mut view = view_on_one_pane();
+    assert!(!view.handle_right_mouse_down(None));
+    assert_eq!(view.screens.top(), None);
+}
+
+#[test]
+fn a_right_click_is_ignored_while_a_panel_is_open() {
+    // ⚠ 정본에는 **이미 닫힌 화면에 우클릭이 늦게 닿아 크래시**한 기록이 있다.
+    //   우리 쪽 같은 자리는 "판이 떠 있으면 캔버스 마우스가 죽는다"가 막는다.
+    let mut view = view_on_one_pane();
+    view.screens.open(Screen::Keys);
+    assert!(!view.handle_right_mouse_down(Some((2, 2))));
+    assert_eq!(view.screens.top(), Some(Screen::Keys), "판이 바뀌었다");
+}
+
+#[test]
+fn a_right_click_does_nothing_when_the_mouse_is_off() {
+    // `set mouse off` 는 클라가 마우스를 아예 안 보는 것이다(왼쪽과 같은 판정).
+    let mut view = view_on_one_pane();
+    view.config.mouse = false;
+    assert!(!view.handle_right_mouse_down(Some((2, 2))));
+    assert_eq!(view.screens.top(), None);
+}
+
+// ── 표시용 스크롤바(§10-21ⓨ2) ────────────────────────────────────────────────
+
+fn scrolled_view(top: usize, scroll: usize) -> SessionView {
+    let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    // ⚠ **테두리 상자가 있는** 배치라야 한다 — 막대는 그 열 위에 얹힌다(테두리를 안
+    //   그리는 배치에서는 얹을 선이 없어 애초에 안 그린다).
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 10, "active": 1,
+        "panes": [{"id": 1, "x": 1, "y": 1, "w": 78, "h": 8, "title": "sh",
+                   "active": true, "box": [0, 0, 80, 10]}]
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(layout))).unwrap();
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1, "rows": [[["x", {}]]], "cursor": [0, 0], "wrap": [],
+        "top": top, "scr": scroll
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(screen))).unwrap();
+    view.pump_headless();
+    view
+}
+
+/// ★ **위로 올라간 패널에만** 선다 — 늘 그리면 라이브 화면에 늘 꽉 찬 막대가 붙는다.
+#[test]
+fn the_scroll_hint_appears_only_after_scrolling_up() {
+    assert!(scrolled_view(0, 0).scroll_hints_for_test().is_empty(), "라이브인데 막대가 있다");
+    let hints = scrolled_view(200, 40).scroll_hints_for_test();
+    assert_eq!(hints.len(), 1, "스크롤했는데 막대가 없다");
+    let hint = &hints[0];
+    assert!(hint.start >= 0.0 && hint.start + hint.len <= 1.0 + 1e-9);
+}
+
+/// 판이 떠 있으면 안 그린다 — 캔버스가 스크림 아래인데 막대만 또렷하면 눈이 그리로 간다.
+#[test]
+fn a_panel_hides_the_scroll_hint() {
+    let mut view = scrolled_view(200, 40);
+    assert!(!view.scroll_hints_for_test().is_empty());
+    view.screens.open(Screen::Keys);
+    assert!(view.scroll_hints_for_test().is_empty());
+}
+
+/// 자리는 패널의 **테두리 열**이다 — 내용 칸을 먹으면 서버에 보고하는 폭이 달라진다.
+#[test]
+fn the_hint_sits_on_the_border_column_not_inside_the_pane() {
+    let view = scrolled_view(200, 40);
+    let hints = view.scroll_hints_for_test();
+    let hint = &hints[0];
+    // `layout_one_pane` 의 내용은 (1,1,…) 이고 테두리 상자는 (0,0,w,h) 다.
+    let pane = &view.state_for_test().panes()[0];
+    let [bx, _, bw, _] = pane.boxrect.expect("테두리 상자");
+    assert_eq!(hint.x, bx + bw - 1, "테두리 오른쪽 열이 아니다");
+    assert!(hint.x >= pane.x + pane.w, "내용 칸을 먹었다");
+}

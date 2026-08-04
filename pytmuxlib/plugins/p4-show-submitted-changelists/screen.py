@@ -272,6 +272,10 @@ class DescribeScreen(ModalScreen):
     #p4descview { height: 1fr; width: 1fr; }
     """
 
+    # 구역 사이에 긋는 선. 폭은 화면이 넘치지 않을 만큼만 — `_TextView` 가 줄을
+    # 자르지 않으므로 길면 가로로 밀린다. 정본의 다른 판들이 쓰는 것과 같은 글자다.
+    _DIVIDER = "─" * 60
+
     def __init__(self, change: str):
         super().__init__()
         self._change = str(change)
@@ -287,9 +291,23 @@ class DescribeScreen(ModalScreen):
         box.border_subtitle = i18n.t("p4cl.detail_nav")
 
     def fill(self, text, err):
-        """서버 응답을 채운다 — 오류면 오류문구, 아니면 줄 단위 텍스트."""
+        """서버 응답을 채운다 — 오류면 오류문구, 아니면 줄 단위 텍스트.
+
+        §10-21ⓛ2: 설명과 파일 목록 **사이에 선**을 긋는다. 경계를 아는 쪽은 서버측
+        플러그인이므로 나누는 것은 그쪽 함수(`describe_sections`)가 하고, 여기서는
+        구역 사이에 선문자 줄 하나를 끼운다 — GUI 는 같은 자리를 **실제 선**으로 긋는다
+        (테두리에서 이미 그렇게 갈라 그리는 것과 같은 결이다)."""
         if err:
             self._view.set_lines([i18n.t("p4cl.error", err=err)])
-        else:
-            self._view.set_lines((text or "").splitlines()
-                                 or [i18n.t("p4cl.no_detail")])
+            return
+        from .server import describe_sections
+        parts = describe_sections(text or "")
+        if not parts:
+            self._view.set_lines([i18n.t("p4cl.no_detail")])
+            return
+        lines = []
+        for i, part in enumerate(parts):
+            if i:
+                lines.append(self._DIVIDER)
+            lines.extend(part.splitlines())
+        self._view.set_lines(lines or [i18n.t("p4cl.no_detail")])

@@ -223,13 +223,19 @@ class _P4ChangesPlugin:
         }
 
     def _describe_spec(self, server, sess, change, cwd):
-        from .server import describe_msg
+        from .server import describe_msg, describe_sections
         msg = describe_msg(server, sess, change, cwd)
+        text = msg.get("text") or ""
         return {
             "t": "plugin_screen", "id": "p4changes", "kind": "text",
             "title": f"CL {change}",
             "hint": i18n.t("p4cl.detail_back"),
-            "text": msg.get("text") or "",
+            "text": text,
+            # §10-21ⓛ2: **구역으로 나눠** 준다 — 설명과 파일 목록 사이에 선이 서게.
+            # 경계를 아는 쪽은 이 플러그인뿐이다(`Affected files ...` 는 p4 가 적은 글).
+            # `text` 를 그대로 두는 이유: 이 칸을 모르는 구버전 클라는 종전과 한 글자도
+            # 다르지 않은 것을 본다(프로토콜 버전을 안 연다).
+            "sections": describe_sections(text),
             "note": msg.get("err") or "",
             "keys": {},
         }

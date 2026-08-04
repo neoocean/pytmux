@@ -189,6 +189,15 @@ pub struct PluginScreen {
     pub rows: Vec<PluginRow>,
     #[serde(default)]
     pub text: String,
+    /// 글 판의 **구역들**(§10-21ⓛ2) — 사이에 선을 긋는다.
+    ///
+    /// 경계를 아는 쪽은 플러그인이다(`p4 describe` 의 `Affected files ...` 는 p4 가 적은
+    /// 글이지 우리 서식이 아니다). 그래서 나누는 것은 저쪽이 하고, 뷰는 **사이에 무엇을
+    /// 그릴지**만 정한다 — GUI 는 실제 선, 정본은 선문자(테두리와 같은 갈림).
+    ///
+    /// 비어 있으면 종전대로 [`text`](Self::text) 한 덩이다(구버전 서버 호환).
+    #[serde(default)]
+    pub sections: Vec<String>,
     /// 실패했거나 비었을 때 화면에 적을 한 줄. **빈 목록과 실패는 다르다.**
     #[serde(default)]
     pub note: String,
@@ -233,6 +242,20 @@ impl PluginScreen {
     /// 자료가 와도 안전하다: 카탈로그에 없는 글은 `t()` 가 그대로 돌려준다.
     pub fn say_text(&self) -> String {
         i18n_say(&self.i18n, "text", &self.text)
+    }
+
+    /// 글 판의 구역들 — **이 클라의 로케일로**(§10-21ⓛ2).
+    ///
+    /// 구역이 없으면 본문 한 덩이를 그대로 한 구역으로 준다. 그래서 뷰는 갈래를 하나만
+    /// 알면 된다(있으면 사이에 선, 없으면 통짜 — 두 길을 뷰가 다시 가르지 않는다).
+    pub fn say_sections(&self) -> Vec<String> {
+        if self.sections.is_empty() {
+            let body = self.say_text();
+            return if body.is_empty() { Vec::new() } else { vec![body] };
+        }
+        // 구역 본문은 **자료**(p4 출력)라 번역 대상이 아니다 — `text` 와 달리 카탈로그를
+        // 안 지난다. 그 판정은 이 칸을 채우는 플러그인이 한다.
+        self.sections.clone()
     }
 
     /// `Enter` 에 걸린 플러그인 액션 이름(없으면 이 화면의 Enter 는 뜻이 없다).

@@ -124,6 +124,47 @@ fn round_half_away(v: f64) -> i64 {
     }
 }
 
+/// **표시용** 스크롤바 — 지금 보는 자리가 전체 중 어디인가(§10-21ⓨ2).
+///
+/// # 위 [`chars`] 와 무엇이 다른가 (섞으면 안 된다)
+///
+/// 저것은 **조작**이다 — 휠을 못 받는 단말을 위해 활성 패널 오른쪽 끝 **한 열을 먹고**
+/// 탭을 받는다(설정 `touch-scroll` 과 한 벌). 제보가 말하는 것은 **표시**이고, 자리도
+/// 칸이 아니라 **외곽선 위**다. 둘을 한 자리로 합치면 touch-scroll 을 끈 사람에게 표시까지
+/// 사라진다.
+///
+/// GUI 는 테두리를 실제 선으로 그리므로(N8) 칸을 안 먹고 선 위에 얹을 수 있다 —
+/// 캔버스 격자를 안 건드리니 서버에 보고하는 행·열도 안 바뀐다.
+///
+/// # 무엇을 돌려주나
+///
+/// 트랙(패널 안쪽 높이)을 1.0 으로 봤을 때 **(썸 시작, 썸 길이)** 다. 그릴 것이 없으면
+/// `None`:
+/// - 스크롤백이 없다(위로 갈 데가 없으면 막대는 늘 꽉 차서 아무 말도 안 한다)
+/// - 패널이 너무 낮다(한 칸짜리 막대는 자리만 차지한다)
+///
+/// 값이 아니라 **비율**인 이유: 픽셀은 뷰의 것이다(선 위 몇 픽셀인지는 테마가 정한다).
+pub fn overlay_fraction(h: usize, top: usize, scroll: usize) -> Option<(f64, f64)> {
+    if h < MIN_H {
+        return None;
+    }
+    let max_scroll = top + scroll;
+    if max_scroll == 0 {
+        return None;   // 스크롤백 없음 — 그릴 것이 없다
+    }
+    let total = max_scroll + h;
+    // 썸 길이 = 보이는 만큼의 비율. 너무 짧으면 안 보이므로 하한을 둔다.
+    let len = (h as f64 / total as f64).clamp(MIN_THUMB, 1.0);
+    // 0.0 = 맨 위(스크롤 최대) … 1.0 = 맨 아래(라이브). `chars` 와 같은 셈이다.
+    let frac = 1.0 - scroll as f64 / max_scroll as f64;
+    let start = (1.0 - len) * frac;
+    Some((start.clamp(0.0, 1.0 - len), len))
+}
+
+/// 표시용 썸의 **최소 길이**(트랙 대비). 스크롤백이 아주 길면 비율이 0 에 수렴해
+/// 막대가 사라지는데, 그러면 "어디쯤인가"를 말하려고 그린 것이 아무 말도 안 한다.
+pub const MIN_THUMB: f64 = 0.06;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +189,42 @@ mod tests {
     }
 
     /// 점프는 **차이**로 옮긴다 — 맨 위를 누르면 지금 스크롤만큼 더 올라간다.
+    // ── 표시용 막대(§10-21ⓨ2) ────────────────────────────────────────────────
+
+    #[test]
+    fn there_is_nothing_to_show_without_scrollback() {
+        // 위로 갈 데가 없으면 막대는 늘 꽉 차서 아무 말도 안 한다 — 안 그리는 것이 맞다.
+        assert_eq!(overlay_fraction(24, 0, 0), None);
+        // 낮은 패널도 마찬가지다(한 칸짜리 막대는 자리만 차지한다).
+        assert_eq!(overlay_fraction(2, 100, 50), None);
+    }
+
+    #[test]
+    fn the_thumb_sits_at_the_bottom_when_live_and_at_the_top_when_scrolled_all_the_way() {
+        // 라이브(scroll = 0)면 맨 아래, 끝까지 올라가면 맨 위다.
+        let (start, len) = overlay_fraction(10, 90, 0).expect("막대");
+        assert!((start + len - 1.0).abs() < 1e-9, "라이브인데 바닥이 아니다: {start} {len}");
+        let (start, _) = overlay_fraction(10, 0, 90).expect("막대");
+        assert!(start.abs() < 1e-9, "끝까지 올라갔는데 맨 위가 아니다: {start}");
+    }
+
+    #[test]
+    fn a_very_long_scrollback_still_leaves_something_to_see() {
+        // 비율이 0 에 수렴하면 "어디쯤인가"를 말하려고 그린 것이 아무 말도 안 한다.
+        let (_, len) = overlay_fraction(24, 1_000_000, 0).expect("막대");
+        assert!(len >= MIN_THUMB, "썸이 사라졌다: {len}");
+        assert!(len <= 1.0);
+    }
+
+    #[test]
+    fn the_thumb_never_runs_past_the_track() {
+        // 어느 자리에서도 시작+길이가 1 을 넘지 않는다(넘으면 테두리 밖으로 그린다).
+        for scroll in [0, 1, 7, 33, 99] {
+            let (start, len) = overlay_fraction(20, 100 - scroll, scroll).expect("막대");
+            assert!(start >= 0.0 && start + len <= 1.0 + 1e-9, "{scroll}: {start}+{len}");
+        }
+    }
+
     #[test]
     fn a_jump_is_a_difference_not_a_position() {
         assert_eq!(jump_delta(100, 0, 0.0), 100, "맨 위로 = 100줄 위로");

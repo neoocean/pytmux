@@ -1359,3 +1359,33 @@ fn the_zone_the_server_lists_first_wins_when_they_overlap() {
         Some(("claude-perm-mode".to_owned(), 7))
     );
 }
+
+// ── 글 판의 **구역**(§10-21ⓛ2) ────────────────────────────────────────────────
+
+#[test]
+fn a_text_screen_without_sections_is_still_one_block() {
+    // 구버전 서버는 이 칸을 안 보낸다 — 그때도 뷰는 갈래를 하나만 알면 된다.
+    let spec = crate::session::PluginScreen {
+        kind: "text".into(),
+        text: "한 줄\n두 줄".into(),
+        ..Default::default()
+    };
+    assert_eq!(spec.say_sections(), vec!["한 줄\n두 줄".to_owned()]);
+    // 본문이 비면 구역도 없다(빈 구역 하나를 지어내면 선만 덜렁 남는다).
+    let empty = crate::session::PluginScreen { kind: "text".into(), ..Default::default() };
+    assert!(empty.say_sections().is_empty());
+}
+
+#[test]
+fn sections_come_through_in_order() {
+    let spec = crate::session::PluginScreen {
+        kind: "text".into(),
+        text: "설명\nAffected files ...\n//depot/x".into(),
+        sections: vec!["설명".into(), "Affected files ...\n//depot/x".into()],
+        ..Default::default()
+    };
+    let parts = spec.say_sections();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0], "설명");
+    assert!(parts[1].starts_with("Affected files"));
+}

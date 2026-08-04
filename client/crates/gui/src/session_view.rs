@@ -1128,6 +1128,18 @@ impl SessionView {
     ///
     /// 별칭 하나를 두는 이유: `apply_action` 자체를 `pub` 로 열면 뷰 밖에서 액션을 밀어
     /// 넣는 길이 생기고, 그러면 "키 → 액션 → 명령" 한 줄기라는 계약이 흐려진다.
+    /// 표시용 스크롤바(§10-21ⓨ2) — 창 없이 물을 수 있는 관측점.
+    #[cfg(test)]
+    pub(crate) fn scroll_hints_for_test(&self) -> Vec<crate::splitter::ScrollHint> {
+        self.scroll_hints()
+    }
+
+    /// 상태 읽기(테스트) — 배치·패널 사각형을 오라클이 확인할 때.
+    #[cfg(test)]
+    pub(crate) fn state_for_test(&self) -> &proto::SessionState {
+        &self.state
+    }
+
     /// 전체 화면 요청이 남아 있나(§10-21ⓘ3). 창 없이 물을 수 있는 유일한 관측점이다.
     #[cfg(test)]
     pub(crate) fn fullscreen_requested_for_test(&self) -> bool {
@@ -2048,6 +2060,57 @@ impl SessionView {
         self.selection = None;
         self.press = self.state.pane_at(x, y).map(|id| (id, x, y));
         false
+    }
+
+    /// 오른쪽 버튼을 눌렀다 — **그 자리의 패널을 대상으로 메뉴를 연다**(§10-21ⓕ3).
+    ///
+    /// # 새 화면이 아니라 새 입구다
+    ///
+    /// 메뉴는 이미 있다(`prefix Enter` · [`Screen::Menu`]) — 항목표도 core 에 한 벌이다
+    /// (`base::keymap` 의 `MENU_*`). 여기서 하는 일은 **그 판을 여는 두 번째 길**을 내는
+    /// 것뿐이라, 항목이 갈리거나 실행 경로가 둘이 될 자리가 없다.
+    ///
+    /// # 정본이 적어 둔 규칙 둘을 그대로 가져온다
+    ///
+    /// ⑴ **마우스 패스스루 앱 위에서도 우클릭은 pytmux 메뉴가 먼저다**
+    ///    (`clientwidgets.py` — 왼쪽 버튼과 갈리는 자리다. 왼쪽은 앱에게 넘기지만
+    ///    오른쪽은 우리가 먹는다. 안 그러면 마우스를 쓰는 앱 위에서는 메뉴로 가는 길이
+    ///    아예 없다).
+    /// ⑵ **평소 모드에서만** 연다(정본의 `button == 3` 은 평소 모드 가드 안에 있다).
+    ///
+    /// # 늦게 도착한 우클릭
+    ///
+    /// 정본에는 **이미 닫힌 화면에 우클릭이 늦게 닿아 크래시**한 기록이 있다
+    /// (`clientio.py`). 우리 쪽 같은 자리는 "판이 떠 있으면 캔버스 마우스가 죽는다"
+    /// 규칙이 막는다 — 판이 있으면 여기서 곧장 돌아간다.
+    pub fn handle_right_mouse_down(&mut self, at: Option<(u16, u16)>) -> bool {
+        // `set mouse off` 는 클라가 마우스를 아예 안 보는 것이다(왼쪽과 같은 판정).
+        if !self.config.mouse {
+            return false;
+        }
+        // 판이 떠 있으면 캔버스 마우스는 죽는다(N2) — 늦게 도착한 우클릭이 그 판 밑의
+        // 패널을 건드리지 않게 하는 자리이기도 하다.
+        if self.screens.top().is_some() {
+            return false;
+        }
+        // 평소 모드에서만. prefix·스크롤 모드에서 열면 그 모드의 다음 키를 메뉴가 먹는다.
+        if self.mode.mode() != InputMode::Normal {
+            return false;
+        }
+        let Some((x, y)) = at else {
+            return false;   // 캔버스 밖(탭바 등) — 정본도 패널 위에서만 연다
+        };
+        // 대상은 **누른 그 패널**이다(정본 `client.py` 도 그 패널을 강조까지 한다).
+        // 비활성이면 먼저 포커스를 옮긴다 — 메뉴의 항목이 "이 패널"에 걸리므로, 안 옮기면
+        // 오른쪽으로 누른 패널과 메뉴가 조작할 패널이 갈린다.
+        if let Some(pane) = self.state.pane_at(x, y) {
+            self.focus_pane(pane);
+        }
+        // ⚠ 여기서 넘김(`forward_mouse`)을 **안 한다**. 마우스를 쓰는 앱 위에서도 메뉴가
+        //   먼저라는 것이 정본의 규칙이고, 그 규칙이 없으면 그런 앱 위에서는 메뉴로 가는
+        //   길이 아예 없다.
+        self.screens.open(Screen::Menu);
+        true
     }
 
     /// 끌고 있다. 경계선이면 비율을, 패널 위면 선택을 늘린다.
@@ -3943,8 +4006,25 @@ impl SessionView {
                 let mut drawn = 0usize;
                 // 본문도 **이 클라의 로케일로**(`say_text`) — 이 판에 산문이 오기
                 // 시작했다(원격 제어). 자료(한도 막대)는 카탈로그에 없어 그대로 지난다.
-                let body = spec.say_text();
+                //
+                // ★ 구역 사이에는 **실제 선**을 긋는다(§10-21ⓛ2). 어디가 경계인지는
+                //   플러그인이 정하고(`sections`), 여기서는 그 사이에 무엇을 그릴지만
+                //   정한다 — 정본은 같은 자리를 선문자로 긋는다(테두리와 같은 갈림).
+                //   그 선도 **한 줄을 먹는다**: 예산을 안 세면 판이 아래로 넘친다.
+                let body = Self::join_sections(&spec.say_sections());
                 for line in body.lines().skip(scroll).take(budget) {
+                    if line == Self::SECTION_MARK {
+                        drawn += 1;
+                        column = column.with_child(
+                            Container::new(Flex::column().finish())
+                                .with_vertical_padding(4.)
+                                .with_border(
+                                    Border::top(1.).with_border_color(theme::BORDER),
+                                )
+                                .finish(),
+                        );
+                        continue;
+                    }
                     drawn += 1;
                     // ★ **긴 줄을 자른다**(§10-21ⓚ2). 폭을 못박아도 줄이 안 접히면
                     //   상한을 넘겨 밀고 나간다 — `p4changes` 의 CL 설명 한 줄이 정확히
@@ -6382,6 +6462,20 @@ impl SessionView {
         base::tint::border(self.state.active_tab_is_remote(), self.state.rtt().degraded)
     }
 
+    /// 구역 사이에 세우는 **자리표 줄**(§10-21ⓛ2).
+    ///
+    /// 왜 문자열 한 줄인가: 이 판은 스크롤을 **줄 수**로 센다(`screens.scroll()`). 선을
+    /// 줄 밖의 무엇으로 두면 스크롤 셈에서 빠져 굴릴수록 어긋난다. 그래서 선도 한 줄을
+    /// 차지하는 것으로 세고, 그릴 때만 글자 대신 선이 된다.
+    ///
+    /// 본문에 이 글자가 그대로 올 일은 없다(제어문자다) — 자료와 섞이지 않는다.
+    const SECTION_MARK: &'static str = "\u{1}";
+
+    /// 구역들을 자리표 줄로 이어 한 덩이로. 구역이 하나면 그대로다.
+    fn join_sections(sections: &[String]) -> String {
+        sections.join(&format!("\n{}\n", Self::SECTION_MARK))
+    }
+
     /// 블록 문자 칸들을 **사각형**으로 옮긴다(§10-21ⓘ).
     ///
     /// # 왜 패널 안까지 옮기나 (테두리와 다른 판단)
@@ -6482,6 +6576,45 @@ impl SessionView {
         Self::frame_segments(canvas, layout, base::tint::BorderTint::Local)
             .into_iter()
             .map(|seg| (seg.x, seg.y))
+            .collect()
+    }
+
+    /// 스크롤한 패널의 **표시용 스크롤바**(§10-21ⓨ2) — 패널 오른쪽 테두리 위.
+    ///
+    /// # 언제 보이나
+    ///
+    /// **위로 올라간 패널에만** 선다. 늘 그리면 라이브 화면 오른쪽에 늘 꽉 찬 막대가
+    /// 붙어 시끄럽고, 그건 "지금 어디쯤인가"를 말하려던 것과 반대다. 스크롤백이 없거나
+    /// 라이브면 core 가 `None` 을 준다.
+    ///
+    /// # 왜 패널마다인가
+    ///
+    /// 스크롤은 **패널마다 따로** 산다(활성 패널만 그리면 옆 패널을 올려 둔 것을 잊는다).
+    ///
+    /// 판이 떠 있으면 안 그린다 — 캔버스가 스크림 아래로 내려가 있는데 그 위에 막대만
+    /// 또렷하면 눈이 그리로 간다(마우스를 끊는 것과 같은 규칙).
+    fn scroll_hints(&self) -> Vec<crate::splitter::ScrollHint> {
+        if self.screens.top().is_some() {
+            return Vec::new();
+        }
+        self.state
+            .panes()
+            .iter()
+            .filter_map(|pane| {
+                let scroll = self.state.pane_scroll(pane.id)?;
+                let top = self.state.pane_top(pane.id)?;
+                let (start, len) =
+                    base::scrollbar::overlay_fraction(pane.h as usize, top, scroll)?;
+                // 테두리 열은 내용 사각형의 **바로 오른쪽**이다(`boxrect` 의 끝 열).
+                let [bx, _, bw, _] = pane.boxrect?;
+                Some(crate::splitter::ScrollHint {
+                    x: bx + bw.saturating_sub(1),
+                    y: pane.y,
+                    h: pane.h,
+                    start,
+                    len,
+                })
+            })
             .collect()
     }
 
@@ -6728,6 +6861,7 @@ impl View for SessionView {
                         Self::frame_segments(&canvas, self.state.layout(), tint),
                         blocks,
                         self.cursor_cell(),
+                        self.scroll_hints(),
                         Self::CELL_PROBE,
                     )
                     .finish(),
@@ -6870,6 +7004,14 @@ impl View for SessionView {
             })
             // 캔버스 밖(탭바 등)의 드래그·뗌도 뷰에 알린다(`None`) — 탭 드래그(G9w)의
             // 놓는 순간이 그 좌표 밖에서 온다.
+            // ★ 오른쪽 버튼(§10-21ⓕ3) — 종전에는 왼쪽만 보고 있었다. 상류가 주는
+            //   이벤트인데 이 크레이트가 안 받던 것이라, ⓘ3(전체 화면)·ⓕ2(수정키 뗌)와
+            //   같은 모양의 미배선이다.
+            .on_right_mouse_down(|evt, _app, position| {
+                let at = Self::cell_from_event(evt, position);
+                evt.dispatch_typed_action(ViewAction::RightMouseDown(at));
+                DispatchEventResult::StopPropagation
+            })
             .on_mouse_dragged(|evt, _app, position| {
                 let at = Self::cell_from_event(evt, position);
                 evt.dispatch_typed_action(ViewAction::MouseDrag(at));
@@ -6954,6 +7096,11 @@ pub enum ViewAction {
     /// Shift 를 여기서 싣는 이유: 넘김 판정은 **누름 시점의** 수정키로 정해진다. 뗌에서
     /// 다시 보면 그 사이에 Shift 를 놓은 사람의 드래그가 중간에 성격을 바꾼다.
     MouseDown((u16, u16), bool),
+    /// 오른쪽 버튼을 눌렀다 — 그 자리의 패널을 대상으로 **메뉴를 연다**(§10-21ⓕ3).
+    ///
+    /// 캔버스 밖(탭바 등)이면 `None` 이다. 그때는 아무 일도 안 한다 — 정본도 패널 위에서만
+    /// 연다(`clientwidgets` 의 `button == 3` 은 패널 위젯의 것이다).
+    RightMouseDown(Option<(u16, u16)>),
     /// 누른 채 옮겼다.
     MouseDrag(Option<(u16, u16)>),
     /// 놓았다.
@@ -6994,6 +7141,7 @@ impl TypedActionView for SessionView {
             ViewAction::Wheel { up, at } => self.handle_wheel(*up, *at),
             ViewAction::MouseMove(at) => self.handle_mouse_move(*at),
             ViewAction::MouseDown(at, shift) => self.handle_mouse_down(*at, *shift),
+            ViewAction::RightMouseDown(at) => self.handle_right_mouse_down(*at),
             ViewAction::MouseDrag(at) => self.handle_mouse_drag(*at),
             ViewAction::MouseUp(at) => self.handle_mouse_up(*at),
             ViewAction::TabPress(i) => {

@@ -143,6 +143,26 @@ pub struct Cursor {
     pub y: u16,
 }
 
+/// 패널 오른쪽 **외곽선 위**에 얹는 표시용 스크롤바(§10-21ⓨ2).
+///
+/// 칸을 안 먹는다 — 테두리를 실제 선으로 그리는 덕에 그 선 위에 겹쳐 그릴 수 있고,
+/// 캔버스 격자를 안 건드리니 서버에 보고하는 행·열도 안 바뀐다.
+///
+/// 조작용 터치 스크롤바(`base::scrollbar::chars`)와 **다른 것**이다: 저건 한 열을 먹고
+/// 탭을 받는다. 섞으면 touch-scroll 을 끈 사람에게 표시까지 사라진다.
+pub struct ScrollHint {
+    /// 패널 **테두리**의 오른쪽 열과 안쪽 위/아래(셀 좌표).
+    pub x: u16,
+    pub y: u16,
+    pub h: u16,
+    /// 트랙을 1.0 으로 본 (썸 시작, 썸 길이) — 값은 core 가 정한다.
+    pub start: f64,
+    pub len: f64,
+}
+
+/// 표시용 스크롤바의 두께. 테두리(1.5px)보다 굵어야 **선 위에 얹힌 것**으로 읽힌다.
+const HINT_PX: f32 = 3.;
+
 /// 커서 테두리의 두께.
 const CURSOR_PX: f32 = 2.;
 
@@ -162,6 +182,8 @@ pub struct SplitterOverlay {
     blocks: Vec<Block>,
     /// 활성 패널의 커서 칸(없으면 안 그린다 — 커서를 감춘 패널·화면이 뜬 동안).
     cursor: Option<Cursor>,
+    /// 스크롤한 패널의 표시용 막대(없으면 안 그린다).
+    hints: Vec<ScrollHint>,
     /// 셀 자리표 id(`SessionView::CELL_PROBE`) — 셀 기하의 원천.
     probe_id: &'static str,
     origin: Option<Point>,
@@ -174,9 +196,10 @@ impl SplitterOverlay {
         segs: Vec<Seg>,
         blocks: Vec<Block>,
         cursor: Option<Cursor>,
+        hints: Vec<ScrollHint>,
         probe_id: &'static str,
     ) -> Self {
-        Self { child, bars, segs, blocks, cursor, probe_id, origin: None }
+        Self { child, bars, segs, blocks, cursor, hints, probe_id, origin: None }
     }
 
     /// 블록 문자 칸들을 사각형으로. 비율(`BlockFill`)을 칸 크기에 곱할 뿐이다 —
@@ -199,6 +222,26 @@ impl SplitterOverlay {
             ctx.scene
                 .draw_rect_without_hit_recording(rect)
                 .with_background(Fill::Solid(color));
+        }
+    }
+
+    /// 표시용 스크롤바를 패널 오른쪽 **테두리 선 위**에 얹는다(§10-21ⓨ2).
+    ///
+    /// 트랙은 테두리 세로줄의 안쪽 구간이고, 그 위에 FOCUS 색 막대를 그린다 — 테두리와
+    /// 같은 색이면 "선이 좀 굵어졌다"로만 보여 아무 말도 안 한다.
+    fn paint_hints(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        for hint in &self.hints {
+            let track_y = origin.y() + hint.y as f32 * ch;
+            let track_h = hint.h as f32 * ch;
+            let y0 = track_y + track_h * hint.start as f32;
+            let h = (track_h * hint.len as f32).max(HINT_PX);
+            // 테두리 선의 **가운데**에 얹는다(선과 같은 축이라야 얹힌 것으로 읽힌다).
+            let cx = origin.x() + (hint.x as f32 + 0.5) * cw;
+            let rect = RectF::new(vec2f(cx - HINT_PX / 2., y0), vec2f(HINT_PX, h));
+            ctx.scene
+                .draw_rect_without_hit_recording(rect)
+                .with_background(Fill::Solid(theme::FOCUS))
+                .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)));
         }
     }
 
@@ -353,6 +396,8 @@ impl Element for SplitterOverlay {
                 }
             }
         }
+        // 스크롤 힌트는 테두리 **위**에 얹는다(§10-21ⓨ2) — 그 선을 덮는 것이 뜻이다.
+        self.paint_hints(origin, cw, ch, ctx);
         // 커서는 **맨 위**다 — 경계·바에 가리면 그 칸에 커서가 있는지 알 수 없다.
         self.paint_cursor(origin, cw, ch, ctx);
     }
