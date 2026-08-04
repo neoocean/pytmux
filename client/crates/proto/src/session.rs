@@ -979,6 +979,15 @@ pub struct SessionState {
     ///
     /// 셸 통합을 안 깐 사용자에게는 영원히 비어 있다 — 그게 정상이다.
     blocks: HashMap<i64, Vec<Block>>,
+    /// 패널 id → 그 패널 셸의 작업 디렉터리(서버 `cwd` 프레임).
+    ///
+    /// 패널 글 안의 **상대경로를 푸는 기준**이다(§10-21ⓧ2 / pytmux-24). 셸 통합이
+    /// 없으면 비어 있고, 그때는 절대경로만 눌린다 — 못 풀면 존을 안 만든다.
+    ///
+    /// ⚠ [`Self::active_cwd`] 와 **다른 값이다**. 저건 활성 패널 하나를 가리키고
+    /// 원격 탭에서 `None` 을 내는데(Claude 폴더 오판 방지), 이건 패널별이고 원격을
+    /// 막지 않는다 — 자세한 이유는 [`Self::pane_cwd`].
+    cwds: HashMap<i64, String>,
     tabs: TabBar,
     /// 서버가 연결을 닫았는가.
     closed: bool,
@@ -1083,6 +1092,7 @@ impl SessionState {
                 let alive: Vec<i64> = layout.panes.iter().map(|p| p.id).collect();
                 self.screens.retain(|id, _| alive.contains(id));
                 self.blocks.retain(|id, _| alive.contains(id));
+                self.cwds.retain(|id, _| alive.contains(id));
                 self.layout = Some(layout);
                 true
             }
@@ -1203,6 +1213,14 @@ impl SessionState {
                 let changed = self.blocks.get(&pane) != Some(&blocks);
                 self.blocks.insert(pane, blocks);
                 changed
+            }
+            ServerMessage::Cwd { pane, cwd } => {
+                // `null`·빈 문자열은 **모르게 됐다**는 뜻이라 지운다 — 옛 기준을 들고
+                // 있으면 조용히 틀린 경로를 푼다(밑줄은 멀쩡하고 복사한 값만 다르다).
+                match cwd.filter(|s| !s.is_empty()) {
+                    Some(path) => self.cwds.insert(pane, path.clone()) != Some(path),
+                    None => self.cwds.remove(&pane).is_some(),
+                }
             }
             ServerMessage::Bye => {
                 self.closed = true;
@@ -2416,6 +2434,26 @@ impl SessionState {
     ///
     /// **두 뷰가 각자 답하면 안 된다.** 한쪽만 원격 판정을 빠뜨리면 그 클라에서만 남의
     /// 대화가 뜨는데, 그건 그럴듯해서 아무도 의심하지 않는다.
+    /// **그 패널의** 작업 디렉터리 — 패널 글 안의 상대경로를 푸는 기준.
+    ///
+    /// # [`Self::active_cwd`] 와 왜 다른 함수인가
+    ///
+    /// 둘은 묻는 것이 다르다. `active_cwd` 는 *"이 머신에서 그 폴더를 열어도 되는가"* 를
+    /// 답하고, 그래서 원격 탭에서 `None` 을 낸다 — 상류 경로로 이 머신의
+    /// `~/.claude/projects` 를 뒤지면 **남의 세션 대화가 그럴듯하게 뜬다**(2026-07-27g
+    /// 실측). 이 함수는 *"화면에 보이는 이 상대경로의 전체 경로가 무엇인가"* 를 답한다.
+    /// 원격 패널의 답은 **상류 머신의 경로**이고 그게 맞다 — 사용자가 그 값을 붙여 넣을
+    /// 곳은 그 셸이다.
+    ///
+    /// ⛔ **둘을 한 함수로 합치지 말 것.** 합치는 순간 위 실측 결함이 되살아나거나
+    /// (원격 가드를 잃는 쪽) 원격 패널에서 경로가 안 풀린다(가드를 물려받는 쪽).
+    ///
+    /// ⚠ 그리고 **활성 패널로 대신하지 말 것**. 옆 패널 글을 활성 패널의 cwd 로 풀면
+    /// 밑줄은 멀쩡히 그어지고 복사한 값만 틀린다 — 조용한 오답이다.
+    pub fn pane_cwd(&self, pane_id: i64) -> Option<&str> {
+        self.cwds.get(&pane_id).map(String::as_str)
+    }
+
     pub fn active_cwd(&self) -> Option<&str> {
         if self.active_tab_is_remote() {
             return None;

@@ -128,6 +128,24 @@ pub enum ServerMessage {
         #[serde(default)]
         tail: String,
     },
+    /// 이 패널 셸의 작업 디렉터리. 서버는 `caps` 로 광고한 클라에게만 보낸다.
+    ///
+    /// 패널 글 안의 **상대경로를 푸는 기준**이다(§10-21ⓧ2 / pytmux-24). 값의 출처는
+    /// 셸이 보낸 `OSC 7` 이라 프로브가 0 이다 — 서버가 pid 로 `/proc`·PEB·`lsof` 를
+    /// 뒤지는 길은 동기 호출이라 레이아웃마다 부를 수 없다.
+    ///
+    /// 블록 목록과 **따로** 오는 이유는 크기다: 값은 문자열 하나인데 블록은 최대
+    /// 500개라, 경로만 풀면 되는 클라가 그 목록을 다 받는 것이 `caps` 게이트가
+    /// 막으려던 바로 그 비용이다.
+    ///
+    /// `cwd: null` 은 **모르게 됐다**는 뜻이다(셸 통합이 꺼졌거나 다른 셸로 바뀌었다).
+    /// 그때는 기준을 버려야 한다 — 옛 기준으로 계속 풀면 조용히 틀린 경로를 복사한다.
+    #[serde(rename = "cwd")]
+    Cwd {
+        pane: i64,
+        #[serde(default)]
+        cwd: Option<String>,
+    },
     /// 서버가 연결을 정상 종료한다.
     #[serde(rename = "bye")]
     Bye,
@@ -229,6 +247,7 @@ impl ServerMessage {
             Self::Blocks { .. } => "blocks",
             Self::Selection { .. } => "selection",
             Self::Claude { .. } => "claude",
+            Self::Cwd { .. } => "cwd",
             Self::Bye => "bye",
             Self::Error { .. } => "error",
             Self::Notice { .. } => "notice",
@@ -572,7 +591,7 @@ where
 /// 광고하지 않으면 해당 메시지가 아예 오지 않는다 — 기능이 조용히 안 되는 것처럼
 /// 보이므로 기본으로 전부 광고한다. 서버가 모르는 이름은 무시하므로 구버전 서버에
 /// 붙어도 안전하다.
-pub const CAPS: &[&str] = &["blocks", "claude", "plugin_surface", "plugin_screen"];
+pub const CAPS: &[&str] = &["blocks", "claude", "cwd", "plugin_surface", "plugin_screen"];
 
 /// 클라 → 서버 첫 프레임.
 #[derive(Debug, Clone, Serialize)]
@@ -679,7 +698,7 @@ mod tests {
         // 안 되고, 증상은 "그 패널엔 아무것도 없다"와 구분되지 않는다.
         assert_eq!(
             json["caps"],
-            serde_json::json!(["blocks", "claude", "plugin_surface", "plugin_screen"])
+            serde_json::json!(["blocks", "claude", "cwd", "plugin_surface", "plugin_screen"])
         );
     }
 

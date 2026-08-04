@@ -51,7 +51,8 @@ from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
 from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
                      config_path_for_write, load_config, normalize_binding_key,
                      set_config_option, textual_key_to_tmux)
-from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
+from .protocol import (CLIENT_CAPS, MIN_H, MIN_W, PROTO_VERSION,
+                       read_msg, write_msg)
 
 # IPC 소켓 재접속 재시도 파라미터 — 흩어져 있던 매직 상수를 한곳에 모았다(M4 #30).
 _RECONNECT_DELAY = 0.02            # 재시도 간격(초)
@@ -175,7 +176,8 @@ class _NetReconnectMixin:
         else:
             return False
         cols, rows = self._content_size()
-        hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
+        hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols,
+                 "rows": rows, "caps": list(CLIENT_CAPS)}
         if cellwidth.ambiguous_wide():    # 재접속 시에도 서버에 모호폭 모드 재통지
             hello["ambig"] = "wide"
         tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)

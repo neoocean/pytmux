@@ -23,7 +23,7 @@ pub enum SpanKind {
     /// `http`/`https` 링크. 그 밖의 스킴은 **안 잡는다**(아래 보안 항목).
     Url,
     /// 파일처럼 보이는 경로. 전체 경로로 푸는 것은 부르는 쪽의 일이다(기준 디렉터리를
-    /// 아는 쪽이 서버라서 — `SessionState::active_cwd`).
+    /// 아는 쪽이 서버라서 — `SessionState::pane_cwd`, **그 범위가 있던 패널의** cwd).
     Path,
 }
 

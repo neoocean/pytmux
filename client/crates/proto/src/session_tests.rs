@@ -1457,3 +1457,69 @@ fn a_path_in_a_pane_is_found_too() {
     // 감싼 괄호는 범위에 안 든다 — 복사한 값이 그대로 경로라야 한다.
     assert_eq!(hit.x0, 7);
 }
+
+// ---- 패널 cwd(§10-21ⓧ2 / pytmux-24) ----------------------------------------
+
+fn cwd_msg(pane: i64, cwd: serde_json::Value) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({ "t": "cwd", "pane": pane, "cwd": cwd }))
+        .unwrap()
+}
+
+#[test]
+fn cwd_is_stored_per_pane() {
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 10), (2, 10)]));
+    assert_eq!(state.pane_cwd(1), None, "셸 통합이 없으면 모른다");
+
+    assert!(state.apply(cwd_msg(1, serde_json::json!("/a/one"))));
+    assert_eq!(state.pane_cwd(1), Some("/a/one"));
+    assert_eq!(state.pane_cwd(2), None, "다른 패널에 새면 남의 기준으로 푼다");
+}
+
+#[test]
+fn the_same_cwd_does_not_request_a_repaint() {
+    let mut state = SessionState::new();
+    let msg = || cwd_msg(1, serde_json::json!("/a/one"));
+    assert!(state.apply(msg()));
+    assert!(!state.apply(msg()), "안 바뀌었으면 다시 그릴 이유가 없다");
+}
+
+/// `null` = **모르게 됐다**. 기준을 버려야 한다 — 옛 기준으로 계속 풀면 밑줄은 멀쩡하고
+/// 복사한 값만 틀린다(조용한 오답).
+#[test]
+fn a_null_cwd_forgets_the_base() {
+    let mut state = SessionState::new();
+    state.apply(cwd_msg(1, serde_json::json!("/a/one")));
+    assert!(state.apply(cwd_msg(1, serde_json::Value::Null)));
+    assert_eq!(state.pane_cwd(1), None);
+    assert!(
+        !state.apply(cwd_msg(1, serde_json::Value::Null)),
+        "이미 모르는 것을 또 모른다고 해도 다시 그릴 일은 없다"
+    );
+}
+
+#[test]
+fn cwd_of_a_closed_pane_is_dropped_with_its_screen() {
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 10), (2, 10)]));
+    state.apply(cwd_msg(2, serde_json::json!("/b/two")));
+    state.apply(layout_msg(&[(1, 10)])); // 패널 2가 닫혔다
+    assert_eq!(state.pane_cwd(2), None, "사라진 패널의 기준은 버린다");
+}
+
+/// ⛔ `pane_cwd` 와 `active_cwd` 는 **다른 질문**이다. 원격 탭에서 `active_cwd` 는
+/// 일부러 `None` 을 내지만(상류 경로로 이 머신의 Claude 폴더를 뒤지면 남의 대화가
+/// 뜬다), 경로 **복사**의 답은 그 상류 경로다. 둘을 합치면 한쪽이 반드시 망가진다.
+#[test]
+fn pane_cwd_is_not_the_active_pane_shortcut() {
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 10), (2, 10)])); // active = 2
+    state.apply(cwd_msg(1, serde_json::json!("/a/one")));
+
+    assert_eq!(state.pane_cwd(1), Some("/a/one"), "비활성 패널도 자기 기준을 갖는다");
+    assert_eq!(
+        state.active_cwd(),
+        None,
+        "active_cwd 는 블록에서 오고, 비활성 패널의 cwd 로 대신 답하면 안 된다"
+    );
+}

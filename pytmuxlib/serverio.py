@@ -535,6 +535,17 @@ class ServerIOMixin:
                             await write_msg(client.writer,
                                             {"t": "blocks", "pane": p.id,
                                              "blocks": payload})
+                # cwd 도 같은 이유로 초기 1회. 이게 없으면 방금 붙은 클라는 사용자가
+                # `cd` 를 한 번 칠 때까지 그 패널의 상대경로를 못 푼다(절대경로만 눌린다).
+                # 값이 없는 패널은 건너뛴다 — 모른다는 것이 기본값이라 알릴 것이 없다.
+                if "cwd" in getattr(client, "caps", ()):
+                    for p in panes:
+                        cwd = self.plugins.pane_cwd(p)
+                        if cwd:
+                            p._cwd_sent = cwd
+                            await write_msg(client.writer,
+                                            {"t": "cwd", "pane": p.id,
+                                             "cwd": cwd})
                 # Claude 트랜스크립트 꼬리도 같은 이유로 초기 1회 보낸다. force=True 인
                 # 이유: 변경 판정을 그대로 타면 "안 바뀌었다"로 아무것도 안 가고, 방금
                 # 붙은 클라는 다음 응답이 올 때까지 빈 구역을 본다.
@@ -632,6 +643,35 @@ class ServerIOMixin:
         if payload is None:
             return
         frame = frame_msg({"t": "blocks", "pane": pane.id, "blocks": payload})
+        for c in wanted:
+            frames_by_client[c].append(frame)
+
+    def _append_cwd_frames(self, frames_by_client, clients, pane):
+        """패널 cwd 가 바뀌었으면 **광고한 클라에게만** 보낸다(§10-21ⓧ2 / pytmux-24).
+
+        클라는 이 값을 패널 글 안의 **상대경로를 푸는 기준**으로 쓴다. 못 풀면 존을
+        안 만들므로, 이게 안 가면 그 패널에서는 절대경로만 눌린다.
+
+        `_append_blocks_frames` 와 세 가지가 다르다:
+
+        - **dirty 훅을 안 쓴다.** `pane_blocks_changed` 는 물어보면 표식을 내리는데,
+          블록과 cwd 가 각자 물으면 먼저 부른 쪽이 표식을 지워 **다른 쪽이 영영 안
+          나간다**. cwd 는 값이 문자열 하나라 마지막으로 보낸 것과 비교하는 게 제일
+          싸고, 그 비교는 멱등이라 순서에 안 걸린다.
+        - **패널이 dirty 하지 않아도 부른다** — `cd` 만 하고 화면이 조용할 수 있다.
+        - **보낼 값이 없어져도 보낸다**(cwd=None). 셸 통합이 꺼지거나 패널이 다른 셸로
+          바뀌면 클라가 옛 기준으로 계속 풀면 안 된다 — 조용히 틀린 경로를 복사하는 것은
+          못 푸는 것보다 나쁘다.
+        """
+        wanted = [c for c in clients
+                  if "cwd" in getattr(c, "caps", ()) and not c.remote_view]
+        if not wanted:
+            return              # 표식을 안 내린다 — 새로 붙는 클라는 _send_full 로 받는다
+        cwd = self.plugins.pane_cwd(pane)
+        if cwd == getattr(pane, "_cwd_sent", None):
+            return              # 처음부터 모르는 패널에 빈 프레임을 흘리지 않는다
+        pane._cwd_sent = cwd
+        frame = frame_msg({"t": "cwd", "pane": pane.id, "cwd": cwd})
         for c in wanted:
             frames_by_client[c].append(frame)
 
@@ -786,6 +826,7 @@ class ServerIOMixin:
                 # 영영 안 간다. 빈도는 플러그인의 프레임 카운터가 줄인다.
                 for p in win.panes():
                     self._append_claude_frames(frames_by_client, clients, p)
+                    self._append_cwd_frames(frames_by_client, clients, p)
                 # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다(동기화 출력
                 # 프레임 도중이면 일반 패널과 동일하게 송신을 미룬다).
                 pu = sess.popup

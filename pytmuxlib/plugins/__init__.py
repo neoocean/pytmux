@@ -220,6 +220,29 @@ class Registry:
                 return payload
         return None
 
+    def pane_cwd(self, pane):
+        """이 패널 셸의 작업 디렉터리. 아무도 모르면 None.
+
+        패널 글 안의 **상대경로를 푸는 기준**이다(§10-21ⓧ2 / pytmux-24). 값의 출처가
+        셸이 보낸 OSC 7 이라 프로브가 0 이다 — 서버의 `_pane_cwd(pane)` 는 pid 로
+        /proc·PEB·lsof 를 뒤지는 **동기** 경로라 레이아웃마다 부를 수 없다.
+
+        `pane_blocks` 와 갈라 둔 이유는 크기다: 값은 문자열 하나인데 블록 목록은 최대
+        500개다. 경로만 풀면 되는 클라에게 그 목록을 통째로 보내는 것은 caps 게이트가
+        막으려던 바로 그 비용이다.
+
+        플러그인 디렉토리를 지우면 None 이 되고, 그러면 두 클라 다 상대경로를 못 풀어
+        **존을 안 만든다**(밑줄을 그어 놓고 눌러도 아무 일이 없으면 그 밑줄이 거짓말이다).
+        """
+        for p in self.plugins:
+            fn = getattr(p, "pane_cwd", None)
+            if fn is None:
+                continue
+            cwd = fn(pane)
+            if cwd:
+                return cwd
+        return None
+
     def pane_claude_tail(self, server, pane, force=False):
         """이 패널의 Claude 트랜스크립트 **꼬리 원문**(JSONL). 보낼 것이 없으면 None.
 

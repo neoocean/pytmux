@@ -350,22 +350,25 @@ class MultiplexerView(Widget):
         if found is None:
             return None
         start, end, word = found
-        full = self._resolve_path(word)
+        full = self._resolve_path(word, pane.get("id"))
         if full is None:
             return None
         x0 = cell_of_char[start]
         x1 = cell_of_char[end] if end < len(cell_of_char) else px + pw
         return (y, x0, x1, full)
 
-    def _resolve_path(self, word: str):
-        """상대 경로를 전체 경로로. 기준은 그 패널의 작업 디렉터리다.
+    def _resolve_path(self, word: str, pane_id=None):
+        """상대 경로를 전체 경로로. 기준은 **그 패널의** 작업 디렉터리다.
 
         셸 통합이 없으면 cwd 를 모르고, 그때는 풀 수 없다 — 모르는 것을 아는 척하지
-        않는다(네이티브 클라의 `resolve_path` 와 같은 판정)."""
+        않는다(네이티브 클라의 `resolve_path` 와 같은 판정).
+
+        ⚠ 기준이 **활성 패널이 아니라 hover 한 패널**인 것이 핵심이다. 활성 패널의
+        cwd 로 옆 패널의 글을 풀면 밑줄은 멀쩡히 그어지고 복사한 값만 틀린다 —
+        조용한 오답이라 사용자가 의심할 단서가 없다."""
         if os.path.isabs(word):
             return word
-        cwd = getattr(self.app, "pane_cwd", None)
-        cwd = cwd() if callable(cwd) else cwd
+        cwd = (self.app.pane_cwds or {}).get(pane_id)
         return os.path.join(cwd, word) if cwd else None
 
     def _pane_at(self, x, y):

@@ -345,3 +345,39 @@ async def test_find_paths_is_narrow_on_purpose():
     assert path_at("Update(server/test/x.mjs)", 0) is None, "괄호 밖"
     # 링크는 링크의 것이다(§10-21ⓥ2 — 그쪽은 GUI 전용이다).
     assert find_paths("https://x.dev/a/b.html") == []
+
+
+async def test_relative_path_resolves_against_that_pane_cwd():
+    """상대경로의 기준은 **hover 한 그 패널**의 cwd 다(pytmux-24 남은 절반).
+
+    ⚠ 활성 패널의 cwd 로 옆 패널 글을 풀면 밑줄은 멀쩡히 그어지고 **복사한 값만**
+    틀린다 — 조용한 오답이라 사용자가 의심할 단서가 없다. 그래서 서버가 패널별로
+    보내고(`cwd` 프레임) 클라도 패널별로 푼다.
+
+    못 풀면 **존을 안 만든다**: 밑줄을 그어 놓고 눌러도 아무 일이 없으면 그 밑줄이
+    거짓말이다(절대경로는 cwd 없이도 풀리므로 계속 눌린다)."""
+    import os
+
+    from pytmuxlib.clientwidgets import MultiplexerView
+
+    class FakeApp:
+        pane_cwds = {1: os.path.join(os.sep, "a", "one"),
+                     2: os.path.join(os.sep, "b", "two")}
+
+    # `app` 은 Textual 의 읽기전용 property 라 인스턴스를 못 만들고 세운다 — 재는 것은
+    # 위젯이 아니라 **푸는 규칙**이므로 그 메서드만 떼어 가짜 앱에 물린다.
+    class _Probe:
+        app = FakeApp()
+        _resolve_path = MultiplexerView._resolve_path
+
+    resolve = _Probe()._resolve_path
+
+    assert resolve("x.mjs", 1) == os.path.join(os.sep, "a", "one", "x.mjs")
+    assert resolve("x.mjs", 2) == os.path.join(os.sep, "b", "two", "x.mjs"), \
+        "다른 패널의 글을 남의 cwd 로 풀었다"
+    assert resolve("x.mjs", 3) is None, "cwd 를 모르는 패널은 못 푼다(존 없음)"
+    assert resolve("x.mjs", None) is None, "패널을 모르면 못 푼다"
+    # ⚠ Windows 에서 앞이 `\` 하나뿐인 경로는 3.13 부터 **절대경로가 아니다**(드라이브가
+    # 없다). 그 OS 의 진짜 절대경로를 만들어 쓴다 — 아니면 이 단언이 OS 를 탄다.
+    absolute = os.path.abspath(os.path.join(os.sep, "abs", "x.mjs"))
+    assert resolve(absolute, 3) == absolute, "절대경로는 cwd 없이도 그대로 풀린다"

@@ -2148,7 +2148,10 @@ impl SessionView {
             SpanKind::Path => {
                 // 존을 만들 때 이미 풀 수 있음을 확인했다(`span_at`) — 여기서 `None` 이면
                 // 그 사이에 cwd 가 사라진 것이다(탭이 바뀌었다).
-                let Some(full) = proto::info::resolve_path(self.state.active_cwd(), &hit.text)
+                //
+                // 기준은 **그 범위가 있던 패널**이다(`hit.pane`). 활성 패널로 풀면 옆
+                // 패널 글에서 밑줄은 멀쩡하고 복사한 값만 틀린다 — 조용한 오답이다.
+                let Some(full) = proto::info::resolve_path(self.state.pane_cwd(hit.pane), &hit.text)
                 else {
                     return;
                 };
@@ -2265,7 +2268,7 @@ impl SessionView {
     fn span_at(&self, x: u16, y: u16) -> Option<proto::SpanHit> {
         let hit = self.state.span_at(x, y)?;
         if hit.kind == base::spans::SpanKind::Path
-            && proto::info::resolve_path(self.state.active_cwd(), &hit.text).is_none()
+            && proto::info::resolve_path(self.state.pane_cwd(hit.pane), &hit.text).is_none()
         {
             return None;
         }

@@ -5268,3 +5268,82 @@ fn the_hint_sits_on_the_border_column_not_inside_the_pane() {
     assert_eq!(hint.x, bx + bw - 1, "테두리 오른쪽 열이 아니다");
     assert!(hint.x >= pane.x + pane.w, "내용 칸을 먹었다");
 }
+
+// ── 경로 존의 기준은 **그 패널**이다(§10-21ⓧ2 / pytmux-24) ────────────────────
+//
+// 종전 GUI 는 `active_cwd()` 로 풀었다 — 활성 패널 하나의 값이라 옆 패널 글에는 남의
+// 기준이 걸렸다. 밑줄은 멀쩡히 그어지고 **복사한 값만** 틀리는 조용한 오답이다.
+
+fn two_panes_with_a_relative_path() -> Vec<ServerMessage> {
+    let line = "Update(server/test/x.mjs)";
+    let mut out = vec![serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 6, "active": 1,
+        "panes": [
+            {"id": 1, "x": 0,  "y": 0, "w": 40, "h": 5, "active": true},
+            {"id": 2, "x": 40, "y": 0, "w": 40, "h": 5, "active": false}
+        ]
+    }))
+    .unwrap()];
+    for pane in [1, 2] {
+        out.push(
+            serde_json::from_value(serde_json::json!({
+                "t": "screen", "pane": pane, "rows": [[[line, {}]]],
+                "cursor": [0, 0], "wrap": [], "top": 0
+            }))
+            .unwrap(),
+        );
+    }
+    out
+}
+
+fn cwd_frame(pane: i64, cwd: &str) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({ "t": "cwd", "pane": pane, "cwd": cwd })).unwrap()
+}
+
+/// 각 패널의 같은 글이 **자기 cwd** 로 풀린다. cwd 를 모르는 패널에는 존이 안 생긴다.
+#[test]
+fn a_path_zone_resolves_against_the_pane_it_is_in() {
+    let (mut view, tx, _sent) = harness();
+    for msg in two_panes_with_a_relative_path() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    // **비활성** 패널만 cwd 를 안다 — active_cwd 로 풀면 여기서 존이 안 생긴다.
+    tx.send(LinkEvent::Message(Box::new(cwd_frame(2, "/b/two"))))
+        .unwrap();
+    view.pump_headless();
+
+    let hit = view.span_at(50, 0).expect("비활성 패널의 경로에 존이 없다");
+    assert_eq!(hit.pane, 2);
+    assert_eq!(hit.text, "server/test/x.mjs");
+    assert_eq!(
+        proto::info::resolve_path(view.state.pane_cwd(hit.pane), &hit.text),
+        Some(
+            std::path::Path::new("/b/two")
+                .join("server/test/x.mjs")
+                .to_string_lossy()
+                .into_owned()
+        )
+    );
+    assert!(
+        view.span_at(10, 0).is_none(),
+        "cwd 를 모르는 패널에 존이 생겼다 — 눌러도 아무 일이 없는 밑줄은 거짓말이다"
+    );
+}
+
+/// 반대쪽도 지킨다: 활성 패널만 알 때 **옆 패널**이 그 값을 빌려 쓰면 안 된다.
+#[test]
+fn a_pane_without_a_cwd_does_not_borrow_the_active_one() {
+    let (mut view, tx, _sent) = harness();
+    for msg in two_panes_with_a_relative_path() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    tx.send(LinkEvent::Message(Box::new(cwd_frame(1, "/a/one"))))
+        .unwrap();
+    view.pump_headless();
+
+    assert!(view.span_at(10, 0).is_some(), "아는 패널에는 존이 있어야 한다");
+    assert!(
+        view.span_at(50, 0).is_none(),
+        "옆 패널이 활성 패널의 cwd 를 빌려 풀었다 — 복사한 값이 조용히 틀린다"
+    );
+}

@@ -118,8 +118,13 @@ pub fn open_link(url: &str) -> bool {
 /// 상대 경로를 **전체 경로**로 푼다(§10-21ⓧ2). 기준은 그 패널의 작업 디렉터리다.
 ///
 /// 못 풀면 `None` — 그때 부르는 쪽은 **존을 안 만든다**(모르는 것을 아는 척하지 않는다).
-/// 셸 통합이 없으면 cwd 를 모르고, 원격 탭이면 그 경로는 **다른 머신의 것**이라
-/// [`SessionState::active_cwd`] 가 일부러 `None` 을 준다.
+/// 셸 통합이 없으면 cwd 를 모른다.
+///
+/// 기준은 [`SessionState::pane_cwd`] 로 **그 범위가 있던 패널**의 것을 준다 —
+/// [`SessionState::active_cwd`] 가 아니다. 저건 활성 패널 하나를 가리키고 원격 탭에서
+/// `None` 을 내는데(Claude 폴더 오판 방지), 여기서 그걸 쓰면 ⑴옆 패널 글을 남의 기준으로
+/// 풀고 ⑵원격 패널에서는 아예 못 푼다. 원격의 답은 **상류 머신의 경로**이고 그게 맞다 —
+/// 사용자가 그 값을 붙여 넣을 곳은 그 셸이다.
 pub fn resolve_path(cwd: Option<&str>, text: &str) -> Option<String> {
     let path = std::path::Path::new(text);
     if path.is_absolute() {

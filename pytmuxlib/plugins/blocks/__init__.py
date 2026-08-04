@@ -69,6 +69,20 @@ def blocks_wire(pane):
     return seg.to_wire()
 
 
+def pane_cwd(pane):
+    """이 패널 셸의 작업 디렉터리. 모르면 None.
+
+    출처는 **셸이 OSC 7 로 알려 준 값**이라 프로브가 0 이다 — 서버의
+    `_pane_cwd(pane)`(pid → /proc·PEB·lsof)와 달리 아무것도 물어보지 않는다. 그래서
+    패널 글의 상대경로를 푸는 기준으로 이걸 쓴다(§10-21ⓧ2 / pytmux-24).
+
+    블록 목록과 **따로** 내주는 이유: 값은 문자열 하나인데 블록은 최대 500개다. 경로만
+    풀면 되는 클라에게 그 목록을 통째로 보내는 건 caps 게이트가 막으려던 바로 그 비용이다.
+    """
+    seg = getattr(pane, _ATTR, None)
+    return getattr(seg, "cwd", None) if seg is not None else None
+
+
 def blocks_dirty(pane):
     return bool(getattr(pane, "_blocks_dirty", False))
 
@@ -84,8 +98,9 @@ class _BlocksPlugin:
     description = "셸 통합(OSC 133)으로 명령 경계를 감지해 블록을 클라에 보낸다"
 
     #: 페더레이션: 이 서버가 업스트림에 붙을 때 광고할 능력. 이게 있어야 업스트림이
-    #: 블록을 내려보내고, 원격 탭을 보는 클라도 블록을 받는다.
-    upstream_caps = ("blocks",)
+    #: 블록을 내려보내고, 원격 탭을 보는 클라도 블록을 받는다. `cwd` 도 여기서 나온다 —
+    #: 안 광고하면 원격 탭에서만 조용히 경로가 안 풀린다.
+    upstream_caps = ("blocks", "cwd")
 
     #: 코어가 OSC 를 넘겨 주는 훅.
     pane_osc = staticmethod(pane_osc)
@@ -93,6 +108,8 @@ class _BlocksPlugin:
     blocks_dirty = staticmethod(blocks_dirty)
     blocks_wire = staticmethod(blocks_wire)
     clear_blocks_dirty = staticmethod(clear_blocks_dirty)
+    #: 패널 cwd(경로 존의 기준). 블록과 갈라 내주는 이유는 함수 docstring.
+    pane_cwd = staticmethod(pane_cwd)
 
 
 PLUGIN = _BlocksPlugin()
@@ -103,5 +120,6 @@ __all__ = [
     "blocks_dirty",
     "blocks_wire",
     "clear_blocks_dirty",
+    "pane_cwd",
     "pane_osc",
 ]

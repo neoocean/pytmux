@@ -271,6 +271,9 @@ def _relay_frame_ok(t, msg: dict) -> bool:
                 and len(blocks) <= _REMOTE_BLOCKS_MAX)
     if t == "claude":
         return "pane" in msg and isinstance(msg.get("tail"), str)
+    if t == "cwd":
+        cwd = msg.get("cwd")
+        return "pane" in msg and (cwd is None or isinstance(cwd, str))
     return True
 
 
@@ -1140,13 +1143,21 @@ class ServerRemoteMixin:
                     msg = dict(msg, blocks=_sanitize_blocks(msg["blocks"]))
                 if t == "claude":
                     msg = dict(msg, tail=_sanitize_claude_tail(msg["tail"]))
+                if t == "cwd":
+                    # 블록의 cwd 와 **같은 방어**를 받는다(같은 OSC 7 유래 문자열이고,
+                    # 클라가 경로 존의 기준으로 쓴 뒤 클립보드로 내보낸다). 상류 상한은
+                    # 우리를 구속하지 않으므로 여기가 더 관대해선 안 된다.
+                    cwd = msg.get("cwd")
+                    msg = dict(msg, cwd=(_strip_ctrl(cwd[:_REMOTE_BLOCK_TEXT_MAX])
+                                         if cwd else None))
                 frame = frame_msg(msg)
                 for c in list(self.clients):
                     if c.remote_view != link.host:
                         continue
                     if req_token is not None and id(c) != req_token:
                         continue
-                    if t in ("blocks", "claude") and t not in getattr(c, "caps", ()):
+                    if (t in ("blocks", "claude", "cwd")
+                            and t not in getattr(c, "caps", ())):
                         # 계약: 광고 안 한 클라(= 파이썬 Textual 클라)는 그 프레임을
                         # 한 바이트도 안 받는다. 로컬 패널에서 지키는 것과 같은 계약을
                         # **릴레이에서도** 지킨다 — 링크 하나가 여러 클라를 먹이므로
