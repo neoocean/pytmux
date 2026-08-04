@@ -295,6 +295,11 @@ pub struct SessionView {
     dragging: Option<i64>,
     /// 마우스가 올라와 있는 분할 경계의 id(N3 — 스플리터 바 강조·커서 모양).
     divider_hover: Option<i64>,
+    /// 마우스가 올라와 있는 **뜻이 있는 범위**(§10-21ⓥ2·ⓧ2) — 링크·경로.
+    ///
+    /// 상태로 드는 이유: 강조를 그리는 것은 렌더고 커서 모양을 세우는 것은 이벤트라,
+    /// 둘이 같은 값을 봐야 "밑줄은 그어졌는데 커서는 화살표"가 안 생긴다.
+    span_hover: Option<proto::SpanHit>,
     /// 버튼은 눌렸는데 아직 안 움직인 자리(캔버스 좌표)와 그 아래 패널.
     ///
     /// 클릭과 드래그는 **놓을 때까지 구분되지 않는다** — 누른 순간에 정하려 하면 둘 중
@@ -470,6 +475,7 @@ impl SessionView {
             fullscreen_requested: false,
             dragging: None,
             divider_hover: None,
+            span_hover: None,
             press: None,
             selection: None,
             mouse_fwd: None,
@@ -2026,6 +2032,13 @@ impl SessionView {
             self.dragging = Some(divider.split_id);
             return false;
         }
+        // ★ 밑줄이 그어진 자리는 **그 뜻이 먼저**다(§10-21ⓥ2·ⓧ2). 그어 놓고 눌렀는데
+        //   선택 드래그가 시작되면 그 밑줄이 거짓말이 된다. 경계보다는 뒤다 — 저건
+        //   잡는 자리이고 이건 글 위다(겹치지 않는다).
+        if !shift && let Some(hit) = self.span_at(x, y) {
+            self.act_on_span(&hit);
+            return true;
+        }
         if shift {
             // 넘김이 안 될 때 층을 가르는 줄(`RUST_LOG=debug`). 셋 중 무엇이 빠졌는지가
             // 화면에서는 전부 "아무 일도 안 남"으로 똑같이 보인다.
@@ -2113,6 +2126,43 @@ impl SessionView {
         true
     }
 
+    /// 밑줄이 그어진 자리를 눌렀다 — 링크는 열고 경로는 복사한다(§10-21ⓥ2·ⓧ2).
+    ///
+    /// **한 배관에 제공자 둘**이다: 무엇인지는 core 가 정하고(`base::spans`) 여기서는
+    /// 그 갈래마다 무엇을 할지만 고른다. 갈래가 늘어도 hover·강조·커서는 그대로다.
+    ///
+    /// 결과는 **알림으로 말한다**. 열지 못했거나 복사하지 못한 것이 화면에 안 남으면
+    /// 사용자는 "눌렀는데 아무 일도 안 났다"만 본다 — 그건 안 눌린 것과 구분이 안 된다.
+    fn act_on_span(&mut self, hit: &proto::SpanHit) {
+        use base::spans::SpanKind;
+        match hit.kind {
+            SpanKind::Url => {
+                if proto::info::open_link(&hit.text) {
+                    self.state.note_notice(tf("링크를 열었다: {url}", &[("url", &hit.text)]));
+                } else {
+                    // 안 여는 것과 못 여는 것이 여기서 합쳐진다 — 둘 다 사용자에게는
+                    // "안 열렸다"이고, 스킴 때문이면 그건 **일부러** 안 연 것이다.
+                    self.state.note_error(tf("링크를 열지 못했다: {url}", &[("url", &hit.text)]));
+                }
+            }
+            SpanKind::Path => {
+                // 존을 만들 때 이미 풀 수 있음을 확인했다(`span_at`) — 여기서 `None` 이면
+                // 그 사이에 cwd 가 사라진 것이다(탭이 바뀌었다).
+                let Some(full) = proto::info::resolve_path(self.state.active_cwd(), &hit.text)
+                else {
+                    return;
+                };
+                // 도구가 하나도 없으면 `false` 다 — 그때 "복사됨"이라고 말하면 거짓말이
+                // 되고, 붙여넣기가 안 되는 이유를 찾을 수 없게 된다(`clip::copy` 문서).
+                if clip::copy(&full) {
+                    self.state.note_notice(tf("경로를 복사했다: {path}", &[("path", &full)]));
+                } else {
+                    self.state.note_error(tf("경로를 복사하지 못했다: {path}", &[("path", &full)]));
+                }
+            }
+        }
+    }
+
     /// 끌고 있다. 경계선이면 비율을, 패널 위면 선택을 늘린다.
     pub fn handle_mouse_drag(&mut self, at: Option<(u16, u16)>) -> bool {
         if self.tab_drag.is_some() {
@@ -2188,14 +2238,38 @@ impl SessionView {
 
     /// 버튼 없이 움직였다(N3). 분할 경계 위인지만 본다 — 강조가 바뀔 때만 다시 그린다.
     pub fn handle_mouse_move(&mut self, at: Option<(u16, u16)>) -> bool {
-        let hover = (self.config.mouse && self.screens.top().is_none())
+        let alive = self.config.mouse && self.screens.top().is_none();
+        let hover = alive
             .then(|| at.and_then(|(x, y)| self.state.divider_at(x, y).map(|d| d.split_id)))
             .flatten();
+        let mut dirty = false;
         if hover != self.divider_hover {
             self.divider_hover = hover;
-            return true;
+            dirty = true;
         }
-        false
+        // ★ 범위 hover(§10-21ⓥ2·ⓧ2) — 경계 위면 그쪽이 먼저다(잡는 자리가 우선).
+        let span = (alive && hover.is_none() && !self.dragging.is_some())
+            .then(|| at.and_then(|(x, y)| self.span_at(x, y)))
+            .flatten();
+        if span != self.span_hover {
+            self.span_hover = span;
+            dirty = true;
+        }
+        dirty
+    }
+
+    /// 그 자리의 범위 — **풀 수 있는 것만** 돌려준다(§10-21ⓧ2).
+    ///
+    /// 경로는 전체 경로로 풀 수 있어야 뜻이 있다(복사할 것이 그 값이다). 못 풀면
+    /// **존을 안 만든다** — 밑줄을 그어 놓고 눌러도 아무 일이 없으면 그 밑줄이 거짓말이다.
+    fn span_at(&self, x: u16, y: u16) -> Option<proto::SpanHit> {
+        let hit = self.state.span_at(x, y)?;
+        if hit.kind == base::spans::SpanKind::Path
+            && proto::info::resolve_path(self.state.active_cwd(), &hit.text).is_none()
+        {
+            return None;
+        }
+        Some(hit)
     }
 
     /// 놓았다. **여기서 클릭과 드래그가 갈린다.**
@@ -6618,6 +6692,14 @@ impl SessionView {
             .collect()
     }
 
+    /// 마우스가 올라온 범위의 밑줄(§10-21ⓥ2·ⓧ2). 없으면 빈 목록이다.
+    fn span_marks(&self) -> Vec<crate::splitter::SpanMark> {
+        self.span_hover
+            .iter()
+            .map(|hit| crate::splitter::SpanMark { y: hit.y, x0: hit.x0, x1: hit.x1 })
+            .collect()
+    }
+
     /// 활성 패널의 커서가 놓인 **캔버스 칸**(§10-21ⓒ). 그릴 것이 없으면 `None`.
     ///
     /// # 왜 이 배선이 통째로 없었나
@@ -6862,6 +6944,7 @@ impl View for SessionView {
                         blocks,
                         self.cursor_cell(),
                         self.scroll_hints(),
+                        self.span_marks(),
                         Self::CELL_PROBE,
                     )
                     .finish(),
@@ -6910,6 +6993,8 @@ impl View for SessionView {
             .map(|d| (d.orient == "lr", d.x, d.y, d.w, d.h))
             .collect();
         let canvas_mouse_alive = self.config.mouse && self.screens.top().is_none();
+        // 커서 모양은 이벤트 안에서 세워야 해서 값 하나로 실어 보낸다(위 `None if`).
+        let span_hovered = self.span_hover.is_some();
 
         // 키·휠은 여기서 받는다. **모든 키**를 받아야 하므로 바인딩 표로 걸지 않는다 —
         // 그 집합은 열거할 수 없다(`a` 가 표에 없다고 패널에 안 가면 타이핑이 안 된다).
@@ -7044,6 +7129,14 @@ impl View for SessionView {
                             } else {
                                 warpui::platform::Cursor::ResizeUpDown
                             },
+                            warpui::scene::ZIndex::Normal(0),
+                        ),
+                        // ★ 범위 위면 **손가락**(§10-21ⓥ2·ⓧ2) — 밑줄만 그으면 "누를 수
+                        //   있다"가 손에 안 온다. 값은 **직전 이동**에서 잰 것이다(이 닫힘은
+                        //   렌더 때 만들어진다) — 마우스는 연달아 움직이므로 한 이벤트
+                        //   뒤에 따라붙고, 그 지연은 눈에 안 띈다.
+                        None if span_hovered => evt.set_cursor(
+                            warpui::platform::Cursor::PointingHand,
                             warpui::scene::ZIndex::Normal(0),
                         ),
                         None => evt.reset_cursor(),

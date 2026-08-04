@@ -160,6 +160,19 @@ pub struct ScrollHint {
     pub len: f64,
 }
 
+/// 마우스가 올라온 **범위**의 밑줄(§10-21ⓥ2·ⓧ2) — 캔버스 셀 좌표 `[x0, x1)`.
+///
+/// 왜 밑줄인가: 배경을 칠하면 그 자리의 글자가 선택(드래그 복사)처럼 보이고, 색을 바꾸면
+/// 그 앱이 칠한 색을 우리가 덮는다. 밑줄은 **글자를 안 건드리고** 링크 관습과도 맞는다.
+pub struct SpanMark {
+    pub y: u16,
+    pub x0: u16,
+    pub x1: u16,
+}
+
+/// 밑줄 두께.
+const MARK_PX: f32 = 1.5;
+
 /// 표시용 스크롤바의 두께. 테두리(1.5px)보다 굵어야 **선 위에 얹힌 것**으로 읽힌다.
 const HINT_PX: f32 = 3.;
 
@@ -184,6 +197,8 @@ pub struct SplitterOverlay {
     cursor: Option<Cursor>,
     /// 스크롤한 패널의 표시용 막대(없으면 안 그린다).
     hints: Vec<ScrollHint>,
+    /// 마우스가 올라온 범위의 밑줄(없으면 안 그린다).
+    marks: Vec<SpanMark>,
     /// 셀 자리표 id(`SessionView::CELL_PROBE`) — 셀 기하의 원천.
     probe_id: &'static str,
     origin: Option<Point>,
@@ -197,9 +212,10 @@ impl SplitterOverlay {
         blocks: Vec<Block>,
         cursor: Option<Cursor>,
         hints: Vec<ScrollHint>,
+        marks: Vec<SpanMark>,
         probe_id: &'static str,
     ) -> Self {
-        Self { child, bars, segs, blocks, cursor, hints, probe_id, origin: None }
+        Self { child, bars, segs, blocks, cursor, hints, marks, probe_id, origin: None }
     }
 
     /// 블록 문자 칸들을 사각형으로. 비율(`BlockFill`)을 칸 크기에 곱할 뿐이다 —
@@ -242,6 +258,19 @@ impl SplitterOverlay {
                 .draw_rect_without_hit_recording(rect)
                 .with_background(Fill::Solid(theme::FOCUS))
                 .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)));
+        }
+    }
+
+    /// 마우스가 올라온 범위에 밑줄을 긋는다(§10-21ⓥ2·ⓧ2).
+    fn paint_marks(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        for mark in &self.marks {
+            let x0 = origin.x() + mark.x0 as f32 * cw;
+            let w = (mark.x1.saturating_sub(mark.x0)) as f32 * cw;
+            // 글자 바닥에서 살짝 띄운다 — 붙이면 받침이 있는 글자(한글)와 겹친다.
+            let y = origin.y() + (mark.y + 1) as f32 * ch - MARK_PX - 1.;
+            ctx.scene
+                .draw_rect_without_hit_recording(RectF::new(vec2f(x0, y), vec2f(w, MARK_PX)))
+                .with_background(Fill::Solid(theme::FOCUS));
         }
     }
 
@@ -398,6 +427,8 @@ impl Element for SplitterOverlay {
         }
         // 스크롤 힌트는 테두리 **위**에 얹는다(§10-21ⓨ2) — 그 선을 덮는 것이 뜻이다.
         self.paint_hints(origin, cw, ch, ctx);
+        // 범위 밑줄(§10-21ⓥ2·ⓧ2) — 글자 **아래**에 긋는다(글자를 안 건드린다).
+        self.paint_marks(origin, cw, ch, ctx);
         // 커서는 **맨 위**다 — 경계·바에 가리면 그 칸에 커서가 있는지 알 수 없다.
         self.paint_cursor(origin, cw, ch, ctx);
     }

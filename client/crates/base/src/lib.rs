@@ -35,6 +35,7 @@ pub mod keys;
 pub mod restart;
 pub mod screens;
 pub mod scrollbar;
+pub mod spans;
 pub mod tint;
 
 pub use block::{Block, BlockList, BlockState};

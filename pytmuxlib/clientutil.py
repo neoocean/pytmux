@@ -479,6 +479,56 @@ _style_cache: dict = {}
 REMOTE_PINK = "#ff5fd7"        # hot pink (256색 #206 근사)
 REMOTE_PINK_DIM = "#af5f87"    # 비활성 외곽선(어두운 분홍)
 
+# §10-21ⓧ2 패널 글에서 **경로처럼 보이는 범위**를 찾는다.
+#
+# 넓히면 아프다: 산문 속 `a/b` 나 날짜 `2026/08/02` 도 경로처럼 보인다. 그래서 두 조건을
+# **둘 다** 요구한다 — ⑴ 구분자(`/`·`\`)가 있고 ⑵ 마지막 조각에 확장자가 있다.
+#
+# ★ 이 규칙은 **네이티브 클라와 한 벌**이라야 한다(`client/crates/base/src/spans.rs`).
+# 두 클라가 각자 판정하면 같은 줄에서 서로 다른 자리를 짚고, 그 어긋남은 나란히 놓아야만
+# 보인다. 픽스처(`client/scripts/gen_spans_fixture.py`)가 이 함수를 직접 불러 대조한다.
+_PATH_WRAP = set("()[]{}\"'`<>,")
+_PATH_TRAIL = set(".,;:!?)]}>\"'`")
+
+
+def _looks_like_path(word: str) -> bool:
+    if len(word) < 3 or "://" in word:
+        return False                       # 링크는 링크의 것이다
+    if "/" not in word and "\\" not in word:
+        return False                       # 낱말 하나는 경로로 안 본다
+    last = word.replace("\\", "/").rsplit("/", 1)[-1]
+    dot = last.rfind(".")
+    return 0 < dot < len(last) - 1
+
+
+def find_paths(line: str) -> list:
+    """줄에서 경로 범위들을 `[(start, end, text)]` 로(글자 인덱스, `[start, end)`)."""
+    out, i, n = [], 0, len(line)
+    while i < n:
+        if line[i].isspace() or line[i] in _PATH_WRAP:
+            i += 1
+            continue
+        end = i
+        while end < n and not line[end].isspace() and line[end] not in _PATH_WRAP:
+            end += 1
+        stop = end
+        while stop > i and line[stop - 1] in _PATH_TRAIL:
+            stop -= 1
+        word = line[i:stop]
+        if _looks_like_path(word):
+            out.append((i, stop, word))
+        i = max(end, i + 1)
+    return out
+
+
+def path_at(line: str, index: int):
+    """그 자리(글자 인덱스)에 걸친 경로 범위. 없으면 `None`."""
+    for start, end, text in find_paths(line):
+        if start <= index < end:
+            return (start, end, text)
+    return None
+
+
 # §10-21ⓓ2 원격 탭 제목을 **표시할 때만** 접는 형식. 값(이름 자체)은 안 바꾼다.
 REMOTE_TITLE_CHOICES = ("full", "host", "name")
 

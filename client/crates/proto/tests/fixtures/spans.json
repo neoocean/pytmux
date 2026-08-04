@@ -1,0 +1,110 @@
+{
+ "_comment": "python3 scripts/gen_spans_fixture.py 로 생성. 출처 = pytmuxlib/clientutil.find_paths. 손으로 고치지 말 것.",
+ "cases": [
+  {
+   "line": "Update(server/test/shot-guide-badges.mjs)",
+   "paths": [
+    {
+     "start": 7,
+     "end": 40,
+     "text": "server/test/shot-guide-badges.mjs"
+    }
+   ]
+  },
+  {
+   "line": "2026/08/02 에 고쳤다",
+   "paths": []
+  },
+  {
+   "line": "a/b 를 보라",
+   "paths": []
+  },
+  {
+   "line": "readme.md 하나",
+   "paths": []
+  },
+  {
+   "line": "client/crates/base/src/spans.rs 를 열었다",
+   "paths": [
+    {
+     "start": 0,
+     "end": 31,
+     "text": "client/crates/base/src/spans.rs"
+    }
+   ]
+  },
+  {
+   "line": "열었다 client\\crates\\gui\\src\\main.rs 를",
+   "paths": [
+    {
+     "start": 4,
+     "end": 33,
+     "text": "client\\crates\\gui\\src\\main.rs"
+    }
+   ]
+  },
+  {
+   "line": "끝에 붙은 것 docs/x.md, 그리고 docs/y.md.",
+   "paths": [
+    {
+     "start": 8,
+     "end": 17,
+     "text": "docs/x.md"
+    },
+    {
+     "start": 23,
+     "end": 32,
+     "text": "docs/y.md"
+    }
+   ]
+  },
+  {
+   "line": "\"quoted/path.txt\" 와 'other/p.rs'",
+   "paths": [
+    {
+     "start": 1,
+     "end": 16,
+     "text": "quoted/path.txt"
+    },
+    {
+     "start": 21,
+     "end": 31,
+     "text": "other/p.rs"
+    }
+   ]
+  },
+  {
+   "line": "https://x.dev/a/b.html",
+   "paths": []
+  },
+  {
+   "line": "한글과 docs/한글/파일.md 섞임",
+   "paths": [
+    {
+     "start": 4,
+     "end": 17,
+     "text": "docs/한글/파일.md"
+    }
+   ]
+  },
+  {
+   "line": "여러 개 a/b.rs 와 c/d.rs 둘",
+   "paths": [
+    {
+     "start": 5,
+     "end": 11,
+     "text": "a/b.rs"
+    },
+    {
+     "start": 14,
+     "end": 20,
+     "text": "c/d.rs"
+    }
+   ]
+  },
+  {
+   "line": "",
+   "paths": []
+  }
+ ]
+}

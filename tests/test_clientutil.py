@@ -323,3 +323,25 @@ async def test_wait_until_settled_stall_vs_progress_vs_met():
                                         timeout=0.2, step=0.0, settle=5)
     assert ok is False
     assert loop.time() - t0 >= 0.2 - 0.05, "진행 중이면 timeout 까지 인내"
+
+
+# --------------------------------------------------------------------------- #
+# §10-21ⓧ2 패널 글의 경로 범위 — 네이티브 클라와 **한 벌**이어야 한다
+# --------------------------------------------------------------------------- #
+async def test_find_paths_is_narrow_on_purpose():
+    """넓히면 아프다 — 산문 속 `a/b` 나 날짜 `2026/08/02` 도 경로처럼 보인다.
+
+    ★ 이 규칙은 `client/crates/base/src/spans.rs` 와 한 벌이고, 픽스처
+    (`client/scripts/gen_spans_fixture.py`)가 이 함수를 직접 불러 대조한다 — 두 클라가
+    같은 줄에서 서로 다른 자리를 짚으면 밑줄도 복사한 값도 갈린다."""
+    from pytmuxlib.clientutil import find_paths, path_at
+    assert find_paths("2026/08/02 에 고쳤다") == [], "날짜를 경로로 잡았다"
+    assert find_paths("a/b 를 보라") == [], "확장자가 없다"
+    assert find_paths("readme.md 하나") == [], "구분자가 없다"
+    got = find_paths("Update(server/test/x.mjs)")
+    assert got == [(7, 24, "server/test/x.mjs")], got
+    # 감싼 괄호는 범위에 안 든다 — 복사한 값이 그대로 경로라야 한다.
+    assert path_at("Update(server/test/x.mjs)", 10)[2] == "server/test/x.mjs"
+    assert path_at("Update(server/test/x.mjs)", 0) is None, "괄호 밖"
+    # 링크는 링크의 것이다(§10-21ⓥ2 — 그쪽은 GUI 전용이다).
+    assert find_paths("https://x.dev/a/b.html") == []

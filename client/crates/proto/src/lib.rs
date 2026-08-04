@@ -58,7 +58,7 @@ pub use compose::{compose_rows, display_width};
 pub use framing::{FrameError, read_frame, write_frame};
 pub use link::{LinkEvent, ServerLink};
 pub use selection::{Point, Selection};
-pub use session::SessionState;
+pub use session::{SessionState, SpanHit};
 pub use status::StatusCtx;
 pub use style::{CellStyle, Color, NamedColor};
 pub use unwrap::unwrap_copy_text;

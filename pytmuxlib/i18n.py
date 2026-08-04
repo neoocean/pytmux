@@ -180,6 +180,8 @@ register({
         "capture.status_on": "상태: ON (캡처 중)",
         "capture.status_off": "상태: OFF",
         "ui.search": "검색…",
+        # §10-21ⓧ2 — 패널 글의 경로를 눌러 전체 경로를 복사했을 때.
+        "span.copied": "경로를 복사했다: {path}",
         "ui.cmd_mode_badge": "CMD(←↑↓→ 이동, : 명령) ",
     },
     "en": {
@@ -190,6 +192,7 @@ register({
         "capture.status_on": "Status: ON (capturing)",
         "capture.status_off": "Status: OFF",
         "ui.search": "Search…",
+        "span.copied": "Copied path: {path}",
         "ui.cmd_mode_badge": "CMD(←↑↓→ move, : cmd) ",
     },
 })

@@ -939,6 +939,20 @@ pub struct VersionReply {
     pub received: std::time::Instant,
 }
 
+/// 패널 글에서 찾은 **뜻이 있는 범위** 한 자리(§10-21ⓥ2·ⓧ2).
+///
+/// 칸 범위는 캔버스 좌표 `[x0, x1)` 이고 같은 행(`y`)이다 — 줄을 넘는 범위는 안 만든다
+/// (터미널의 줄바꿈은 접힘일 수도 자른 것일 수도 있어, 이어 붙이면 없던 주소가 생긴다).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpanHit {
+    pub pane: i64,
+    pub kind: base::spans::SpanKind,
+    pub text: String,
+    pub y: u16,
+    pub x0: u16,
+    pub x1: u16,
+}
+
 /// 서버 세션의 현재 모습.
 #[derive(Debug, Default, Clone)]
 pub struct SessionState {
@@ -2015,6 +2029,52 @@ impl SessionState {
     /// 분할 경계들(마우스 손잡이). 분할이 없으면 비어 있다.
     pub fn dividers(&self) -> &[crate::message::Divider] {
         self.layout.as_ref().map_or(&[], |l| &l.dividers)
+    }
+
+    /// 패널 글의 그 자리에 **뜻이 있는 범위**가 있나(§10-21ⓥ2·ⓧ2).
+    ///
+    /// # 왜 proto 인가
+    ///
+    /// 범위를 찾는 규칙은 core 가 안다([`base::spans`]) — 두 클라가 같은 자리를 짚어야
+    /// 해서다. 여기서 하는 일은 그 규칙에 **줄을 떠먹이고 자리를 셀로 되돌리는 것**이다:
+    /// 어느 패널의 몇 번째 줄인지, 한 글자가 몇 칸인지는 캔버스를 아는 이 층만 안다.
+    ///
+    /// ⚠ **그 패널의 줄만** 본다. 캔버스 한 행에는 옆 패널의 글도 있어, 행 전체를 넘기면
+    /// 두 패널의 글자가 이어 붙어 없던 경로가 생긴다.
+    ///
+    /// 돌려주는 칸 범위는 `[x0, x1)` 로 **캔버스 좌표**다(강조를 그리는 자리).
+    pub fn span_at(&self, x: u16, y: u16) -> Option<SpanHit> {
+        let pane = self.pane_at(x, y)?;
+        let (px, py, w, h) = self.pane_rect(pane)?;
+        // 테두리는 글이 아니다 — 내용 사각형 밖이면 범위도 없다.
+        if x < px || x >= px + w || y < py || y >= py + h {
+            return None;
+        }
+        let canvas = self.composite()?;
+        // 칸 → 글자. 넓은 글자의 뒤 칸(`continuation`)은 앞 글자에 붙는다.
+        let mut text = String::new();
+        let mut cell_of_char: Vec<u16> = Vec::new();
+        let mut hit_index: Option<usize> = None;
+        for cx in px..px + w {
+            let Some(cell) = canvas.cell(cx as usize, y as usize) else { continue };
+            if cell.continuation {
+                // 이 칸을 짚었어도 앞 글자가 답이다(한 글자가 두 칸이다).
+                if cx == x && hit_index.is_none() {
+                    hit_index = cell_of_char.len().checked_sub(1);
+                }
+                continue;
+            }
+            if cx == x {
+                hit_index = Some(cell_of_char.len());
+            }
+            cell_of_char.push(cx);
+            text.push(cell.ch);
+        }
+        let span = base::spans::at(&text, hit_index?)?;
+        let x0 = *cell_of_char.get(span.start)?;
+        // 끝 칸은 **다음 글자의 칸**이다(마지막 글자면 패널 오른쪽 끝).
+        let x1 = cell_of_char.get(span.end).copied().unwrap_or(px + w);
+        Some(SpanHit { pane, kind: span.kind, text: span.text, y, x0, x1 })
     }
 
     /// 캔버스 좌표 (x, y) 에 있는 패널의 id.

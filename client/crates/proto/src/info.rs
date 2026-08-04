@@ -93,6 +93,42 @@ pub fn open_capture_dir(path: &str) -> bool {
     std::process::Command::new(opener).arg(dir).spawn().is_ok()
 }
 
+/// 링크를 **OS 기본 브라우저**로 연다(§10-21ⓥ2). 열었으면 `true`.
+///
+/// # ⚠ 스킴을 여기서 한 번 더 본다
+///
+/// 범위를 찾을 때 이미 `http`/`https` 만 잡는다([`base::spans`]) — 그런데 그 판정과 이
+/// 실행 사이에 자리가 있으면 그 틈이 곧 통로가 된다(패널 출력은 **남이 만든 글**이다).
+/// 여는 자리에서 다시 보는 것이 싸고, 두 자리가 갈라질 수 없게 **같은 표**를 본다.
+///
+/// 열지 못한 것과 안 여는 것은 다르다 — 둘 다 `false` 지만 부르는 쪽이 알림으로 가른다.
+pub fn open_link(url: &str) -> bool {
+    if !base::spans::is_openable(url) {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    let opener = "open";
+    #[cfg(target_os = "windows")]
+    let opener = "explorer";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let opener = "xdg-open";
+    std::process::Command::new(opener).arg(url).spawn().is_ok()
+}
+
+/// 상대 경로를 **전체 경로**로 푼다(§10-21ⓧ2). 기준은 그 패널의 작업 디렉터리다.
+///
+/// 못 풀면 `None` — 그때 부르는 쪽은 **존을 안 만든다**(모르는 것을 아는 척하지 않는다).
+/// 셸 통합이 없으면 cwd 를 모르고, 원격 탭이면 그 경로는 **다른 머신의 것**이라
+/// [`SessionState::active_cwd`] 가 일부러 `None` 을 준다.
+pub fn resolve_path(cwd: Option<&str>, text: &str) -> Option<String> {
+    let path = std::path::Path::new(text);
+    if path.is_absolute() {
+        return Some(text.to_owned());
+    }
+    let base = cwd?;
+    Some(std::path::Path::new(base).join(path).to_string_lossy().into_owned())
+}
+
 /// 1,234,567 모양(파이썬 f"{size:,}" 동형).
 fn group_thousands(n: i64) -> String {
     let digits = n.to_string();

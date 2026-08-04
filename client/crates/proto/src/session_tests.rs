@@ -1389,3 +1389,71 @@ fn sections_come_through_in_order() {
     assert_eq!(parts[0], "설명");
     assert!(parts[1].starts_with("Affected files"));
 }
+
+// ── 패널 글의 **뜻이 있는 범위**(§10-21ⓥ2·ⓧ2) ────────────────────────────────
+
+fn state_with_line(line: &str) -> SessionState {
+    let mut state = SessionState::new();
+    state.apply(
+        serde_json::from_value(serde_json::json!({
+            "t": "layout", "cols": 60, "rows": 5, "active": 1,
+            "panes": [{"id": 1, "x": 0, "y": 0, "w": 60, "h": 5, "active": true}]
+        }))
+        .unwrap(),
+    );
+    state.apply(
+        serde_json::from_value(serde_json::json!({
+            "t": "screen", "pane": 1, "rows": [[[line, {}]]], "cursor": [0, 0],
+            "wrap": [], "top": 0
+        }))
+        .unwrap(),
+    );
+    state
+}
+
+#[test]
+fn a_link_in_a_pane_is_found_with_its_cell_range() {
+    let state = state_with_line("보세요 https://x.dev/a 끝");
+    // `보세요 ` = 3글자(각 2칸) + 공백 = 7칸. 링크는 거기서 시작한다.
+    let hit = state.span_at(8, 0).expect("범위");
+    assert_eq!(hit.kind, base::spans::SpanKind::Url);
+    assert_eq!(hit.text, "https://x.dev/a");
+    assert_eq!(hit.x0, 7, "시작 칸이 글자 수로 세어졌다: {hit:?}");
+    assert_eq!(hit.x1, 7 + 15, "끝 칸");
+    assert_eq!(hit.pane, 1);
+}
+
+/// ★ 넓은 글자가 앞에 있으면 **글자 수와 칸 수가 다르다** — 그 산수를 여기서 잰다.
+#[test]
+fn the_cell_range_accounts_for_wide_characters() {
+    let state = state_with_line("한글한글 https://x.dev/a");
+    // 한글 4자 = 8칸 + 공백 1 = 9. 그 자리에서 시작해야 한다.
+    let hit = state.span_at(10, 0).expect("범위");
+    assert_eq!(hit.x0, 9, "넓은 글자를 한 칸으로 셌다: {hit:?}");
+}
+
+/// 넓은 글자의 **뒤 칸**을 짚어도 그 글자로 읽는다(한 글자가 두 칸이다).
+#[test]
+fn the_trailing_cell_of_a_wide_character_resolves_to_that_character() {
+    let state = state_with_line("가나다라마바사아자차카타파하 https://x.dev/a");
+    let hit = state.span_at(30, 0).expect("범위");
+    assert_eq!(hit.text, "https://x.dev/a");
+}
+
+#[test]
+fn a_spot_with_no_span_is_none() {
+    let state = state_with_line("그냥 글자만 있다");
+    assert!(state.span_at(1, 0).is_none());
+    // 패널 밖(줄이 없는 행)도 마찬가지다.
+    assert!(state.span_at(1, 4).is_none());
+}
+
+#[test]
+fn a_path_in_a_pane_is_found_too() {
+    let state = state_with_line("Update(server/test/x.mjs)");
+    let hit = state.span_at(10, 0).expect("범위");
+    assert_eq!(hit.kind, base::spans::SpanKind::Path);
+    assert_eq!(hit.text, "server/test/x.mjs");
+    // 감싼 괄호는 범위에 안 든다 — 복사한 값이 그대로 경로라야 한다.
+    assert_eq!(hit.x0, 7);
+}
