@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import functools
 import hmac
 import os
 import secrets
@@ -56,6 +57,10 @@ _PROBE_DECL_TIMEOUT = 0.2
 # 종료 시 `serve_forever()` 태스크의 취소를 기다리는 상한(pytmux-134). 그 취소가
 # `wait_closed` 를 타 **열린 연결을 기다리므로** 무한정 기다리면 host 가 안 죽는다.
 _SERVING_CANCEL_TIMEOUT = 0.5
+
+# 종료 시 '만들고 있는 패널'이 착지하기를 기다리는 상한(pytmux-136). 안 기다리면 그
+# 자식이 정리 루프를 지나쳐 고아로 남는다. 넘으면 그냥 진행한다.
+_SPAWN_SETTLE_TIMEOUT = 3.0
 
 
 def orphan_grace() -> float:
@@ -97,6 +102,9 @@ class PtyHost:
         self._token: str | None = None                     # 연결 인증 토큰(M1)
         self._published_port: int | None = None            # portfile 에 게시한 포트
         self._preauth_conns = 0                            # 인증 중 연결 수(PTYH-1)
+        # 지금 **만들고 있는** 패널 id(pytmux-136). `panes` 에는 아직 없지만 곧 생긴다 —
+        # 중복 spawn 을 막고, 종료가 그 착지를 기다릴 수 있게 한다.
+        self._spawning: set[int] = set()
         # 고아 워치독(R1) 상태. _owner_pid = 현재/마지막 소유 서버 pid('owner' op 로 통지),
         # _prev_owner_pid = 그 직전 소유자(list_reply 로 보고 → 새 서버의 미상 패널 prune
         # 안전 게이트), _idle_since = 서버 연결이 없어진 시각(loop.time; None=연결 중).
@@ -235,7 +243,7 @@ class PtyHost:
     async def _on_control(self, msg: dict, writer: asyncio.StreamWriter):
         op = msg.get("op")
         if op == "spawn":
-            self._spawn(msg)
+            await self._spawn(msg)
             pe = self.panes.get(int(msg["pane"]))
             await proto.write_frame(writer, proto.encode_json(
                 {"op": "spawned", "pane": int(msg["pane"]),
@@ -288,16 +296,43 @@ class PtyHost:
             # 서버의 '진짜' 종료(kill-server·SIGTERM — 재시작 아님): 모든 자식 셸을
             # 죽이고 host 도 내려간다(고아 OpenConsole/셸 방지). 재시작 경로는 이 op 를
             # 보내지 않으므로(연결만 끊음) host 가 살아 세션을 보존한다.
-            for pid in list(self.panes):
-                self._close_pane(pid)
+            # ⚠ **먼저 `_stop` 을 세운다**(pytmux-136): 그래야 만드는 중인 spawn 이
+            #    착지하면서 "내려가는 중"을 보고 **등록하지 않고 스스로 닫는다**. 순서를
+            #    뒤집으면 그 패널이 아래 정리 루프 뒤에 등록돼 자식이 고아로 남는다.
             if self._stop is not None:
                 self._stop.set()
+            await self._settle_spawns()
+            for pid in list(self.panes):
+                self._close_pane(pid)
 
     # ---- 패널 수명 ----
-    def _spawn(self, msg: dict):
+    async def _spawn(self, msg: dict):
+        """패널 하나를 세운다. **만드는 일만 루프 밖에서** 한다(pytmux-136).
+
+        # 왜 비동기인가
+
+        `pty_backend.spawn` 은 동기이고, Windows 의 ConPTY 생성은 **~1.5초** 걸린다
+        (실측 2026-08-04: `spawn` op 처리 0.138s→1.659s). 종전엔 그것이 이벤트 루프
+        스레드에서 그대로 돌아, 그동안 host 가 **어떤 프레임도 안 읽고 안 썼다** — 새
+        패널 하나를 여는 값을 **열려 있는 모든 패널이 함께** 치렀다(그 순간 전 세션의
+        입출력이 멎는다). [[pytmux-134]] 의 경합도 이 창이 열어 준 것이었다.
+
+        검증(argv 위생)은 **루프에서 그대로** 한다 — 값싸고, 밖으로 내보내면 손상
+        프레임이 스레드를 하나 쓴다.
+
+        # 만드는 동안 세상이 바뀐다 (이 함수가 조심하는 것)
+
+        `await` 가 생긴 순간 그 사이에 다른 op 가 끼어들 수 있다. 셋을 막는다:
+        ⑴ **같은 패널 중복 spawn** — `self.panes` 는 아직 비어 있으니 예약(`_spawning`)으로
+           막는다. 안 막으면 PTY 두 개가 생기고 하나는 아무도 안 닫는다.
+        ⑵ **만드는 중에 온 `shutdown`** — 다 만든 뒤 등록하면 그 자식은 고아가 된다.
+           그래서 등록 전에 다시 보고, 내려가는 중이면 **방금 만든 것을 즉시 닫는다**.
+        ⑶ 반대로 `shutdown` 쪽은 만들던 것이 **착지할 때까지 잠깐 기다린다**(`_settle_spawns`)
+           — 안 기다리면 ⑵의 검사가 돌기도 전에 host 가 죽어 자식만 남는다.
+        """
         pane_id = int(msg["pane"])
-        if pane_id in self.panes:
-            return                       # 멱등(중복 spawn 무시)
+        if pane_id in self.panes or pane_id in self._spawning:
+            return                       # 멱등(중복 spawn 무시 · 만드는 중도 포함)
         cols, rows = int(msg.get("cols", 80)), int(msg.get("rows", 24))
         # argv 는 **리스트/튜플의 str** 만 통과시킨다. 종전 `list(msg.get("argv") or [])`
         # 는 문자열을 받으면 `list("not-a-list")` = 글자별 리스트가 되어 **손상 프레임이
@@ -314,14 +349,39 @@ class PtyHost:
         argv = [a for a in raw if isinstance(a, str)]
         if not argv or len(argv) != len(raw):
             return
-        pty = pty_backend.spawn(argv, cols=cols, rows=rows,
-                                cwd=msg.get("cwd"), env=msg.get("env"))
+        # ── 여기부터가 느린 부분이다. 루프에서 내린다. ──────────────────────────
+        self._spawning.add(pane_id)
+        try:
+            pty = await self.loop.run_in_executor(
+                None,
+                functools.partial(pty_backend.spawn, argv, cols=cols, rows=rows,
+                                  cwd=msg.get("cwd"), env=msg.get("env")))
+        finally:
+            self._spawning.discard(pane_id)
+        # ⑵ 만드는 사이에 내려가기로 했으면 **등록하지 않고 바로 닫는다** — 등록하면
+        #    이미 지나간 정리 루프가 이 패널을 못 봐서 자식이 고아로 남는다.
+        if (self._stop is not None and self._stop.is_set()) or pane_id in self.panes:
+            with contextlib.suppress(Exception):
+                pty.stop_reader()
+            with contextlib.suppress(Exception):
+                pty.close()
+            return
         pe = _PaneEntry(pane_id, pty, cols, rows, getattr(pty, "pid", -1))
         self.panes[pane_id] = pe
         pty.start_reader(
             self.loop,
             lambda d, pid=pane_id: self._on_output(pid, d),
             lambda pid=pane_id: self._on_eof(pid))
+
+    async def _settle_spawns(self, timeout: float = _SPAWN_SETTLE_TIMEOUT):
+        """만들고 있는 패널이 **착지할 때까지** 잠깐 기다린다(pytmux-136 ⑶).
+
+        종료 경로가 이걸 안 하면, 아직 `self.panes` 에 없는 패널의 자식이 정리 루프를
+        그냥 지나쳐 **고아로 남는다**. 상한이 있다 — 종료가 남의 사정으로 영영 멈추면
+        안 된다(넘으면 그냥 진행한다)."""
+        deadline = self.loop.time() + timeout
+        while self._spawning and self.loop.time() < deadline:
+            await asyncio.sleep(0.02)
 
     def _on_output(self, pane_id: int, data: bytes):
         """자식 출력: 서버 연결돼 있으면 'D' 프레임 즉시 전송, 아니면 pending 에 버퍼링."""
@@ -426,10 +486,13 @@ class PtyHost:
             sys.stderr.write(
                 f"pytmux ptyhost: 소유 서버(pid={owner}) 부재 {grace:.0f}s 초과 "
                 f"— 패널 {len(self.panes)}개를 닫고 종료합니다\n")
-            for pid in list(self.panes):
-                self._close_pane(pid)
+            # shutdown op 와 **같은 순서**다(pytmux-136): `_stop` 을 먼저 세워 만드는
+            # 중인 패널이 스스로 닫게 하고, 착지를 기다린 뒤 정리한다.
             if self._stop is not None:
                 self._stop.set()
+            await self._settle_spawns()
+            for pid in list(self.panes):
+                self._close_pane(pid)
             return
 
     # ---- 데몬 본체 ----
