@@ -636,6 +636,11 @@ class ServerPersistMixin:
             "reexec_supported": (host_mode or
                                  (not pty_backend.IS_WINDOWS
                                   and self.loop is not None)),
+            # §10-21ⓔ3: **이 서버가 어느 OS 인가**. 첫 점검 줄은 OS 마다 재는 것이
+            # 다른데(POSIX=execv · Windows=pty-host 인수인계) 라벨이 늘 POSIX 를 적어,
+            # Windows 사용자가 "못 하는 것이 정상인 조건"을 실패로 읽었다. 서버는
+            # 원격일 수 있어 **클라의 OS 로 대신 못 판단한다** — 그래서 서버가 적는다.
+            "server_os": "windows" if pty_backend.IS_WINDOWS else "posix",
             "host_mode": host_mode,
             "has_sessions": bool(self.sessions),
             "panes": n, "panes_with_fd": with_fd,

@@ -753,15 +753,34 @@ def _client_relaunch_ok() -> bool:
     return bool(a0) and (a0.endswith(".py") or os.access(a0, os.X_OK))
 
 
+def _restart_server_relaunch_label(server_os) -> str:
+    """첫 점검 줄의 라벨 — **그 서버의 OS 가 실제로 재는 것**을 적는다(§10-21ⓔ3).
+
+    제보: Windows 이진에서도 `✗ 서버 re-exec 지원(POSIX·이벤트루프)` 이 떠, **못 하는
+    것이 정상인 조건**을 실패로 보여 "재시작 불가"로 읽혔다. 실제로는 조건 자체가 이미
+    OS 별로 갈려 있다 — POSIX 는 `os.execv` 로 자기를 덮어쓰고, Windows 는 그 시스템콜이
+    없어 **pty-host 인수인계**(옵션 C)로 같은 일을 한다(`Server.restart_check` 의
+    `reexec_supported` 가 그 둘을 이미 OR 로 잰다). 갈려 있던 것은 **라벨뿐**이었다.
+
+    ⚠ 클라의 OS 로 판단하면 안 된다 — 서버는 원격일 수 있다(페더레이션·ssh). 그래서
+    서버가 `server_os` 를 적어 보내고, 모르면(옛 서버) 종전 문구로 남는다."""
+    if server_os == "windows":
+        return "서버 재기동 지원(pty-host 인수인계)"
+    return "서버 re-exec 지원(POSIX·이벤트루프)"
+
+
 def _restart_check_eval(m, cli_ok, kind="all"):
     """서버 restart_check 결과(m) + 클라 측 점검(cli_ok)을 (safe, checks) 로 평가.
 
     kind="server" 는 클라를 relaunch 하지 않으므로 relaunch 점검을 제외한다.
-    checks 는 (통과여부, 라벨) 리스트(팝업 표시용), safe 는 전체 AND."""
+    checks 는 (통과여부, 라벨) 리스트(팝업 표시용), safe 는 전체 AND.
+
+    첫 줄의 **라벨만** 서버 OS 를 따른다(§10-21ⓔ3) — 재는 값도 순서도 그대로다."""
     panes, with_fd = m.get("panes", 0), m.get("panes_with_fd", 0)
     fd_ok = (panes == with_fd and panes > 0)
     checks = [
-        (m.get("reexec_supported"), "서버 re-exec 지원(POSIX·이벤트루프)"),
+        (m.get("reexec_supported"),
+         _restart_server_relaunch_label(m.get("server_os"))),
         (m.get("has_sessions"), "복원할 세션 존재"),
         (m.get("serialize_ok"), "상태 직렬화 round-trip"),
         (fd_ok, f"패널 master fd 보유 ({with_fd}/{panes})"),

@@ -1,5 +1,5 @@
 {
- "_comment": "python3 scripts/gen_screen_anchor_fixture.py 로 생성. 출처 = pytmuxlib/clientscreens.py 의 CSS(align/dock)와 PromptScreen.compose 의 요소 차례. 손으로 고치지 말 것.",
+ "_comment": "python3 scripts/gen_screen_anchor_fixture.py 로 생성. 출처 = pytmuxlib/clientscreens.py 의 CSS(align/dock)와 PromptScreen.compose 의 요소 차례, 그리고 CSS 를 뒤집는 호출 인자(InfoScreen center=). 손으로 고치지 말 것.",
  "anchors": {
   "ChooseBufferScreen": "middle",
   "ChooseLayoutScreen": "middle",
@@ -18,6 +18,12 @@
   "SettingsScreen": "middle",
   "TabSwitcherScreen": "middle",
   "_SettingInputScreen": "middle"
+ },
+ "overrides": {
+  "InfoScreen": {
+   "restartcheck.title": "middle",
+   "version": "middle"
+  }
  },
  "docks": {
   "ComposePromptScreen": {

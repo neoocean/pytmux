@@ -555,7 +555,10 @@ class _RestartVersionMixin:
             "",
             i18n.t("restartcheck.note"),
         ]
-        self.push_screen(InfoScreen(lines, title=i18n.t("restartcheck.title")))
+        # §10-21ⓓ3: 이 판도 **짧다**(열 줄 남짓·늘 그 길이). 위에 붙이면 화면 대부분이
+        # 빈 채로 남는다 — 버전 판과 같은 사정이라 같은 예외를 쓴다(`center=True`).
+        self.push_screen(InfoScreen(lines, title=i18n.t("restartcheck.title"),
+                                    center=True))
 
     def _show_version_popup(self, msg):
         """서버 version 회신(version·uptime·pid) + 클라 자신의 값으로 팝업 구성.
@@ -579,6 +582,10 @@ class _RestartVersionMixin:
                 i18n.t("version.server", ver=srv_ver, up=srv_up),
                 "",
                 i18n.t("version.pid", pid=pid),
+                # §10-21ⓐ3: **이 클라가 무엇인가**. 서버는 원격일 수 있어 OS 가 다를 수
+                # 있으므로 서버 줄에 섞지 않고 따로 선다(GUI 도 같은 자리에 자기 빌드를
+                # 적는다 — 두 클라가 대칭이라야 나란히 놓고 견줄 수 있다).
+                i18n.t("version.build", name=version.client_build()),
             ]
         self.push_screen(InfoScreen(make_lines(), title="version",
                                     center=True, tick_cb=make_lines))

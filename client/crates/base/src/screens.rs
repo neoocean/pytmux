@@ -246,8 +246,20 @@ impl Screen {
     /// | 앵커 | 화면 | 왜 |
     /// |---|---|---|
     /// | [`Bottom`](Anchor::Bottom) | `:` 프롬프트 · 팔레트 · 작성창 | **치던 흐름의 연장**이다. 손과 눈이 방금 `:` 를 친 화면 아래에 있는데 판이 가운데나 위에 뜨면 시선이 한 번 튄다 |
-    /// | [`Top`](Anchor::Top) | 읽는 판(버전·훅·셸 결과·재시작 점검·키 도움말) | 긴 글이라 **위에서 시작해야** 첫 줄이 늘 같은 자리다(정본 `InfoScreen`) |
-    /// | [`Middle`](Anchor::Middle) | 나머지 — **고르러 여는** 판 | 목록이 짧으면 판도 작고, 가운데가 눈의 기본 자리다 |
+    /// | [`Top`](Anchor::Top) | 읽는 판(훅·셸 결과·키 도움말) | 긴 글이라 **위에서 시작해야** 첫 줄이 늘 같은 자리다(정본 `InfoScreen`) |
+    /// | [`Middle`](Anchor::Middle) | 나머지 — **고르러 여는** 판, 그리고 **짧은 읽는 판**(버전·재시작 점검) | 목록이 짧으면 판도 작고, 가운데가 눈의 기본 자리다 |
+    ///
+    /// # 읽는 판인데 가운데인 예외 둘 — 버전·재시작 점검(§10-21ⓐ3·ⓓ3)
+    ///
+    /// 위 표의 "긴 글이라 위에서 시작"은 **긴 글일 때만** 근거다. 이 둘은 길이가 정해져
+    /// 있어(다섯 줄·열 줄 남짓) 위에 붙이면 화면 대부분이 빈 채로 남는다. 그래서
+    /// **정본이 이 둘을 예외로 둔다** — `InfoScreen(..., center=True)`(`clientconn.py`
+    /// 의 `_show_version_popup`·`_show_restart_check_popup`). 우리가 위에 세운 것은 그
+    /// 예외를 안 옮긴 것이었다.
+    ///
+    /// 정본의 이 예외는 CSS 가 아니라 **호출 인자**라, 클래스 CSS 만 읽던 픽스처에는
+    /// 안 잡혔다 — 그래서 잰 적이 없었다(`gen_screen_anchor_fixture.py` 의 `overrides`
+    /// 가 이제 그 인자까지 뽑는다).
     ///
     /// # 왜 core 에 두나
     ///
@@ -262,12 +274,14 @@ impl Screen {
             // 우리는 화면 종류가 제목·키 안내를 들고 있어 갈래를 나눴을 뿐, 자리는 같다.
             Screen::Keys
             | Screen::Hooks
-            | Screen::Version
             | Screen::ShellOutput
-            | Screen::RestartCheck
             // 네이티브 전용(정본에 짝이 없다) — 플랜 전문·거부 사유도 **읽는 판**이라
             // 같은 관습을 따른다.
             | Screen::ClaudeDetail => Anchor::Top,
+            // 읽는 판인데 **짧아서** 가운데인 예외 — 정본도 이 둘만 `center=True` 다
+            // (위 「예외」 · §10-21ⓐ3·ⓓ3). 재시작 점검은 그 위에 **고르는 판**이기도
+            // 하다(단추가 있다) — 가운데가 두 번 맞는 자리다.
+            Screen::Version | Screen::RestartCheck => Anchor::Middle,
             // 고르러 여는 판.
             Screen::Tabs
             | Screen::Tree
@@ -334,6 +348,22 @@ impl Screen {
     /// 앵커 적합성 테스트가 이것으로 픽스처를 찾는다. 여럿이 한 정본 화면에 대응하는
     /// 것은 정상이다(읽는 판 다섯이 전부 `InfoScreen` 이다) — 정본은 범용 한 장에
     /// 제목만 갈아 끼우고, 우리는 화면 종류가 제목·키 안내를 들고 있다.
+    /// 정본에서 이 판을 띄우는 **호출의 이름** — 클래스 CSS 를 덮어쓰는 인자가 있는
+    /// 자리에만 있다(§10-21ⓐ3).
+    ///
+    /// 정본의 범용 `InfoScreen` 은 CSS 로 `align: center top` 인데, **호출이
+    /// `center=True` 로 그것을 뒤집는 자리**가 있다. 클래스 CSS 만 읽던 픽스처는 그
+    /// 예외를 통째로 못 봤고, 그래서 우리 버전 판이 정본과 다른 자리에 서는 것을 아무도
+    /// 안 쟀다. 이름은 그 호출의 `title=` 인자다 — 정본에서 그 판을 가리키는 유일한 이름이다.
+    pub fn canon_variant(self) -> Option<&'static str> {
+        match self {
+            Screen::Version => Some("version"),
+            // 정본은 이 판의 제목을 카탈로그 키로 짓는다 — 그 키가 곧 이름이다.
+            Screen::RestartCheck => Some("restartcheck.title"),
+            _ => None,
+        }
+    }
+
     pub fn canon_class(self) -> Option<&'static str> {
         Some(match self {
             Screen::Keys
@@ -1540,51 +1570,107 @@ pub enum PanelTarget {
     Row(usize),
     /// 확인 화면의 버튼([`CONFIRM_YES`]/[`CONFIRM_NO`]).
     ConfirmButton(usize),
+    /// 설정 화면의 `row` 번째 줄 — **고르기만** 한다(§10-21ⓣ).
+    ///
+    /// [`Row`](PanelTarget::Row) 과 갈라 두는 이유: 저쪽은 고르고 **곧장 `Enter`** 인데,
+    /// 설정에서 그러면 이름을 눌렀을 뿐인데 값이 바뀐다. 값을 바꾸는 것은 값칸의 일이다.
+    SettingRow(usize),
+    /// 설정 값칸의 **화살표**(스테퍼 `‹`·`›`) 또는 토글을 눌렀다 — 평소 `←→` 와 같은 길.
+    SettingStep { row: usize, forward: bool },
+    /// 설정 값칸의 **낱말을 직접 찍었다**(셀렉터).
+    ///
+    /// 키에는 없는 길이다: 화살표는 한 칸씩 도는데 마우스는 목표를 바로 가리킬 수 있다.
+    /// 그래도 **값을 정하는 것은 core** 다([`crate::config::setting_pick_at`]) — 뷰는
+    /// "몇 번째 낱말을 눌렀나"만 넘긴다.
+    SettingChoice { row: usize, index: usize },
+    /// 판 안 **단추**(§10-21ⓓ3 — 재시작 점검 판의 「지금 재시작」).
+    ///
+    /// 무엇이 일어나는지는 [`crate::Action`] 이 그대로 들고 있다 — 클릭에만 있는
+    /// 지름길이 아니라 **팔레트·키가 이미 가는 그 길**이다. 그래서 확인 화면이나 드라이런
+    /// 게이트를 건너뛰는 갈래가 생기지 않는다.
+    Button(crate::Action),
+}
+
+/// 판 안 클릭이 그다음 **무엇이 되는가**.
+///
+/// 뜻을 bool 하나로 적던 자리다("`Enter` 를 태울까"). 설정 값칸이 생기면서 갈래가
+/// 넷이 됐고, bool 로는 "←로 한 칸"과 "세 번째 낱말"을 구분할 수 없다.
+///
+/// ★ 갈래가 늘어도 **실행 경로는 키와 한 벌**이다 — 아래 셋 다 키가 이미 가는 길이고
+/// (`Enter`·`←→`·값 고르기), 클릭에만 있는 지름길은 없다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelEffect {
+    /// 커서만 옮겼다.
+    Moved,
+    /// 평소 `Enter` 경로를 그대로 탄다.
+    Enter,
+    /// 평소 `←→` 경로를 그대로 탄다(`true` = 오른쪽).
+    Dir(bool),
+    /// 설정 줄 `row` 의 `index` 번째 값을 골랐다 — 키의 값 고르기와 같은 표를 지난다.
+    Pick { row: usize, index: usize },
+    /// 판 안 단추를 눌렀다 — **평소 액션 경로**를 그대로 탄다(팔레트·키와 같은 길).
+    Act(crate::Action),
 }
 
 impl Screens {
-    /// 판 안을 클릭했다 — **커서를 그리로 옮긴다.**
+    /// 판 안을 클릭했다 — **커서를 그리로 옮기고**, 이어서 무엇이 되는지를 돌려준다.
     ///
-    /// `true` 를 돌려주면 뷰가 이어서 `Enter` 를 **평소 경로로** 태운다. 클릭을 "옮기고
-    /// 누르기"로 쪼개는 이유: 실행 경로가 키와 **한 벌**이 된다. 클릭에만 있는 지름길을
-    /// 만들면 확인 화면을 건너뛰거나(파괴적 동작!) 층을 잘못 들어가는 갈래가 생긴다.
-    pub fn panel_click(&mut self, target: PanelTarget) -> bool {
+    /// 클릭을 "옮기고 누르기"로 쪼개는 이유: 실행 경로가 키와 **한 벌**이 된다. 클릭에만
+    /// 있는 지름길을 만들면 확인 화면을 건너뛰거나(파괴적 동작!) 층을 잘못 들어가는
+    /// 갈래가 생긴다.
+    pub fn panel_click(&mut self, target: PanelTarget) -> PanelEffect {
         match target {
+            // §10-21ⓣ — 이름칸을 눌렀다. **값은 안 건드린다**(그건 값칸의 일이다).
+            PanelTarget::SettingRow(row) => {
+                self.selected = row;
+                PanelEffect::Moved
+            }
+            PanelTarget::SettingStep { row, forward } => {
+                self.selected = row;
+                PanelEffect::Dir(forward)
+            }
+            PanelTarget::SettingChoice { row, index } => {
+                self.selected = row;
+                PanelEffect::Pick { row, index }
+            }
             PanelTarget::SettingsCat(i) => {
                 // 사이드바는 코어 분류 **뒤에 플러그인 분류**가 이어진 목록이다(정본과
                 // 같은 차례) — 정적 표만 보면 `Claude` 탭 클릭이 조용히 무시된다.
                 let cats = self.plugins.setting_cats();
                 let Some(cat) = cats.get(i) else {
-                    return false;
+                    return PanelEffect::Moved;
                 };
                 if let Some(row) = self.plugins.setting_cat_first(cat) {
                     self.selected = row;
                 }
-                false
+                PanelEffect::Moved
             }
             PanelTarget::PaletteTab(i) => {
                 if i > self.plugins.palette_cats().len() {
-                    return false;
+                    return PanelEffect::Moved;
                 }
                 self.palette_tab = i;
                 self.selected = 0;
-                false
+                PanelEffect::Moved
             }
             PanelTarget::InfoTab(i) => {
                 // 탭 수는 뷰가 안다(내용이 정한다 — REC 탭은 플러그인이 있을 때만 선다).
                 // 그래서 여기서는 자리만 세우고, 범위 맞추기는 `wrap_info_tab` 이 한다.
                 self.info_tab = i;
                 self.scroll = 0;    // 다른 탭의 스크롤 자리를 물려받으면 빈 화면이 뜬다
-                false
+                PanelEffect::Moved
             }
             PanelTarget::Row(row) => {
                 self.selected = row;
-                true
+                PanelEffect::Enter
             }
             PanelTarget::ConfirmButton(button) => {
                 self.confirm_pick = button.min(CONFIRM_NO);
-                true
+                PanelEffect::Enter
             }
+            // 판을 **닫지 않는다** — 재시작 점검은 누른 결과(드라이런 결과·알림)를 그
+            // 자리에서 다시 보이는 판이다. 닫으면 방금 무엇이 됐는지 볼 곳이 없다.
+            PanelTarget::Button(action) => PanelEffect::Act(action),
         }
     }
 

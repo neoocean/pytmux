@@ -22,6 +22,7 @@
 
 pub mod atomicfile;
 pub mod block;
+pub mod build;
 pub mod chrome;
 pub mod config;
 pub mod editor;

@@ -1163,6 +1163,40 @@ pub fn setting_pick_dir(
     })
 }
 
+/// 값 목록에서 **그 낱말을 직접 찍었다**(§10-21ⓣ — 설정 판 마우스).
+///
+/// # 왜 방향판(`setting_pick_dir`)으로 안 되나
+///
+/// 화살표는 한 칸씩 돈다 — 선택지가 넷이면 세 번째를 고르려고 두 번 눌러야 하고, 그건
+/// 마우스가 할 수 있는 일(목표를 바로 가리키기)을 버리는 것이다. 그래서 자리를 받는 길을
+/// 따로 둔다.
+///
+/// # 그래도 값을 정하는 것은 여기다
+///
+/// 뷰는 "몇 번째 낱말을 눌렀나"만 넘긴다. 뷰가 값을 직접 계산하면 키 경로와 마우스
+/// 경로가 갈리고, 갈린 두 경로는 반드시 다르게 낡는다(제보의 ⚠ 그대로다).
+///
+/// 지금 값을 다시 찍으면 `None` 이다 — 서버 토글은 **뒤집기**라, 이미 그 값인데 부르면
+/// 반대로 간다(화면에 켜진 것을 눌렀는데 꺼지는 그림이다).
+pub fn setting_pick_at(row: usize, values: &SettingValues, index: usize) -> Option<SettingPick> {
+    let setting = SETTINGS.get(row)?;
+    let choices = setting.choices()?;
+    let want = *choices.get(index)?;
+    if setting.value(values) == want {
+        return None;
+    }
+    Some(match setting.kind {
+        // 서버 토글·설정 토글은 **뒤집기**뿐이다 — 지금과 다른 값을 찍었으니 뒤집으면 된다.
+        SettingKind::Toggle(action) => SettingPick::Act(action),
+        SettingKind::ConfigToggle => SettingPick::Flip(setting.key),
+        SettingKind::ConfigEnum(_) => SettingPick::Set(setting.key, want),
+        SettingKind::Enum(opt) => SettingPick::Act(Action::SetEnum(opt, want)),
+        SettingKind::Lang => SettingPick::Act(Action::SetLang(want)),
+        // `choices()` 가 `None` 인 갈래라 위에서 이미 돌아갔다.
+        SettingKind::Number { .. } | SettingKind::Text(_) | SettingKind::Link(_) => return None,
+    })
+}
+
 /// prefix 를 바꾼다 — **설정 파일에 남기고** 새 값을 돌려준다.
 ///
 /// 못 읽는 표기면 `None` 이고 **파일은 손대지 않는다**. 못 읽는 값을 그대로 적으면 다음

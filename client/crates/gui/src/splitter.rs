@@ -46,6 +46,39 @@ pub struct Bar {
     pub h: u16,
     /// 잡고 있거나(드래그) 마우스가 올라와 있나 — FOCUS 색으로 강조.
     pub active: bool,
+    /// 이 바가 **건너뛰는** 칸들 — 테두리 이음새(`┬`·`┴`·`├`·`┤`·`┼`)다(§10-21ⓟ).
+    ///
+    /// 서버가 주는 경계 사각형은 노드 rect **전체 높이**(좌우 분할이면 위·아래 테두리
+    /// 줄까지)를 덮는다. 그 끝 칸은 이음새라 가로 테두리도 지나가는데, 바가 그 칸을
+    /// 바탕색으로 덮고 세로선만 그리면 **가로 테두리가 거기서 끊기고 세로선만 남아**
+    /// T 자로 튀어나온 것처럼 보인다. 제보의 스크린샷이 정확히 그 그림이었다.
+    ///
+    /// 그래서 이음새 칸의 주인은 **테두리**다([`Seg`]) — 바는 그 사이만 그린다.
+    pub skip: std::collections::BTreeSet<(u16, u16)>,
+}
+
+impl Bar {
+    /// 이 바가 실제로 칠하는 **연속 구간들** — 이음새에서 끊긴다.
+    ///
+    /// 세로 바면 `(시작 y, 칸 수)`, 가로 바면 `(시작 x, 칸 수)`. 구간으로 자르는 이유:
+    /// 칸마다 따로 칠하면 굵은 알약의 둥근 끝이 칸마다 생겨 점선처럼 보인다.
+    pub fn runs(&self) -> Vec<(u16, u16)> {
+        let (start, len) = if self.vertical { (self.y, self.h) } else { (self.x, self.w) };
+        let mut out: Vec<(u16, u16)> = Vec::new();
+        for step in 0..len {
+            let pos = start + step;
+            let cell = if self.vertical { (self.x, pos) } else { (pos, self.y) };
+            if self.skip.contains(&cell) {
+                continue;
+            }
+            match out.last_mut() {
+                // 바로 앞 칸에서 이어지면 같은 구간이다.
+                Some(run) if run.0 + run.1 == pos => run.1 += 1,
+                _ => out.push((pos, 1)),
+            }
+        }
+        out
+    }
 }
 
 /// 경계 문자 칸 하나를 **실제 선**으로 옮긴 것.
@@ -259,42 +292,55 @@ impl Element for SplitterOverlay {
         // 테두리를 **먼저** — 스플리터 바는 그 위에 얹혀야 잡는 자리가 또렷하다.
         self.paint_frames(origin, cw, ch, ctx);
         for bar in &self.bars {
-            let cover = RectF::new(
-                vec2f(origin.x() + bar.x as f32 * cw, origin.y() + bar.y as f32 * ch),
-                vec2f(bar.w as f32 * cw, bar.h as f32 * ch),
-            );
-            // 경계 문자 칸을 바탕색으로 덮는다 — 문자와 바가 겹쳐 보이면 둘 다 지저분하다.
-            ctx.scene
-                .draw_rect_without_hit_recording(cover)
-                .with_background(Fill::Solid(theme::BG));
-            // ★ 평소에는 **테두리와 같은 굵기의 선**이다(2026-08-01 사용자 지시).
-            //
-            // 종전에는 늘 `BAR_PX`(4px) 알약이라, 패널 테두리(1.5px)와 나란히 놓이면
-            // 경계만 유독 굵어 "선문자가 남은 것"처럼 보였다 — 정본은 이 자리도 한 겹
-            // 선이다. **잡을 수 있다는 신호는 잡으려 할 때 나오면 된다**: 마우스를
-            // 올리거나 끌고 있을 때만 굵은 알약으로 자란다(그때는 손가락이 목표를
-            // 찾는 중이라 굵은 편이 낫다).
-            let px = if bar.active { BAR_PX } else { FRAME_PX };
-            let thin = if bar.vertical {
-                RectF::new(
-                    vec2f(cover.center().x() - px / 2., cover.origin_y()),
-                    vec2f(px, cover.height()),
-                )
-            } else {
-                RectF::new(
-                    vec2f(cover.origin_x(), cover.center().y() - px / 2.),
-                    vec2f(cover.width(), px),
-                )
-            };
-            let color = if bar.active { theme::FOCUS } else { theme::BORDER };
-            let painted = ctx
-                .scene
-                .draw_rect_without_hit_recording(thin)
-                .with_background(Fill::Solid(color));
-            // 둥근 끝은 **굵을 때만** 뜻이 있다 — 1.5px 선에 50% 반경을 주면 끝이
-            // 뭉개져 이웃 테두리와 이음새가 어긋나 보인다.
-            if bar.active {
-                painted.with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)));
+            // ★ 이음새 칸에서 끊어 그린다(§10-21ⓟ) — 그 칸은 테두리가 주인이다.
+            //   통짜로 덮으면 가로 테두리가 거기서 끊기고 세로선만 남아 **T 자로
+            //   튀어나온 것**처럼 보인다(제보의 스크린샷).
+            for (pos, span) in bar.runs() {
+                let cover = if bar.vertical {
+                    RectF::new(
+                        vec2f(origin.x() + bar.x as f32 * cw, origin.y() + pos as f32 * ch),
+                        vec2f(bar.w as f32 * cw, span as f32 * ch),
+                    )
+                } else {
+                    RectF::new(
+                        vec2f(origin.x() + pos as f32 * cw, origin.y() + bar.y as f32 * ch),
+                        vec2f(span as f32 * cw, bar.h as f32 * ch),
+                    )
+                };
+                // 경계 문자 칸을 바탕색으로 덮는다 — 문자와 바가 겹쳐 보이면 둘 다
+                // 지저분하다.
+                ctx.scene
+                    .draw_rect_without_hit_recording(cover)
+                    .with_background(Fill::Solid(theme::BG));
+                // ★ 평소에는 **테두리와 같은 굵기의 선**이다(2026-08-01 사용자 지시).
+                //
+                // 종전에는 늘 `BAR_PX`(4px) 알약이라, 패널 테두리(1.5px)와 나란히 놓이면
+                // 경계만 유독 굵어 "선문자가 남은 것"처럼 보였다 — 정본은 이 자리도 한 겹
+                // 선이다. **잡을 수 있다는 신호는 잡으려 할 때 나오면 된다**: 마우스를
+                // 올리거나 끌고 있을 때만 굵은 알약으로 자란다(그때는 손가락이 목표를
+                // 찾는 중이라 굵은 편이 낫다).
+                let px = if bar.active { BAR_PX } else { FRAME_PX };
+                let thin = if bar.vertical {
+                    RectF::new(
+                        vec2f(cover.center().x() - px / 2., cover.origin_y()),
+                        vec2f(px, cover.height()),
+                    )
+                } else {
+                    RectF::new(
+                        vec2f(cover.origin_x(), cover.center().y() - px / 2.),
+                        vec2f(cover.width(), px),
+                    )
+                };
+                let color = if bar.active { theme::FOCUS } else { theme::BORDER };
+                let painted = ctx
+                    .scene
+                    .draw_rect_without_hit_recording(thin)
+                    .with_background(Fill::Solid(color));
+                // 둥근 끝은 **굵을 때만** 뜻이 있다 — 1.5px 선에 50% 반경을 주면 끝이
+                // 뭉개져 이웃 테두리와 이음새가 어긋나 보인다.
+                if bar.active {
+                    painted.with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)));
+                }
             }
         }
         // 커서는 **맨 위**다 — 경계·바에 가리면 그 칸에 커서가 있는지 알 수 없다.

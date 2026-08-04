@@ -43,7 +43,12 @@ pub type CheckRow = (bool, &'static str);
 /// (통과로 떨어지면 점검이 있으나 마나인 상태가 되고, 그건 없는 것보다 나쁘다).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Probe {
-    /// 서버가 자기를 re-exec 할 수 있나(**POSIX 전용** — Windows 서버는 못 한다).
+    /// 서버가 **자기를 다시 띄울 수 있나**.
+    ///
+    /// 재는 방법이 OS 마다 다르다: POSIX 는 `os.execv` 로 자기를 덮어쓰고, Windows 는
+    /// 그 시스템콜이 없어 **pty-host 인수인계**(옵션 C)로 같은 일을 한다. 서버가 그 둘을
+    /// 이미 OR 로 재서 보내므로 여기서는 참/거짓 하나다 — 갈리는 것은 [`Probe::server_os`]
+    /// 가 정하는 **라벨뿐**이다(§10-21ⓔ3).
     pub reexec: bool,
     /// 복원할 세션이 있나.
     pub sessions: bool,
@@ -51,6 +56,48 @@ pub struct Probe {
     pub serialize: bool,
     pub panes: i64,
     pub panes_with_fd: i64,
+    /// **서버가** 도는 OS(`windows` · `posix`). 모르면 `None` — 옛 서버다.
+    ///
+    /// 클라의 OS 로 대신 판단하면 안 된다: 서버는 원격일 수 있다(페더레이션·ssh).
+    /// 그래서 서버가 적어 보내고, 첫 점검 줄의 라벨이 이 값을 따른다.
+    pub server_os: Option<Os>,
+}
+
+/// 서버가 도는 OS — 첫 점검 줄이 **무엇을 재는가**가 여기서 갈린다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    /// `os.execv` 로 자기를 덮어쓴다.
+    Posix,
+    /// 그 시스템콜이 없어 **pty-host 인수인계**로 같은 일을 한다(옵션 C).
+    Windows,
+}
+
+impl Os {
+    /// 서버가 보낸 낱말 → 갈래. 모르는 낱말은 `None` 이다 — 억지로 한쪽으로 접으면
+    /// 서버가 이름을 바꿨을 때 **틀린 라벨을 확신에 차서** 적는다.
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "windows" => Some(Self::Windows),
+            "posix" => Some(Self::Posix),
+            _ => None,
+        }
+    }
+}
+
+/// 첫 점검 줄의 라벨 — 그 서버의 OS 가 **실제로 재는 것**을 적는다(§10-21ⓔ3).
+///
+/// 제보: Windows 이진에서도 `✗ 서버 re-exec 지원(POSIX·이벤트루프)` 이 떠, **못 하는
+/// 것이 정상인 조건**을 실패로 보여 "재시작 불가"로 읽혔다. 재는 값은 이미 OS 별로 갈려
+/// 있었고(서버가 둘을 OR 로 잰다) 갈리지 않은 것은 **라벨뿐**이었다.
+///
+/// 파이썬 `_restart_server_relaunch_label` 과 같다 — 두 클라가 같은 화면을 보이게.
+pub fn server_relaunch_label(server_os: Option<Os>) -> &'static str {
+    use crate::i18n::t;
+    match server_os {
+        Some(Os::Windows) => t("서버 재기동 지원(pty-host 인수인계)"),
+        // 모르는 서버(옛 판)는 종전 문구 그대로 — 지어내지 않는다.
+        Some(Os::Posix) | None => t("서버 re-exec 지원(POSIX·이벤트루프)"),
+    }
 }
 
 /// 서버 드라이런 회신 + 클라 쪽 점검을 합쳐 `(안전한가, 줄들)` 로.
@@ -65,7 +112,8 @@ pub fn evaluate(probe: Probe, relaunch_ok: bool, kind: Kind) -> (bool, Vec<Check
     // `0 == 0` 을 통과로 읽으면 그 자리가 조용히 열린다(파이썬도 `panes > 0` 을 요구한다).
     let fd_ok = probe.panes == probe.panes_with_fd && probe.panes > 0;
     let mut rows: Vec<CheckRow> = vec![
-        (probe.reexec, t("서버 re-exec 지원(POSIX·이벤트루프)")),
+        // 값도 순서도 그대로다 — 라벨만 서버 OS 를 따른다(§10-21ⓔ3).
+        (probe.reexec, server_relaunch_label(probe.server_os)),
         (probe.sessions, t("복원할 세션 존재")),
         (probe.serialize, t("상태 직렬화 round-trip")),
         (fd_ok, t("패널 master fd 보유")),
@@ -132,7 +180,40 @@ mod tests {
             serialize: true,
             panes: 2,
             panes_with_fd: 2,
+            server_os: Some(Os::Posix),
         }
+    }
+
+    /// ★ §10-21ⓔ3 — Windows 서버에 **POSIX 조건을 적지 않는다.**
+    ///
+    /// 제보의 증상은 "못 하는 것이 정상인 조건을 실패로 그려" 재시작이 아예 안 되는
+    /// 것처럼 읽히는 것이었다. 재는 값은 그대로고 라벨만 그 OS 의 것이 된다.
+    #[test]
+    fn a_windows_server_is_not_told_it_lacks_a_posix_feature() {
+        let probe = Probe { server_os: Some(Os::Windows), ..all_good() };
+        let (_, rows) = evaluate(probe, true, Kind::All);
+        assert!(rows[0].1.contains("pty-host"), "실제: {}", rows[0].1);
+        assert!(!rows[0].1.contains("POSIX"), "실제: {}", rows[0].1);
+        // 값·순서·개수는 안 움직인다 — 갈린 것은 라벨뿐이다.
+        assert_eq!(rows.len(), 5);
+        assert!(rows[0].0);
+    }
+
+    #[test]
+    fn a_posix_server_keeps_the_old_wording_and_so_does_an_old_server() {
+        let posix = evaluate(all_good(), true, Kind::All).1;
+        assert!(posix[0].1.contains("POSIX"), "실제: {}", posix[0].1);
+        // 서버가 칸을 안 보내면(옛 판) 지어내지 않고 종전 문구로 남는다.
+        let old = Probe { server_os: None, ..all_good() };
+        assert_eq!(evaluate(old, true, Kind::All).1[0].1, posix[0].1);
+    }
+
+    #[test]
+    fn an_unknown_os_word_is_not_folded_into_one_of_the_two() {
+        // 억지로 접으면 서버가 이름을 바꿨을 때 **틀린 라벨을 확신에 차서** 적는다.
+        assert_eq!(Os::parse("darwin"), None);
+        assert_eq!(Os::parse("windows"), Some(Os::Windows));
+        assert_eq!(Os::parse("posix"), Some(Os::Posix));
     }
 
     #[test]

@@ -2871,6 +2871,117 @@ fn a_divider_cell_is_left_to_the_splitter_bar() {
     );
 }
 
+/// 좌우로 쪼갠 배치 — 경계 열이 위·아래 테두리와 만나 `┬`·`┴` 를 만든다.
+///
+/// 서버가 주는 경계 사각형은 노드 rect **전체 높이**를 덮으므로 그 양 끝이 곧 이음새다.
+fn split_canvas() -> (proto::canvas::Canvas, proto::message::Layout) {
+    use proto::canvas::Canvas;
+    use proto::message::{Divider, Layout, PaneLayout};
+    let mut canvas = Canvas::new(10, 5);
+    canvas.draw_box(0, 0, 5, 5, CellStyle::default());
+    canvas.draw_box(4, 0, 6, 5, CellStyle::default());
+    let pane = |id, x| PaneLayout {
+        id,
+        x: x + 1,
+        y: 1,
+        w: 3,
+        h: 3,
+        boxrect: Some([x, 0, if x == 0 { 5 } else { 6 }, 5]),
+        ..Default::default()
+    };
+    let layout = Layout {
+        cols: 10,
+        rows: 5,
+        panes: vec![pane(1, 0), pane(2, 4)],
+        dividers: vec![Divider {
+            split_id: 7,
+            orient: "lr".into(),
+            x: 4,
+            y: 0,
+            w: 1,
+            h: 5,
+            ..Default::default()
+        }],
+        active: 1,
+        ..Default::default()
+    };
+    (canvas, layout)
+}
+
+/// ★ §10-21ⓟ — **이음새는 테두리가 그린다.**
+///
+/// 이 칸까지 바에게 주면 가로 테두리가 거기서 끊긴 채 세로선만 지나가, 세로 스플리터가
+/// 패널 위 테두리를 **넘어 위로 뻗은 것**처럼 보인다(제보의 스크린샷). 곧은 칸은 종전대로
+/// 바의 것이다 — 그 자리에 선을 겹쳐 그리면 잡는 자리가 두 겹으로 보인다.
+#[test]
+fn the_junction_cells_of_a_divider_stay_with_the_frame() {
+    let (canvas, layout) = split_canvas();
+    let segs = SessionView::frame_segments(&canvas, Some(&layout));
+    let at = |x: u16, y: u16| segs.iter().find(|s| s.x == x && s.y == y).map(|s| s.bits);
+    assert_eq!(at(4, 0), Some(0b0111), "┬ 는 좌·우·아래 — 가로 테두리가 이어져야 한다");
+    assert_eq!(at(4, 4), Some(0b1011), "┴ 는 좌·우·위");
+    // 그 사이의 곧은 칸은 종전대로 바의 것이다.
+    assert_eq!(at(4, 2), None, "곧은 경계 칸까지 테두리가 그리면 선이 두 겹이다");
+}
+
+/// 그리고 바는 **그 칸을 건너뛴다** — 안 건너뛰면 방금 그린 이음새를 바탕색으로 덮는다.
+///
+/// 판정이 한 곳(`frame_cells`)이라 둘이 갈릴 수 없다는 것까지 여기서 잰다.
+#[test]
+fn the_bar_skips_the_cells_the_frame_owns() {
+    let (canvas, layout) = split_canvas();
+    let frame = SessionView::frame_cells(&canvas, Some(&layout));
+    let divider = &layout.dividers[0];
+    let bar = crate::splitter::Bar {
+        vertical: true,
+        x: divider.x,
+        y: divider.y,
+        w: divider.w,
+        h: divider.h,
+        active: false,
+        skip: frame
+            .iter()
+            .copied()
+            .filter(|(fx, fy)| {
+                *fx >= divider.x
+                    && *fx < divider.x + divider.w
+                    && *fy >= divider.y
+                    && *fy < divider.y + divider.h
+            })
+            .collect(),
+    };
+    assert_eq!(bar.skip.len(), 2, "이음새 둘(┬·┴)을 못 찾았다: {:?}", bar.skip);
+    // 위·아래 이음새를 뺀 **가운데 세 칸**만 한 구간으로 칠한다.
+    assert_eq!(bar.runs(), vec![(1, 3)], "바가 이음새를 덮는다");
+}
+
+/// 이음새가 없으면(경계가 테두리에 안 닿는 배치) 종전처럼 **통짜 한 구간**이다 —
+/// 구간으로 자른 것이 평상시 그림을 바꾸지 않았음을 못박는다.
+#[test]
+fn a_divider_without_junctions_is_still_painted_in_one_piece() {
+    let bar = crate::splitter::Bar {
+        vertical: true,
+        x: 4,
+        y: 0,
+        w: 1,
+        h: 5,
+        active: false,
+        skip: Default::default(),
+    };
+    assert_eq!(bar.runs(), vec![(0, 5)]);
+    // 가로 바는 x 축으로 센다(축을 헷갈리면 세로 바만 맞고 가로가 조용히 틀린다).
+    let across = crate::splitter::Bar {
+        vertical: false,
+        x: 2,
+        y: 3,
+        w: 4,
+        h: 1,
+        active: false,
+        skip: [(3, 3)].into_iter().collect(),
+    };
+    assert_eq!(across.runs(), vec![(2, 1), (4, 2)]);
+}
+
 #[test]
 fn without_a_layout_nothing_is_converted() {
     // 첫 프레임(배치 없음)에 크롬을 지어내면 없는 테두리가 잠깐 번쩍인다.

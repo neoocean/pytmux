@@ -38,7 +38,7 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
 
 # 총계 래칫(2026-07-25 기준 실측). **늘리지 말고 줄여라** — 이주 CL 이 여기를 함께 낮춘다.
 # 2026-07-30c 이주 6차(260→249): test_client 의 화면·자식 마운트 대기 11건.
-TOTALS = {"pause": 249, "sleep": 90, "silent_skip": 18}
+TOTALS = {"pause": 249, "sleep": 90, "silent_skip": 17}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
@@ -90,7 +90,9 @@ CEILINGS = {
     "test_token_log_screen": [15, 0, 0],
     "test_token_saver": [0, 3, 0],
     "test_token_sync_p5": [7, 0, 0],
-    "test_version": [0, 0, 1],
+    # 2026-08-04(§10-21ⓔ3): 조용한 return 하나를 명시 skip 으로 옮겼다 — 이 상자에서
+    # 늘 PASS 로 세어지던 자리다(POSIX 전용 드라이런).
+    "test_version": [0, 0, 0],
 }
 
 

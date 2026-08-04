@@ -108,9 +108,37 @@ async def test_restart_check_command_opens_popup():
         # 고정 pause 유지: push_screen 직후 스택은 **즉시** 바뀌므로 조건 폴링은 0회
         # 대기가 된다 — 여기서 기다리는 것은 스택이 아니라 InfoScreen 의 **마운트**
         # (compose→ListView)다. 폴링으로 바꾸면 마운트 전에 진행해 NoMatches 로 깨진다.
-        await wait_mounted(pilot, InfoScreen)
+        scr = await wait_mounted(pilot, InfoScreen)
         assert isinstance(app.screen, InfoScreen)
+        # §10-21ⓓ3: 이 판도 짧아 **가운데** 선다(버전 판과 같은 예외). 이 값이 곧
+        # 두 클라의 자리 계약이다 — 앵커 픽스처가 이 인자를 뽑아 Rust 쪽과 맞춘다.
+        assert scr._center is True
     await _with_app(body)
+
+
+async def test_restart_check_labels_follow_the_server_os():
+    """§10-21ⓔ3 — Windows 서버에는 **POSIX 조건을 적지 않는다.**
+
+    제보: Windows 이진에서도 `✗ 서버 re-exec 지원(POSIX·이벤트루프)` 이 떠, 못 하는
+    것이 정상인 조건을 실패로 보여 "재시작 불가"로 읽혔다. 재는 값(reexec_supported)은
+    서버가 이미 OS 별로 갈라 보내고 있었고 — POSIX 는 execv, Windows 는 pty-host
+    인수인계 — 갈리지 않은 것은 라벨뿐이었다.
+
+    ⚠ 클라의 OS 로 판단하면 안 된다: 서버는 원격일 수 있다. 그래서 서버가 보낸
+    `server_os` 만 본다."""
+    from pytmuxlib.clientutil import _restart_check_eval
+    base = {"reexec_supported": True, "has_sessions": True, "serialize_ok": True,
+            "panes": 2, "panes_with_fd": 2}
+    win = _restart_check_eval(dict(base, server_os="windows"), True)[1]
+    assert "pty-host" in win[0][1], win[0]
+    assert "POSIX" not in win[0][1], win[0]
+    posix = _restart_check_eval(dict(base, server_os="posix"), True)[1]
+    assert "POSIX" in posix[0][1], posix[0]
+    # 옛 서버(칸 없음)는 지어내지 않고 종전 문구로 남는다.
+    assert _restart_check_eval(base, True)[1][0][1] == posix[0][1]
+    # 값·순서·개수는 안 움직인다 — 갈린 것은 라벨뿐이다.
+    assert [ok for ok, _ in win] == [ok for ok, _ in posix]
+    assert len(win) == len(posix) == 5
 
 
 async def test_stale_dismiss_after_popup_closed_is_noop_not_crash():
@@ -174,6 +202,9 @@ async def test_version_command_opens_popup():
         assert "p4:" not in joined, joined         # 접두사 제거
         assert "폴백" not in joined and "동기화된" not in joined, joined
         assert "서버 pid 42" in joined, joined
+        # §10-21ⓐ3: **이 클라가 무엇인가**가 판에 있다. 헬퍼(version.client_build)만
+        # 재면 그것을 붙이는 호출을 지워도 통과한다 — 호출부까지 단언한다.
+        assert "빌드" in joined and "Textual" in joined, joined
         assert scr._center is True
         # 업타임은 tick_cb 로 매 초 갱신된다 — 강제 tick 이 줄 수를 보존하며 라벨을
         # in-place 갱신(에러 없이 동작)하는지 확인. tick_cb 는 호출마다 현재 시각으로

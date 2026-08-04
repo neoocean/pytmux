@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import subprocess
 
 from . import proc
@@ -76,6 +77,21 @@ def _probe_version(d: str, timeout: float) -> str:
     except (OSError, subprocess.SubprocessError):
         pass
     return "unknown"
+
+
+def client_build() -> str:
+    """이 클라가 **무엇으로 어디서** 도는가 — 버전 팝업의 빌드 줄(§10-21ⓐ3).
+
+    제보: 버전 판에 "어느 OS 바이너리인지"가 없어 여러 판이 굴러다니는 상자에서
+    화면만 보고는 구분할 수 없었다. 그 제보는 GUI 것이지만 **두 클라가 각자 자기
+    이름을 적는 모양**이 대칭이라 정본도 같은 줄을 낸다(GUI 쪽 짝은
+    `client/crates/base/src/build.rs`).
+
+    정본은 이진이 아니라 스크립트라 배포 파일 이름이 없다 — 그 자리에 **무엇으로
+    도는가**(파이썬 판)를 적는다. 서버는 원격일 수 있어 OS 가 다를 수 있으므로
+    이 줄은 **클라 것**임을 이름으로 못박는다."""
+    return (f"pytmux (Textual) · {platform.system()}-{platform.machine()}"
+            f" · python {platform.python_version()}")
 
 
 def fmt_uptime(seconds: float) -> str:

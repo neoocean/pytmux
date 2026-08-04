@@ -57,6 +57,8 @@ pytmux 서버(파이썬 데몬)에 **같은 소켓 프로토콜**로 붙는 네�
 
 ```powershell
 $env:PYTMUX_HOME = "$sp\pytmuxhome"          # 상태·소켓·캡처가 전부 이 아래로 격리된다
+# ⛔ 그런데 **설정 파일은 안 딸려 온다** — 아래 「설정 파일은 따로 격리한다」 참조.
+New-Item -ItemType File -Force "$env:PYTMUX_HOME\config" | Out-Null
 $py = "..\pytmux.py"                          # 저장소 루트(이 디렉토리의 한 단계 위)
 
 python $py start-server                       # → "서버 기동됨: tcp:127.0.0.1:0"
@@ -71,6 +73,23 @@ Test-Path "$env:PYTMUX_HOME\state\default.ptyhost.pid"   # False
 - **`PYTMUX_HOME` 없이 클라 이진을 띄우면 사용자의 라이브 서버에 붙는다**: `endpoint.rs`
   가 `PYTMUX_HOME/state` → 없으면 `%LOCALAPPDATA%\pytmux`(=라이브) 순으로 소켓을 자동
   발견한다. 실험용으로 띄울 땐 **항상** `PYTMUX_HOME` 을 먼저 세운다.
+- ⛔ ★ **설정 파일은 따로 격리한다 — `PYTMUX_HOME` 만으로는 안 된다**(사고 2026-08-04).
+  탐색 차례가 `$PYTMUX_CONFIG` → **`$PYTMUX_HOME/config`** → `~/.config/pytmux/config`
+  → `~/.pytmux.conf` 인데(`base/src/config.rs` 머리말), 스크래치 홈에 `config` 파일이
+  **없으면 그 자리를 건너뛰어 사용자의 진짜 설정 파일을 읽는다**. 읽기만이면 그나마
+  낫지만 **쓰기도 같은 파일로 간다** — 설정 판을 마우스로 눌러 값을 바꾸는 순간
+  (§10-21ⓣ 실측) 사용자의 `~/.config/pytmux/config` 에 `set status-position top` 이
+  박혔다.
+  - 증상이 **엉뚱한 데서 터진다**: 그 다음 `cargo test -p gui` 에서 배지 자리 오라클
+    둘이 떨어졌다(`monitor_badges_sit_in_the_bottom_status_bar_not_the_tab_bar` 등).
+    GUI 테스트는 `Config::load()` 로 **이 상자의 진짜 설정 파일**을 읽으므로, 상태줄이
+    위로 간 설정이 테스트 프레임의 그리기 차례를 바꿔 버린 것이다. 제품도 테스트도
+    멀쩡한데 **환경이 실패를 만든** 부류라, 원인을 코드에서 찾으면 한참 헤맨다.
+  - 처방: 위 레시피처럼 `$PYTMUX_HOME\config` 를 **빈 파일로 먼저 만들거나**
+    `$env:PYTMUX_CONFIG` 를 스크래치 파일로 세운다. 빈 파일이면 기본값으로 뜬다.
+  - 이미 밟았으면 **되돌린다**: 라이브 확인 전에 `~/.config/pytmux/config` 를 복사해
+    두고 끝나면 되돌릴 것(무엇을 눌렀는지 기억으로 복원하려 들지 말 것 — 값이 기본값과
+    같으면 파일에 줄이 아예 없어서, 지운 줄인지 원래 없던 줄인지 사후에 못 가른다).
 - GUI 이진 자체를 치우는 건 이름으로 해도 안전하다(`pytmux-gui`
   는 우리 것만 있다). 위험한 것은 **`pythonw`·`python`** 이다.
 

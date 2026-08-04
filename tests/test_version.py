@@ -89,7 +89,10 @@ async def test_restart_check_dry_run():
     점검이라 건너뛴다."""
     from pytmuxlib import ipc
     if ipc.IS_WINDOWS:
-        return
+        # 조용한 return 대신 명시 skip — 요약이 사유별로 리포트해야 커버리지 갭이
+        # 보인다(CLAUDE.md 「명시 SKIP」). 이 상자에서 늘 PASS 로 세어지던 자리다.
+        from run import skip
+        skip("POSIX 전용(re-exec+fd 상속 경로 · Windows 는 pty-host 인수인계라 값이 다르다)")
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
@@ -106,6 +109,9 @@ async def test_restart_check_dry_run():
         assert rep["serialize_ok"] is True and rep["serialize_err"] == ""
         assert rep["panes"] == rep["panes_with_fd"] >= 1
         assert rep["running_version"] == srv._code_version
+        # §10-21ⓔ3: 서버가 **자기 OS** 를 적어 보낸다 — 클라가 자기 OS 로 대신
+        # 판단하면 원격 서버의 조건을 클라 OS 로 적게 된다.
+        assert rep["server_os"] == "posix", rep["server_os"]
         # 드라이런이라 세션/패널을 안 건드린다(부작용 없음)
         assert len(list(srv._all_panes())) == n_before
     finally:

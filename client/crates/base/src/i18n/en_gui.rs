@@ -25,4 +25,6 @@ pub static EN: &[(&str, &str)] = &[
     ("아직 알림이 없다", "No notices yet"),
     ("버퍼가 없다", "No buffers"),
     ("(탭 없음)", "(no tabs)"),
+    // §10-21ⓓ3 — 재시작 점검 판의 단추.
+    ("지금 재시작 (restart-all)", "Restart now (restart-all)"),
 ];

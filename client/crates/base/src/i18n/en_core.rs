@@ -496,6 +496,8 @@ pub static EN: &[(&str, &str)] = &[
     ),
     // ── restart.rs ──
     ("서버 re-exec 지원(POSIX·이벤트루프)", "Server re-exec support (POSIX·event loop)"),
+    // §10-21ⓔ3 — Windows 서버는 execv 가 없어 pty-host 인수인계로 같은 일을 한다.
+    ("서버 재기동 지원(pty-host 인수인계)", "Server relaunch support (pty-host handover)"),
     ("복원할 세션 존재", "Sessions to restore exist"),
     ("상태 직렬화 round-trip", "State serialization round-trip"),
     ("패널 master fd 보유", "Pane master fds held"),

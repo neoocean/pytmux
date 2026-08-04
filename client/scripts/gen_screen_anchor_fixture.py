@@ -20,8 +20,16 @@
 | 키 | 뜻 |
 |---|---|
 | `anchors` | 화면 클래스 → `top`\\|`middle`\\|`bottom`(세로 축만. 가로는 정본이 전부 `center`) |
+| `overrides` | **호출이 CSS 를 뒤집는 자리** — `클래스` → {`title` → 앵커} |
 | `docks` | 그 화면 안에서 바닥에 고정되는 컨테이너 id(있으면) |
 | `prompt_order` | `PromptScreen` 안 **요소 차례**(후보가 위인지 입력이 아래인지) |
+
+`overrides` 가 왜 필요한가(§10-21ⓐ3): 정본의 범용 `InfoScreen` 은 CSS 로 `center top`
+인데, **호출이 `center=True` 로 그것을 뒤집는 자리**가 있다(`version` 판 — 다섯 줄뿐이라
+위에 붙이면 화면이 비어 보인다). 클래스 CSS 만 읽던 이 생성기는 그 예외를 통째로 못 봤고,
+그래서 우리 버전 판이 정본과 **다른 자리에 서는 것을 아무도 안 쟀다**. 자리가 CSS 한
+낱말이라 안 잰다는 것이 이 픽스처의 존재 이유였는데, 정작 그 낱말을 덮어쓰는 인자를
+빠뜨리고 있었다.
 
 `prompt_order` 를 따로 뽑는 이유: 이 차례는 정본이 **사용자 요청으로 뒤집은** 것이다
 (§10 — 모바일에서 후보가 입력 박스 아래로 가 키보드에 가렸다). 앵커만 맞추고 차례가
@@ -84,11 +92,14 @@ def main():
     if not anchors:
         sys.exit(f"{path} 에서 화면 정렬을 하나도 못 찾았다 — 뽑는 방법이 틀렸다")
 
+    overrides = _anchor_overrides(os.path.abspath(args.pytmux))
     payload = {
         "_comment": "python3 scripts/gen_screen_anchor_fixture.py 로 생성. 출처 = "
                     "pytmuxlib/clientscreens.py 의 CSS(align/dock)와 "
-                    "PromptScreen.compose 의 요소 차례. 손으로 고치지 말 것.",
+                    "PromptScreen.compose 의 요소 차례, 그리고 CSS 를 뒤집는 "
+                    "호출 인자(InfoScreen center=). 손으로 고치지 말 것.",
         "anchors": dict(sorted(anchors.items())),
+        "overrides": {k: dict(sorted(v.items())) for k, v in sorted(overrides.items())},
         "docks": dict(sorted(docks.items())),
         "prompt_order": _prompt_order(src),
     }
@@ -98,9 +109,95 @@ def main():
     by = {}
     for v in anchors.values():
         by[v] = by.get(v, 0) + 1
+    n_over = sum(len(v) for v in overrides.values())
     print(f"{args.out} — 화면 {len(anchors)}개 "
           f"({' · '.join(f'{k} {n}' for k, n in sorted(by.items()))}) "
-          f"· dock {len(docks)} · 프롬프트 차례 {payload['prompt_order']}")
+          f"· 덮어쓰기 {n_over} · dock {len(docks)} "
+          f"· 프롬프트 차례 {payload['prompt_order']}")
+
+
+# ── 호출이 CSS 를 뒤집는 자리 ──────────────────────────────────────────────
+#
+# 범용 `InfoScreen` 은 CSS 로 `center top` 이지만 호출이 `center=True` 로 뒤집을 수
+# 있다. 그 인자를 안 뽑으면 정본이 가운데 띄우는 판을 우리는 위에 세우게 된다(§10-21ⓐ3).
+
+def _client_sources(root):
+    """정본 클라 코드 전부 — `InfoScreen` 을 띄우는 자리는 여러 모듈에 흩어져 있다
+    (`clientconn.py`·`clientcmd.py`·플러그인). 한 파일만 보면 조용히 빠뜨린다."""
+    base = os.path.join(root, "pytmuxlib")
+    for dirpath, _dirs, files in os.walk(base):
+        for name in sorted(files):
+            if name.endswith(".py"):
+                yield os.path.join(dirpath, name)
+
+
+def _balanced(src, open_paren):
+    """`src[open_paren]` 의 `(` 에 대응하는 `)` 까지의 **안쪽 텍스트**.
+
+    괄호를 세는 이유: 호출이 여러 줄에 걸치고 안에 또 호출이 있다
+    (`InfoScreen(make_lines(), title="version", center=True, ...)`). 정규식 하나로는
+    그 짝을 못 맞춘다."""
+    depth, i = 0, open_paren
+    while i < len(src):
+        ch = src[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                return src[open_paren + 1:i]
+        elif ch in "\"'":                   # 문자열 안의 괄호는 안 센다
+            quote = src[i:i + 3] if src[i:i + 3] in ('"""', "'''") else ch
+            end = src.find(quote, i + len(quote))
+            if end < 0:
+                return None
+            i = end + len(quote) - 1
+        i += 1
+    return None
+
+
+def _title_of(args):
+    """호출의 `title=` 인자를 **정본이 그 판을 부르는 이름**으로 정규화.
+
+    문자열 리터럴이면 그 값, `i18n.t("k")` 면 키 `k`, 그 밖이면 표현식 원문.
+    인자가 없으면 `InfoScreen` 의 기본값(`info`)이다."""
+    m = re.search(r"\btitle\s*=\s*", args)
+    if not m:
+        return "info"
+    rest = args[m.end():]
+    depth, cut = 0, len(rest)
+    for i, ch in enumerate(rest):
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            cut = i
+            break
+    expr = rest[:cut].strip()
+    lit = re.fullmatch(r"""['"](.*)['"]""", expr, re.S)
+    if lit:
+        return lit.group(1)
+    key = re.fullmatch(r"""i18n\.t\(\s*['"]([^'"]+)['"].*\)""", expr, re.S)
+    if key:
+        return key.group(1)
+    return " ".join(expr.split())
+
+
+def _anchor_overrides(root):
+    m_all = {}
+    for path in _client_sources(root):
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        for call in re.finditer(r"\bInfoScreen\(", src):
+            args = _balanced(src, call.end() - 1)
+            if args is None or not re.search(r"\bcenter\s*=\s*True\b", args):
+                continue
+            m_all.setdefault("InfoScreen", {})[_title_of(args)] = "middle"
+    if not m_all:
+        sys.exit("호출이 CSS 를 뒤집는 자리를 하나도 못 찾았다 — 정본이 그 예외를 "
+                 "없앴거나(그러면 Rust 쪽 canon_variant 도 지울 것) 뽑는 방법이 틀렸다")
+    return m_all
 
 
 def _prompt_order(src):

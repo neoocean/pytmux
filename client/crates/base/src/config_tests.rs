@@ -213,6 +213,57 @@ fn picking_a_toggle_row_gives_an_action_and_a_text_row_gives_a_question() {
     assert!(setting_pick(SETTINGS.len(), &values).is_none(), "목록 밖");
 }
 
+// ── 낱말을 직접 찍기(§10-21ⓣ — 설정 판 마우스) ────────────────────────────────
+
+#[test]
+fn picking_a_word_lands_on_that_value_not_the_next_one() {
+    // ★ 이것이 방향판과 갈리는 이유다: 선택지가 셋 이상일 때 화살표는 한 칸씩 도는데,
+    //   마우스는 목표를 바로 가리킬 수 있다. 찍은 낱말이 곧 값이라야 그 뜻이 산다.
+    let values = base_values();
+    let row = SETTINGS.iter().position(|s| matches!(s.kind, SettingKind::ConfigEnum(_)))
+        .expect("고르는 줄이 하나는 있다");
+    let SettingKind::ConfigEnum(choices) = SETTINGS[row].kind else { unreachable!() };
+    assert!(choices.len() >= 2, "선택지가 하나면 이 테스트가 아무것도 안 잰다");
+    let now = SETTINGS[row].value(&values);
+    for (i, want) in choices.iter().enumerate() {
+        match setting_pick_at(row, &values, i) {
+            // 지금 값을 다시 찍으면 아무 일도 안 한다(누른 것이 꺼지면 놀란다).
+            None => assert_eq!(*want, now, "{want} 를 찍었는데 아무 일도 안 했다"),
+            Some(SettingPick::Set(key, value)) => {
+                assert_eq!(key, SETTINGS[row].key);
+                assert_eq!(value, *want, "{i} 번째를 찍었는데 다른 값이 됐다");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn picking_the_value_a_toggle_already_has_does_nothing() {
+    // 서버 토글은 **뒤집기**뿐이다 — 이미 그 값인데 부르면 반대로 간다(화면에 켜진
+    // 것을 눌렀는데 꺼지는 그림이다).
+    let mut values = base_values();
+    values.inactive_dim = true;
+    let row = SETTINGS.iter().position(|s| s.key == "inactive-dim").expect("줄");
+    // `choices()` 는 ["on", "off"] 순이다.
+    assert!(setting_pick_at(row, &values, 0).is_none(), "켜진 것을 다시 켰다");
+    assert!(matches!(setting_pick_at(row, &values, 1), Some(SettingPick::Flip("inactive-dim"))));
+}
+
+#[test]
+fn a_row_without_choices_cannot_be_picked_by_slot() {
+    // 숫자·물음·링크에는 찍을 낱말이 없다 — 없는 자리를 만들어 내면 거짓말이다.
+    let values = base_values();
+    for key in ["inactive-dim-ratio", "prefix", "list-keys"] {
+        let row = SETTINGS.iter().position(|s| s.key == key).expect(key);
+        assert!(setting_pick_at(row, &values, 0).is_none(), "{key}");
+    }
+    // 목록 밖·자리 밖도 마찬가지다.
+    assert!(setting_pick_at(SETTINGS.len(), &values, 0).is_none());
+    let row = SETTINGS.iter().position(|s| s.key == "inactive-dim").expect("줄");
+    assert!(setting_pick_at(row, &values, 99).is_none(), "없는 자리를 골랐다");
+}
+
 #[test]
 fn the_notation_we_write_is_the_notation_we_read() {
     // ★ 우리가 쓴 줄을 **파이썬 클라가 읽어야 한다**. 한 바퀴 돌려 확인한다.

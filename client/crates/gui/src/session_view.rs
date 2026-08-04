@@ -170,6 +170,25 @@ impl Flash {
     }
 }
 
+/// 판 안 클릭 자리의 **번호를 한 줄로** 나눠 주는 것(§10-21ⓣ).
+///
+/// hover 상태 풀(`panel_click_states`)의 색인은 **그 화면 안에서 유일**해야 한다. 종전엔
+/// 자리가 한 종류(사이드바 탭)뿐이라 그 자리의 색인을 그대로 썼는데, 설정 값칸이 눌리게
+/// 되면서 한 화면에 자리가 여러 갈래(줄 이름·토글·낱말·화살표)가 됐다. 갈래마다 0 부터
+/// 세면 **남의 자리의 hover 가 내 자리에 붙는다** — 눈에는 "엉뚱한 데가 밝아진다"로 보인다.
+#[derive(Debug, Default)]
+struct PanelIds(usize);
+
+impl PanelIds {
+    /// 다음 번호를 뗀다. 그리는 차례가 곧 번호라, 배치가 바뀌면 번호도 함께 움직인다
+    /// (그래서 화면이 바뀔 때 풀을 버린다 — `SessionView::handle_key` 의 hover 버리기).
+    fn next(&mut self) -> usize {
+        let id = self.0;
+        self.0 += 1;
+        id
+    }
+}
+
 pub struct SessionView {
     /// 돌고 있는 셸 명령의 결과가 도착하는 자리(`run-shell`·`if-shell`).
     ///
@@ -912,22 +931,10 @@ impl SessionView {
                 }
                 // `Enter` 는 앞으로, `←→` 는 방향대로 — 값을 고르는 길은 **한 벌**이다.
                 ScreenKey::Applied(row) | ScreenKey::AppliedDir(row, _) => {
-                    use base::config::SettingPick;
                     let forward = !matches!(outcome, ScreenKey::AppliedDir(_, false));
-                    match base::config::setting_pick_dir(
-                        row,
-                        &self.setting_values(),
-                        forward,
-                    ) {
-                        Some(SettingPick::Act(action)) => {
-                            self.apply_action(action);
-                        }
-                        Some(SettingPick::Ask(prompt, seed)) => self.screens.ask(prompt, &seed),
-                        Some(SettingPick::Flip(key)) => self.flip_config(key),
-                        Some(SettingPick::Set(key, value)) => self.set_config(key, value),
-                        Some(SettingPick::SetNumber(key, value)) => self.set_number(key, value),
-                        None => {}
-                    }
+                    let pick =
+                        base::config::setting_pick_dir(row, &self.setting_values(), forward);
+                    self.apply_setting_pick(pick);
                 }
                 // 플러그인이 물은 것을 **취소**했다 — 아무 일도 안 일어나고, 그 스펙은
                 // 들고 있을 이유가 없다(다음에 열 때 낡은 물음이 되살아나면 안 된다).
@@ -3075,11 +3082,28 @@ impl SessionView {
     /// 그대로 탄다(클릭에만 있는 지름길을 만들지 않는다 — 확인 화면을 건너뛰는 갈래가
     /// 생기는 것을 막는다).
     pub fn panel_click(&mut self, target: base::PanelTarget) -> bool {
+        use base::screens::PanelEffect;
         if !self.config.mouse {
             return false;
         }
-        if self.screens.panel_click(target) {
-            self.handle_key(Key::Enter, Mods::NONE);
+        match self.screens.panel_click(target) {
+            PanelEffect::Moved => {}
+            PanelEffect::Enter => {
+                self.handle_key(Key::Enter, Mods::NONE);
+            }
+            // 화살표도 **키 경로 그대로** — 값 고르기의 규칙(감기·범위)이 저쪽에 있다.
+            PanelEffect::Dir(forward) => {
+                self.handle_key(if forward { Key::Right } else { Key::Left }, Mods::NONE);
+            }
+            // 낱말을 직접 찍었다 — 자리는 뷰가 알고 **값은 core 가 고른다**.
+            PanelEffect::Pick { row, index } => {
+                let pick = base::config::setting_pick_at(row, &self.setting_values(), index);
+                self.apply_setting_pick(pick);
+            }
+            // 판 안 단추 — 팔레트·키가 이미 가는 그 길이다(지름길이 아니다).
+            PanelEffect::Act(action) => {
+                self.apply_action(action);
+            }
         }
         true
     }
@@ -4608,6 +4632,26 @@ impl SessionView {
     }
 
 
+    /// core 가 고른 설정 변경을 실제로 적용한다.
+    ///
+    /// ★ **키와 마우스가 이 함수 하나로 만난다**(§10-21ⓣ). 값칸 클릭이 생기면서 진입이
+    /// 둘이 됐는데, 적용을 두 곳에 적으면 그 둘은 반드시 다르게 낡는다 — 실제로 이
+    /// 저장소가 두 번 만든 갈라짐이다. 무엇을 할지는 core 가 정하고
+    /// (`setting_pick_dir` · `setting_pick_at`), 여기는 그것을 집행만 한다.
+    fn apply_setting_pick(&mut self, pick: Option<base::config::SettingPick>) {
+        use base::config::SettingPick;
+        match pick {
+            Some(SettingPick::Act(action)) => {
+                self.apply_action(action);
+            }
+            Some(SettingPick::Ask(prompt, seed)) => self.screens.ask(prompt, &seed),
+            Some(SettingPick::Flip(key)) => self.flip_config(key),
+            Some(SettingPick::Set(key, value)) => self.set_config(key, value),
+            Some(SettingPick::SetNumber(key, value)) => self.set_number(key, value),
+            None => {}
+        }
+    }
+
     /// 설정 파일이 쥔 on/off 하나를 뒤집는다(패리티 G6b). 두 뷰가 같은 표다.
     fn flip_config(&mut self, key: &str) {
         let Some((next, written)) = base::config::flip_config(key, &self.config)
@@ -5047,11 +5091,12 @@ impl SessionView {
     ///
     /// 왜 목록 위 머리줄만으로는 모자란가: 34줄은 한 화면에 안 들어가 **지금 어디쯤인지**가
     /// 스크롤 밖으로 밀린다. 옆에 늘 붙은 탭줄은 그 자리를 잃지 않는다.
-    fn settings_sidebar(&self, active: Option<usize>) -> Box<dyn Element> {
+    fn settings_sidebar(&self, active: Option<usize>, ids: &mut PanelIds) -> Box<dyn Element> {
         let mut side = Flex::column().with_main_axis_size(MainAxisSize::Min).with_spacing(2.);
         // 코어 분류 뒤에 **플러그인이 낸 분류**(`Claude`)가 이어진다 — 정본과 같은 차례.
         let cats = self.screens.plugins().setting_cats();
         for (i, cat) in cats.iter().enumerate() {
+            let id = ids.next();
             let on = active == Some(i);
             let label = self.ui_text(
                 base::config::settings_cat_label(cat),
@@ -5064,11 +5109,11 @@ impl SessionView {
                 .with_corner_radius(theme::TAB_RADIUS);
             if on {
                 boxed = boxed.with_background_color(theme::ACTIVE);
-            } else if self.panel_hovered(i) {
+            } else if self.panel_hovered(id) {
                 boxed = boxed.with_background_color(theme::HOVER);
             }
             side = side.with_child(self.clickable_panel(
-                i,
+                id,
                 base::PanelTarget::SettingsCat(i),
                 boxed.finish(),
             ));
@@ -5085,10 +5130,20 @@ impl SessionView {
     /// 켜기/끄기만 네이티브 토글 그림으로 남긴다(N5) — 스위치는 두 상태가 그림에
     /// 이미 들어 있어, 낱말 둘을 늘어놓는 것보다 네이티브 화면에서 읽기 쉽다.
     /// 셋 이상은 그 그림이 없으므로 **분절 알약**으로 편다.
+    /// ★ §10-21ⓣ — **값칸은 제자리에서 조작된다**(제보의 핵심).
+    ///
+    /// 종전에는 이 함수가 **그리기만** 했다. 줄만 눌리게 해도 값은 여전히 키로 바꿔야
+    /// 하므로, 제보가 말한 "특히 토글과 셀렉터"는 그때도 그대로 남는다. 그래서 조각마다
+    /// 클릭 대상이 있다: 토글은 눌러서 뒤집고, 낱말은 **그것을 직접 찍고**, 스테퍼
+    /// 화살표는 좌우 두 칸이다.
+    ///
+    /// 무엇이 되는지는 전부 core 가 정한다(`PanelTarget::Setting*` → `setting_pick_*`).
     fn value_widget(
         &self,
         line: Flex,
         display: &base::config::ValueDisplay,
+        row: usize,
+        ids: &mut PanelIds,
     ) -> Flex {
         use base::config::ValueDisplay;
         match display {
@@ -5100,12 +5155,17 @@ impl SessionView {
                             base::config::setting_value_label("off"),
                         ];
                 // '?'(구버전 서버 — 미상)를 토글로 그리면 거짓말이다.
-                match (on_off, cur) {
-                    (true, Some(i)) => return line.with_child(self.toggle(*i == 0)),
-                    _ => {}
+                if let (true, Some(i)) = (on_off, cur) {
+                    // 토글은 그림 하나가 곧 스위치다 — 누르면 뒤집는다(평소 `Enter` 길).
+                    return line.with_child(self.clickable_panel(
+                        ids.next(),
+                        base::PanelTarget::SettingStep { row, forward: true },
+                        self.toggle(*i == 0),
+                    ));
                 }
                 let mut line = line;
                 for (i, label) in labels.iter().enumerate() {
+                    let id = ids.next();
                     let picked = Some(i) == *cur;
                     let color = if picked { palette::FG } else { palette::DIM };
                     let mut cell = Container::new(self.ui_text(label.clone(), 12., color))
@@ -5114,8 +5174,15 @@ impl SessionView {
                         .with_corner_radius(theme::TAB_RADIUS);
                     if picked {
                         cell = cell.with_background_color(theme::ACTIVE);
+                    } else if self.panel_hovered(id) {
+                        // 고른 것이 아닌데 hover 면 "여기를 누르면 이 값이 된다"의 신호다.
+                        cell = cell.with_background_color(theme::HOVER);
                     }
-                    line = line.with_child(cell.finish());
+                    line = line.with_child(self.clickable_panel(
+                        id,
+                        base::PanelTarget::SettingChoice { row, index: i },
+                        cell.finish(),
+                    ));
                 }
                 if cur.is_none() {
                     let unknown = base::i18n::tc("setting", "미상(서버)");
@@ -5127,24 +5194,56 @@ impl SessionView {
                 }
                 line
             }
-            ValueDisplay::Stepper(value) => line
-                .with_child(self.ui_text("‹", 13., palette::DIM))
-                .with_child(self.text(value.clone(), 13., palette::CYAN))
-                .with_child(self.ui_text("›", 13., palette::DIM)),
-            ValueDisplay::Text { shown, unset } => line.with_child(self.text(
-                shown.clone(),
-                13.,
-                if *unset { palette::DIM } else { palette::CYAN },
+            ValueDisplay::Stepper(value) => {
+                // 화살괄호가 곧 단추다 — 정본이 `‹ 0.20 ›` 로 "좌우로 바뀐다"를 알리는
+                // 그 자리에, 네이티브에서는 실제로 누를 수 있는 것이 있어야 한다.
+                let mut arrow = |line: Flex, word: &'static str, forward: bool| {
+                    let id = ids.next();
+                    let color = if self.panel_hovered(id) { palette::FG } else { palette::DIM };
+                    line.with_child(self.clickable_panel(
+                        id,
+                        base::PanelTarget::SettingStep { row, forward },
+                        Container::new(self.ui_text(word, 13., color))
+                            .with_horizontal_padding(4.)
+                            .finish(),
+                    ))
+                };
+                let line = arrow(line, "‹", false);
+                let line = line.with_child(self.text(value.clone(), 13., palette::CYAN));
+                arrow(line, "›", true)
+            }
+            ValueDisplay::Text { shown, unset } => {
+                // 자유 입력은 **물음 판**을 연다(평소 `Enter` 길) — 그 자리에서 글자를
+                // 받을 칸이 없으니 값칸을 누른 것이 곧 "고쳐 쓰겠다"다.
+                line.with_child(self.clickable_panel(
+                    ids.next(),
+                    base::PanelTarget::SettingStep { row, forward: true },
+                    self.text(
+                        shown.clone(),
+                        13.,
+                        if *unset { palette::DIM } else { palette::CYAN },
+                    ),
+                ))
+            }
+            ValueDisplay::Link(word) => line.with_child(self.clickable_panel(
+                ids.next(),
+                base::PanelTarget::SettingStep { row, forward: true },
+                Flex::row()
+                    .with_main_axis_size(MainAxisSize::Min)
+                    .with_child(self.ui_text("→", 13., palette::DIM))
+                    .with_child(self.ui_text(*word, 13., palette::FG))
+                    .finish(),
             )),
-            ValueDisplay::Link(word) => line
-                .with_child(self.ui_text("→", 13., palette::DIM))
-                .with_child(self.ui_text(*word, 13., palette::FG)),
         }
     }
 
     /// 설정 화면(패리티 G5b). on/off 값은 네이티브 토글 그림으로(N5) — 값을 바꾸는
     /// 길(Enter 키 → `flip_config`)은 종전 그대로다.
     fn render_settings(&self, column: Flex) -> Flex {
+        // 판 안 클릭 자리의 **번호를 한 줄로 준다**(§10-21ⓣ). 사이드바와 값칸이 같은
+        // 풀을 쓰므로 각자 0 부터 세면 hover 가 서로의 자리에 붙는다 — 실제로 그 풀은
+        // 화면 하나당 하나다(`panel_click_states`).
+        let mut ids = PanelIds::default();
         let values = self.setting_values();
         let plugins = self.screens.plugins();
         // 줄 목록은 **코어 뒤에 플러그인**이다(정본 `settings_order` 와 같은 차례).
@@ -5176,29 +5275,37 @@ impl SessionView {
             // 이름은 **사람 말**이다 — `inactive-dim` 을 읽고 아는 사람은 이미
             // `set-option` 을 칠 줄 안다(정본 `setting.<key>` 카탈로그와 같은 낱말).
             let label = base::config::setting_label(setting.key()).to_owned();
+            // 이름칸은 **고르기만** 한다 — 여기를 눌렀는데 값이 바뀌면 놀란다.
+            let name_id = ids.next();
             let mut line = Flex::row()
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(8.)
-                .with_child(
+                .with_child(self.clickable_panel(
+                    name_id,
+                    base::PanelTarget::SettingRow(row),
                     // 이름칸을 **고정 폭**으로 잡아 값칸의 세로줄을 맞춘다(정본은 26칸
                     // 패딩으로 같은 일을 한다 — 여기선 픽셀이라 상자로 잡는다).
                     ConstrainedBox::new(
                         Flex::row()
                             .with_main_axis_size(MainAxisSize::Min)
-                            .with_child(self.ui_text(label, 13., palette::FG))
+                            .with_child(self.ui_text(
+                                label,
+                                13.,
+                                if self.panel_hovered(name_id) { palette::CYAN } else { palette::FG },
+                            ))
                             .finish(),
                     )
                     .with_width(196.)
                     .finish(),
-                );
+                ));
             let display = match setting {
                 base::SettingRef::Core(s) => s.display(&values),
                 // 플러그인 줄의 **지금 값은 모른다**(표면은 목록이지 값이 아니다) —
                 // 모르는 것을 아는 척하지 않는다(`PluginSetting::display`).
                 base::SettingRef::Plugin(s) => s.display(),
             };
-            line = self.value_widget(line, &display);
+            line = self.value_widget(line, &display, row, &mut ids);
             let mut boxed = Container::new(line.finish())
                 .with_horizontal_padding(6.)
                 .with_vertical_padding(1.)
@@ -5214,7 +5321,7 @@ impl SessionView {
                 .with_cross_axis_alignment(CrossAxisAlignment::Start)
                 .with_spacing(10.)
                 .with_child(
-                    self.settings_sidebar(base::config::settings_cat_of(selected)),
+                    self.settings_sidebar(base::config::settings_cat_of(selected), &mut ids),
                 )
                 .with_child(list.finish())
                 .finish(),
@@ -5538,6 +5645,48 @@ impl SessionView {
     ///
     /// 문장만 있고 버튼이 없으면 **무엇이 기본인지 화면에 없다**(대조 문서 §9). 기본은
     /// 늘 '아니오'이고, 그 사실이 눈에 보여야 되돌릴 수 없는 일 앞에서 손이 멈춘다.
+    /// 재시작 점검 판의 **「지금 재시작」 단추**(§10-21ⓓ3).
+    ///
+    /// # 왜 안전하지 않으면 비활성인가
+    ///
+    /// 제보가 "안전하면 그 판에서 눌러 바로 재시작"이라고 조건을 붙였다. 안전하지 않을
+    /// 때 단추를 지우면 **왜 못 하는지가 화면에서 사라지고**, 그냥 누르게 두면 이 판은
+    /// 그것을 막으려고 있는 것을 스스로 무너뜨린다. 그래서 흐리게 남기고 위 표의 FAIL
+    /// 줄이 이유를 말한다.
+    ///
+    /// # 왜 지름길이 아닌가
+    ///
+    /// 누르면 [`Action::RestartAll`] 이 **평소 경로**로 돈다 — 팔레트의 `restart-all` 과
+    /// 같은 길이라 드라이런을 다시 돌고, FAIL 이면 확인 판이 뜬다. 되돌릴 수 없는 것
+    /// 앞의 게이트를 클릭이 건너뛰지 않는다.
+    fn restart_button(&self, safe: bool) -> Box<dyn Element> {
+        let label = self.ui_text(
+            t("지금 재시작 (restart-all)"),
+            13.,
+            if safe { palette::FG } else { palette::DIM },
+        );
+        let mut boxed = Container::new(label)
+            .with_horizontal_padding(14.)
+            .with_vertical_padding(4.)
+            .with_corner_radius(theme::PILL_RADIUS);
+        if !safe {
+            return Container::new(boxed.finish()).with_padding_top(8.).finish();
+        }
+        // 클릭 자리 번호는 이 판에 하나뿐이다 — 확인 판의 단추들과 같은 풀이지만 판이
+        // 다르고, 판이 바뀔 때 풀을 버린다(`handle_key` 의 hover 버리기).
+        let id = 0;
+        boxed = boxed
+            .with_background_color(if self.panel_hovered(id) { theme::HOVER } else { theme::ACTIVE })
+            .with_border(Border::all(1.5).with_border_color(theme::FOCUS));
+        Container::new(self.clickable_panel(
+            id,
+            base::PanelTarget::Button(base::Action::RestartAll),
+            boxed.finish(),
+        ))
+        .with_padding_top(8.)
+        .finish()
+    }
+
     fn confirm_buttons(&self) -> Box<dyn Element> {
         let pick = self.screens.confirm_pick();
         let mut row = Flex::row()
@@ -5987,21 +6136,20 @@ impl SessionView {
                 .fold(column, |c, row| {
                     c.with_child(self.text(row.clone(), 13., palette::FG))
                 }),
+            // 날 값(`serialize_ok: true`)이 아니라 **판정**을 보인다. 그리고 안전하면
+            // 그 자리에서 재시작한다(§10-21ⓓ3) — 판이 읽는 것에서 고르는 것이 됐다.
             Screen::RestartCheck => {
-                let rows = self.state.restart_check();
-                if rows.is_empty() {
-                    column.with_child(self.text(t("서버에 묻는 중…"), 13., palette::DIM))
-                } else {
-                    rows.iter().fold(column, |c, row| {
-                        c.with_child(self.text(row.clone(), 13., palette::FG))
-                    })
-                }
+                let (safe, rows) = proto::info::restart_check_lines(&self.state);
+                let column = rows.into_iter().fold(column, |c, row| {
+                    c.with_child(self.text(row, 13., palette::FG))
+                });
+                column.with_child(self.restart_button(safe))
             }
-            Screen::Version => column.with_child(self.text(
-                self.state.version().unwrap_or(t("서버에 묻는 중…")),
-                13.,
-                palette::FG,
-            )),
+            // 서버 줄 + 클라 줄 + 빌드 이름(§10-21ⓐ3). 줄을 짓는 것은 판정이라
+            // proto 가 한다 — 뷰가 지으면 두 클라가 다른 말을 하기 시작한다.
+            Screen::Version => proto::info::version_lines(&self.state)
+                .into_iter()
+                .fold(column, |c, row| c.with_child(self.text(row, 13., palette::FG))),
         };
         // 힌트 줄(판 바닥) — 위 구분선의 짝이다.
         let column = column.with_child(
@@ -6102,22 +6250,37 @@ impl SessionView {
                 chrome.insert((gx, bar.y as usize));
             }
         }
-        // 분할 경계 칸은 **뺀다** — 거기는 스플리터 바가 자기 그림을 그리고, 선까지
-        // 겹치면 잡는 자리가 두 겹으로 보인다.
-        let inside_divider = |x: usize, y: usize| {
+        // 분할 경계 칸 중 **곧은 선**은 뺀다 — 거기는 스플리터 바가 자기 그림을 그리고,
+        // 선까지 겹치면 잡는 자리가 두 겹으로 보인다.
+        //
+        // ★ **이음새 칸(`┬`·`┴`·`├`·`┤`·`┼`)은 빼지 않는다**(§10-21ⓟ). 서버가 주는
+        //   경계 사각형은 노드 rect **전체**를 덮으므로 그 양 끝이 가로 테두리와 만나는
+        //   칸이고, 그 칸까지 바에게 주면 가로 테두리가 거기서 끊긴 채 세로선만 지나가
+        //   **T 자로 튀어나온 것**처럼 보인다. 제보의 스크린샷이 그 그림이었다.
+        //
+        //   갈래는 **비트로** 가른다: 경계와 같은 축의 비트만 있으면 곧은 선(바의 것),
+        //   수직 성분이 섞였으면 이음새(테두리의 것)다.
+        let divider_owns = |x: usize, y: usize, bits: u8| {
+            const UP_DOWN: u8 = 0b1100;
+            const LEFT_RIGHT: u8 = 0b0011;
             layout.dividers.iter().any(|d| {
-                x >= d.x as usize
+                let inside = x >= d.x as usize
                     && x < (d.x + d.w) as usize
                     && y >= d.y as usize
-                    && y < (d.y + d.h) as usize
+                    && y < (d.y + d.h) as usize;
+                // 좌우 분할(`lr`)의 경계는 세로선이다.
+                let straight = if d.orient == "lr" { bits == UP_DOWN } else { bits == LEFT_RIGHT };
+                inside && straight
             })
         };
         chrome
             .into_iter()
-            .filter(|(x, y)| !inside_divider(*x, *y))
             .filter_map(|(x, y)| {
                 let cell = canvas.cell(x, y)?;
                 let bits = proto::canvas::box_bits(cell.ch)?;
+                if divider_owns(x, y, bits) {
+                    return None;
+                }
                 let (fg, _) = colors(&cell.style);
                 Some(crate::splitter::Seg { x: x as u16, y: y as u16, bits, color: fg })
             })
@@ -6444,6 +6607,16 @@ impl View for SessionView {
                         h: d.h,
                         active: self.dragging == Some(d.split_id)
                             || self.divider_hover == Some(d.split_id),
+                        // 테두리가 주인인 이음새 칸은 바가 건드리지 않는다(§10-21ⓟ).
+                        // `frame` 이 이미 "선으로 그릴 칸"이라 그 교집합이 곧 이음새다 —
+                        // 판정이 한 곳이라 둘이 갈릴 수 없다.
+                        skip: frame
+                            .iter()
+                            .copied()
+                            .filter(|(fx, fy)| {
+                                *fx >= d.x && *fx < d.x + d.w && *fy >= d.y && *fy < d.y + d.h
+                            })
+                            .collect(),
                     })
                     .collect();
                 column = column.with_child(

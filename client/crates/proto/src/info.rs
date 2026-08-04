@@ -143,6 +143,115 @@ fn server_lines(state: &SessionState, endpoint: &str, now: f64) -> Vec<String> {
     lines
 }
 
+/// 버전 판(`version`)의 줄 — **서버 줄과 클라 줄이 따로 선다**(§10-21ⓐ3).
+///
+/// # 왜 두 줄인가
+///
+/// 종전에는 서버가 지은 한 줄뿐이라 **어느 이진을 보고 있는지가 화면에 없었다.** 그리고
+/// 서버와 클라는 다른 OS 일 수 있다(원격 attach·페더레이션) — 한 줄에 섞으면 그 차이가
+/// 사라지고, 두 줄이면 그대로 드러난다.
+///
+/// 모양은 정본 `_show_version_popup` 과 같다(머리줄 · 클라 · 서버 · 빈 줄 · pid). 업타임
+/// 표기도 정본 `fmt_uptime` 과 같은 `1d 02:03:04` 다 — 나란히 놓고 보는 판이라 한쪽만
+/// 다른 단위면 사람이 매번 환산해야 한다.
+pub fn version_lines(state: &SessionState) -> Vec<String> {
+    let client = format!("{} · {}", base::build::NAME, base::build::os_label());
+    let mut lines = vec![
+        t("pytmux 버전 / 업타임").to_owned(),
+        String::new(),
+        tf(
+            "  클라이언트  {ver}  업타임 {up}",
+            &[
+                ("ver", client.as_str()),
+                ("up", base::build::fmt_uptime(base::build::uptime().as_secs_f64()).as_str()),
+            ],
+        ),
+    ];
+    match state.version_reply() {
+        // 서버 업타임은 회신 시점의 값이다 — 판이 떠 있는 동안 늘어야 정본과 같다.
+        Some(reply) => {
+            let up = base::build::fmt_uptime(reply.uptime + reply.received.elapsed().as_secs_f64());
+            lines.push(tf(
+                "  서버        {ver}  업타임 {up}",
+                &[("ver", strip_p4(&reply.version).as_str()), ("up", up.as_str())],
+            ));
+            lines.push(String::new());
+            lines.push(tf("  (서버 pid {pid})", &[("pid", reply.pid.to_string().as_str())]));
+        }
+        None => lines.push(tf("  서버        {ver}", &[("ver", t(WAITING))])),
+    }
+    lines.push(String::new());
+    // 받아야 할 파일 이름 그대로 — 화면에 뜬 이름으로 `build/` 에서 바로 찾는다.
+    lines.push(tf("  (빌드 {name})", &[("name", base::build::artifact().as_str())]));
+    lines
+}
+
+/// `p4:70135` → `70135`. 정본 `_show_version_popup._cl` 과 같은 규칙이고, 그 밖의
+/// 형식은 손대지 않는다(모르는 형식을 자르면 버전이 거짓이 된다).
+fn strip_p4(version: &str) -> String {
+    version.strip_prefix("p4:").unwrap_or(version).to_owned()
+}
+
+/// 재시작 점검 판의 줄 — **판정을 사람 말로**(§10-21ⓓ3).
+///
+/// # 왜 바뀌었나
+///
+/// 종전에는 서버가 준 칸을 `키: 값` 으로 이름순 나열했다(`serialize_ok: true`). 그런데
+/// **그 값의 해석은 이미 코드에 있다** — `base::restart::evaluate` 가 같은 칸으로
+/// `(안전한가, 줄들)` 을 만들고, 드라이런 게이트가 그것으로 재시작을 통과시킨다. 판만
+/// 날 값을 보이고 있었으니, 사용자는 화면을 읽고도 "그래서 되나"를 알 수 없었다.
+///
+/// 모양은 정본 `_show_restart_check_popup` 과 같다(판정 한 줄 · PASS/FAIL 표 · 버전 · 주석).
+///
+/// `(안전한가, 줄들)` 을 함께 돌려주는 이유: 뷰가 단추를 **켤지 끌지**를 같은 판정으로
+/// 정해야 한다. 뷰가 다시 재면 판의 글과 단추가 어긋날 수 있다.
+pub fn restart_check_lines(state: &SessionState) -> (bool, Vec<String>) {
+    use base::restart;
+    if !state.has_restart_check() {
+        return (false, vec![t(WAITING).to_owned()]);
+    }
+    let (safe, rows) = restart::evaluate(
+        state.restart_probe(),
+        restart::relaunch_ok(),
+        restart::Kind::All,
+    );
+    let mut lines = vec![
+        if safe { t("✅ 안전 — 지금 재시작할 수 있다") } else { t("⚠️ 주의 — 아래 FAIL 을 확인할 것") }
+            .to_owned(),
+        String::new(),
+    ];
+    for (ok, label) in &rows {
+        lines.push(tf(
+            "  [{res}] {label}",
+            &[("res", if *ok { "PASS" } else { "FAIL" }), ("label", label)],
+        ));
+    }
+    let field = |key: &str| {
+        state
+            .restart_check_field(key)
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default()
+    };
+    let (run, disk) = (field("running_version"), field("disk_version"));
+    if !run.is_empty() {
+        lines.push(String::new());
+        lines.push(tf(
+            "  서버 버전: 실행={run}  디스크={disk}",
+            &[("run", strip_p4(&run).as_str()), ("disk", strip_p4(&disk).as_str())],
+        ));
+        lines.push(
+            if run == disk { t("  (동일)") } else { t("  → 재시작 시 갱신됨") }.to_owned(),
+        );
+    }
+    let err = field("serialize_err");
+    if !err.is_empty() {
+        lines.push(tf("        직렬화 오류: {err}", &[("err", err.as_str())]));
+    }
+    lines.push(String::new());
+    lines.push(t("  (버전 차이는 위험이 아니라 '재시작이 새 코드를 로드'를 뜻함)").to_owned());
+    (safe, lines)
+}
+
 fn session_lines(state: &SessionState) -> Vec<String> {
     let tabs = state.tabs();
     let active = tabs.tabs.iter().find(|t| t.active);
@@ -189,6 +298,96 @@ mod tests {
         let tabs = tabs(&state, "/tmp/x.sock", 0.0);
         assert_eq!(tabs.len(), 2);
         assert!(tabs.iter().all(|(_, lines)| !lines.is_empty()), "빈 탭이 있다");
+    }
+
+    /// 회신 전에도 판이 **클라 줄을 이미 안다** — 서버를 기다려 여는 판이 아니다.
+    #[test]
+    fn the_version_panel_names_this_binary_before_the_server_answers() {
+        let lines = version_lines(&SessionState::new());
+        let joined = lines.join("\n");
+        assert!(joined.contains(base::build::NAME), "클라 이름이 없다: {lines:?}");
+        assert!(joined.contains(base::build::os_label()), "OS 가 없다: {lines:?}");
+        // ★ 받아야 할 파일 이름 그대로 — 이 줄이 빠지면 "어느 이진인가"가 다시 사라진다.
+        assert!(joined.contains(&base::build::artifact()), "배포 이름이 없다: {lines:?}");
+        assert!(joined.contains(WAITING), "서버 줄이 침묵한다: {lines:?}");
+    }
+
+    /// 서버 줄과 클라 줄은 **따로** 선다 — 한 줄에 섞으면 둘의 OS 가 다를 때 그 차이가
+    /// 사라진다(원격 attach·페더레이션).
+    #[test]
+    fn the_server_line_is_separate_and_strips_the_p4_prefix() {
+        let mut state = SessionState::new();
+        state.apply(
+            serde_json::from_value(serde_json::json!({
+                "t": "version", "version": "p4:70135", "uptime": 3723.0, "pid": 4242
+            }))
+            .unwrap(),
+        );
+        let lines = version_lines(&state);
+        let server = lines.iter().find(|l| l.contains("서버")).expect("서버 줄");
+        assert!(server.contains("70135"), "p4 접두를 안 뗐다: {server}");
+        assert!(!server.contains("p4:"), "{server}");
+        // 정본과 같은 업타임 모양(회신 직후라 초 자리만 흔들린다).
+        assert!(server.contains("01:02:0"), "업타임 모양이 정본과 다르다: {server}");
+        assert!(lines.iter().any(|l| l.contains("4242")), "pid 가 없다: {lines:?}");
+        // 그리고 클라 줄이 그대로 남아 있다(서버 회신이 그것을 밀어내지 않는다).
+        assert!(lines.iter().any(|l| l.contains(base::build::NAME)), "{lines:?}");
+    }
+
+    fn restart_check(extra: serde_json::Value) -> crate::ServerMessage {
+        let mut obj = serde_json::json!({
+            "t": "restart_check", "reexec_supported": true, "has_sessions": true,
+            "serialize_ok": true, "panes": 2, "panes_with_fd": 2,
+            "running_version": "p4:70135", "disk_version": "p4:70135",
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            obj[k] = v.clone();
+        }
+        serde_json::from_value(obj).unwrap()
+    }
+
+    /// ★ §10-21ⓓ3 — 판이 **판정**을 말한다.
+    ///
+    /// 종전에는 `serialize_ok: true` 같은 날 값을 이름순으로 늘어놓았다. 그 해석은 이미
+    /// 코드에 있었는데(드라이런 게이트가 그것으로 재시작을 막는다) 판만 안 쓰고 있었다.
+    #[test]
+    fn the_restart_panel_says_whether_it_is_safe_not_just_the_raw_fields() {
+        let mut state = SessionState::new();
+        state.apply(restart_check(serde_json::json!({})));
+        let (safe, lines) = restart_check_lines(&state);
+        assert!(safe, "{lines:?}");
+        let joined = lines.join("\n");
+        assert!(joined.contains("안전"), "판정 줄이 없다: {lines:?}");
+        assert!(joined.contains("[PASS]"), "표가 없다: {lines:?}");
+        assert!(!joined.contains("serialize_ok"), "날 값이 남았다: {lines:?}");
+        // 버전 줄과 그 해설(같으면 '동일')도 정본과 같은 자리에 선다.
+        assert!(joined.contains("70135"), "{lines:?}");
+        assert!(joined.contains("(동일)"), "{lines:?}");
+    }
+
+    /// 실패하면 **무엇이 실패했는지** 그 자리에 있어야 한다 — 단추를 흐리게만 두면
+    /// 사용자는 왜 못 하는지 알 수 없다.
+    #[test]
+    fn an_unsafe_check_names_the_failing_row_and_is_not_safe() {
+        let mut state = SessionState::new();
+        state.apply(restart_check(serde_json::json!({
+            "serialize_ok": false, "serialize_err": "그림자 객체",
+            "disk_version": "p4:70200",
+        })));
+        let (safe, lines) = restart_check_lines(&state);
+        assert!(!safe, "{lines:?}");
+        let joined = lines.join("\n");
+        assert!(joined.contains("[FAIL]"), "{lines:?}");
+        assert!(joined.contains("그림자 객체"), "직렬화 오류 글이 없다: {lines:?}");
+        assert!(joined.contains("갱신됨"), "버전이 달라졌는데 안 적는다: {lines:?}");
+    }
+
+    /// 회신 전에는 **지어내지 않는다** — 빈 표를 보이면 "전부 실패"로 읽힌다.
+    #[test]
+    fn before_the_reply_the_restart_panel_says_it_is_waiting() {
+        let (safe, lines) = restart_check_lines(&SessionState::new());
+        assert!(!safe);
+        assert_eq!(lines, vec![WAITING.to_owned()]);
     }
 
     #[test]

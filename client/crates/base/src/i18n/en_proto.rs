@@ -39,6 +39,26 @@ pub static EN: &[(&str, &str)] = &[
         "If degraded sticks, reconnect with the reconnect / resync command",
     ),
     ("서버에 묻는 중…", "Asking the server…"),
+    // ── info.rs — 버전 판(§10-21ⓐ3 · 정본 `version.*` 카탈로그와 같은 모양) ──
+    ("pytmux 버전 / 업타임", "pytmux version / uptime"),
+    ("  클라이언트  {ver}  업타임 {up}", "  Client  {ver}  uptime {up}"),
+    ("  서버        {ver}  업타임 {up}", "  Server  {ver}  uptime {up}"),
+    ("  서버        {ver}", "  Server  {ver}"),
+    ("  (서버 pid {pid})", "  (server pid {pid})"),
+    ("  (빌드 {name})", "  (build {name})"),
+    // ── info.rs — 재시작 점검 판(§10-21ⓓ3 · 정본 `restartcheck.*` 와 같은 모양) ──
+    ("✅ 안전 — 지금 재시작할 수 있다", "✅ Safe — you can restart now"),
+    ("⚠️ 주의 — 아래 FAIL 을 확인할 것", "⚠️ Caution — review the FAIL items below"),
+    // `  [{res}] {label}` 은 두 로케일이 같은 글이라 표에 안 넣는다(같은 번역은
+    // 표를 키우기만 하고, 폴백이 이미 그 글을 준다 — `en_tables_have_no_identity_rows`).
+    ("  서버 버전: 실행={run}  디스크={disk}", "  Server version: running={run}  disk={disk}"),
+    ("  (동일)", "  (same)"),
+    ("  → 재시작 시 갱신됨", "  → will update on restart"),
+    ("        직렬화 오류: {err}", "        serialize error: {err}"),
+    (
+        "  (버전 차이는 위험이 아니라 '재시작이 새 코드를 로드'를 뜻함)",
+        "  (a version diff is not a risk — it means 'restart loads new code')",
+    ),
     ("호스트   {name}", "Host       {name}"),
     ("연결     {mode}", "Link       {mode}"),
     ("엔드포인트 {endpoint}", "Endpoint   {endpoint}"),

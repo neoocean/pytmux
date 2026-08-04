@@ -250,6 +250,9 @@ fn main() -> Result<()> {
     //   실패 사유가 종전처럼 보이게 한다. 러스트 std 가 표준 핸들을 첫 출력 때 캐시하므로
     //   한 줄이라도 먼저 내면 늦는다(`console` 모듈 문서).
     let has_console = console::attach_parent();
+    // 기동 시각을 여기서 못박는다 — 처음 읽는 자리(버전 판)에서 초기화되면 업타임이
+    // "판을 처음 연 시각"부터 세어 늘 0 근처가 된다(`base::build::started`).
+    base::build::mark_start();
     // 로거가 없으면 `log::info!` 는 **어디로도 안 간다** — 진단을 남긴 줄 알고
     // 아무것도 안 남긴 상태가 된다. 기본은 조용하고(`RUST_LOG` 미설정 시 warn
     // 이상), 필요할 때 `RUST_LOG=info` 로 켠다.

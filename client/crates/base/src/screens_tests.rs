@@ -482,13 +482,17 @@ fn clicking_a_settings_tab_jumps_to_that_category() {
     let mut screens = Screens::new();
     screens.open(Screen::Settings);
     for (i, cat) in SETTINGS_CATS.iter().enumerate() {
-        assert!(!screens.panel_click(PanelTarget::SettingsCat(i)), "탭은 실행이 아니다");
+        assert_eq!(
+            screens.panel_click(PanelTarget::SettingsCat(i)),
+            PanelEffect::Moved,
+            "탭은 실행이 아니다"
+        );
         assert_eq!(screens.selected(), settings_cat_first(cat).unwrap());
         assert_eq!(SETTINGS[screens.selected()].cat, *cat);
     }
     // 없는 탭은 아무 일도 안 한다(화면이 바뀌면 자리가 사라질 수 있다).
     let before = screens.selected();
-    assert!(!screens.panel_click(PanelTarget::SettingsCat(999)));
+    assert_eq!(screens.panel_click(PanelTarget::SettingsCat(999)), PanelEffect::Moved);
     assert_eq!(screens.selected(), before);
 }
 
@@ -499,13 +503,16 @@ fn clicking_a_palette_tab_switches_the_category() {
     let mut screens = Screens::new();
     screens.open_palette();
     screens.press(Key::Down, Mods::NONE);
-    assert!(!screens.panel_click(PanelTarget::PaletteTab(2)));
+    assert_eq!(screens.panel_click(PanelTarget::PaletteTab(2)), PanelEffect::Moved);
     assert_eq!(screens.palette_cat(), Some(PALETTE_CATS[1]));
     assert_eq!(screens.selected(), 0, "탭을 바꿨는데 커서가 남았다");
     // 0 은 `전체` 다.
     screens.panel_click(PanelTarget::PaletteTab(0));
     assert_eq!(screens.palette_cat(), None);
-    assert!(!screens.panel_click(PanelTarget::PaletteTab(PALETTE_CATS.len() + 1)));
+    assert_eq!(
+        screens.panel_click(PanelTarget::PaletteTab(PALETTE_CATS.len() + 1)),
+        PanelEffect::Moved
+    );
 }
 
 /// 메뉴 줄 클릭은 **그 줄로 옮기고 `Enter` 를 태워 달라**고 답한다.
@@ -517,13 +524,56 @@ fn clicking_a_menu_row_asks_for_the_normal_enter_path() {
     use crate::MenuRow;
     let mut screens = Screens::new();
     screens.open(Screen::Menu);
-    assert!(screens.panel_click(PanelTarget::Row(1)), "실행 경로를 안 탄다");
+    assert_eq!(screens.panel_click(PanelTarget::Row(1)), PanelEffect::Enter, "실행 경로를 안 탄다");
     assert_eq!(screens.selected(), 1);
     // 뷰가 이어서 Enter 를 태우면 그 줄의 뜻대로 동작한다(여기서는 그룹 진입).
     let rows = screens.menu_rows();
     let MenuRow::Group(second) = rows[1] else { panic!("둘째 줄이 그룹이 아니다") };
     screens.press(Key::Enter, Mods::NONE);
     assert_eq!(screens.menu_group(), Some(second));
+}
+
+// ── 설정 판 마우스(§10-21ⓣ) ────────────────────────────────────────────────────
+
+/// ★ 이름칸은 **고르기만** 한다.
+///
+/// [`PanelTarget::Row`] 로 뭉뚱그리면 이름을 눌렀을 뿐인데 값이 바뀐다 — 설정에서
+/// `Enter` 는 값을 넘기는 키라서다. 값을 바꾸는 것은 값칸의 일이다.
+#[test]
+fn clicking_a_setting_name_only_moves_the_cursor() {
+    let mut screens = Screens::new();
+    screens.open(Screen::Settings);
+    assert_eq!(screens.panel_click(PanelTarget::SettingRow(3)), PanelEffect::Moved);
+    assert_eq!(screens.selected(), 3);
+}
+
+/// 값칸의 화살표·토글은 **평소 `←→` 경로**를 탄다 — 감기·범위 규칙이 저쪽에 있다.
+#[test]
+fn clicking_a_setting_arrow_takes_the_normal_direction_path() {
+    let mut screens = Screens::new();
+    screens.open(Screen::Settings);
+    assert_eq!(
+        screens.panel_click(PanelTarget::SettingStep { row: 5, forward: false }),
+        PanelEffect::Dir(false)
+    );
+    // 누른 줄로 커서도 옮긴다 — 안 옮기면 다른 줄의 값이 바뀐다.
+    assert_eq!(screens.selected(), 5);
+    assert_eq!(
+        screens.panel_click(PanelTarget::SettingStep { row: 5, forward: true }),
+        PanelEffect::Dir(true)
+    );
+}
+
+/// 낱말을 직접 찍으면 **그 자리**가 그대로 넘어온다(화살표처럼 한 칸씩 돌지 않는다).
+#[test]
+fn clicking_a_setting_word_picks_that_exact_slot() {
+    let mut screens = Screens::new();
+    screens.open(Screen::Settings);
+    assert_eq!(
+        screens.panel_click(PanelTarget::SettingChoice { row: 2, index: 1 }),
+        PanelEffect::Pick { row: 2, index: 1 }
+    );
+    assert_eq!(screens.selected(), 2);
 }
 
 /// 확인 버튼 클릭 — **누른 버튼이 곧 답**이다.
@@ -534,7 +584,7 @@ fn clicking_a_confirm_button_answers_with_that_button() {
     assert_eq!(screens.confirm_pick(), CONFIRM_NO, "열 때는 늘 아니오다");
 
     // '예' 를 눌렀다 → 이어지는 Enter 가 예로 확정된다.
-    assert!(screens.panel_click(PanelTarget::ConfirmButton(CONFIRM_YES)));
+    assert_eq!(screens.panel_click(PanelTarget::ConfirmButton(CONFIRM_YES)), PanelEffect::Enter);
     assert_eq!(screens.confirm_pick(), CONFIRM_YES);
     assert_eq!(
         screens.press(Key::Enter, Mods::NONE),
@@ -544,7 +594,7 @@ fn clicking_a_confirm_button_answers_with_that_button() {
     // '아니오' 를 눌렀다 → 아무 일도 안 일어난다(되돌릴 수 없는 것 앞의 기본).
     let mut screens = Screens::new();
     screens.confirm(Prompt::KillTab);
-    assert!(screens.panel_click(PanelTarget::ConfirmButton(CONFIRM_NO)));
+    assert_eq!(screens.panel_click(PanelTarget::ConfirmButton(CONFIRM_NO)), PanelEffect::Enter);
     assert_eq!(screens.press(Key::Enter, Mods::NONE), Some(ScreenKey::Closed));
 }
 

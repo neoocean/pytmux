@@ -900,6 +900,22 @@ pub mod theme {
     }
 }
 
+/// `request_version` 회신의 **날 값** + 그것을 받은 시각.
+///
+/// 시각까지 드는 이유: 서버 업타임은 회신 순간의 값이라 판이 떠 있는 동안 멈춘다.
+/// 정본은 그 값을 매 초 외삽해 늘려 그린다(`_show_version_popup` 의 `tick_cb`) —
+/// 같은 판을 나란히 놓았을 때 한쪽만 멎어 있으면 그것이 곧 갈림이다.
+#[derive(Debug, Clone)]
+pub struct VersionReply {
+    /// 서버 코드 버전. `p4:70135` 처럼 접두가 붙어 온다.
+    pub version: String,
+    /// 회신 **시점**의 서버 업타임(초).
+    pub uptime: f64,
+    pub pid: i64,
+    /// 회신을 받은 시각 — 지금 업타임 = `uptime + received.elapsed()`.
+    pub received: std::time::Instant,
+}
+
 /// 서버 세션의 현재 모습.
 #[derive(Debug, Default, Clone)]
 pub struct SessionState {
@@ -935,6 +951,9 @@ pub struct SessionState {
     last_error: Option<String>,
     /// `request_version` 회신을 사람이 읽을 한 줄로. 묻기 전에는 `None`.
     version: Option<String>,
+    /// 같은 회신의 **날 값**. 한 줄만 들면 버전 판이 그 줄밖에 못 그린다 —
+    /// 서버 줄과 클라 줄을 나눠 적으려면 조각이 필요하다(§10-21ⓐ3).
+    version_reply: Option<VersionReply>,
     /// `request_restart_check` 회신을 사람이 읽을 줄들로. 묻기 전에는 비어 있다.
     restart_check: Vec<String>,
     /// `run-shell` 이 마지막으로 낸 출력(줄 단위). 상한은 파이썬과 같은 40줄이다.
@@ -1183,6 +1202,12 @@ impl SessionState {
                         ("version", version.as_str()),
                     ],
                 ));
+                self.version_reply = Some(VersionReply {
+                    version,
+                    uptime,
+                    pid,
+                    received: std::time::Instant::now(),
+                });
                 true
             }
             ServerMessage::Notice { text, sev, i18n } => {
@@ -1819,12 +1844,26 @@ impl SessionState {
             serialize: flag("serialize_ok"),
             panes: count("panes"),
             panes_with_fd: count("panes_with_fd"),
+            // 없으면 `None` — 옛 서버다. 여기서 우리 OS 로 채우면 **원격 서버의
+            // 조건을 클라 OS 로 적게 된다**(§10-21ⓔ3).
+            server_os: f
+                .get("server_os")
+                .and_then(serde_json::Value::as_str)
+                .and_then(base::restart::Os::parse),
         }
     }
 
     /// 드라이런 회신이 이미 왔나(게이트가 회신을 기다릴지 정한다).
     pub fn has_restart_check(&self) -> bool {
         !self.restart_check_fields.is_empty()
+    }
+
+    /// 드라이런 회신의 칸 하나 — 판정에 안 쓰는 곁들이(버전·오류 글)를 판이 읽는 길.
+    ///
+    /// [`restart_probe`](Self::restart_probe) 와 갈라 두는 이유: 저쪽은 **판정에 드는
+    /// 값**만 옮긴다. 판에 적을 글까지 그 구조체에 넣으면 core 가 화면 문구를 알게 된다.
+    pub fn restart_check_field(&self, key: &str) -> Option<&serde_json::Value> {
+        self.restart_check_fields.get(key)
     }
 
     /// 다음 드라이런을 위해 지난 회신을 버린다.
@@ -1895,6 +1934,11 @@ impl SessionState {
 
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
+    }
+
+    /// 같은 회신의 날 값 — 버전 판이 서버 줄과 클라 줄을 나눠 적을 때 쓴다.
+    pub fn version_reply(&self) -> Option<&VersionReply> {
+        self.version_reply.as_ref()
     }
 
     /// 지나간 알림들. **새것이 앞**이다.

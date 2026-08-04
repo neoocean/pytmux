@@ -625,6 +625,8 @@ register({
         "version.client": "  클라이언트  {ver:<14}  업타임 {up}",
         "version.server": "  서버        {ver:<14}  업타임 {up}",
         "version.pid": "  (서버 pid {pid})",
+        # §10-21ⓐ3 — 이 클라가 무엇인가(서버는 원격일 수 있어 OS 가 다를 수 있다).
+        "version.build": "  (빌드 {name})",
         # 서버 정보(host status) 탭
         "hoststatus.host": "호스트: {host}",
         "hoststatus.conn": "연결: {kind}",
@@ -677,6 +679,7 @@ register({
         "version.client": "  Client  {ver:<14}  uptime {up}",
         "version.server": "  Server  {ver:<14}  uptime {up}",
         "version.pid": "  (server pid {pid})",
+        "version.build": "  (build {name})",
         "hoststatus.host": "Host: {host}",
         "hoststatus.conn": "Connection: {kind}",
         "hoststatus.conn_remote": "remote (ssh)", "hoststatus.conn_local": "local",
