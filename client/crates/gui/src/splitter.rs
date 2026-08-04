@@ -170,6 +170,25 @@ pub struct SpanMark {
     pub x1: u16,
 }
 
+/// **그 앱이 그은** 밑줄(SGR 4) — 캔버스 셀 좌표 `[x0, x1)` 와 그 글자의 색(pytmux-123).
+///
+/// [`SpanMark`] 와 자리는 같지만 뜻이 다르다. 저건 *"여기는 누를 수 있다"* 는 **우리**
+/// 표시라 FOCUS 색이고, 이건 패널 안 프로그램이 칠한 **글자의 속성**이라 그 글자와 같은
+/// 색이라야 한다 — 우리 색으로 그으면 `man`·`git diff` 가 밑줄로 하던 말이 다른 말이 된다.
+///
+/// # 왜 글리프가 아니라 오버레이인가
+///
+/// 밑줄은 글자 모양이 아니라 **칸 아래 선**이다. 캔버스는 조각(run)마다 `Text` 를
+/// 얹는데 거기엔 밑줄 속성이 없고, 넣더라도 조각 경계에서 선이 끊긴다(고정폭 산수와
+/// 글꼴 자연폭이 한 톨씩 다르다). 오버레이는 이미 셀 격자를 알고 있어(`CELL_PROBE`)
+/// 칸 단위로 이어 그릴 수 있다 — 스크롤바·커서·범위 밑줄이 같은 이유로 여기 있다.
+pub struct Underline {
+    pub y: u16,
+    pub x0: u16,
+    pub x1: u16,
+    pub color: ColorU,
+}
+
 /// 밑줄 두께.
 const MARK_PX: f32 = 1.5;
 
@@ -199,6 +218,8 @@ pub struct SplitterOverlay {
     hints: Vec<ScrollHint>,
     /// 마우스가 올라온 범위의 밑줄(없으면 안 그린다).
     marks: Vec<SpanMark>,
+    /// 그 앱이 그은 밑줄(SGR 4). 셸 출력에 밑줄이 없으면 비어 있다.
+    underlines: Vec<Underline>,
     /// 셀 자리표 id(`SessionView::CELL_PROBE`) — 셀 기하의 원천.
     probe_id: &'static str,
     origin: Option<Point>,
@@ -213,9 +234,10 @@ impl SplitterOverlay {
         cursor: Option<Cursor>,
         hints: Vec<ScrollHint>,
         marks: Vec<SpanMark>,
+        underlines: Vec<Underline>,
         probe_id: &'static str,
     ) -> Self {
-        Self { child, bars, segs, blocks, cursor, hints, marks, probe_id, origin: None }
+        Self { child, bars, segs, blocks, cursor, hints, marks, underlines, probe_id, origin: None }
     }
 
     /// 블록 문자 칸들을 사각형으로. 비율(`BlockFill`)을 칸 크기에 곱할 뿐이다 —
@@ -264,14 +286,36 @@ impl SplitterOverlay {
     /// 마우스가 올라온 범위에 밑줄을 긋는다(§10-21ⓥ2·ⓧ2).
     fn paint_marks(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
         for mark in &self.marks {
-            let x0 = origin.x() + mark.x0 as f32 * cw;
-            let w = (mark.x1.saturating_sub(mark.x0)) as f32 * cw;
-            // 글자 바닥에서 살짝 띄운다 — 붙이면 받침이 있는 글자(한글)와 겹친다.
-            let y = origin.y() + (mark.y + 1) as f32 * ch - MARK_PX - 1.;
-            ctx.scene
-                .draw_rect_without_hit_recording(RectF::new(vec2f(x0, y), vec2f(w, MARK_PX)))
-                .with_background(Fill::Solid(theme::FOCUS));
+            Self::underline_rect(origin, cw, ch, mark.y, mark.x0, mark.x1, theme::FOCUS, ctx);
         }
+    }
+
+    /// 그 앱이 그은 밑줄(SGR 4 · pytmux-123). 색은 **그 글자의 것**이다.
+    fn paint_underlines(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        for line in &self.underlines {
+            Self::underline_rect(origin, cw, ch, line.y, line.x0, line.x1, line.color, ctx);
+        }
+    }
+
+    /// 칸 구간 `[x0, x1)` 아래에 선 하나. **자리 산수는 여기 한 곳**이다 — 범위 밑줄과
+    /// 글자 밑줄이 각자 자리를 재면 같은 줄에서 두 선이 어긋나 그어진다.
+    fn underline_rect(
+        origin: Vector2F,
+        cw: f32,
+        ch: f32,
+        y: u16,
+        x0: u16,
+        x1: u16,
+        color: ColorU,
+        ctx: &mut PaintContext,
+    ) {
+        let left = origin.x() + x0 as f32 * cw;
+        let w = (x1.saturating_sub(x0)) as f32 * cw;
+        // 글자 바닥에서 살짝 띄운다 — 붙이면 받침이 있는 글자(한글)와 겹친다.
+        let top = origin.y() + (y + 1) as f32 * ch - MARK_PX - 1.;
+        ctx.scene
+            .draw_rect_without_hit_recording(RectF::new(vec2f(left, top), vec2f(w, MARK_PX)))
+            .with_background(Fill::Solid(color));
     }
 
     /// 커서 칸을 **테두리 상자**로 그린다.
@@ -427,6 +471,9 @@ impl Element for SplitterOverlay {
         }
         // 스크롤 힌트는 테두리 **위**에 얹는다(§10-21ⓨ2) — 그 선을 덮는 것이 뜻이다.
         self.paint_hints(origin, cw, ch, ctx);
+        // 글자 밑줄(SGR 4 · pytmux-123)이 먼저 — 범위 밑줄(우리 표시)이 그 위에 얹혀야
+        // hover 중에 "누를 수 있다"가 글자 속성보다 또렷하다.
+        self.paint_underlines(origin, cw, ch, ctx);
         // 범위 밑줄(§10-21ⓥ2·ⓧ2) — 글자 **아래**에 긋는다(글자를 안 건드린다).
         self.paint_marks(origin, cw, ch, ctx);
         // 커서는 **맨 위**다 — 경계·바에 가리면 그 칸에 커서가 있는지 알 수 없다.

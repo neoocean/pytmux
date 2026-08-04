@@ -5347,3 +5347,136 @@ fn a_pane_without_a_cwd_does_not_borrow_the_active_one() {
         "옆 패널이 활성 패널의 cwd 를 빌려 풀었다 — 복사한 값이 조용히 틀린다"
     );
 }
+
+// ── 글자 밑줄(SGR 4 · pytmux-123) ────────────────────────────────────────────
+//
+// 서버는 밑줄을 정상적으로 싣고 파서도 정상적으로 읽는다. 마지막 한 걸음(칠하기)만
+// 없어서 **아무 오라클도 안 울었다** — 스타일 왕복 테스트는 값이 살아 있는지만 본다.
+// 그래서 여기서 재는 것은 값이 아니라 **그릴 것이 생기는가**다.
+
+fn underlined(fg: Option<proto::style::Color>) -> CellStyle {
+    CellStyle { underline: true, fg, ..Default::default() }
+}
+
+#[test]
+fn underlined_cells_become_one_line_per_run() {
+    let mut canvas = proto::canvas::Canvas::new(10, 1);
+    canvas.put_text(0, 0, "ab", CellStyle::default());
+    canvas.put_text(2, 0, "cd", underlined(None));
+    canvas.put_text(4, 0, "ef", CellStyle::default());
+
+    let lines = SessionView::underlines(&canvas);
+    assert_eq!(lines.len(), 1, "이어진 두 칸이 한 선이 아니다: {}", lines.len());
+    assert_eq!((lines[0].y, lines[0].x0, lines[0].x1), (0, 2, 4), "자리가 틀렸다");
+}
+
+#[test]
+fn a_canvas_without_underlines_asks_for_no_lines() {
+    let mut canvas = proto::canvas::Canvas::new(6, 1);
+    canvas.put_text(0, 0, "hello", CellStyle::default());
+    assert!(
+        SessionView::underlines(&canvas).is_empty(),
+        "밑줄이 없는 화면에 선을 그리려 한다"
+    );
+}
+
+/// 색이 갈리면 끊는다 — 다른 색의 밑줄을 한 선으로 이으면 그중 하나가 거짓이 된다.
+#[test]
+fn runs_break_where_the_colour_changes() {
+    let mut canvas = proto::canvas::Canvas::new(8, 1);
+    canvas.put_text(0, 0, "ab", underlined(proto::style::Color::parse("red")));
+    canvas.put_text(2, 0, "cd", underlined(proto::style::Color::parse("blue")));
+
+    let lines = SessionView::underlines(&canvas);
+    assert_eq!(lines.len(), 2, "색이 갈렸는데 한 선으로 이었다");
+    assert_eq!((lines[0].x0, lines[0].x1), (0, 2));
+    assert_eq!((lines[1].x0, lines[1].x1), (2, 4));
+    assert_ne!(lines[0].color, lines[1].color, "선 색이 글자 색을 안 따라간다");
+}
+
+/// 줄이 다르면 당연히 다른 선이다(행을 넘어 이어 붙으면 화면 밖으로 선이 뻗는다).
+#[test]
+fn runs_do_not_wrap_across_rows() {
+    let mut canvas = proto::canvas::Canvas::new(4, 2);
+    canvas.put_text(2, 0, "ab", underlined(None));
+    canvas.put_text(0, 1, "cd", underlined(None));
+
+    let lines = SessionView::underlines(&canvas);
+    assert_eq!(lines.len(), 2);
+    assert_eq!((lines[0].y, lines[0].x0, lines[0].x1), (0, 2, 4));
+    assert_eq!((lines[1].y, lines[1].x0, lines[1].x1), (1, 0, 2));
+}
+
+/// 넓은 글자는 **두 칸**을 덮는다 — 뒤 칸(continuation)이 같은 스타일이라 이어진다.
+/// 한 칸만 그으면 한글 밑줄이 글자 절반에서 끊긴다.
+#[test]
+fn a_wide_character_is_underlined_across_both_of_its_cells() {
+    let mut canvas = proto::canvas::Canvas::new(6, 1);
+    canvas.put_text(0, 0, "한", underlined(None));
+
+    let lines = SessionView::underlines(&canvas);
+    assert_eq!(lines.len(), 1);
+    assert_eq!((lines[0].x0, lines[0].x1), (0, 2), "넓은 글자의 뒤 칸이 빠졌다");
+}
+
+/// 반전된 밑줄은 **보이는 색**을 따라간다 — `colors()` 가 fg·bg 를 바꾸므로 선도 같이
+/// 바뀌어야 배경에 묻히지 않는다.
+#[test]
+fn a_reversed_run_underlines_in_the_colour_the_eye_sees() {
+    let mut canvas = proto::canvas::Canvas::new(4, 1);
+    let style = CellStyle {
+        underline: true,
+        reverse: true,
+        bg: proto::style::Color::parse("red"),
+        ..Default::default()
+    };
+    canvas.put_text(0, 0, "ab", style);
+
+    let lines = SessionView::underlines(&canvas);
+    assert_eq!(lines.len(), 1);
+    let plain = CellStyle { fg: proto::style::Color::parse("red"), ..Default::default() };
+    assert_eq!(lines[0].color, colors(&plain).0, "반전을 안 푼 색으로 그었다");
+}
+
+/// ★ **배선까지** 본다 — 규칙만 재면 `render` 에서 부르는 줄을 지워도 통과한다.
+/// 진짜 서버 프레임(스타일 `un`)을 먹여 그릴 선이 생기는지 끝까지 따라간다.
+#[test]
+fn an_underlined_cell_from_the_server_reaches_the_overlay() {
+    let (mut view, tx, _sent) = harness();
+    let msgs: Vec<ServerMessage> = vec![
+        serde_json::from_value(serde_json::json!({
+            "t": "layout", "cols": 20, "rows": 3, "active": 1,
+            "panes": [{"id": 1, "x": 0, "y": 0, "w": 20, "h": 3, "active": true}]
+        }))
+        .unwrap(),
+        serde_json::from_value(serde_json::json!({
+            "t": "screen", "pane": 1,
+            "rows": [[["ab", {}], ["cd", {"un": true}]]],
+            "cursor": null, "wrap": [], "top": 0
+        }))
+        .unwrap(),
+    ];
+    for msg in msgs {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+
+    let lines = view.underline_marks();
+    assert_eq!(
+        lines.len(),
+        1,
+        "서버가 보낸 밑줄이 오버레이까지 못 왔다(칠하는 쪽이 없으면 여기가 빈다)"
+    );
+    assert_eq!((lines[0].y, lines[0].x0, lines[0].x1), (0, 2, 4));
+}
+
+/// 반대쪽: 밑줄 없는 화면은 오버레이에 아무 일도 안 시킨다.
+#[test]
+fn a_plain_screen_reaches_the_overlay_with_nothing_to_draw() {
+    let (mut view, tx, _sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert!(view.underline_marks().is_empty());
+}

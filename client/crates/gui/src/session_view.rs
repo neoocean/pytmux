@@ -1667,13 +1667,14 @@ impl SessionView {
             .active_pane()
             .and_then(|p| self.state.pane_rect(p))
             .map_or(cols, |(px, _, w, _)| (px as usize + w as usize).min(cols));
-        // "아직 확정 안 됐다"를 **반전**으로 말한다.
+        // "아직 확정 안 됐다"를 **반전 + 밑줄**로 말한다.
         //
-        // ⚠ 원래는 밑줄(터미널의 조합 표시 관례)로 하려 했는데, **이 클라는 밑줄을 아예
-        //   안 그린다** — `colors()` 가 fg·bg·reverse 만 본다(SGR 4 가 통째로 버려지는
-        //   것은 이 배지와 무관한 별개 결함이다). 안 그려지는 표시를 고르면 조합 글자가
-        //   확정 글자와 **똑같아 보이고**, 그건 이 기능의 절반을 잃는 것이다.
-        //   `underline` 도 함께 세워 둔다 — 나중에 그리게 되면 그때 뜻이 맞는다.
+        // 원래 고르려던 것은 밑줄 하나였다(터미널의 조합 표시 관례). 그런데 그때 이
+        // 클라는 밑줄을 **아예 안 그렸고**(pytmux-123 — `colors()` 가 fg·bg·reverse 만
+        // 봤다), 안 그려지는 표시를 고르면 조합 글자가 확정 글자와 똑같아 보인다. 그래서
+        // 반전으로 넘기고 `underline` 은 세워만 뒀다 — *"나중에 그리게 되면 그때 뜻이
+        // 맞는다"*. 그 나중이 왔다(오버레이가 SGR 4 를 긋는다). 반전은 **남긴다**: 이미
+        // 그 모습으로 받아들여진 표시라 지금 빼면 조합 표시가 조용히 옅어진다.
         let style = proto::style::CellStyle {
             reverse: true,
             underline: true,
@@ -6585,6 +6586,68 @@ impl SessionView {
         out
     }
 
+    /// 지금 화면이 요구하는 글자 밑줄들 — `render` 가 오버레이에 넘기는 그 값.
+    ///
+    /// 규칙([`underlines`](Self::underlines))과 갈라 둔 이유는 **오라클**이다: 순수
+    /// 함수만 재면 이걸 부르는 줄을 지워도 테스트가 통과한다(`client/CLAUDE.md` 가
+    /// 경고하는 공허 통과). 이 함수는 서버 메시지 → 합성 캔버스 → 규칙까지를 한 줄로
+    /// 묶으므로, 테스트가 **진짜 프레임을 먹여** 그릴 것이 생기는지 볼 수 있다.
+    fn underline_marks(&self) -> Vec<crate::splitter::Underline> {
+        self.composite_for_paint()
+            .as_ref()
+            .map(Self::underlines)
+            .unwrap_or_default()
+    }
+
+    /// 밑줄(SGR 4)이 켜진 칸들을 **이어진 구간**으로 모은다(pytmux-123).
+    ///
+    /// # 왜 이게 없었나
+    ///
+    /// 서버는 밑줄을 정상적으로 싣고 파서도 정상적으로 읽는다(`CellStyle::underline`).
+    /// 마지막 한 걸음, **칠하는 쪽만** 없었다 — `colors()` 는 fg·bg·reverse 만 본다.
+    /// 그래서 아무 오라클도 안 울었다(스타일 왕복 테스트는 값이 살아 있는지만 본다).
+    /// `man`·`less`·`git diff` 가 밑줄을 쓰므로 실제로 정보가 사라졌다.
+    ///
+    /// # 왜 칸을 이어 붙이나
+    ///
+    /// 칸마다 따로 그리면 인접한 사각형 사이에 반픽셀 틈이 생겨 **점선처럼** 보인다.
+    /// 색이 같고 붙어 있으면 한 구간이다. 색이 갈리면 끊는다 — 서로 다른 색의 밑줄을
+    /// 한 선으로 이으면 그중 하나가 거짓이 된다.
+    ///
+    /// 넓은 글자의 뒤 칸(`continuation`)도 **같은 스타일**을 갖고 있어 자연히 이어진다.
+    fn underlines(canvas: &proto::canvas::Canvas) -> Vec<crate::splitter::Underline> {
+        let (w, h) = canvas.size();
+        let mut out: Vec<crate::splitter::Underline> = Vec::new();
+        for y in 0..h {
+            let mut run: Option<crate::splitter::Underline> = None;
+            for x in 0..w {
+                let color = canvas
+                    .cell(x, y)
+                    .filter(|cell| cell.style.underline)
+                    .map(|cell| colors(&cell.style).0);
+                match (&mut run, color) {
+                    // 이어진다 — 끝만 늘린다.
+                    (Some(cur), Some(c)) if cur.color == c && cur.x1 == x as u16 => {
+                        cur.x1 = x as u16 + 1;
+                    }
+                    // 끊겼거나 색이 갈렸다 — 앞 구간을 내려놓고 새로 연다.
+                    (_, Some(c)) => {
+                        out.extend(run.take());
+                        run = Some(crate::splitter::Underline {
+                            y: y as u16,
+                            x0: x as u16,
+                            x1: x as u16 + 1,
+                            color: c,
+                        });
+                    }
+                    (_, None) => out.extend(run.take()),
+                }
+            }
+            out.extend(run);
+        }
+        out
+    }
+
     /// 이 칸을 **글자 대신 사각형**으로 그리나 — `render_row` 가 비울 칸을 정할 때 쓴다.
     ///
     /// [`block_cells`](Self::block_cells) 와 **같은 판정**이라야 한다(테두리 쪽과 같은
@@ -6948,6 +7011,7 @@ impl View for SessionView {
                         self.cursor_cell(),
                         self.scroll_hints(),
                         self.span_marks(),
+                        self.underline_marks(),
                         Self::CELL_PROBE,
                     )
                     .finish(),
