@@ -848,8 +848,13 @@ class ServerIOMixin:
                 # 켠 것이 그 클라이기 때문이다. **틱은 서버가 판단한다**: 정본은
                 # `client_tick` 으로 클라가 1초마다 재합성하는데, 네이티브 클라는
                 # 프레임이 도착해야 다시 그린다(지금 화면 갱신과 같은 길).
+                # 패널 사각형은 클라와 무관하다 — 클라마다 다시 세지 않는다.
+                pane_rects = [{"id": p.id, "x": x, "y": y, "w": w, "h": h}
+                              for p, (x, y, w, h)
+                              in self._client_pane_rects(sess, win)]
                 for c in clients:
-                    frame = self._plugin_cells_frame(c, sess, win, now)
+                    frame = self._plugin_cells_frame(c, sess, win, now,
+                                                     pane_rects)
                     if frame is not None:
                         frames_by_client[c].append(frame)
                 # 클라마다 이 프레임의 모든 메시지를 한 번에 write+drain(B4).
@@ -861,13 +866,26 @@ class ServerIOMixin:
     # 만들면 같은 그림을 다시 계산해 버린다(내용 비교가 걸러 주지만 계산은 이미 했다).
     _CELLS_PERIOD = 1.0
 
-    def _plugin_cells_frame(self, c, sess, win, now):
+    def _plugin_cells_frame(self, c, sess, win, now, pane_rects=None):
         """이 클라의 셀 기여 프레임(없으면 None).
+
+        `pane_rects` 는 flush 루프가 **클라 수만큼 다시 세지 않으려고** 미리 건네는
+        것이다(패널 사각형은 클라와 무관하다). 생략하면 여기서 센다 — 한 클라만 놓고
+        부르는 자리(테스트)가 계산을 손으로 챙기지 않아도 되게.
 
         **끄는 것도 프레임이다**: 오버레이를 닫으면 빈 런 목록이 한 번 나가야 클라가
         지운다. 그래서 "직전에 뭔가 보냈는데 지금 비었다"도 보낼 거리다 —
         `_cells_last` 가 그 판정을 한다(같으면 안 보낸다 · 30Hz 로 같은 그림을 흘리지
-        않는다)."""
+        않는다).
+
+        ★ **두 갈래가 한 프레임에 실린다**(pytmux-2): 런·딤은 오버레이에서 나와 1초
+        주기로 만들고, 클릭존은 패널 내용에서 나와 매 틱 다시 잰다. 그래서 런은
+        만든 것을 들고 있다가(`_cells_runs`) 클릭존만 움직인 프레임에도 함께 싣는다 —
+        안 그러면 자리만 바뀐 프레임이 그림을 지운다."""
+        if pane_rects is None:
+            pane_rects = [{"id": p.id, "x": x, "y": y, "w": w, "h": h}
+                          for p, (x, y, w, h)
+                          in self._client_pane_rects(sess, win)]
         overlays = (c.plugin_state or {}).get("overlays") or {}
         # 이 클라만 아는 사실들(Tier D · P7) — 오늘은 입력기 한/영 하나다.
         facts = (c.plugin_state or {}).get("facts") or {}
@@ -875,40 +893,51 @@ class ServerIOMixin:
             # §1.7 원격 보기 중 — 화면이 업스트림 것이라 그 위에 **로컬** 시계가 뜨면
             # 안 된다. 들고 있던 그림이 남지 않게 지우개는 한 번 내보낸다(아래 빈
             # 런 경로가 그 일을 한다). 입력기 배지도 같다 — 남의 화면 위에 내 한/영을
-            # 얹으면 그 줄이 상류 것인지 내 것인지 알 수 없다.
+            # 얹으면 그 줄이 상류 것인지 내 것인지 알 수 없다. 클릭존도 마찬가지다:
+            # 지금 보는 글은 상류 것이라 내 패널의 자리를 얹으면 엉뚱한 데를 누른다.
             overlays, facts = {}, {}
-        if not overlays and not facts and not c._cells_last:
-            return None                      # 켠 적도 없다 — 아무것도 안 만든다
-        if now - c._cells_at < self._CELLS_PERIOD and c._cells_last:
-            return None
-        c._cells_at = now
         cols, rows = self._session_size(sess)
-        panes = [{"id": p.id, "x": x, "y": y, "w": w, "h": h}
-                 for p, (x, y, w, h) in self._client_pane_rects(sess, win)]
-        req = {"panes": panes, "overlays": overlays, "facts": facts,
+        req = {"panes": pane_rects, "overlays": overlays, "facts": facts,
                # 활성 패널 id — 배지처럼 **거기 하나에만** 붙는 기여가 쓴다(Tier D).
                "active": (win.active_pane.id
                           if win and win.active_pane else None),
                "cols": cols, "rows": rows}
-        try:
-            runs = self.plugins.plugin_cells(self, sess, req)
-            dim = self.plugins.plugin_dim_panes(self, sess, req)
-            trig = self.plugins.plugin_triggers(self, sess, req)
-        except Exception:
-            # 한 플러그인의 예외가 flush 루프 전체(=모든 클라 렌더)를 죽이지 않게
-            # 가드한다(server_scan 과 같은 규율).
-            self._log_error("plugin_cells")
-            return None
-        zones, keys = trig.get("zones") or [], trig.get("keys") or []
-        # 클릭존·키도 판정에 넣는다. ⚠ 오늘의 유일한 시민(달력)에서는 **이것만으로
-        # 달라지는 프레임을 만들 수 없다** — 화살표는 제목 런과 같은 자리 셈에서 나오니
-        # 그림이 같으면 자리도 같다(변이로 확인: 이 두 줄을 빼도 테스트가 안 죽는다).
-        # 그래도 두는 이유는 계약이 더 넓기 때문이다: 런 없이 클릭존만 내는 오버레이가
-        # 허용되고, 그때 그 자리 변화를 실어 나를 것이 여기 말고는 없다.
+        zones = keys = []
+        if not getattr(c, "remote_view", None):
+            try:
+                # ⚠ **클릭존은 주기를 안 탄다**(런·딤과 다른 점 — pytmux-2): 자리가
+                # 패널 **내용**에서 나오는 것이 생겼고(Claude footer), 내용이 움직이면
+                # 자리도 움직인다. 1초를 기다리면 그 사이 사용자가 누른 곳이 **낡은
+                # 자리**다. 달력 화살표는 종전대로 오버레이 상태에서 나오므로 이 경로가
+                # 더 자주 돌아도 답이 같다.
+                trig = self.plugins.plugin_triggers(self, sess, req)
+            except Exception:
+                # 한 플러그인의 예외가 flush 루프 전체(=모든 클라 렌더)를 죽이지 않게
+                # 가드한다(server_scan 과 같은 규율).
+                self._log_error("plugin_triggers")
+                return None
+            zones = list(trig.get("zones") or [])
+            keys = list(trig.get("keys") or [])
+        if not overlays and not facts and not zones and not c._cells_last:
+            return None                      # 켠 적도 없다 — 아무것도 안 만든다
+        # 런·딤은 종전 주기 그대로 만든다(시계는 초 단위라 그 이상 자주 만들면 같은
+        # 그림을 다시 계산할 뿐이다). 만들지 않는 틱에는 직전 것을 그대로 쓴다.
+        if now - c._cells_at >= self._CELLS_PERIOD or not c._cells_last:
+            c._cells_at = now
+            try:
+                c._cells_runs = self.plugins.plugin_cells(self, sess, req)
+                c._cells_dim = self.plugins.plugin_dim_panes(self, sess, req)
+            except Exception:
+                self._log_error("plugin_cells")
+                return None
+        runs, dim = c._cells_runs, c._cells_dim
+        # 클릭존·키도 판정에 넣는다. 달력에서는 이것만으로 달라지는 프레임을 만들 수
+        # 없지만(화살표는 제목 런과 같은 자리 셈에서 나온다), Claude footer 존은
+        # **런 없이 자리만** 있으므로 여기가 그 유일한 신호다.
         key = (tuple(sorted(dim)),
                tuple((r["x"], r["y"], r["text"]) for r in runs),
-               tuple((z["x"], z["y"], z["pane"], z["name"], z["do"])
-                     for z in zones),
+               tuple((z["x"], z["y"], z["w"], z["pane"], z["name"], z["do"],
+                      z.get("opens", "")) for z in zones),
                tuple((k["key"], k["pane"], k["name"], k["do"]) for k in keys))
         if key == c._cells_last:
             return None

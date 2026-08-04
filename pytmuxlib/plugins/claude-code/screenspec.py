@@ -40,6 +40,9 @@ RULES = ("claude-rules", "rules", "startup-rules")
 SETTINGS = ("claude-settings",)
 MODEL = ("model", "model-config", "claude-model")
 TOKEN_LOG = ("claude-token-log", "token-usage")
+# 이 이름은 팔레트 명령이 아니다 — **패널 안 footer 를 눌러야** 열린다(pytmux-2).
+# 정본도 명령이 아니라 클릭으로만 여는 팝업이라 표면이 안 늘었다.
+PERM = ("claude-perm-mode",)
 
 i18n.register({
     "ko": {
@@ -110,6 +113,22 @@ def _close(sid):
 def _active_pane(sess):
     win = getattr(sess, "active_window", None) if sess is not None else None
     return getattr(win, "active_pane", None) if win is not None else None
+
+
+def _pane(sess, pane_id):
+    """`pane_id` 가 가리키는 패널(없거나 못 찾으면 활성 패널).
+
+    클릭존은 **누른 그 패널**을 가리킨다 — 비활성 Claude 패널의 footer 를 눌러도
+    활성 패널의 모드를 바꾸면 안 된다(정본 `_open_perm_mode` 도 pane_id 를 받는다)."""
+    win = getattr(sess, "active_window", None) if sess is not None else None
+    if win is not None and pane_id is not None:
+        try:
+            p = win.pane_by_id(int(pane_id))
+        except (TypeError, ValueError):
+            p = None
+        if p is not None:
+            return p
+    return _active_pane(sess)
 
 
 # ── prompt-clear-queue — 쌓인 명령 목록 ─────────────────────────────────────
@@ -269,6 +288,43 @@ def _model_apply(server, sess, arg):
     return True
 
 
+# ── claude-perm-mode — footer 를 눌러 여는 권한모드 선택 ────────────────────
+def _perm_spec(server, sess, pane_id, selected=0):
+    """정본 `PermModeScreen` 과 **같은 목록**을 자료로(pytmux-2).
+
+    목록도 bypass 노출 규칙도 `perm_modes()` 한 벌에서 온다 — 여기서 다시 고르면
+    한쪽만 위험 모드를 숨기는 갈림이 생긴다. 라벨은 `pscreen.*` 키라 GUI 가 자기
+    로케일로 다시 읽는다."""
+    from . import perm_modes
+    p = _pane(sess, pane_id)
+    current = getattr(p, "_perm_mode", None) if p is not None else None
+    bypass_ok = bool(getattr(p, "_bypass_seen", False)) if p is not None else False
+    rows = []
+    for key, label in perm_modes(current, bypass_ok):
+        # ⚠ 줄의 글까지 **재료로** 싣는다(로케일 ⓑ). 목록 줄의 `label` 은 보통 자료라
+        #    클라가 번역하지 않는다 — 그래야 `복사` 라는 이름의 파일이 `Copy` 로 안
+        #    보인다(`PluginRow::say_cols` 의 그 갈림). 그런데 이 화면의 그 자리는
+        #    **말**이다. 그래서 "이건 말이다"를 재료로 알린다.
+        text, spec = i18n.phrase(label)
+        rows.append({"key": key, "label": text, "i18n": {"label": spec},
+                     "cols": [i18n.t("pscreen.perm_now")] if key == current else []})
+    title, title_spec = i18n.phrase("pscreen.perm_title", current=current or "?")
+    return _spec("claude-perm-mode", "list", title,
+                 i18n.t("pscreen.perm_hint"),
+                 rows=rows, keys={"enter": "apply"}, selected=selected,
+                 carried={"title": title_spec})
+
+
+def _perm_apply(server, sess, pane_id, target):
+    """정본이 하던 것과 **같은 서버 호출** — 목표 모드를 세우면 `_scan_claude` 가
+    idle 에서 shift+tab 폐루프로 거기까지 순환 주입한다(우리가 키를 세지 않는다)."""
+    target = (target or "").strip()
+    if not target:
+        return False
+    server.set_claude_perm_mode(sess, target, pane_id)
+    return True
+
+
 # ── claude-token-log — 일별 집계 한 판 ─────────────────────────────────────
 def _token_rows(server):
     """`(일자, 토큰, 5h 최대%)` 목록(최근 먼저)과 안내 한 줄.
@@ -314,8 +370,14 @@ def _token_log_spec(server, selected=0):
 
 
 # ── 진입점 ────────────────────────────────────────────────────────────────
-def open_spec(server, sess, name):
-    """명령 이름 → 첫 화면. **내 이름이 아니면 `None`**(다른 플러그인·다른 경로로)."""
+def open_spec(server, sess, name, args=(), state=None):
+    """명령 이름 → 첫 화면. **내 이름이 아니면 `None`**(다른 플러그인·다른 경로로).
+
+    `args` 는 여는 쪽이 실어 보낸 것이다 — 오늘은 권한모드 화면의 **패널 id** 하나뿐이고
+    (footer 를 누른 그 패널), 나머지 화면은 활성 패널로 충분하다. 그 id 는 `state` 에
+    적어 둔다: 화면 안에서 Enter 를 눌러 올 때 `plugin_action` 프레임에는 패널 칸이
+    없어(계약이 `id`·`do`·`row`·`input` 넷이다), 안 적어 두면 **활성 패널의 모드를
+    바꾼다** — 비활성 Claude 패널의 footer 를 눌렀을 때 딱 그 사고가 난다."""
     if name in PC_QUEUE:
         return _pc_queue_spec(server, sess)
     if name in RULES:
@@ -326,11 +388,17 @@ def open_spec(server, sess, name):
         return _model_spec(server, sess)
     if name in TOKEN_LOG:
         return _token_log_spec(server)
+    if name in PERM:
+        pane_id = args[0] if args else None
+        if isinstance(state, dict):
+            state["claude_perm_pane"] = pane_id
+        return _perm_spec(server, sess, pane_id)
     return None
 
 
 #: 이 모듈이 여는 화면 id 들 — `plugin_screen` 이 "내 화면인가"를 이것으로 가른다.
-IDS = ("pc-queue", "claude-rules", "claude-settings", "model", "claude-token-log")
+IDS = ("pc-queue", "claude-rules", "claude-settings", "model", "claude-token-log",
+       "claude-perm-mode")
 
 
 def action(server, sess, req):
@@ -367,6 +435,17 @@ def action(server, sess, req):
     if sid == "model":
         if do == "apply":
             _model_apply(server, sess, str(picked or ""))
+            return _close(sid)
+        return None
+    if sid == "claude-perm-mode":
+        if do == "apply":
+            state = req.get("state")
+            pane_id = (state or {}).get("claude_perm_pane") \
+                if isinstance(state, dict) else None
+            _perm_apply(server, sess, pane_id, str(picked or ""))
+            # 닫는다 — 모드는 **바로 안 바뀐다**(서버가 idle 을 기다려 shift+tab 을
+            # 순환 주입한다). 판을 열어 둔 채 다시 그리면 고른 줄에 아직 '현재' 가
+            # 안 붙어 "안 먹었다"로 보인다. 정본도 고르는 즉시 닫는다.
             return _close(sid)
         return None
     if sid == "claude-token-log":

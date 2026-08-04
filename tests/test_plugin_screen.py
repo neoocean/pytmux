@@ -642,3 +642,108 @@ async def test_a_composed_title_carries_the_ingredients_not_just_the_words():
         assert spec["title"].endswith(path), spec["title"]
     finally:
         await teardown(srv, task, sock)
+
+
+# ---------------------------------------------------------------------------
+# claude-perm-mode(pytmux-2) — 팔레트에 없는 화면이다. **패널 안 footer 를 눌러야**
+# 열리고, 그래서 "어느 패널을 눌렀나"가 뜻의 일부다.
+# ---------------------------------------------------------------------------
+
+class _ScreenSpy:
+    """`plugin_state` 를 가진 클라 — 화면이 판 상태를 여기 적는다(Tier C · P5)."""
+
+    def __init__(self):
+        self.sent = []
+        self.plugin_state = {}
+
+
+async def _screen(srv, sess, client, action, msg):
+    """화면 명령 하나를 태우고 그 클라에게 간 스펙을 돌려준다."""
+    async def fake_send_to(self, c, obj):
+        if c is client:
+            client.sent.append(obj)
+        return True
+
+    from pytmuxlib.servercmd import _CMD_TABLE
+    with harness.patched(type(srv), _send_to=fake_send_to):
+        await _CMD_TABLE[action][0](srv, client, sess, msg)
+    return client.sent[-1] if client.sent else None
+
+
+async def test_the_permission_screen_lists_what_the_canonical_popup_lists():
+    """정본 `PermModeScreen` 과 **같은 표**에서 나와야 한다 — 두 벌이면 한쪽만 모드를
+    하나 더 갖거나 위험 모드를 덜 숨긴다."""
+    import importlib
+    plugin = importlib.import_module("pytmuxlib.plugins.claude-code")
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._perm_mode = "plan"
+        c = _ScreenSpy()
+        spec = await _screen(srv, sess, c, "plugin_open",
+                             {"name": "claude-perm-mode", "args": [p.id]})
+        assert spec and spec["t"] == "plugin_screen", spec
+        assert spec["id"] == "claude-perm-mode" and spec["kind"] == "list", spec
+        keys = [r["key"] for r in spec["rows"]]
+        assert keys == [k for k, _ in plugin.perm_modes("plan", False)], keys
+        # 위험 모드는 가용할 때만 — 안 그러면 도달 못 하는 모드를 고르게 된다.
+        assert "bypass" not in keys, keys
+        # 지금 모드에 표가 붙는다(어디에 있는지 모른 채 고르면 안 된다).
+        marked = [r["key"] for r in spec["rows"] if r["cols"]]
+        assert marked == ["plan"], spec["rows"]
+
+        p._bypass_seen = True
+        spec2 = await _screen(srv, sess, c, "plugin_open",
+                              {"name": "claude-perm-mode", "args": [p.id]})
+        assert "bypass" == spec2["rows"][-1]["key"], spec2["rows"]
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_permission_screen_changes_the_pane_that_was_clicked():
+    """★ 비활성 Claude 패널의 footer 를 눌렀는데 **활성 패널**의 모드가 바뀌면 안 된다.
+
+    화면 안 동작(`plugin_action`) 프레임에는 패널 칸이 없다(계약이 id·do·row·input
+    넷이다). 그래서 연 패널을 판 상태에 적어 두는데, 그 적기를 빠뜨리면 증상은 조용하다
+    — 팝업은 제대로 뜨고 고르기도 되며 **엉뚱한 패널**이 바뀔 뿐이다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        srv.split_pane(sess, "h")
+        panes = win.panes()
+        assert len(panes) == 2, panes
+        clicked = next(p for p in panes if p is not win.active_pane)
+
+        c = _ScreenSpy()
+        await _screen(srv, sess, c, "plugin_open",
+                      {"name": "claude-perm-mode", "args": [clicked.id]})
+        got = []
+        with harness.patched(type(srv), set_claude_perm_mode=(
+                lambda self, s, target, pane_id=None: got.append((target, pane_id)))):
+            closed = await _screen(srv, sess, c, "plugin_action",
+                                   {"id": "claude-perm-mode", "do": "apply",
+                                    "row": 0, "input": "accept"})
+        assert got == [("accept", clicked.id)], (got, clicked.id,
+                                                 win.active_pane.id)
+        # 고르면 닫는다 — 모드는 바로 안 바뀌므로(서버가 idle 을 기다려 순환 주입한다)
+        # 판을 열어 둔 채 다시 그리면 "안 먹었다"로 보인다.
+        assert closed["t"] == "plugin_screen_close", closed
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_permission_labels_travel_as_keys_not_as_korean():
+    """이 줄들은 이제 소켓을 건넌다 — 한국어 원문을 키로 쓰면 로케일 그물
+    (`gen_server_strings.py` 가 네임스페이스로 고른다)에 안 걸려 **영어 사용자에게
+    한국어로** 뜬다. 종전 자리(`screens.py` 클래스 속성)가 딱 그 모양이었다."""
+    import importlib
+    plugin = importlib.import_module("pytmuxlib.plugins.claude-code")
+    from pytmuxlib import i18n
+
+    for _key, label in plugin.PERM_MODES + [plugin.PERM_BYPASS]:
+        assert label.startswith("pscreen."), label
+        assert i18n._CATALOG["en"].get(label), f"{label} 에 영어 짝이 없다"
+        assert i18n._CATALOG["ko"].get(label), f"{label} 에 한국어 원문이 없다"

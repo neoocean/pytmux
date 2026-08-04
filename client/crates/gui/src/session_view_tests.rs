@@ -4898,3 +4898,38 @@ fn render_gets_its_canvas_only_through_composite_for_paint() {
         "`render` 가 서버 합성을 직접 집었다 — 클라가 얹는 것(조합 중인 글자)이 화면에서 사라진다"
     );
 }
+
+#[test]
+fn clicking_the_claude_footer_asks_the_server_for_the_screen_it_named() {
+    // pytmux-2 · 23: 패널 **안**의 자리가 화면을 여는 첫 사례다. 무엇이 열리는지도,
+    // 그 화면이 있는지도 서버가 정한다 — 우리는 이름과 **누른 패널**을 되돌려 보낼
+    // 뿐이다. 패널을 안 실으면 비활성 Claude 패널의 footer 를 눌렀을 때 활성 패널의
+    // 모드가 바뀐다(증상이 조용한 갈래다: 팝업은 제대로 뜬다).
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [], "runs": [],
+        "zones": [{"x": 10, "y": 1, "w": 15, "h": 1, "pane": 7,
+                   "name": "claude-code", "do": "perm",
+                   "opens": "claude-perm-mode"}],
+        "keys": []
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(cells))).unwrap();
+    view.pump_headless();
+    view.handle_mouse_down((12, 1), false);
+    view.pump_headless();
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    let open = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_open")
+        .unwrap_or_else(|| panic!("footer 를 눌렀는데 아무것도 안 올라갔다: {frames:?}"));
+    assert_eq!(open["name"], "claude-perm-mode");
+    assert_eq!(open["args"], serde_json::json!(["7"]), "누른 패널을 안 실었다");
+    // 이 자리는 오버레이 길로 **가면 안 된다** — 그 이름은 서버에서 사라진다.
+    assert!(
+        !frames.iter().any(|f| f["action"] == "plugin_overlay_action"),
+        "화면을 여는 자리가 오버레이 길로도 나갔다: {frames:?}"
+    );
+}

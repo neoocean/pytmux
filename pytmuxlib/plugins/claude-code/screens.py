@@ -33,16 +33,12 @@ _LOCAL_HOST = "<local>"
 i18n.register({
     "ko": {s: s for s in (
         # 공통/버튼/힌트
-        "Enter 토글/순환 · ESC 닫기", "저장", "취소", "  ◀ 현재",
+        "Enter 토글/순환 · ESC 닫기", "저장", "취소",
         # rules·model
         "Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소", "기본", "모델", "컨텍스트",
         "모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc",
-        # perm 모드
-        "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)",
-        "accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)",
-        "default — 매번 확인 (일반 모드)",
-        "plan — 플랜 모드 (계획만, 실행 안 함)",
-        "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
+        # (perm 모드 라벨은 여기 없다 — 소켓을 건너 GUI 로도 나가므로 `pscreen.perm_*`
+        #  키로 __init__.py 에 산다. 한국어 원문을 키로 쓰면 로케일 그물에 안 걸린다.)
         # token-log: 탭(넓은/좁은)·그룹·컬럼·차원
         "시간", "시", "일", "주", "월", "계정", "계", "패널", "패", "세",
         "시나리오", "한도", "경고", "경", "기간", "기", "보기", "조회", "토큰 사용량",
@@ -55,20 +51,12 @@ i18n.register({
     )},
     "en": {
         "Enter 토글/순환 · ESC 닫기": "Enter toggle/cycle · ESC close",
-        "저장": "Save", "취소": "Cancel", "  ◀ 현재": "  ◀ current",
+        "저장": "Save", "취소": "Cancel",
         "Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소":
             "Claude start rules — Ctrl+S save · Esc cancel",
         "기본": "Default", "모델": "Model", "컨텍스트": "Context",
         "모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc":
             "Model·context change · ←→ value · Enter apply · Esc",
-        "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)":
-            "auto — auto-accept all, safety checks (⏵⏵ auto mode)",
-        "accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)":
-            "accept — auto-accept edits·basic FS only (⏵⏵ accept edits)",
-        "default — 매번 확인 (일반 모드)": "default — confirm each time (normal)",
-        "plan — 플랜 모드 (계획만, 실행 안 함)": "plan — plan mode (plan only, no run)",
-        "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)":
-            "bypass — skip permissions, no confirm ⚠️ (Bypass Permission Mode)",
         "시간": "Time", "시": "T", "일": "Day", "주": "Week", "월": "Month",
         "계정": "Account", "계": "A", "패널": "Panel", "패": "P", "세": "S",
         "시나리오": "Scenario",
@@ -104,7 +92,8 @@ i18n.register({
 # 포맷 문자열(동적 인자 포함)은 semantic 키.
 i18n.register({
     "ko": {
-        "pscreen.perm_title": "권한모드 선택 (현재: {current})",
+        # (pscreen.perm_title 은 __init__.py 로 갔다 — 화면 스펙도 그 글을 지어야
+        #  하고 그것을 짓는 것은 서버라, 여기(Textual)에 두면 서버가 못 읽는다.)
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
         "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (표시 {n})",
@@ -177,7 +166,6 @@ i18n.register({
             "• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).",
     },
     "en": {
-        "pscreen.perm_title": "Select permission mode (current: {current})",
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
         "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (shown {n})",
@@ -477,24 +465,16 @@ class PermModeScreen(ModalScreen):
     """
     # 박스 폭(CSS #perm width 와 일치) — 좌측 정렬 오프셋/중앙 계산에 쓴다.
     _BOX_W = 60
-    _MODES = [
-        ("auto", "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)"),
-        ("accept", "accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)"),
-        ("default", "default — 매번 확인 (일반 모드)"),
-        ("plan", "plan — 플랜 모드 (계획만, 실행 안 함)"),
-    ]
-    # 가용할 때만(또는 현재 모드일 때) 목록 끝에 덧붙는 위험 모드.
-    _BYPASS = ("bypass", "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)")
 
     def __init__(self, current, anchor_y=None, anchor_x=None,
                  bypass_available=False):
         super().__init__()
         self._current = current
-        # bypass 항목 노출 여부: 서버가 가용 판정했거나 현재가 이미 bypass 면 포함.
-        show_bypass = bool(bypass_available) or current == "bypass"
-        self._modes = list(self._MODES)
-        if show_bypass:
-            self._modes.append(self._BYPASS)
+        # 목록도 bypass 노출 규칙도 **정본 표 한 벌**이다(`__init__.py:perm_modes`) —
+        # GUI 의 화면 스펙이 같은 함수를 부른다(pytmux-2). 여기 다시 적으면 그 순간
+        # 두 벌이 되고, 갈리는 순간 한쪽만 위험 모드를 숨긴다.
+        from . import perm_modes
+        self._modes = perm_modes(current, bypass_available)
         # 클릭한 footer 행(화면 y). 아래에 공간이 있으면 그 아래, 없으면 위에 띄운다.
         # None 이면 화면 세로 중앙(기존 동작).
         self._anchor_y = anchor_y
@@ -505,7 +485,7 @@ class PermModeScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         items = []
         for key, label in self._modes:
-            mark = i18n.t("  ◀ 현재") if key == self._current else ""
+            mark = i18n.t("pscreen.perm_now") if key == self._current else ""
             items.append(ListItem(Label(i18n.t(label) + mark, markup=False),
                                   id=f"M_{key}"))
         lv = ListView(*items, id="perm")

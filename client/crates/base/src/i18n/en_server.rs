@@ -17,6 +17,7 @@
 //! 를 우리 표는 `Auto-resume`, 정본은 `auto-resume` 로 적고 있었다).
 
 pub static EN: &[(&str, &str)] = &[
+    ("  ◀ 현재", "  ◀ current"),
     (" …", " …"),
     (" ⏎", " ⏎"),
     (" ⏳ {label} {eta}s(입력=취소) ", " ⏳ {label} {eta}s (input=cancel) "),
@@ -41,7 +42,12 @@ pub static EN: &[(&str, &str)] = &[
     ("Claude 설정", "Claude settings"),
     ("Claude 시작 규칙 — 새 세션·/clear 뒤 자동 주입", "Claude start rules — injected after a new session/clear"),
     ("Enter 키워드 · p 경로 · a 추가 · d 삭제 · Esc 닫기", "Enter keyword · p path · a add · d delete · Esc close"),
+    ("accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)", "accept — auto-accept edits·basic FS only (⏵⏵ accept edits)"),
+    ("auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)", "auto — auto-accept all, safety checks (⏵⏵ auto mode)"),
+    ("bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)", "bypass — skip permissions, no confirm ⚠️ (Bypass Permission Mode)"),
     ("c 비우기 · Esc 닫기", "c clear · Esc close"),
+    ("default — 매번 확인 (일반 모드)", "default — confirm each time (normal)"),
+    ("plan — 플랜 모드 (계획만, 실행 안 함)", "plan — plan mode (plan only, no run)"),
     ("remote-attach {target} 실패 — {why}", "remote-attach {target} failed — {why}"),
     ("remote-attach {target}: 연결됐지만 원격이 응답 없음 — 원격 서버 점검", "remote-attach {target}: connected but remote is unresponsive — check the remote server"),
     ("remote-attach {target}: 원격 탭 병합됨", "remote-attach {target}: remote tab merged"),
@@ -56,6 +62,7 @@ pub static EN: &[(&str, &str)] = &[
     ("↑↓ 이동 · Enter 그 위치로 점프 · Esc 닫기", "↑↓ move · Enter jump to position · Esc close"),
     ("↑↓ 이동 · Enter 바꾸기 · Esc 닫기", "↑↓ move · Enter change · Esc close"),
     ("↑↓ 이동 · Enter 상세 · Esc 닫기", "↑↓ move · Enter details · Esc close"),
+    ("↑↓ 이동 · Enter 적용 · Esc 닫기", "↑↓ move · Enter apply · Esc close"),
     ("↑↓ 이동 · Enter 적용(/model 주입) · Esc 닫기", "↑↓ move · Enter apply (injects /model) · Esc close"),
     ("↑↓ 이동 · Esc 닫기", "↑↓ move · Esc close"),
     ("↻ 갱신 [u]", "↻ Refresh [u]"),
@@ -68,6 +75,7 @@ pub static EN: &[(&str, &str)] = &[
     ("값이 비어 있어 아무것도 안 했습니다", "Empty value — nothing was done"),
     ("같은 이름이 {n}개 있습니다 — 덮어쓸까요?", "{n} names already exist — overwrite?"),
     ("같은 자리입니다", "Same place"),
+    ("권한모드 선택 (현재: {current})", "Select permission mode (current: {current})"),
     ("규칙을 걸 디렉토리 경로", "Directory the rule applies to"),
     ("규칙을 저장했습니다", "Rule saved"),
     ("그 디렉토리에서 쓸 이름 키워드", "Name keyword to use in that directory"),

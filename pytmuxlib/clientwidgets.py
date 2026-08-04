@@ -489,6 +489,15 @@ class MultiplexerView(Widget):
                 fn and fn(pid)
                 event.stop()
                 return
+        # Claude 컨텍스트 footer 의 토큰 수치('… /clear to save 386.8k tokens') 클릭
+        # → 토큰 사용량 팝업(pytmux-23). 상태줄 Σ 배지와 **같은 팝업**이다 — 같은 수를
+        # 두 자리에서 눌러 서로 다른 판이 뜨면 그게 더 이상하다.
+        for pid, (zx0, zx1, zy) in getattr(self.app, "_tokens_zone", {}).items():
+            if zy == event.y and zx0 <= event.x < zx1:
+                fn = getattr(self.app, "open_token_log", None)  # 플러그인 설치
+                fn and fn()
+                event.stop()
+                return
         # 현재 탭 닫기 버튼([x]) 클릭(콘텐츠 오른쪽 위)
         z = self.app._tab_close_zone
         if z and z[2] == event.y and z[0] <= event.x < z[1]:

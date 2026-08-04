@@ -368,6 +368,59 @@ MODEL_CHOICES = ["opus", "sonnet", "haiku",
 # 컨텍스트 크기: 기본 / 1M(확장). 'default' 면 모델만, 아니면 뒤에 토큰으로 덧붙인다.
 CTX_CHOICES = [("기본", "default"), ("1M", "1m")]
 
+# 권한모드 후보 — footer 를 눌러 여는 선택 팝업의 줄들(pytmux-2). `MODEL_CHOICES` 와
+# **같은 이유로** 여기 산다: 이제 이 목록을 화면 스펙도 쓰고 그것을 짓는 것은 서버다.
+#
+# ⚠ 라벨이 **한국어 원문이 아니라 `pscreen.*` 키**인 것도 그래서다. 이 줄들은 이제 소켓을
+# 건너 GUI 로 나가는데, 한국어 원문을 키로 쓰면(클라 전용 문자열의 관례다) 위 머리말이
+# 적어 둔 그물(`gen_server_strings.py` 가 네임스페이스로 고른다)에 안 걸려 **영어
+# 사용자에게 한국어로 뜬다**. 종전 자리(`screens.py` 의 클래스 속성)가 딱 그 모양이었다.
+PERM_MODES = [
+    ("auto", "pscreen.perm_auto"),
+    ("accept", "pscreen.perm_accept"),
+    ("default", "pscreen.perm_default"),
+    ("plan", "pscreen.perm_plan"),
+]
+# 가용할 때만(또는 현재 모드일 때) 목록 끝에 덧붙는 위험 모드 — 서버가 idle footer 에서
+# bypass 를 관측해 시작 시 `--dangerously-skip-permissions` 가 활성임을 안 경우에만
+# 노출한다. 안 그러면 도달 불가 모드를 실수로 고르게 된다.
+PERM_BYPASS = ("bypass", "pscreen.perm_bypass")
+
+i18n.register({
+    "ko": {
+        "pscreen.perm_auto": "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)",
+        "pscreen.perm_accept": "accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)",
+        "pscreen.perm_default": "default — 매번 확인 (일반 모드)",
+        "pscreen.perm_plan": "plan — 플랜 모드 (계획만, 실행 안 함)",
+        "pscreen.perm_bypass": "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
+        "pscreen.perm_now": "  ◀ 현재",
+        "pscreen.perm_hint": "↑↓ 이동 · Enter 적용 · Esc 닫기",
+        "pscreen.perm_title": "권한모드 선택 (현재: {current})",
+    },
+    "en": {
+        "pscreen.perm_auto": "auto — auto-accept all, safety checks (⏵⏵ auto mode)",
+        "pscreen.perm_accept":
+            "accept — auto-accept edits·basic FS only (⏵⏵ accept edits)",
+        "pscreen.perm_default": "default — confirm each time (normal)",
+        "pscreen.perm_plan": "plan — plan mode (plan only, no run)",
+        "pscreen.perm_bypass":
+            "bypass — skip permissions, no confirm ⚠️ (Bypass Permission Mode)",
+        "pscreen.perm_now": "  ◀ current",
+        "pscreen.perm_hint": "↑↓ move · Enter apply · Esc close",
+        "pscreen.perm_title": "Select permission mode (current: {current})",
+    },
+})
+
+
+def perm_modes(current, bypass_available=False):
+    """이 패널에 보일 `(키, 라벨)` 목록 — 정본 팝업과 화면 스펙이 **같은 것**을 부른다.
+
+    `bypass` 노출 규칙(가용하거나 이미 그 모드)이 두 벌이면 한쪽만 위험 모드를 숨긴다."""
+    out = list(PERM_MODES)
+    if bool(bypass_available) or current == "bypass":
+        out.append(PERM_BYPASS)
+    return out
+
 
 # 토큰 절감 설정 팝업(ClaudeSaverScreen)의 행/순환 프리셋. clientutil 에서 이리로 이전.
 SAVER_ROWS = [
@@ -1303,6 +1356,7 @@ class _ClaudeCodePlugin:
         app._perm_zone = {}             # id -> (x0,x1,y) 권한모드 footer 클릭존
         app._remote_zone = {}           # id -> (x0,x1,y) 원격제어 표시 클릭존
         app._interrupt_zone = {}        # id -> (x0,x1,y) busy footer 'esc to interrupt' 클릭존
+        app._tokens_zone = {}           # id -> (x0,x1,y) '/clear to save N tokens' 토큰 수치 클릭존
         # 헤더 상태/클릭존 글루(코어/clientwidgets 가 getattr 로 호출 — 없으면 no-op).
         app._update_claude = lambda pc: _update_claude(app, pc)
         app.interrupt_pane = lambda pid: _interrupt_pane(app, pid)
@@ -1565,6 +1619,47 @@ class _ClaudeCodePlugin:
         from .statusbadges import badges
         return badges(msg)
 
+    def plugin_triggers(self, server, sess, req):
+        """Claude 패널 **안**의 누르는 자리(pytmux-2 · pytmux-23).
+
+        # 왜 서버가 내나
+
+        규칙(어느 문구가 누르는 자리인가)은 오래 정본 클라 안에만 있었다 — 파이썬/
+        Textual 모양이라 소켓을 못 건넜고, 그래서 GUI 에서는 권한모드 footer 를 눌러도
+        아무 일이 없었다. 이제 규칙은 [`footerzones`](footerzones) 한 벌이고 정본과
+        서버가 **같은 함수**를 부른다. 여기서 하는 일은 그 규칙을 이 클라의 화면 사정
+        (패널 사각형)에 대고 돌려 자리로 옮기는 것뿐이다.
+
+        # 왜 넷 중 둘만 내나
+
+        `remote`·`interrupt` 는 화면이 아니라 **동작**이다(원격 제어 판 토글 · ESC 주입).
+        그 배선은 아직 GUI 에 없고, `do` 만 실어 두면 *"선언은 있고 배선이 없는 칸"* 이
+        하나 더 생긴다 — pytmux-20 이 상태줄 표식에서 세운 규율 그대로 **화면이 있는
+        것만** 낸다(`footerzones.OPENS` 가 그 표다).
+        """
+        from .footerzones import OPENS, scan_pane
+        from .servermixin import screen_text
+        win = getattr(sess, "active_window", None) if sess is not None else None
+        if win is None:
+            return {}
+        zones = []
+        for r in req.get("panes") or []:
+            p = win.pane_by_id(r["id"])
+            if p is None or not getattr(p, "_claude", None):
+                continue
+            try:
+                lines = screen_text(p.screen).split("\n")
+            except Exception:
+                continue
+            found = scan_pane(lines[:r["h"]], r["x"], r["y"], r["w"], r["h"])
+            for kind, (x0, x1, y) in found.items():
+                opens = OPENS.get(kind)
+                if not opens or x1 <= x0:
+                    continue
+                zones.append({"x": x0, "y": y, "w": x1 - x0, "h": 1,
+                              "pane": r["id"], "do": kind, "opens": opens})
+        return {"zones": zones}
+
     # 이 이름들이 한도 팝업을 연다 — 정본의 `handle_command` 갈래와 **같은 표**다
     # (아래 `elif c in (…)` 와 갈라지면 팔레트에서 되던 이름이 네이티브에서만 죽는다).
     _USAGE_PANEL = ("usage-panel", "usage-limits", "limits")
@@ -1621,10 +1716,12 @@ class _ClaudeCodePlugin:
             name = req.get("name")
             if name in self._USAGE_PANEL:
                 return self._usage_panel_spec(server)
-            # 나머지 넷(+큐 목록)은 `screenspec` 이 짓는다 — 이 파일이 화면 다섯을
-            # 더 들면 1700줄이 2200줄이 되고, 그 규모가 이 저장소의 '부분 수정 →
-            # 회귀' 를 부른다(루트 CLAUDE.md 의 거대 파일 규율).
-            return screenspec.open_spec(server, sess, name)
+            # 나머지(넷 + 큐 목록 + 권한모드)는 `screenspec` 이 짓는다 — 이 파일이
+            # 화면 여섯을 더 들면 1700줄이 2200줄이 되고, 그 규모가 이 저장소의
+            # '부분 수정 → 회귀' 를 부른다(루트 CLAUDE.md 의 거대 파일 규율).
+            return screenspec.open_spec(server, sess, name,
+                                        req.get("args") or (),
+                                        req.get("state"))
         sid = req.get("id")
         if sid == "claude-usage-panel":
             if do == "close":

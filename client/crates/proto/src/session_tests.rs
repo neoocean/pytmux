@@ -867,14 +867,41 @@ fn a_rows_columns_are_read_in_our_own_locale_but_its_name_is_not() {
         tag: String::new(),
         depth: 0,
         expand: String::new(),
+        i18n: Default::default(),
     };
-    let (cols, label) = base::i18n::with_locale("en", || (row.say_cols(), row.label.clone()));
+    // 그리는 자리가 부르는 것과 **같은 함수**로 잰다 — `label` 을 직접 읽으면 뷰가
+    // 그 자리에서 무엇을 하는지는 안 재는 오라클이 된다.
+    let (cols, label) = base::i18n::with_locale("en", || (row.say_cols(), row.say_label()));
     assert_eq!(
         cols,
         vec!["<UP>".to_owned(), "<DIR>".to_owned()],
         "줄의 칸이 서버 로케일 그대로 샜다(`say_cols` 를 안 거치는 것이다)"
     );
     assert_eq!(label, "빈 디렉터리입니다", "이름을 번역했다 — 그건 자료다");
+}
+
+#[test]
+fn a_row_whose_name_is_words_says_it_and_then_we_translate_it() {
+    // pytmux-2: 권한모드 줄의 그 자리는 이름이 아니라 **말**이다. 판정은 우리가 하지
+    // 않는다 — 플러그인이 재료를 실어 보내면 말이고, 안 보내면 위 테스트대로 자료다.
+    // 이 갈림이 없으면 둘 중 하나는 반드시 틀린다(이름이 번역되거나 말이 한국어로 남거나).
+    let row: PluginRow = serde_json::from_value(serde_json::json!({
+        "key": "auto",
+        "label": "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)",
+        "cols": [],
+        "i18n": {"label": {
+            "fmt": "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)", "args": {}}}
+    }))
+    .unwrap();
+    assert_eq!(
+        base::i18n::with_locale("en", || row.say_label()),
+        "auto — auto-accept all, safety checks (⏵⏵ auto mode)",
+        "말인데 서버 로케일 그대로 샜다"
+    );
+    assert_eq!(
+        base::i18n::with_locale("ko", || row.say_label()),
+        "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)"
+    );
 }
 
 /// 재료가 없는 알림은 서버가 지은 글 그대로다(구버전 서버 호환).
@@ -1220,4 +1247,43 @@ fn a_status_without_plugin_badges_means_there_are_none() {
         state.plugin_badges().is_empty(),
         "배지 키가 안 왔는데 옛 배지가 남았다 — 캡처를 꺼도 REC 가 사라지지 않는다"
     );
+}
+
+#[test]
+fn a_zone_that_opens_a_screen_does_not_go_down_the_overlay_path() {
+    // pytmux-2 · 23: 패널 안 Claude footer 자리는 오버레이 **상태**를 바꾸는 것이 아니라
+    // **화면**을 연다. 두 길이 갈리는 이유는 되돌려 보내는 명령이 다르기 때문이고,
+    // 섞이면 증상이 조용하다 — `plugin_overlay_action` 으로 간 이름은 아무도 안 집어
+    // 사라지고, 사용자에게는 "눌렀는데 아무 일도 안 남"으로 보인다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [], "runs": [],
+        "zones": [
+            {"x": 4, "y": 2, "w": 2, "h": 1, "pane": 1,
+             "name": "calendar", "do": "prev"},
+            {"x": 10, "y": 3, "w": 15, "h": 1, "pane": 7,
+             "name": "claude-code", "do": "perm", "opens": "claude-perm-mode"},
+        ],
+        "keys": []
+    }))
+    .unwrap();
+    state.apply(cells);
+    // 화면을 여는 자리는 여는 길로만 나간다.
+    assert_eq!(
+        state.open_zone_at(11, 3),
+        Some(("claude-perm-mode".to_owned(), 7)),
+        "footer 를 눌렀는데 열 화면 이름이 안 나온다"
+    );
+    assert_eq!(
+        state.overlay_zone_at(11, 3),
+        None,
+        "화면을 여는 자리가 오버레이 길로도 나간다 — 그 이름은 서버에서 사라진다"
+    );
+    // 오버레이 자리는 종전 그대로다(둘을 가르느라 달력이 죽으면 안 된다).
+    assert_eq!(
+        state.overlay_zone_at(5, 2),
+        Some(("calendar".to_owned(), 1, "prev".to_owned()))
+    );
+    assert_eq!(state.open_zone_at(5, 2), None, "달력 화살표가 화면을 연다고 한다");
 }

@@ -1912,6 +1912,17 @@ impl SessionView {
         // ★ 오버레이가 광고한 자리(달력의 `‹`/`›`)가 먼저다 — 화살표를 그려 놓고
         // 클릭이 안 먹으면 그 화살표가 거짓말이 된다. **뜻은 우리가 모른다**: 서버가
         // 준 이름을 그대로 되돌려 보내고, 다음 셀 프레임이 답이다.
+        // ★ 패널 **안**의 자리가 화면을 여는 것이면 그 길로 보낸다(pytmux-2 · 23 —
+        // Claude 의 권한모드 footer 와 토큰 수치). 여는 화면 이름도, 그 화면이 있는지도
+        // 서버가 정한다 — 우리는 누른 패널을 함께 실어 보낼 뿐이다. 그 패널을 안 실으면
+        // 비활성 Claude 패널의 footer 를 눌렀을 때 **활성 패널의 모드**가 바뀐다.
+        if let Some((name, pane)) = self.state.open_zone_at(x, y) {
+            self.pending.push(Outgoing::Command(Command::PluginOpen {
+                name,
+                args: vec![pane.to_string()],
+            }));
+            return true;
+        }
         if let Some((name, pane, act)) = self.state.overlay_zone_at(x, y) {
             self.pending.push(Outgoing::Command(Command::PluginOverlayAction {
                 name,
@@ -3813,7 +3824,7 @@ impl SessionView {
                             13.,
                             palette::DIM,
                         ))
-                        .with_child(self.text(item.label.clone(), 13., fg));
+                        .with_child(self.text(item.say_label(), 13., fg));
                     // 칸은 플러그인이 **적은 말**이라 우리 로케일로 다시 읽는다
                     // (이름은 자료라 그대로 — `PluginRow::say_cols`).
                     for col in item.say_cols() {
@@ -3867,7 +3878,7 @@ impl SessionView {
                             ConstrainedBox::new(
                                 Flex::row()
                                     .with_main_axis_size(MainAxisSize::Min)
-                                    .with_child(self.text(item.label.clone(), 13., fg))
+                                    .with_child(self.text(item.say_label(), 13., fg))
                                     .finish(),
                             )
                             .with_width(220.)
@@ -3909,7 +3920,7 @@ impl SessionView {
                             ConstrainedBox::new(
                                 Flex::row()
                                     .with_main_axis_size(MainAxisSize::Min)
-                                    .with_child(self.text(item.label.clone(), 13., palette::FG))
+                                    .with_child(self.text(item.say_label(), 13., palette::FG))
                                     .finish(),
                             )
                             .with_width(196.)

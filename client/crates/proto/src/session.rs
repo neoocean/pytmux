@@ -343,6 +343,15 @@ pub struct PluginZone {
     /// 서버에 되돌려 줄 이름. 우리는 뜻을 모른다.
     #[serde(default, rename = "do")]
     pub act: String,
+    /// 누르면 열 **플러그인 화면 이름**(비었으면 이 자리는 상태를 바꾸는 자리다).
+    ///
+    /// 자리가 둘로 갈리는 이유는 되돌려 보내는 길이 다르기 때문이다: 달력 화살표는
+    /// 그 오버레이의 **상태**를 바꾸니 `plugin_overlay_action` 으로 가고, Claude
+    /// footer 자리는 **화면**을 여니 `plugin_open` 으로 간다(pytmux-2 · 23). 배지의
+    /// [`PluginBadge::open`] 과 같은 규약이고, 서버는 마찬가지로 **그 화면이 실제로
+    /// 있을 때만** 싣는다.
+    #[serde(default)]
+    pub opens: String,
 }
 
 /// 오버레이가 가져가는 키 하나. 이름은 이 클라의 표기다([`base::keys`] 의 `binding_name`).
@@ -544,9 +553,33 @@ pub struct PluginRow {
     /// `▸` 가 붙어 눌러도 아무 일이 없는 화살표가 생긴다(정본이 그래서 셋을 가른다).
     #[serde(default)]
     pub expand: String,
+    /// 이 줄의 **글**을 우리 로케일로 다시 지을 재료(`{"label": …}`).
+    ///
+    /// # 왜 칸(`cols`)처럼 그냥 번역하지 않나
+    ///
+    /// [`say_cols`](Self::say_cols) 가 적어 둔 갈림 그대로다: `label` 은 보통 **자료**라
+    /// (파일 이름·CL 번호) 번역하면 `복사` 라는 이름의 파일이 `Copy` 로 보인다. 그런데
+    /// 화면에 따라서는 그 자리가 **말**이다 — 권한모드 선택의 `auto — 모든 동작 자동
+    /// 수락…`(pytmux-2)이 첫 사례다.
+    ///
+    /// 그래서 판정을 우리가 하지 않고 **플러그인이 실어 보낸다**: 재료가 오면 말이고,
+    /// 안 오면 자료다. 오늘 이 칸을 채우는 화면은 권한모드 하나이고 mdir·ncd 의 이름은
+    /// 종전 그대로 손대지 않는다.
+    #[serde(default)]
+    pub i18n: I18nMap,
 }
 
 impl PluginRow {
+    /// 줄의 글 — **말이면** 이 클라의 로케일로, 자료면 그대로.
+    pub fn say_label(&self) -> String {
+        match self.i18n.get("label") {
+            Some(p) if !p.fmt.is_empty() => i18n_say(&self.i18n, "label", &self.label),
+            // ⚠ `i18n_say` 의 폴백은 `t(fallback)` 이라 **번역한다** — 이름을 그리로
+            // 흘리면 위 문단의 `복사` 문제가 그대로 돌아온다. 그래서 여기서 끊는다.
+            _ => self.label.clone(),
+        }
+    }
+
     /// 부가 칸을 **이 클라의 로케일로**.
     ///
     /// # 왜 칸만인가 (2026-08-02p)
@@ -1365,16 +1398,39 @@ impl SessionState {
     /// 이름의 뜻은 **모른다**. 달력의 `‹` 가 지난달인지 지난해인지는 플러그인이 정하고
     /// (설계 §4.4) 우리는 그 자리를 눌렀다는 사실만 올린다 — 그래서 새 오버레이가
     /// 생겨도 여기는 안 바뀐다.
-    pub fn overlay_zone_at(&self, x: u16, y: u16) -> Option<(String, i64, String)> {
+    /// 화면 좌표 클릭이 **화면을 여는 자리**에 맞았나 — 맞았으면 `(화면 이름, 패널)`.
+    ///
+    /// [`overlay_zone_at`](Self::overlay_zone_at) 과 같은 자리 목록을 보되 `opens` 가
+    /// 실린 것만 고른다. 부르는 쪽은 이것을 **먼저** 물어야 한다: 같은 자리를
+    /// `plugin_overlay_action` 으로 보내면 서버가 그 이름을 아무도 안 집어 조용히
+    /// 사라진다(눌렀는데 아무 일도 안 나는, 이 저장소의 상습 결함).
+    pub fn open_zone_at(&self, x: u16, y: u16) -> Option<(String, i64)> {
+        let z = self.zone_at(x, y)?;
+        (!z.opens.is_empty()).then(|| (z.opens.clone(), z.pane))
+    }
+
+    /// `(x,y)` 를 덮는 자리 하나 — 팝업 뒤는 안 본다.
+    fn zone_at(&self, x: u16, y: u16) -> Option<&PluginZone> {
         // 팝업이 떠 있으면 뒤에 가려진 화살표는 클릭 대상이 아니다(68295 빚 —
         // `pane_at` 의 팝업 우선 규칙과 같은 이유).
         if self.popup().is_some() {
             return None;
         }
         let (x, y) = (x as i64, y as i64);
-        let zone = self.plugin_cells.zones.iter().find(|z| {
-            x >= z.x && x < z.x + z.w.max(1) && y >= z.y && y < z.y + z.h.max(1)
-        })?;
+        self.plugin_cells
+            .zones
+            .iter()
+            .find(|z| x >= z.x && x < z.x + z.w.max(1) && y >= z.y && y < z.y + z.h.max(1))
+    }
+
+    pub fn overlay_zone_at(&self, x: u16, y: u16) -> Option<(String, i64, String)> {
+        let zone = self.zone_at(x, y)?;
+        // 화면을 여는 자리는 이 길이 아니다 — `plugin_overlay_action` 으로 보내면
+        // 서버가 그 이름을 아무도 안 집어 **조용히 사라진다**(눌렀는데 아무 일도 안
+        // 나는, 이 저장소의 상습 결함). 그런 자리는 `open_zone_at` 이 가져간다.
+        if !zone.opens.is_empty() {
+            return None;
+        }
         Some((zone.name.clone(), zone.pane, zone.act.clone()))
     }
 

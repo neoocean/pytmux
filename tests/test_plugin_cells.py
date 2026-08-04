@@ -670,3 +670,176 @@ async def test_a_reported_fact_reaches_the_plugin_through_the_server_frame():
         assert not (body2.get("runs") or []), f"지웠는데 배지가 남았다: {body2}"
     finally:
         await teardown(srv, task, sock)
+
+
+# ---------------------------------------------------------------------------
+# Claude 패널 **안**의 클릭존(pytmux-2 · pytmux-23) — 오버레이가 아니라 **패널 내용**
+# 에서 나오는 첫 자리다. 그래서 여기서 더 재는 것: 규칙이 정말 한 벌인가 · 오버레이를
+# 하나도 안 켠 클라도 자리를 받는가 · 문구를 못 찾으면 조용히 안 만드는가.
+# ---------------------------------------------------------------------------
+
+def _footerzones():
+    """claude-code 의 `footerzones` 모듈(이름에 하이픈이 있어 import 문으로는 못 쓴다)."""
+    import importlib
+    return importlib.import_module(
+        "pytmuxlib.plugins.claude-code.footerzones")
+
+
+_FOOTER = [
+    "  ⏵⏵ auto mode on (shift+tab to cycle)",
+    "  new task? /clear to save 386.8k tokens",
+]
+
+
+async def test_the_rule_that_finds_the_footer_is_one_copy():
+    """정본이 부르는 함수와 서버가 부르는 함수가 **같은 것**이어야 한다.
+
+    두 벌이 되면 그 순간 두 클라의 누르는 자리가 갈린다 — 그리고 그 갈림은 화면에
+    아무 표시도 안 남기므로(둘 다 그럴듯한 자리를 보인다) 사람이 못 잡는다."""
+    import importlib
+    fz = _footerzones()
+    render = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.clientrender")
+    plugin = importlib.import_module("pytmuxlib.plugins.claude-code")
+    assert render.scan_pane is fz.scan_pane, \
+        "정본 렌더가 규칙을 따로 들고 있다"
+    # 서버 쪽도 같은 이름을 지연 import 한다 — 소스로 못박는다(호출부까지 단언).
+    import inspect
+    src = inspect.getsource(plugin._ClaudeCodePlugin.plugin_triggers)
+    assert "from .footerzones import" in src, \
+        f"서버가 규칙을 다른 데서 가져온다:\n{src}"
+
+
+async def test_the_scanner_covers_only_the_words_it_actually_found():
+    """존은 **문구만** 덮는다 — 줄 전체를 덮으면 힌트를 눌러도 팝업이 뜬다(07-15)."""
+    fz = _footerzones()
+    found = fz.scan_pane(_FOOTER, 10, 5, 60, 24)
+    assert set(found) == {"perm", "tokens"}, found
+    px0, px1, py = found["perm"]
+    assert (px0, py) == (12, 5), found              # 들여쓰기 둘 만큼 밀려 있다
+    assert px1 == px0 + len("⏵⏵ auto mode on"), found
+    # 힌트 "(shift+tab to cycle)" 는 존 밖이다.
+    assert px1 < 10 + len(_FOOTER[0].rstrip()), found
+    tx0, tx1, ty = found["tokens"]
+    assert ty == 6 and tx1 - tx0 == len("386.8k tokens"), found
+
+
+async def test_a_token_count_in_the_transcript_is_not_a_click_target():
+    """`386.8k tokens` 는 대화 본문에도 얼마든 지나간다 — footer 서명(`/clear`)이
+    같은 줄에 없으면 **존을 안 만든다**. 오탐은 아무 일도 안 나는 것보다 나쁘다."""
+    fz = _footerzones()
+    assert fz.scan_pane(["  we burned 386.8k tokens on that"], 0, 0, 60, 24) == {}
+    assert fz.scan_pane(["  /clear the queue please"], 0, 0, 60, 24) == {}
+
+
+async def test_wide_characters_before_the_footer_do_not_shift_the_zone():
+    """한글이 앞에 있으면 글자 수와 칸 수가 갈린다 — 칸으로 세야 자리가 맞는다."""
+    fz = _footerzones()
+    found = fz.scan_pane(["한글 ⏵⏵ auto mode on"], 0, 0, 60, 24)
+    x0, _x1, _y = found["perm"]
+    assert x0 == 5, found          # "한글 " = 2+2+1 칸
+
+
+async def test_a_client_with_no_overlay_still_gets_the_claude_zones():
+    """★ **배선을 잰다**(손으로 만든 req 로는 안 지나는 자리다).
+
+    종전 셀 프레임은 *"오버레이를 켠 적도 없으면 아무것도 안 만든다"* 로 시작했다 —
+    그 전제 그대로면 시계를 안 켠 사람에게는 Claude 클릭존이 **영영 안 간다**. 그리고
+    그 사람이 대다수다."""
+    import json
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._claude = "idle"
+        p.feed(("\x1b[2J\x1b[H" + "\r\n".join(_FOOTER) + "\r\n").encode("utf-8"))
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}       # 아무 오버레이도 안 켰다
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        c = _C()
+        frame = srv._plugin_cells_frame(c, sess, win, 100.0)
+        assert frame is not None, "오버레이를 안 켰다고 클릭존까지 안 왔다"
+        body = json.loads(frame[4:])
+        zones = {z["do"]: z for z in body.get("zones") or []}
+        assert set(zones) == {"perm", "tokens"}, body
+        assert zones["perm"]["opens"] == "claude-perm-mode", zones
+        assert zones["tokens"]["opens"] == "claude-token-log", zones
+        assert zones["perm"]["pane"] == p.id, zones
+        assert zones["perm"]["w"] == len("⏵⏵ auto mode on"), zones
+        # Claude 가 아니게 되면 자리도 사라진다(그 자리는 이제 트랜스크립트다).
+        p._claude = None
+        erase = srv._plugin_cells_frame(c, sess, win, 101.0)
+        assert erase is not None, "Claude 가 아닌데 자리가 그대로 남는다"
+        assert not (json.loads(erase[4:]).get("zones") or []), erase
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_zones_do_not_wait_for_the_one_second_tick():
+    """클릭존은 패널 **내용**에서 나온다 — 내용이 움직이면 자리도 움직인다. 런처럼
+    1초를 기다리면 그 사이 사용자가 누른 곳이 **낡은 자리**다(시계는 초 단위라
+    기다려도 되지만 이건 아니다)."""
+    import json
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._claude = "idle"
+        p.feed(("\x1b[2J\x1b[H" + "\r\n".join(_FOOTER) + "\r\n").encode("utf-8"))
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        c = _C()
+        first = srv._plugin_cells_frame(c, sess, win, 100.0)
+        assert first is not None
+        was = {z["do"]: z["y"] for z in json.loads(first[4:])["zones"]}
+        # 같은 초 안에서 footer 가 한 줄 밀렸다.
+        p.feed(("\x1b[2J\x1b[H\r\n" + "\r\n".join(_FOOTER) + "\r\n").encode("utf-8"))
+        frame = srv._plugin_cells_frame(c, sess, win, 100.1)
+        assert frame is not None, "footer 가 움직였는데 다음 초까지 낡은 자리를 준다"
+        now = {z["do"]: z["y"] for z in json.loads(frame[4:])["zones"]}
+        assert now["perm"] == was["perm"] + 1, (was, now)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_a_remote_view_does_not_get_the_local_claude_zones():
+    """원격 보기 중에는 보이는 글이 **업스트림 것**이다 — 내 패널에서 잰 자리를 얹으면
+    엉뚱한 데를 누른다(시계와 같은 이유)."""
+    import json
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._claude = "idle"
+        p.feed(("\x1b[2J\x1b[H" + "\r\n".join(_FOOTER) + "\r\n").encode("utf-8"))
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 0.0
+                self._cells_last = ()
+                self.remote_view = None
+
+        c = _C()
+        assert srv._plugin_cells_frame(c, sess, win, 100.0) is not None
+        c.remote_view = object()
+        erase = srv._plugin_cells_frame(c, sess, win, 101.0)
+        assert erase is not None, "원격 보기로 들어갔는데 내 자리가 그대로 남는다"
+        assert not (json.loads(erase[4:]).get("zones") or []), erase
+    finally:
+        await teardown(srv, task, sock)

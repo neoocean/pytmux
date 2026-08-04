@@ -7764,3 +7764,37 @@ async def test_remote_attach_via_splits_relay_host():
                                   "via": "jump1"}) in sent, sent
         assert ("remote_attach", {"host": "via B"}) in sent, sent
     await _with_app(body)
+
+
+async def test_token_footer_click_opens_the_token_popup():
+    """pytmux-23: Claude 가 그린 `… /clear to save 386.8k tokens` 의 **수치**를 누르면
+    토큰 사용량 팝업이 열린다 — 상태줄 Σ 배지와 같은 판이다(같은 수를 두 자리에서
+    눌러 서로 다른 판이 뜨면 그게 더 이상하다).
+
+    ★ 히트테스트만 재지 않고 **호출부까지** 단언한다: 존을 만들어 놓고 그 존을 여는
+    호출을 지워도 통과하는 오라클이 이 저장소에서 두 번 나왔다(공허 통과)."""
+    async def body(app, pilot, srv):
+        pane = app.layout["panes"][0]
+        pid, py = pane["id"], pane["y"]
+        app.pane_claude = {pid: {"id": pid, "claude": "idle",
+                                 "perm_mode": "default"}}
+        app.pane_content[pid] = ([
+            [("트랜스크립트 — 386.8k tokens 라고 적힌 본문", {})],
+            [("new task? /clear to save 386.8k tokens", {})],
+        ], None)
+        app._composite()
+        # 본문의 같은 문구는 존이 아니다(footer 서명 `/clear` 이 없다).
+        assert pid in app._tokens_zone, app._tokens_zone
+        zx0, zx1, zy = app._tokens_zone[pid]
+        assert zy == py + 1, (zy, py)
+        assert app._footer_zone_at(zx0, py) is None, "본문 줄이 존이 됐다"
+        # 존은 수치만 덮는다 — 'new task? /clear to save' 는 클릭 대상이 아니다.
+        assert zx1 - zx0 == len("386.8k tokens"), (zx0, zx1)
+        assert app._footer_zone_at(zx0, zy) == (pid, "tokens")
+        assert app._footer_zone_at(zx0 - 1, zy) is None
+
+        opened = []
+        app.open_token_log = lambda *a, **k: opened.append(1)
+        app.view.on_mouse_down(_FakeMouse(zx0, zy, 1))
+        assert opened, "존은 만들었는데 누르면 아무 일도 안 난다"
+    await _with_app(body)
