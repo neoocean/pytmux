@@ -107,15 +107,66 @@ class _ImeIndicatorPlugin:
         # 의도된 상단 테두리 오버레이라 그 칸이 파랑이 아닌 게 정상이다.
         app._ime_zone = None
 
+    # ---- 서버 측: 배지를 보일까 말까(옵션 · pytmux-35) ----
+    #
+    # 종전에는 이 값이 **정본 클라의 인스턴스 속성**뿐이었다. 네이티브 클라의 배지는
+    # 서버가 그리는데(`plugin_cells`) 서버엔 그 값이 없어, 그쪽에서는 끌 방법이 아예
+    # 없었다 — 명령은 팔레트에 보이는데 눌러도 아무 일이 없는 줄이었다. 사유와 설계는
+    # `cmdmap.py` 머리말.
+    def server_opts_init(self, server, opts):
+        po = opts.get("plugin_opts")
+        po = po if isinstance(po, dict) else {}
+        server.ime_show = bool(po.get("ime_show", True))    # 기본 ON(종전 동작)
+
+    def server_opts_serialize(self, server):
+        return {"ime_show": bool(getattr(server, "ime_show", True))}
+
+    def server_status(self, server, sess, win, msg, full):
+        """토글로만 바뀌는 정적 옵션이라 **full 일 때만** 싣는다(C4 규약 — 주기 status
+        에서 빠져도 클라가 직전 값을 유지한다)."""
+        if full:
+            msg["ime_show"] = bool(getattr(server, "ime_show", True))
+
+    def server_command(self, server, client, sess, action, msg):
+        if action == "set_ime_indicator":
+            value = msg.get("value")
+            server.ime_show = (not getattr(server, "ime_show", True)) \
+                if value is None else bool(value)
+            try:
+                server._save_opts()
+            except Exception:
+                pass        # 영속 실패로 토글 자체가 죽지 않게(값은 이미 섰다)
+            return "broadcast"          # 붙어 있는 모든 클라가 같은 상태를 본다
+        return None
+
+    def plugin_command_action(self, name, args):
+        """`ime-indicator` → `(set_ime_indicator, {value})` (pytmux-35). 옮기기만 한다."""
+        from .cmdmap import to_action
+        return to_action(name, args)
+
+    def client_status(self, app, msg):
+        """서버가 정한 표시 여부를 흡수한다. 키가 안 왔으면(구버전 서버·델타 프레임)
+        직전 값을 유지한다 — 없는 것을 '꺼짐'으로 읽으면 배지가 깜빡인다."""
+        if "ime_show" in msg:
+            app.ime_show = bool(msg["ime_show"])
+
     def handle_command(self, app, c, args):
-        if c in ("ime-indicator", "ime"):
-            app.ime_show = not getattr(app, "ime_show", True)
-            app._composite()
-            fn = getattr(app, "display_message", None)
-            if fn:
-                fn("IME 인디케이터 " + ("ON" if app.ime_show else "OFF"))
-            return True
-        return False
+        # ★ 이름→액션은 `cmdmap` 한 벌이 정한다(pytmux-35) — 서버도 같은 표를 쓴다.
+        from .cmdmap import to_action
+        got = to_action(c, args)
+        if got is None:
+            return False
+        action, kw = got
+        # 낙관적 즉시 반영(서버 broadcast 가 권위값으로 확정) — 정본 설정 팝업의
+        # `saver_action` 과 같은 손버릇이다.
+        app.ime_show = (not getattr(app, "ime_show", True)) \
+            if kw.get("value") is None else bool(kw["value"])
+        app.send_cmd(action, **kw)
+        app._composite()
+        fn = getattr(app, "display_message", None)
+        if fn:
+            fn("IME 인디케이터 " + ("ON" if app.ime_show else "OFF"))
+        return True
 
     # ---- 클라이언트 런타임 훅 ----
     def client_tick(self, app):
@@ -306,6 +357,8 @@ class _ImeIndicatorPlugin:
     # 클라가 `client_fact` 로 올려 준 것을 그대로 쓴다(설계 §4.4 Tier D).
     def plugin_cells(self, server, sess, req):
         from .cells import ime_cells
+        if not getattr(server, "ime_show", True):
+            return []                      # 꺼 뒀다(`ime-indicator off`) — 안 그린다
         label = ((req.get("facts") or {}).get("ime") or "").strip()
         if not label:
             return []                      # 안 올라왔으면 안 그린다(끄는 것도 프레임)

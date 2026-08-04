@@ -208,10 +208,17 @@ def test_the_table_never_names_an_action_the_server_does_not_accept():
     known = set(fx["actions"]) | set(_CMD_TABLE)
     cm = _cmdmap()
     bad = []
+    # ⚠ 인자에 따라 **액션이 갈리는** 이름이 있다(`prompt-clear-queue`: 무인자면 화면,
+    #    인자가 있으면 쌓기·비우기 — pytmux-35). 무인자 하나만 물으면 그 이름의 액션을
+    #    통째로 안 재게 되므로 몇 가지 인자로 눌러 본다. `None` 은 *"이번엔 액션이
+    #    아니다"* 이지 실패가 아니다.
     for name in cm.names():
-        action, _kw = cm.to_action(name, [])
-        if action not in known:
-            bad.append((name, action))
+        got = [cm.to_action(name, a) for a in ([], ["-c"], ["아무 말"])]
+        assert any(g is not None for g in got), \
+            f"{name}: 어떤 인자로도 액션이 안 나온다 — 표에 이름만 있고 뜻이 없다"
+        for g in got:
+            if g is not None and g[0] not in known:
+                bad.append((name, g[0]))
     assert not bad, f"서버가 안 받는 액션을 표가 이름 댄다: {bad}"
 
 

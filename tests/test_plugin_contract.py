@@ -260,12 +260,13 @@ async def _opts_namespace_body(reg, _S):
     # ③ serialize 는 현재 server 값을 돌려준다(코어가 plugin_opts 밑에 불투명 저장).
     out = reg.server_opts_serialize(s2)
     assert out["claude_auto_retry"] is False
-    # ph_max_lines(claude-prompt-history)·capture(rec)·namesync_rules(claude-name-sync)는
+    # ph_max_lines(claude-prompt-history)·capture(rec)·namesync_rules(claude-name-sync)·
+    # ime_show(ime-indicator, pytmux-35 — 배지 표시 여부가 서버 옵션이 됐다)는
     # 다른 플러그인 소유 opt(별개) — claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고
     # 비교한다. 2026-07-07: prompt_clear_message·claude_auto_mode·claude_auto_launch·
     # claude_rules·claude_long_turn_sec·claude_repeat_alert 6종을 코어에서 plugin_opts 로
     # 이전(완전분리).
-    assert set(out) - {"ph_max_lines", "capture", "namesync_rules"} == {
+    assert set(out) - {"ph_max_lines", "capture", "namesync_rules", "ime_show"} == {
         "claude_auto_retry", "token_debug", "auto_token_on_exit",
         "claude_auto_redraw", "prompt_clear_message", "claude_auto_mode",
         # F3 옵션A(2026-07-25): 자동재개 대역외 확인 3-state. 이 골든이 새 옵션의
@@ -294,9 +295,9 @@ async def _opts_namespace_body(reg, _S):
     reg2.server_opts_init(s3, {"claude_auto_retry": False})
     assert not hasattr(s3, "claude_auto_retry"), "플러그인 부재인데 설정 설치됨"
     # claude-code 의 opts 는 사라진다(잔존 키는 다른 플러그인 소유: ph_max_lines, capture,
-    # namesync_rules).
+    # namesync_rules, ime_show).
     assert set(reg2.server_opts_serialize(s3)) - {
-        "ph_max_lines", "capture", "namesync_rules"} == set()
+        "ph_max_lines", "capture", "namesync_rules", "ime_show"} == set()
 
 
 async def test_pane_token_accumulator_owned_by_plugin():
@@ -398,9 +399,10 @@ async def test_token_subsystem_fully_disabled_without_plugin():
     reg.server_opts_init(s, {"claude_auto_retry": False,
                              "plugin_opts": {"claude_auto_retry": False}})
     # claude-code 의 opts 가 사라진다(잔존 키는 다른 플러그인 소유: claude-prompt-history
-    # 의 ph_max_lines, rec 의 capture, claude-name-sync 의 namesync_rules).
+    # 의 ph_max_lines, rec 의 capture, claude-name-sync 의 namesync_rules,
+    # ime-indicator 의 ime_show).
     assert set(reg.server_opts_serialize(s)) - {
-        "ph_max_lines", "capture", "namesync_rules"} == set()
+        "ph_max_lines", "capture", "namesync_rules", "ime_show"} == set()
     # ④ DB 연결 런타임 상태(server_init) 미설치.
     s2 = _S()
     reg.server_init(s2)

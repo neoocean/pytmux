@@ -746,29 +746,29 @@ fn cmd_kinds() -> CmdKinds {
 /// 줄이는 것이 목표다. 이 목록이 **늘면** 게이트가 운다 — 새 플러그인 명령을 광고만 하고
 /// 어느 클라도 못 하게 두는 것이 이 부류가 생긴 경위다.
 ///
-/// 어떻게 줄이나(둘 중 하나):
-/// - 플러그인이 **화면 스펙**을 내면(Tier B) `plugin_open` 경로가 그대로 산다 —
-///   `claude-settings`·`model`·`usage-panel` 처럼 정본에서 팝업인 것들이 여기다.
-/// - 상태만 바꾸는 것은 **네이티브 어댑터**로 든다(위 `NATIVE_PLUGIN_COMMANDS`) —
-///   다만 그 목록도 래칫이라 "왜 서버가 못 하나"를 적어야 한다.
-static DEAD_PLUGIN_COMMANDS: &[&str] = &[
-    "auto-launch",
-    "capture-output",
-    "capture-toggle",
-    "claude-rules",
-    "claude-settings",
-    "claude-token-log",
-    "ime-indicator",
-    "model",
-    "namesync",
-    "prompt-clear-queue",
-    "prompt-history-lines",
-    // 2026-08-03 (pytmux-35) 에 여섯이 나갔다 — `auto-resume-message` ·
-    // `claude-auto-redraw` · `claude-resume-verify` · `claude-token-account` ·
-    // `claude-token-sync` · `prompt-clear-message`(+ 앞서 `usage-panel`).
-    // 인자를 파싱해야 뜻이 온전한 것들이라 팔레트가 인자를 못 받는 동안(pytmux-7)
-    // 여기 묶여 있었다.
-];
+/// 어떻게 줄이나(셋 중 하나):
+/// - 플러그인이 **화면 스펙**을 내면(Tier C) `plugin_open` 경로가 그대로 산다 —
+///   `claude-settings`·`model`·`namesync` 처럼 정본에서 팝업인 것들이 그렇게 나갔다.
+/// - 상태를 바꾸는 것은 플러그인이 **`cmdmap`** 을 내면 서버가 받는다(pytmux-35) —
+///   `capture-output`·`auto-launch`·`prompt-history-lines`·`ime-indicator` 가 그 길이다.
+/// - 그래도 서버가 못 하는 것만 **네이티브 어댑터**로 든다(위 `NATIVE_PLUGIN_COMMANDS`) —
+///   그 목록도 래칫이라 "왜 서버가 못 하나"를 적어야 한다.
+///
+/// ★ **2026-08-04 에 0 이 됐다**(pytmux-35 종결 · 23 → 18 → 17 → 11 → 0). 남아 있던
+///   열하나가 마지막 CL 에서 나갔다:
+///   - `cmdmap` — `capture-output`·`capture-toggle`(rec) · `prompt-history-lines`
+///     (claude-prompt-history) · `auto-launch`(claude-code — **정본에서도 죽어 있었다**:
+///     팔레트·CLI 토글표엔 있는데 `handle_command` 에 분기가 없었다) ·
+///     `ime-indicator`(표시 여부를 서버 옵션으로 옮겨 두 클라가 한 값을 본다).
+///   - **화면 스펙** — `claude-settings`(form) · `claude-rules`(prompt · 지금 규칙이
+///     입력칸 초기값) · `model`(list) · `claude-token-log`(table · 일별 집계. 계층
+///     타임라인·`[한도]` 탭은 EXT-0008) · `namesync`(table + 물음) ·
+///     `prompt-clear-queue`(무인자면 목록, 인자가 있으면 액션 — 갈래는 `cmdmap` 이 정한다).
+///
+/// 이 목록이 **비었다고 이 오라클이 공허해지지는 않는다**: 계산한 `dead` 가 하나라도
+/// 생기면 그 순간 떨어진다(빈 목록 == 빈 목록이 아니라 `dead == []` 를 잰다). 픽스처가
+/// 헛돌아 빈 것은 `the_command_kinds_fixture_actually_measured_something` 이 막는다.
+static DEAD_PLUGIN_COMMANDS: &[&str] = &[];
 
 #[test]
 fn the_dead_command_list_does_not_grow() {

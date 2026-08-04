@@ -17,6 +17,25 @@ import importlib
 import pkgutil
 
 
+def onoff(args):
+    """`on`/`off` 낱말 → `True`/`False`, 없으면 `None`(**서버가 토글한다**).
+
+    # 왜 레지스트리에 있나 (pytmux-35)
+
+    플러그인마다 `cmdmap` 이 생기면서 같은 네 줄이 여러 벌 생길 참이었다. 이 함수가
+    갈리면 — 한쪽만 `toggle` 을 받거나 한쪽만 대소문자를 무시하면 — **같은 명령이 클라
+    마다 다르게 동작한다.** 그것이 이 결함(pytmux-35)이 생긴 모양 그대로다.
+
+    플러그인이 코어를 읽는 것은 이 저장소의 관례다(`i18n`·`proc`). 반대 방향만 금지다 —
+    코어는 플러그인을 직접 import 하지 않는다(delete-to-disable).
+    """
+    if "on" in args:
+        return True
+    if "off" in args:
+        return False
+    return None
+
+
 def _discover():
     """plugins/ 하위 서브패키지를 불러와 `PLUGIN` 객체 목록을 만든다. import 가
     깨진 플러그인은 조용히 건너뛴다(하나가 망가져도 앱 전체를 막지 않게)."""

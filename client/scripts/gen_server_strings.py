@@ -48,6 +48,7 @@ SHIPPED = {
     "p4cl": "p4changes 의 Tier C 화면 스펙",
     "ph": "prompt-history 의 Tier C 화면 스펙",
     "mdir": "mdir 의 Tier C 화면 스펙(제목·안내·물음·결과·실패 사유)",
+    "nsync": "claude-name-sync 의 Tier C 화면 스펙(규칙 판의 제목·안내·물음)",
     "claude": "claude-code 의 상태줄 배지(P6 후반이 Tier B 로 옮길 것)",
     "ccmsg": "claude-code 가 클라에 보내는 안내 줄",
 }

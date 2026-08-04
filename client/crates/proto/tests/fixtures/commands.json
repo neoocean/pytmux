@@ -71,6 +71,7 @@
     "set_buffer": "handled",
     "set_capture": "full",
     "set_claude_account": "handled",
+    "set_claude_auto_launch": "full",
     "set_claude_auto_mode": "full",
     "set_claude_auto_redraw": "full",
     "set_claude_auto_retry": "full",
@@ -80,6 +81,7 @@
     "set_claude_turn_warn": "full",
     "set_coalesce": "full",
     "set_exit_empty": "full",
+    "set_ime_indicator": "full",
     "set_monitor": "full",
     "set_nest_auto_attach": "full",
     "set_pane_title": "full",
@@ -295,6 +297,9 @@
     "set_claude_account": [
       "name"
     ],
+    "set_claude_auto_launch": [
+      "value"
+    ],
     "set_claude_auto_mode": [
       "value"
     ],
@@ -322,6 +327,9 @@
       "value"
     ],
     "set_exit_empty": [
+      "value"
+    ],
+    "set_ime_indicator": [
       "value"
     ],
     "set_monitor": [

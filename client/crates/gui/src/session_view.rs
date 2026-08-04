@@ -2489,15 +2489,26 @@ impl SessionView {
                             // ★ 물음 문구의 주인은 **플러그인**이다(`ask_text` — 첫 줄이
                             //   물음, 나머지가 상세). 안 실어 주면 되돌릴 수 없는 것 앞에서
                             //   "플러그인이 물었다:" 한 줄만 보인다.
-                            let (kind, ask, sel) = match self.state.plugin_screen() {
-                                Some(spec) => {
-                                    (spec.kind.clone(), spec.ask_text(), spec.selected)
-                                }
-                                None => (String::new(), String::new(), 0),
+                            // ★ 입력칸의 **초기값도 스펙이 정한다**(pytmux-35). 고치는
+                            //   화면인데 지금 값이 안 실리면 '편집'이 아니라 '다시 치기'가
+                            //   된다 — `claude-rules`(시작 규칙)·`namesync`(경로·키워드)가
+                            //   그 부류다. 실을 것이 없는 물음은 종전대로 빈 칸이다.
+                            let (kind, ask, sel, seed) = match self.state.plugin_screen() {
+                                Some(spec) => (
+                                    spec.kind.clone(),
+                                    spec.ask_text(),
+                                    spec.selected,
+                                    spec.text.clone(),
+                                ),
+                                None => (String::new(), String::new(), 0, String::new()),
                             };
                             match kind.as_str() {
                                 "prompt" => {
-                                    self.screens.ask_with_detail(base::Prompt::PluginAsk, "", ask);
+                                    self.screens.ask_with_detail(
+                                        base::Prompt::PluginAsk,
+                                        &seed,
+                                        ask,
+                                    );
                                 }
                                 "confirm" => {
                                     self.screens.confirm_with(base::Prompt::PluginAsk, ask);
@@ -3886,7 +3897,10 @@ impl SessionView {
                 let selected = self.screens.selected().min(spec.rows.len().saturating_sub(1));
                 let start = (selected + 1).saturating_sub(budget);
                 for (row, item) in spec.rows.iter().enumerate().skip(start).take(budget) {
-                    let value = item.cols.first().cloned().unwrap_or_default();
+                    // 값도 **플러그인이 적은 말**이라 우리 로케일로 읽는다(목록·표와 같은
+                    // 규칙 — `PluginRow::say_cols`). 여기만 `cols` 를 날로 쓰던 동안
+                    // 설정 판의 `끔`·`완료마다` 가 영어 사용자에게 한국어로 떴다.
+                    let value = item.say_cols().into_iter().next().unwrap_or_default();
                     let line = Flex::row()
                         .with_main_axis_size(MainAxisSize::Min)
                         .with_cross_axis_alignment(CrossAxisAlignment::Center)

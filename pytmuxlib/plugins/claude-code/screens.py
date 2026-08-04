@@ -20,7 +20,7 @@ from rich.style import Style
 
 from pytmuxlib import i18n
 from pytmuxlib.clientutil import REMOTE_PINK, theme_color
-from . import SAVER_ROWS
+from . import CTX_CHOICES, MODEL_CHOICES, SAVER_ROWS
 
 # usage_xc.host 가 NULL(=이 머신 적재분)인 덩어리를 가리키는 표시 키.
 # 서버쪽 정본은 usagedb.LOCAL_HOST — 클라 화면이 저장소 모듈을 import 하지
@@ -386,11 +386,12 @@ class ModelCtxScreen(ModalScreen):
     #mcmenu { width: 56; height: auto; max-height: 80%;
               border: round $accent; background: $panel; }
     """
-    # 모델 후보(짧은 별칭 + 구체 버전). '/model <이름>' 인자로 그대로 주입한다.
-    _MODELS = ["opus", "sonnet", "haiku",
-               "opus-4.8", "sonnet-4.6", "haiku-4.5", "default"]
-    # 컨텍스트 크기: 기본 / 1M(확장). 'default' 면 모델만, 아니면 뒤에 토큰으로 덧붙임.
-    _CTX = [("기본", "default"), ("1M", "1m")]
+    # 모델·컨텍스트 후보 — 표의 정본은 **UI 무의존 자리**(`MODEL_CHOICES`·`CTX_CHOICES`)다.
+    # 화면 스펙(Tier C)도 같은 목록을 쓰는데 그것을 짓는 것은 서버라, 여기 두면 서버가
+    # 후보를 얻으려고 Textual 을 읽게 된다(pytmux-35 · `SAVER_ROWS` 와 같은 이유·같은 자리).
+    # 이 이름들은 `_TokenLogScreen` 도 참조하므로 별칭으로 남긴다.
+    _MODELS = MODEL_CHOICES
+    _CTX = CTX_CHOICES
 
     def __init__(self, current_model=None):
         super().__init__()

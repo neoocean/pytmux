@@ -3493,9 +3493,11 @@ fn a_rows_columns_are_drawn_in_our_locale_but_its_name_is_not() {
 fn a_prompt_spec_uses_the_native_ask_and_sends_the_typed_answer() {
     // 물음은 이 클라가 이미 잘하는 일이다 — 플러그인이 물었다고 화면을 한 벌 더 만들면
     // 되돌릴 수 없는 것 앞의 규칙이 두 곳에 생긴다.
+    // ⚠ `text` 는 **입력칸 초기값**이다(아래 오라클) — 빈 칸에서 시작하는 물음이라
+    //    여기서는 비워 둔다.
     let ask: ServerMessage = serde_json::from_value(serde_json::json!({
         "t": "plugin_screen", "id": "mdir", "kind": "prompt",
-        "title": "새 이름", "hint": "", "rows": [], "text": "새 이름:", "note": "",
+        "title": "새 이름", "hint": "", "rows": [], "text": "", "note": "",
         "selected": 0, "keys": {"enter": "rename"}
     }))
     .unwrap();
@@ -3514,6 +3516,32 @@ fn a_prompt_spec_uses_the_native_ask_and_sends_the_typed_answer() {
         .unwrap_or_else(|| panic!("답이 안 돌아갔다: {frames:?}"));
     assert_eq!(action["do"], "rename");
     assert_eq!(action["input"], "hi");
+}
+
+#[test]
+fn a_prompt_spec_seeds_the_input_with_what_the_plugin_sent() {
+    // pytmux-35: **고치는 화면**의 물음은 지금 값에서 시작해야 한다. 안 그러면 규칙
+    // 하나를 손보려고 전체를 다시 쳐야 하고, 그건 '편집'이 아니라 '덮어쓰기'다
+    // (`claude-rules` 의 시작 규칙 · `namesync` 의 경로·키워드가 그 부류다).
+    let ask: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-rules", "kind": "prompt",
+        "title": "Claude 시작 규칙", "hint": "", "rows": [],
+        "text": "한국어로 답할 것", "note": "", "selected": 0,
+        "keys": {"enter": "save"}
+    }))
+    .unwrap();
+    // 초기값 뒤에 한 글자를 더 치고 확정한다 — 초기값이 안 실렸으면 답은 `!` 뿐이다.
+    let sent = sent_after(
+        vec![layout_one_pane(), ask],
+        &[(Key::Char('!'), Mods::NONE), (Key::Enter, Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let action = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_action")
+        .unwrap_or_else(|| panic!("답이 안 돌아갔다: {frames:?}"));
+    assert_eq!(action["do"], "save");
+    assert_eq!(action["input"], "한국어로 답할 것!");
 }
 
 // ── P3 — 오버레이는 클라만 아는 사실이고, 그림은 서버가 준다 ────────────────────

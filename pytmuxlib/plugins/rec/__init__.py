@@ -97,6 +97,14 @@ class _RecPlugin:
             return "send_full"
         return None
 
+    def plugin_command_action(self, name, args):
+        """`capture-output`/`capture-toggle` → `(set_capture, {value})` (pytmux-35).
+
+        **옮기기만 한다** — 어느 표가 그 액션을 받는지는 서버가 안다(코어 표 → 플러그인
+        `server_command` 순). 규칙 한 벌은 `cmdmap.py` 에 있고 정본 클라도 그것을 쓴다."""
+        from .cmdmap import to_action
+        return to_action(name, args)
+
     def server_pty_output(self, server, pane, data):
         """패널 PTY 출력 1조각 — 캡처 ON 이면 파일에 무손실 append(serverpty
         _ingest_slice 의 `if self.capture: self._capture_write` 이전). 이 훅은 30Hz

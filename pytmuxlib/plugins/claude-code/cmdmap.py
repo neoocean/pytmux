@@ -30,19 +30,19 @@
 그것들은 액션이 아니라 팝업이고, 그 길은 Tier C 화면 스펙이다(`usage-panel` 이 먼저
 갔다 — pytmux-20). 여기 두면 "서버로 보냈는데 아무 일도 안 나는" 칸이 생긴다.
 
-**부작용이 딸린 것도 없다**(`claude-token-debug` 는 보내고 나서 알림을 띄운다,
-`prompt-clear-queue` 는 팝업을 연다). 알림·팝업은 클라의 일이라 이 표가 나를 수 없다.
+**알림이 딸린 것도 없다**(`claude-token-debug` 는 보내고 나서 알림을 띄운다). 알림은
+클라의 일이라 이 표가 나를 수 없다.
+
+# 인자에 따라 갈리는 것 (`prompt-clear-queue`)
+
+한 이름이 **화면이기도 하고 액션이기도** 할 수 있다. `prompt-clear-queue` 는 무인자면
+큐를 보여 주고(화면), 인자가 있으면 쌓거나 비운다(액션). 그 갈래는 여기서 정한다 —
+무인자에 `None` 을 돌려주면 서버가 그대로 **화면 경로**로 넘어간다(`servercmd`
+`_cmd_plugin_cmd` 의 3단계). 클라는 어느 쪽인지 몰라도 된다.
 """
 from __future__ import annotations
 
-
-def onoff(args):
-    """on/off 인자 → True/False, 없으면 None(서버가 토글)."""
-    if "on" in args:
-        return True
-    if "off" in args:
-        return False
-    return None
+from pytmuxlib.plugins import onoff
 
 
 def redraw_arg(args):
@@ -67,6 +67,18 @@ def verify_arg(args):
         return "weak"
     v = onoff(args)
     return "weak" if v is True else "off" if v is False else None
+
+
+def pc_queue_arg(args):
+    """`prompt-clear-queue` 의 갈래 — `(액션, 인자)` 이거나 `None`(무인자 = 화면).
+
+    `-c`/`clear`/`--clear` 는 비우기, 그 밖의 말은 그대로 큐에 쌓는다(정본
+    `_pc_queue` 와 같은 규칙 — 두 벌이 되면 같은 글자가 클라마다 다른 일을 한다)."""
+    if not args:
+        return None
+    if str(args[0]).lower() in ("-c", "clear", "--clear"):
+        return "pc_queue_clear", {}
+    return "pc_queue_add", {"cmd": " ".join(args).strip()}
 
 
 #: 명령 이름(별칭 포함) → `(액션, 인자 만드는 함수)`.
@@ -101,11 +113,24 @@ _TABLE = {
         ("set_claude_auto_retry", lambda a: {"value": onoff(a)}),
     ("claude-auto-mode", "auto-mode"):
         ("set_claude_auto_mode", lambda a: {"value": onoff(a)}),
+    # ★ 종전에는 이 이름이 **정본에서도 죽어 있었다**(pytmux-35): 팔레트·선택지 팝업·
+    #   외부 CLI 토글표에는 있는데 `handle_command` 의 사슬에 분기가 없어, `:auto-launch
+    #   on` 은 "알 수 없는 명령"으로 끝났다. 전수로 재는 자가 없으면 이런 구멍은 안
+    #   보인다 — 이 표가 그 자가 재는 자리다.
+    ("auto-launch", "claude-auto-launch"):
+        ("set_claude_auto_launch", lambda a: {"value": onoff(a)}),
     ("prompt-clear-message",):
         ("set_prompt_clear_message", lambda a: {"msg": " ".join(a).strip()}),
 }
 
+#: 인자에 따라 **액션 자체가 갈리는** 이름. 값은 `args → (액션, 인자) | None` 이고
+#: `None` 은 *"이번엔 액션이 아니다"* = 서버가 화면 경로로 넘어간다.
+_BRANCH = {
+    ("prompt-clear-queue", "pc-queue"): pc_queue_arg,
+}
+
 _BY_NAME = {name: spec for names, spec in _TABLE.items() for name in names}
+_BY_NAME_BRANCH = {name: fn for names, fn in _BRANCH.items() for name in names}
 
 
 def to_action(name, args):
@@ -114,13 +139,19 @@ def to_action(name, args):
     ⚠ `None` 은 **"내 것이 아니다"** 이지 실패가 아니다. 부르는 쪽은 다른 길(화면 스펙 ·
     클라 전용 팝업)로 넘어간다.
     """
+    args = list(args or [])
+    branch = _BY_NAME_BRANCH.get(name)
+    if branch is not None:
+        return branch(args)
     spec = _BY_NAME.get(name)
     if spec is None:
         return None
     action, mk = spec
-    return action, mk(list(args or []))
+    return action, mk(args)
 
 
 def names():
-    """이 표가 다루는 이름 전부(오라클이 전수를 재는 데 쓴다)."""
-    return sorted(_BY_NAME)
+    """이 표가 다루는 이름 전부(오라클이 전수를 재는 데 쓴다).
+
+    갈리는 이름(`_BRANCH`)도 이 표의 것이다 — 무인자일 때 액션이 안 나올 뿐이다."""
+    return sorted(set(_BY_NAME) | set(_BY_NAME_BRANCH))
