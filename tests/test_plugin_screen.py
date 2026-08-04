@@ -747,3 +747,93 @@ async def test_the_permission_labels_travel_as_keys_not_as_korean():
         assert label.startswith("pscreen."), label
         assert i18n._CATALOG["en"].get(label), f"{label} 에 영어 짝이 없다"
         assert i18n._CATALOG["ko"].get(label), f"{label} 에 한국어 원문이 없다"
+
+
+async def test_a_pane_id_that_arrived_as_text_still_names_that_pane():
+    """★ 와이어의 패널 id 는 **문자열**이다 — 그걸 안 고치면 조용히 활성 패널이 된다.
+
+    GUI 는 자리를 누를 때 `args: ["7"]` 로 보낸다(`pane.to_string()`). 그런데
+    `Window.pane_by_id` 는 `p.id == pid` 로 비교하므로 `3 == "3"` 이 거짓이고, 부르는
+    쪽은 죄다 `... or win.active_pane` 으로 우아하게 내려간다 — 그래서 비활성 Claude
+    패널의 footer 를 눌러도 **활성 패널**이 바뀌었다. id 를 실어 보낸 이유가 통째로
+    사라지는데 증상은 조용하다(팝업은 제대로 뜬다).
+
+    위 오라클이 이걸 못 잡은 이유도 적어 둔다: 그 테스트는 `args: [p.id]` 로 **int** 를
+    넘긴다. 정본이 부르는 모양이지 GUI 가 보내는 모양이 아니었다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        srv.split_pane(sess, "h")
+        clicked = next(p for p in win.panes() if p is not win.active_pane)
+
+        c = _ScreenSpy()
+        await _screen(srv, sess, c, "plugin_open",
+                      {"name": "claude-perm-mode", "args": [str(clicked.id)]})
+        got = []
+        with harness.patched(type(srv), set_claude_perm_mode=(
+                lambda self, s, target, pane_id=None: got.append((target, pane_id)))):
+            await _screen(srv, sess, c, "plugin_action",
+                          {"id": "claude-perm-mode", "do": "apply",
+                           "row": 0, "input": "accept"})
+        assert got == [("accept", clicked.id)], (got, clicked.id,
+                                                 win.active_pane.id)
+    finally:
+        await teardown(srv, task, sock)
+
+
+# ---------------------------------------------------------------------------
+# claude-remote-control(pytmux-2 잔여) — 이것도 팔레트에 없다. 정본에서 그 자리는
+# 곧바로 토글이 아니라 **판을 먼저 열고** `[r]` 로 토글한다.
+# ---------------------------------------------------------------------------
+
+async def test_the_remote_control_screen_says_what_the_canonical_popup_says():
+    """글이 두 벌이 되면 두 클라의 설명이 갈린다 — 같은 카탈로그 키에서 와야 한다."""
+    from pytmuxlib import i18n
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        c = _ScreenSpy()
+        spec = await _screen(srv, sess, c, "plugin_open",
+                             {"name": "claude-remote-control", "args": [str(p.id)]})
+        assert spec and spec["t"] == "plugin_screen", spec
+        assert spec["id"] == "claude-remote-control", spec
+        assert spec["kind"] == "text", spec
+        assert spec["title"] == i18n.t("ccmsg.rc_title"), spec
+        assert spec["text"] == i18n.t("ccmsg.rc_body"), spec
+        # ★ `[r]` 이 **실제로 실린다** — 안 실으면 정본에는 있는 손이 GUI 에만 없고,
+        #   그건 "판은 뜨는데 아무것도 못 한다"가 된다(본문은 [r] 을 쓰라고 적는다).
+        assert spec["keys"] == {"r": "toggle"}, spec
+        assert "[r]" in spec["text"], spec["text"]
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_remote_control_toggle_types_rc_into_the_pane_that_was_clicked():
+    """`[r]` → 그 패널에 `/rc` 주입 + 닫기(정본 `InfoScreen` 의 hide_key 와 같은 손).
+
+    ★ 여기도 **누른 그 패널**이다. 권한모드가 먼저 밟은 자리라 같은 자를 댄다 —
+    화면 안 동작 프레임에는 패널 칸이 없으니 여는 쪽이 판 상태에 적어야 한다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        srv.split_pane(sess, "h")
+        clicked = next(p for p in win.panes() if p is not win.active_pane)
+
+        c = _ScreenSpy()
+        await _screen(srv, sess, c, "plugin_open",
+                      {"name": "claude-remote-control", "args": [str(clicked.id)]})
+        got = []
+        with harness.patched(type(srv), _pc_inject=(
+                lambda self, pane, text: got.append((pane.id, text)))):
+            closed = await _screen(srv, sess, c, "plugin_action",
+                                   {"id": "claude-remote-control", "do": "toggle",
+                                    "row": 0, "input": None})
+        assert got == [(clicked.id, "/rc")], (got, clicked.id, win.active_pane.id)
+        assert closed["t"] == "plugin_screen_close", closed
+        assert closed["id"] == "claude-remote-control", closed
+    finally:
+        await teardown(srv, task, sock)

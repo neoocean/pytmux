@@ -6637,6 +6637,34 @@ async def test_claude_footer_no_hover_highlight_but_keyboard_focus():
     await _with_app(body)
 
 
+async def test_the_interrupt_zone_wins_when_the_perm_zone_swallows_the_line():
+    """겹치는 자리에서 **인터럽트가 먼저**다(규칙 = `footerzones.PRIORITY`).
+
+    좁은 창에서는 권한모드 문구가 잘려 안 보이고, 그러면 그 자리는 예전대로 **줄
+    전체**로 넓어진다(팝업 진입로는 남긴다는 fallback). 그 줄에 `esc to interrupt`
+    가 같이 있으면 인터럽트 자리는 통째로 덮이는데, 그때 perm 이 이기면 **하던 일을
+    멈추려고 누른 손이 권한모드 팝업을 연다**.
+
+    ⚠ 이 순서는 종전에 `footer_zone_at` 안에만 있었다 — 그래서 같은 규칙을 쓰는 GUI
+    는 못 물려받았다. 이제 규칙 쪽 한 벌이라 여기서 재는 것이 그쪽도 지킨다."""
+    async def body(app, pilot, srv):
+        pid = app.layout["panes"][0]["id"]
+        app.pane_claude = {pid: {"id": pid, "claude": "busy",
+                                 "perm_mode": "default"}}
+        # 모드 문구가 없는 줄인데 perm 신호는 있다 → perm 이 줄 전체를 먹는다.
+        line = "shift+tab to  ✳ Thinking… (esc to interrupt)"
+        app.pane_content[pid] = ([[(line, {})]], None)
+        app._composite()
+        pzone = app._perm_zone[pid]
+        izone = app._interrupt_zone[pid]
+        assert pzone[0] <= izone[0] and izone[1] <= pzone[1], (pzone, izone)
+        assert app._footer_zone_at(izone[0], izone[2]) == (pid, "interrupt"), \
+            "겹친 자리에서 권한모드가 이겼다 — 멈추려던 손이 팝업을 연다"
+        # 겹치지 않는 자리는 종전대로 권한모드다.
+        assert app._footer_zone_at(pzone[0], pzone[2]) == (pid, "perm")
+    await _with_app(body)
+
+
 async def test_perm_mode_click_outside_closes():
     """§10-A #3: 권한모드 팝업 박스(#perm) 바깥(백드롭) 클릭 시 dismiss(None) 로 닫힌다.
     박스 안 클릭은 닫지 않는다(InfoScreen 의 inside-box 판정 패턴)."""

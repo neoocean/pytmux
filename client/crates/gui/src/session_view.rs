@@ -1923,6 +1923,15 @@ impl SessionView {
             }));
             return true;
         }
+        // ★ 패널 안의 자리가 **화면이 아니라 그 패널에 치는 것**이면 그대로 친다
+        //   (Claude busy footer 의 `esc to interrupt`). 무엇을 치는지는 서버가 정하고
+        //   우리는 그 패널로 넘길 뿐이라, 사람이 그 자리에서 ESC 를 친 것과 같은 길이다.
+        //   **활성 패널을 안 바꾼다** — 비활성 Claude 패널을 멈추려고 누른 것이 지금
+        //   보는 패널로 가면 안 된다(정본이 `send_input_pane` 을 쓰는 이유).
+        if let Some((pane, data)) = self.state.send_zone_at(x, y) {
+            self.pending.push(Outgoing::InputToPane { pane, data });
+            return true;
+        }
         if let Some((name, pane, act)) = self.state.overlay_zone_at(x, y) {
             self.pending.push(Outgoing::Command(Command::PluginOverlayAction {
                 name,
@@ -3845,7 +3854,10 @@ impl SessionView {
             "text" => {
                 let scroll = self.screens.scroll();
                 let mut drawn = 0usize;
-                for line in spec.text.lines().skip(scroll).take(budget) {
+                // 본문도 **이 클라의 로케일로**(`say_text`) — 이 판에 산문이 오기
+                // 시작했다(원격 제어). 자료(한도 막대)는 카탈로그에 없어 그대로 지난다.
+                let body = spec.say_text();
+                for line in body.lines().skip(scroll).take(budget) {
                     drawn += 1;
                     // ★ **긴 줄을 자른다**(§10-21ⓚ2). 폭을 못박아도 줄이 안 접히면
                     //   상한을 넘겨 밀고 나간다 — `p4changes` 의 CL 설명 한 줄이 정확히

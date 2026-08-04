@@ -14,6 +14,11 @@
 | `claude-token-log` | `TokenLogScreen` | `table` — 일별 집계(전체 재현은 EXT-0008) |
 | `prompt-clear-queue` | `InfoScreen` | `list` — 쌓인 명령(비우기는 `c`) |
 
+여기에 **명령이 아닌 판 둘**이 붙어 있다 — `claude-perm-mode`·`claude-remote-control`.
+팔레트에 없고 **Claude 패널 안 footer 를 눌러야** 열린다(pytmux-2 · 규칙은
+[`footerzones`](footerzones)). 정본도 명령이 아니라 클릭으로만 여는 팝업이라 표면은
+안 늘었고, 다만 여는 쪽이 **누른 패널 id** 를 실어 보낸다는 점이 다르다.
+
 # 무엇을 옮기고 무엇을 안 옮겼나
 
 **규칙은 안 옮겼다.** 토글의 전이(`SAVER_CYCLES`·`_cycle_next`)도, 모델 후보
@@ -40,9 +45,10 @@ RULES = ("claude-rules", "rules", "startup-rules")
 SETTINGS = ("claude-settings",)
 MODEL = ("model", "model-config", "claude-model")
 TOKEN_LOG = ("claude-token-log", "token-usage")
-# 이 이름은 팔레트 명령이 아니다 — **패널 안 footer 를 눌러야** 열린다(pytmux-2).
+# 이 둘은 팔레트 명령이 아니다 — **패널 안 footer 를 눌러야** 열린다(pytmux-2).
 # 정본도 명령이 아니라 클릭으로만 여는 팝업이라 표면이 안 늘었다.
 PERM = ("claude-perm-mode",)
+RC = ("claude-remote-control",)
 
 i18n.register({
     "ko": {
@@ -65,6 +71,7 @@ i18n.register({
         "pscreen.spec_tklog_col_pct": "5h 최대",
         "pscreen.spec_on_mark": "●",
         "pscreen.spec_off_mark": "○",
+        "pscreen.rc_hint": "r 원격 제어 토글(/rc) · ↑↓ 스크롤 · Esc 닫기",
     },
     "en": {
         "pscreen.spec_settings_title": "Claude settings",
@@ -86,6 +93,7 @@ i18n.register({
         "pscreen.spec_tklog_col_pct": "5h peak",
         "pscreen.spec_on_mark": "●",
         "pscreen.spec_off_mark": "○",
+        "pscreen.rc_hint": "r toggle remote control (/rc) · ↑↓ scroll · Esc close",
     },
 })
 
@@ -113,6 +121,21 @@ def _close(sid):
 def _active_pane(sess):
     win = getattr(sess, "active_window", None) if sess is not None else None
     return getattr(win, "active_pane", None) if win is not None else None
+
+
+def _as_pane_id(value):
+    """와이어로 온 패널 id → `int`(못 고치면 `None` = 활성 패널).
+
+    ⚠ **여기서 안 고치면 조용히 활성 패널이 된다.** 클릭존이 여는 화면은 패널 id 를
+    `plugin_open` 의 `args` 로 받는데 그 칸은 **문자열**이고(GUI 는 `pane.to_string()`),
+    `Window.pane_by_id` 는 `p.id == pid` 로 비교한다 — `3 == "3"` 은 거짓이라 못 찾고,
+    부르는 쪽은 죄다 `... or win.active_pane` 으로 우아하게 내려간다. 그래서 비활성
+    Claude 패널의 footer 를 눌러도 **활성 패널**의 모드가 바뀌었다(그 사고를 막으려고
+    id 를 실어 보낸 것인데 그 id 가 도착해서 버려졌다). 들어오는 자리에서 한 번 고친다."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _pane(sess, pane_id):
@@ -325,6 +348,23 @@ def _perm_apply(server, sess, pane_id, target):
     return True
 
 
+# ── claude-remote-control — footer 의 'Remote Control active' 를 눌러 여는 판 ──
+def _rc_spec(server, sess, pane_id):
+    """정본 `_open_remote_control` 의 InfoScreen 과 **같은 글·같은 손**(pytmux-2 잔여).
+
+    footer 의 그 자리는 곧바로 토글이 아니다 — 원격 제어가 무엇이고 어떻게 끄는지 적은
+    판을 먼저 열고, `[r]` 로 토글한다. 글은 `ccmsg.rc_*` 한 벌에서 오므로 정본과 글자까지
+    같다(여기서 다시 적으면 두 클라의 설명이 갈린다).
+
+    `pane_id` 는 스펙에 안 실린다 — `[r]` 로 돌아오는 프레임에는 패널 칸이 없어
+    (`plugin_action` 의 계약이 `id`·`do`·`row`·`input` 넷이다) 여는 쪽이 `state` 에
+    적어 둔다. 안 적으면 비활성 Claude 패널의 표시를 눌러 놓고 **활성 패널의 원격
+    제어**를 토글한다 — 권한모드 화면이 먼저 밟은 자리 그대로다."""
+    return _spec("claude-remote-control", "text",
+                 i18n.t("ccmsg.rc_title"), i18n.t("pscreen.rc_hint"),
+                 text=i18n.t("ccmsg.rc_body"), keys={"r": "toggle"})
+
+
 # ── claude-token-log — 일별 집계 한 판 ─────────────────────────────────────
 def _token_rows(server):
     """`(일자, 토큰, 5h 최대%)` 목록(최근 먼저)과 안내 한 줄.
@@ -373,8 +413,8 @@ def _token_log_spec(server, selected=0):
 def open_spec(server, sess, name, args=(), state=None):
     """명령 이름 → 첫 화면. **내 이름이 아니면 `None`**(다른 플러그인·다른 경로로).
 
-    `args` 는 여는 쪽이 실어 보낸 것이다 — 오늘은 권한모드 화면의 **패널 id** 하나뿐이고
-    (footer 를 누른 그 패널), 나머지 화면은 활성 패널로 충분하다. 그 id 는 `state` 에
+    `args` 는 여는 쪽이 실어 보낸 것이다 — 오늘은 **패널 id** 하나뿐이고(footer 를 누른
+    그 패널 · 권한모드와 원격 제어 둘이 쓴다), 나머지 화면은 활성 패널로 충분하다. 그 id 는 `state` 에
     적어 둔다: 화면 안에서 Enter 를 눌러 올 때 `plugin_action` 프레임에는 패널 칸이
     없어(계약이 `id`·`do`·`row`·`input` 넷이다), 안 적어 두면 **활성 패널의 모드를
     바꾼다** — 비활성 Claude 패널의 footer 를 눌렀을 때 딱 그 사고가 난다."""
@@ -389,16 +429,21 @@ def open_spec(server, sess, name, args=(), state=None):
     if name in TOKEN_LOG:
         return _token_log_spec(server)
     if name in PERM:
-        pane_id = args[0] if args else None
+        pane_id = _as_pane_id(args[0] if args else None)
         if isinstance(state, dict):
             state["claude_perm_pane"] = pane_id
         return _perm_spec(server, sess, pane_id)
+    if name in RC:
+        pane_id = _as_pane_id(args[0] if args else None)
+        if isinstance(state, dict):
+            state["claude_rc_pane"] = pane_id
+        return _rc_spec(server, sess, pane_id)
     return None
 
 
 #: 이 모듈이 여는 화면 id 들 — `plugin_screen` 이 "내 화면인가"를 이것으로 가른다.
 IDS = ("pc-queue", "claude-rules", "claude-settings", "model", "claude-token-log",
-       "claude-perm-mode")
+       "claude-perm-mode", "claude-remote-control")
 
 
 def action(server, sess, req):
@@ -446,6 +491,16 @@ def action(server, sess, req):
             # 닫는다 — 모드는 **바로 안 바뀐다**(서버가 idle 을 기다려 shift+tab 을
             # 순환 주입한다). 판을 열어 둔 채 다시 그리면 고른 줄에 아직 '현재' 가
             # 안 붙어 "안 먹었다"로 보인다. 정본도 고르는 즉시 닫는다.
+            return _close(sid)
+        return None
+    if sid == "claude-remote-control":
+        if do == "toggle":
+            state = req.get("state")
+            pane_id = (state or {}).get("claude_rc_pane") \
+                if isinstance(state, dict) else None
+            server.toggle_claude_remote(sess, pane_id)
+            # 정본도 `[r]` 을 누르면 토글하고 **바로 닫는다**(`InfoScreen` 의
+            # hide_key → hide_cb → dismiss). 판을 열어 둬 봐야 그 글은 안 바뀐다.
             return _close(sid)
         return None
     if sid == "claude-token-log":

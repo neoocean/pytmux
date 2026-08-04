@@ -4933,3 +4933,44 @@ fn clicking_the_claude_footer_asks_the_server_for_the_screen_it_named() {
         "화면을 여는 자리가 오버레이 길로도 나갔다: {frames:?}"
     );
 }
+
+#[test]
+fn clicking_the_interrupt_footer_types_into_that_pane() {
+    // pytmux-2 잔여: `esc to interrupt` 는 화면이 아니라 **그 패널에 치는 것**이다.
+    // 무엇을 치는지는 서버가 자리에 실어 보내고(`send`), 우리는 그 패널로 넘긴다 —
+    // 사람이 그 자리에서 ESC 를 친 것과 같은 길이다.
+    //
+    // ★ **양성 오라클**이다(부정 단언만 있으면 배선이 통째로 빠져도 통과한다 —
+    //   이 저장소에서 두 번 밟았다). 그래서 프레임이 실제로 무엇을 실었는지 본다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [], "runs": [],
+        "zones": [{"x": 10, "y": 1, "w": 16, "h": 1, "pane": 7,
+                   "name": "claude-code", "do": "interrupt", "send": "\u{1b}"}],
+        "keys": []
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(cells))).unwrap();
+    view.pump_headless();
+    view.handle_mouse_down((12, 1), false);
+    view.pump_headless();
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    let input = frames
+        .iter()
+        .find(|f| f["t"] == "input")
+        .unwrap_or_else(|| panic!("인터럽트 자리를 눌렀는데 아무것도 안 올라갔다: {frames:?}"));
+    // ESC 한 바이트의 base64. 값까지 재는 이유: 빈 바이트열도 프레임은 만든다.
+    assert_eq!(input["data"], "Gw==", "친 것이 ESC 가 아니다: {frames:?}");
+    // ★ **누른 그 패널**이어야 한다(활성 패널 1 이 아니라 7). 여기가 비면 서버가
+    //   활성 패널로 흘려, 비활성 Claude 패널을 멈추려던 클릭이 지금 보는 패널을 멈춘다.
+    assert_eq!(input["pane"], 7, "누른 패널을 안 실었다: {frames:?}");
+    // 화면 길·오버레이 길로는 **가면 안 된다** — 둘 다 이 자리에서는 조용히 사라진다.
+    assert!(
+        !frames
+            .iter()
+            .any(|f| f["action"] == "plugin_open" || f["action"] == "plugin_overlay_action"),
+        "치는 자리가 화면/오버레이 길로도 나갔다: {frames:?}"
+    );
+}

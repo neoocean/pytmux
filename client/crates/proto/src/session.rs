@@ -218,6 +218,23 @@ impl PluginScreen {
         i18n_say(&self.i18n, "note", &self.note)
     }
 
+    /// **글 판(`text`)의 본문** — 이 클라의 로케일로.
+    ///
+    /// # 왜 `text` 만 오래 번역이 안 됐나
+    ///
+    /// 제목·안내·한 줄은 처음부터 `say_*` 를 탔는데 본문은 아니었다. 그때 이 칸에
+    /// 오던 것이 한도 막대(`usage-panel`)처럼 **자료**뿐이라 번역할 것이 없었기
+    /// 때문이다. 산문이 오는 첫 판(원격 제어 · pytmux-2 잔여)에서 그 전제가 깨졌다.
+    ///
+    /// ⚠ **`prompt` 판의 `text` 는 여기로 오면 안 된다.** 그 칸은 입력의 **초기값**
+    /// (지금 규칙·지금 경로)이라 사람이 친 자료다 — 번역하면 사람이 저장한 글이
+    /// 저장할 때마다 달라진다. 그래서 이 함수는 글 판 렌더 한 자리에서만 부른다.
+    ///
+    /// 자료가 와도 안전하다: 카탈로그에 없는 글은 `t()` 가 그대로 돌려준다.
+    pub fn say_text(&self) -> String {
+        i18n_say(&self.i18n, "text", &self.text)
+    }
+
     /// `Enter` 에 걸린 플러그인 액션 이름(없으면 이 화면의 Enter 는 뜻이 없다).
     ///
     /// # 왜 뷰가 `keys["enter"]` 를 직접 안 읽나
@@ -343,15 +360,27 @@ pub struct PluginZone {
     /// 서버에 되돌려 줄 이름. 우리는 뜻을 모른다.
     #[serde(default, rename = "do")]
     pub act: String,
-    /// 누르면 열 **플러그인 화면 이름**(비었으면 이 자리는 상태를 바꾸는 자리다).
+    /// 누르면 열 **플러그인 화면 이름**(비었으면 이 자리는 화면을 여는 자리가 아니다).
     ///
-    /// 자리가 둘로 갈리는 이유는 되돌려 보내는 길이 다르기 때문이다: 달력 화살표는
-    /// 그 오버레이의 **상태**를 바꾸니 `plugin_overlay_action` 으로 가고, Claude
-    /// footer 자리는 **화면**을 여니 `plugin_open` 으로 간다(pytmux-2 · 23). 배지의
-    /// [`PluginBadge::open`] 과 같은 규약이고, 서버는 마찬가지로 **그 화면이 실제로
-    /// 있을 때만** 싣는다.
+    /// 자리가 셋으로 갈리는 이유는 되돌려 보내는 길이 다르기 때문이다: 달력 화살표는
+    /// 그 오버레이의 **상태**를 바꾸니 `plugin_overlay_action` 으로 가고, Claude 의
+    /// 권한모드·토큰 자리는 **화면**을 여니 `plugin_open` 으로 간다(pytmux-2 · 23).
+    /// 배지의 [`PluginBadge::open`] 과 같은 규약이고, 서버는 마찬가지로 **그 화면이
+    /// 실제로 있을 때만** 싣는다.
     #[serde(default)]
     pub opens: String,
+    /// 누르면 **그 패널에 칠 글자**(비었으면 이 자리는 치는 자리가 아니다).
+    ///
+    /// 세 번째 갈래다(pytmux-2 잔여). 어떤 자리는 화면도 오버레이 상태도 아니고
+    /// *"그 패널에 이것을 친다"* 가 전부다 — Claude busy footer 의 `esc to interrupt`
+    /// 가 그렇고, 정본도 그 자리를 `send_input_pane(pid, ESC)` 한 줄로 처리한다.
+    ///
+    /// **뜻은 여전히 우리 것이 아니다.** `\x1b` 가 무슨 뜻인지는 패널 안 프로그램이
+    /// 정하고, 우리는 서버가 정한 바이트를 그 패널로 넘긴다 — 사람이 그 자리에서
+    /// ESC 를 친 것과 **같은 경로**다(`Outgoing::InputToPane`). 그래서 이 갈래에는
+    /// 되돌려 보낼 이름도 회신도 없다: 다음 프레임의 패널 화면이 답이다.
+    #[serde(default)]
+    pub send: String,
 }
 
 /// 오버레이가 가져가는 키 하나. 이름은 이 클라의 표기다([`base::keys`] 의 `binding_name`).
@@ -1409,6 +1438,17 @@ impl SessionState {
         (!z.opens.is_empty()).then(|| (z.opens.clone(), z.pane))
     }
 
+    /// 화면 좌표 클릭이 **그 패널에 치는 자리**에 맞았나 — 맞았으면 `(패널, 칠 바이트)`.
+    ///
+    /// 세 번째 갈래다([`PluginZone::send`]). Claude busy footer 의 `esc to interrupt`
+    /// 가 이 길로 오고, 우리는 그 바이트를 그 패널에 넣는다 — **활성 패널을 안 바꾼다**
+    /// (비활성 Claude 패널의 footer 를 눌러 놓고 지금 보는 패널을 멈추면 안 된다.
+    /// 정본이 `send_input_pane` 을 쓰는 이유가 그것이다).
+    pub fn send_zone_at(&self, x: u16, y: u16) -> Option<(i64, Vec<u8>)> {
+        let z = self.zone_at(x, y)?;
+        (!z.send.is_empty()).then(|| (z.pane, z.send.clone().into_bytes()))
+    }
+
     /// `(x,y)` 를 덮는 자리 하나 — 팝업 뒤는 안 본다.
     fn zone_at(&self, x: u16, y: u16) -> Option<&PluginZone> {
         // 팝업이 떠 있으면 뒤에 가려진 화살표는 클릭 대상이 아니다(68295 빚 —
@@ -1425,10 +1465,12 @@ impl SessionState {
 
     pub fn overlay_zone_at(&self, x: u16, y: u16) -> Option<(String, i64, String)> {
         let zone = self.zone_at(x, y)?;
-        // 화면을 여는 자리는 이 길이 아니다 — `plugin_overlay_action` 으로 보내면
-        // 서버가 그 이름을 아무도 안 집어 **조용히 사라진다**(눌렀는데 아무 일도 안
-        // 나는, 이 저장소의 상습 결함). 그런 자리는 `open_zone_at` 이 가져간다.
-        if !zone.opens.is_empty() {
+        // 화면을 여는 자리도, 패널에 치는 자리도 이 길이 아니다 — `plugin_overlay_action`
+        // 으로 보내면 서버가 **그 오버레이를 켠 적이 있나**를 먼저 보고(`servercmd` 의
+        // `state is None → return`), Claude footer 처럼 오버레이가 아닌 자리는 그 상태가
+        // 영영 없어 **조용히 사라진다**(눌렀는데 아무 일도 안 나는, 이 저장소의 상습
+        // 결함). 그런 자리는 `open_zone_at`·`send_zone_at` 이 가져간다.
+        if !zone.opens.is_empty() || !zone.send.is_empty() {
             return None;
         }
         Some((zone.name.clone(), zone.pane, zone.act.clone()))

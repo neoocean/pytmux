@@ -116,13 +116,34 @@ def scan_pane(lines, px, py, pw, ph) -> dict:
     return found
 
 
-#: 존 종류 → 그 존이 여는 Tier C 화면 이름(GUI 가 `plugin_open` 으로 되돌려 보낸다).
+#: 자리가 **겹칠 때 먼저 집는 순서**. 규칙이라 여기 산다 — 두 소비자가 각자 순서를
+#: 적으면 같은 자리를 눌러도 클라마다 다른 일이 난다.
 #:
-#: 여기 없는 종류(`remote`·`interrupt`)는 **화면이 아니라 동작**이라 이 표에 없다 —
-#: 정본에서도 팝업이 아니고(원격 제어 토글 · ESC 주입), GUI 로 옮기는 길은
-#: `plugin_overlay_action` 쪽이다. 선언만 하고 배선이 없는 칸을 만들지 않는다는
-#: pytmux-20 의 규율을 그대로 따른다.
+#: `interrupt` 가 `perm` 보다 앞인 이유: 둘은 같은 줄의 다른 구간이라 보통 안 겹치지만,
+#: 폭이 잘려 모드 문구를 못 찾으면 `perm` 이 **줄 전체**로 넓어진다(위 fallback). 그때
+#: `interrupt` 는 그 줄의 진부분집합이라, 뒤에 두면 영영 못 눌린다.
+PRIORITY = ("interrupt", "perm", "remote", "tokens")
+
+#: 존 종류 → 그 존이 여는 Tier C 화면 이름(클라가 `plugin_open` 으로 되돌려 보낸다).
+#:
+#: `remote` 도 여기 있다 — 정본에서 그 자리는 곧바로 토글이 아니라 **판을 연다**
+#: (`_open_remote_control` = 원격 제어가 무엇인지 적은 InfoScreen + `[r]` 토글). 판을
+#: 건너뛰고 바로 `/rc` 를 치면 그건 정본과 다른 제품이다.
 OPENS = {
     "perm": "claude-perm-mode",
+    "remote": "claude-remote-control",
     "tokens": "claude-token-log",
+}
+
+#: 존 종류 → 누르면 **그 패널에 치는 글자**(화면이 아니라 동작인 자리).
+#:
+#: `interrupt` 만 여기 있다. 정본도 이 자리는 팝업이 아니라 `send_input_pane(pid, ESC)`
+#: 한 줄이고(`_interrupt_pane`), 그러니 이 자리의 뜻은 *"그 패널에 이것을 친다"* 가
+#: 전부다 — 자리와 함께 **칠 것까지** 실어 보내면 두 클라가 같은 것을 친다.
+#:
+#: ⚠ 클라는 여전히 뜻을 모른다(설계 §4.4). `\x1b` 가 "지금 하는 일을 멈춰라"라는 것은
+#: Claude Code 가 정하는 일이고, 클라는 서버가 정한 바이트를 그 패널로 넘길 뿐이다 —
+#: 사람이 그 자리를 눌러 ESC 를 친 것과 같은 경로다.
+SENDS = {
+    "interrupt": "\x1b",
 }

@@ -843,3 +843,125 @@ async def test_a_remote_view_does_not_get_the_local_claude_zones():
         assert not (json.loads(erase[4:]).get("zones") or []), erase
     finally:
         await teardown(srv, task, sock)
+
+
+# ---------------------------------------------------------------------------
+# 넷 중 나머지 둘(`remote`·`interrupt`) — pytmux-2 잔여. 이 둘은 화면이 아니라
+# 동작이라 길이 갈렸고, 그래서 오래 GUI 에 안 갔다. 여기서 재는 것: 두 길이 제대로
+# 갈리는가 · 어느 것도 **조용히 사라지는 길**로 안 가는가 · 겹칠 때 차례가 맞는가.
+# ---------------------------------------------------------------------------
+
+_FOOTER4 = [
+    "  ⏵⏵ auto mode on (shift+tab to cycle)",
+    "  ✳ Thinking… (esc to interrupt)",
+    "  Remote Control active",
+    "  new task? /clear to save 386.8k tokens",
+]
+
+
+async def test_every_zone_the_rule_finds_has_a_way_back_to_the_server():
+    """★ **넷이 다 나간다** — 그리고 넷이 다 갈 길이 있다.
+
+    종전에는 규칙이 넷을 찾아 놓고 서버가 둘만 실었다(나머지 둘은 배선이 없어 실으면
+    "누를 수는 있는데 아무 일도 안 나는 칸"이 됐다). 이제 길이 둘이라 넷이 다 나가고,
+    **자리마다 정확히 한 길**이어야 한다 — 둘 다 비면 죽은 칸이고, 둘 다 차면 클라가
+    어느 길로 갈지 우리가 모른다."""
+    import json
+
+    fz = _footerzones()
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._claude = "idle"
+        p.feed(("\x1b[2J\x1b[H" + "\r\n".join(_FOOTER4) + "\r\n").encode("utf-8"))
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        body = json.loads(srv._plugin_cells_frame(_C(), sess, win, 100.0)[4:])
+        zones = {z["do"]: z for z in body.get("zones") or []}
+        assert set(zones) == {"perm", "interrupt", "remote", "tokens"}, body
+        # 화면을 여는 셋 — 이름은 규칙 쪽 표 그대로다.
+        assert zones["perm"]["opens"] == "claude-perm-mode", zones
+        assert zones["remote"]["opens"] == "claude-remote-control", zones
+        assert zones["tokens"]["opens"] == "claude-token-log", zones
+        # 치는 하나 — 칠 것까지 실려야 한다(안 실으면 클라가 빈 바이트를 친다).
+        assert zones["interrupt"]["send"] == "\x1b", zones
+        # ★ 자리마다 **정확히 한 길**이다.
+        for kind, z in zones.items():
+            assert bool(z["opens"]) != bool(z["send"]), (kind, z)
+        # 자리는 문구만 덮는다 — 'esc to interrupt' 는 줄 전체가 아니다.
+        assert zones["interrupt"]["w"] == len("esc to interrupt"), zones
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_order_the_server_ships_them_in_is_the_priority():
+    """겹칠 때 무엇이 이기는가는 **차례**로 나른다.
+
+    클라는 자리 목록에서 먼저 맞는 것을 집는다(파이썬은 `PRIORITY` 로 훑고, Rust 는
+    벡터 순서로 `find` 한다). 그러니 서버가 싣는 차례가 곧 두 클라의 우선순위이고,
+    그 차례가 `interrupt` 먼저가 아니면 **좁은 창에서 인터럽트를 영영 못 누른다**
+    (폭이 잘리면 perm 이 줄 전체로 넓어져 그 자리를 덮는다)."""
+    import json
+
+    fz = _footerzones()
+    assert fz.PRIORITY[0] == "interrupt", fz.PRIORITY
+    assert set(fz.PRIORITY) == set(fz.OPENS) | set(fz.SENDS), \
+        "규칙이 찾는 종류와 우선순위 표가 갈렸다"
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._claude = "idle"
+        p.feed(("\x1b[2J\x1b[H" + "\r\n".join(_FOOTER4) + "\r\n").encode("utf-8"))
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        body = json.loads(srv._plugin_cells_frame(_C(), sess, win, 100.0)[4:])
+        got = [z["do"] for z in body["zones"]]
+        assert got == [k for k in fz.PRIORITY if k in got], (got, fz.PRIORITY)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_bytes_the_interrupt_zone_carries_are_the_ones_canon_types():
+    """정본이 치는 것과 자리에 실리는 것이 **같은 표**에서 와야 한다.
+
+    갈리면 증상이 조용하다 — 두 클라가 같은 자리를 눌러 서로 다른 것을 친다. 그래서
+    값을 두 번 적었나를 **소스로** 본다(호출부까지 단언 — 값을 만드는 표만 재면 그
+    표를 안 읽는 호출부가 통과한다)."""
+    import importlib
+
+    fz = _footerzones()
+    plugin = importlib.import_module("pytmuxlib.plugins.claude-code")
+    # ⚠ 소스 문자열이 아니라 **상수 표**를 본다. 소스로 보면 독스트링의 `\\x1b` 가
+    #   걸려 "다시 적었다"로 오진한다(실제로 그렇게 한 번 틀렸다).
+    raw = plugin._interrupt_pane.__code__.co_consts
+    # `from .footerzones import SENDS` 의 이름은 **튜플 상수**(fromlist)로 들어온다.
+    consts = [x for c in raw for x in (c if isinstance(c, tuple) else (c,))]
+    assert "SENDS" in consts, f"정본이 칠 것을 따로 들고 있다: {consts}"
+    for c in consts:
+        if isinstance(c, (str, bytes)) and (b"\x1b" if isinstance(c, bytes)
+                                            else "\x1b") in c:
+            raise AssertionError(f"정본이 ESC 를 다시 적었다: {consts}")
+
+    sent = []
+
+    class _App:
+        def send_input_pane(self, pid, data):
+            sent.append((pid, data))
+
+    plugin._interrupt_pane(_App(), 7)
+    assert sent == [(7, fz.SENDS["interrupt"].encode("utf-8"))], sent

@@ -14,7 +14,7 @@
 이 모듈은 매 프레임 호출되는 client_render 훅이 지연 import 한다(첫 호출 후 캐시)."""
 from __future__ import annotations
 
-from .footerzones import scan_pane
+from .footerzones import PRIORITY, scan_pane
 
 
 def render(app, cells, W, H):
@@ -25,7 +25,7 @@ def render(app, cells, W, H):
 def _scan_all_footer_zones(app, W, H):
     """모든 패널의 content 에서 footer 클릭존을 스캔해 app._perm_zone 등을 매 프레임
     새로 채운다(코어 _composite 가 하던 clear+scan 을 이리로 이전)."""
-    perm, remote, interrupt, tokens = {}, {}, {}, {}
+    found = {kind: {} for kind in PRIORITY}
     panes = app.layout.get("panes", [])
     pane_claude = getattr(app, "pane_claude", {})
     for p in panes:
@@ -44,12 +44,11 @@ def _scan_all_footer_zones(app, W, H):
         end = max(top, min(p["h"], H - p["y"]))  # 아래로 잘리는 자리
         for kind, zone in scan_pane(lines[top:end], p["x"], p["y"] + top,
                                     p["w"], end - top).items():
-            {"perm": perm, "remote": remote,
-             "interrupt": interrupt, "tokens": tokens}[kind][p["id"]] = zone
-    app._perm_zone = perm
-    app._remote_zone = remote
-    app._interrupt_zone = interrupt
-    app._tokens_zone = tokens
+            found[kind][p["id"]] = zone
+    # 종류 목록도 규칙 쪽 한 벌에서 온다 — 여기 손으로 적어 두면 규칙에 종류가 하나
+    # 늘었을 때 이 줄이 KeyError 로 **매 프레임** 터진다(서버는 로그로만 삼킨다).
+    for kind, zones in found.items():
+        setattr(app, f"_{kind}_zone", zones)
 
 
 def footer_zone_at(app, x, y):
@@ -57,10 +56,11 @@ def footer_zone_at(app, x, y):
     (pane_id, "interrupt"|"perm"|"remote"|"tokens") 반환, 아니면 None(§10 호버 강조·
     클릭 공용).
 
-    인터럽트 존은 perm 존과 겹칠 수 있어(폭 잘림 fallback 시 perm=줄 전체) **먼저**
-    검사해 우선권을 준다. 토큰 존(pytmux-23)은 다른 줄이라 순서를 안 탄다."""
-    for kind, attr in (("interrupt", "_interrupt_zone"), ("perm", "_perm_zone"),
-                       ("remote", "_remote_zone"), ("tokens", "_tokens_zone")):
+    겹칠 때 무엇이 먼저인가는 [`footerzones.PRIORITY`](footerzones) 가 정한다 — 종전엔
+    그 순서가 이 함수 안에만 있었고, 그래서 같은 규칙을 쓰는 GUI 는 순서를 **못 물려받았다**
+    (자리 목록에서 먼저 맞는 것을 집으므로 서버가 싣는 차례가 곧 그 클라의 우선순위다)."""
+    for kind in PRIORITY:
+        attr = f"_{kind}_zone"
         for pid, (zx0, zx1, zy) in getattr(app, attr, {}).items():
             if zy == y and zx0 <= x < zx1:
                 return (pid, kind)

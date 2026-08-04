@@ -1287,3 +1287,75 @@ fn a_zone_that_opens_a_screen_does_not_go_down_the_overlay_path() {
     );
     assert_eq!(state.open_zone_at(5, 2), None, "달력 화살표가 화면을 연다고 한다");
 }
+
+#[test]
+fn a_zone_that_types_into_a_pane_is_its_own_path() {
+    // pytmux-2 잔여: 세 번째 갈래(`send`). 화면도 오버레이 상태도 아니고 *"그 패널에
+    // 이것을 친다"* 가 전부인 자리다 — Claude busy footer 의 `esc to interrupt`.
+    //
+    // ★ 여기서 재는 것은 **갈림**이다. 이 자리가 오버레이 길로도 나가면 그 클릭은
+    //   서버에서 조용히 사라진다(Claude footer 는 오버레이가 아니라 그 상태가 없다).
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [], "runs": [],
+        "zones": [
+            {"x": 10, "y": 3, "w": 16, "h": 1, "pane": 7,
+             "name": "claude-code", "do": "interrupt", "opens": "", "send": "\u{1b}"},
+        ],
+        "keys": []
+    }))
+    .unwrap();
+    state.apply(cells);
+    assert_eq!(
+        state.send_zone_at(11, 3),
+        Some((7, b"\x1b".to_vec())),
+        "치는 자리를 눌렀는데 칠 것이 안 나온다"
+    );
+    // ★ **누른 그 패널**이다 — 활성 패널(1)이 아니라 자리가 실어 온 7 이어야 한다.
+    //   여기가 틀리면 비활성 Claude 패널을 멈추려던 클릭이 지금 보는 패널을 멈춘다.
+    assert_eq!(state.send_zone_at(11, 3).map(|(p, _)| p), Some(7));
+    assert_eq!(
+        state.overlay_zone_at(11, 3),
+        None,
+        "치는 자리가 오버레이 길로도 나간다 — 그 클릭은 서버에서 조용히 사라진다"
+    );
+    assert_eq!(state.open_zone_at(11, 3), None, "치는 자리가 화면을 연다고 한다");
+}
+
+#[test]
+fn the_zone_the_server_lists_first_wins_when_they_overlap() {
+    // 자리는 겹칠 수 있다 — Claude footer 의 폭이 잘려 권한모드 문구를 못 찾으면 그
+    // 자리가 **줄 전체**로 넓어지고, 그러면 같은 줄의 `esc to interrupt` 를 통째로
+    // 덮는다. 정본은 그 우선순위를 자기 안에 갖고 있었고(interrupt 먼저), 우리는
+    // **서버가 싣는 차례**로 물려받는다(`footerzones.PRIORITY`).
+    //
+    // 그러니 여기서 못박는 것은 규칙 하나다: **먼저 실린 자리가 이긴다.** 이 줄이
+    // 무너지면 좁은 창에서 인터럽트를 영영 못 누르는데, 증상은 "가끔 안 먹는다"라
+    // 사람이 못 잡는다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [], "runs": [],
+        "zones": [
+            {"x": 10, "y": 3, "w": 16, "h": 1, "pane": 7,
+             "name": "claude-code", "do": "interrupt", "send": "\u{1b}"},
+            {"x": 0, "y": 3, "w": 60, "h": 1, "pane": 7,
+             "name": "claude-code", "do": "perm", "opens": "claude-perm-mode"},
+        ],
+        "keys": []
+    }))
+    .unwrap();
+    state.apply(cells);
+    assert_eq!(
+        state.send_zone_at(11, 3),
+        Some((7, b"\x1b".to_vec())),
+        "겹친 자리에서 뒤에 실린 것이 이겼다 — 좁은 창에서 인터럽트가 죽는다"
+    );
+    assert_eq!(state.open_zone_at(11, 3), None);
+    // 겹치지 않는 자리는 종전대로 권한모드다.
+    assert_eq!(
+        state.open_zone_at(2, 3),
+        Some(("claude-perm-mode".to_owned(), 7))
+    );
+}

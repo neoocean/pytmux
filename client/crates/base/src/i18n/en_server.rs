@@ -48,6 +48,7 @@ pub static EN: &[(&str, &str)] = &[
     ("c 비우기 · Esc 닫기", "c clear · Esc close"),
     ("default — 매번 확인 (일반 모드)", "default — confirm each time (normal)"),
     ("plan — 플랜 모드 (계획만, 실행 안 함)", "plan — plan mode (plan only, no run)"),
+    ("r 원격 제어 토글(/rc) · ↑↓ 스크롤 · Esc 닫기", "r toggle remote control (/rc) · ↑↓ scroll · Esc close"),
     ("remote-attach {target} 실패 — {why}", "remote-attach {target} failed — {why}"),
     ("remote-attach {target}: 연결됐지만 원격이 응답 없음 — 원격 서버 점검", "remote-attach {target}: connected but remote is unresponsive — check the remote server"),
     ("remote-attach {target}: 원격 탭 병합됨", "remote-attach {target}: remote tab merged"),

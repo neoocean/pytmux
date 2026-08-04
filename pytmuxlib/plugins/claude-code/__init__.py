@@ -552,8 +552,13 @@ def _apply_model_config(app, res):
 def _interrupt_pane(app, pane_id):
     """busy footer 의 'esc to interrupt' 클릭 → 그 패널에 ESC(\\x1b)를 주입한다.
     실행 중인 Claude 작업을 중단(키보드 ESC 와 동일). 활성 패널을 바꾸지 않도록
-    send_input_pane 으로 클릭한 패널에 직접 보낸다(비활성 Claude 패널도 가능)."""
-    app.send_input_pane(pane_id, b"\x1b")
+    send_input_pane 으로 클릭한 패널에 직접 보낸다(비활성 Claude 패널도 가능).
+
+    ⚠ **치는 글자는 여기서 정하지 않는다** — [`footerzones.SENDS`](footerzones) 가 정본이다.
+    서버가 GUI 에 그 자리를 실어 보낼 때 같은 표에서 글자를 꺼내므로, 여기 `\\x1b` 를
+    따로 적어 두면 두 클라가 같은 자리에서 다른 것을 치게 된다."""
+    from .footerzones import SENDS
+    app.send_input_pane(pane_id, SENDS["interrupt"].encode("utf-8"))
 
 
 def _open_perm_mode(app, pane_id):
@@ -1630,14 +1635,32 @@ class _ClaudeCodePlugin:
         서버가 **같은 함수**를 부른다. 여기서 하는 일은 그 규칙을 이 클라의 화면 사정
         (패널 사각형)에 대고 돌려 자리로 옮기는 것뿐이다.
 
-        # 왜 넷 중 둘만 내나
+        # 이제 넷을 다 낸다 — 길이 둘이라서
 
-        `remote`·`interrupt` 는 화면이 아니라 **동작**이다(원격 제어 판 토글 · ESC 주입).
-        그 배선은 아직 GUI 에 없고, `do` 만 실어 두면 *"선언은 있고 배선이 없는 칸"* 이
-        하나 더 생긴다 — pytmux-20 이 상태줄 표식에서 세운 규율 그대로 **화면이 있는
-        것만** 낸다(`footerzones.OPENS` 가 그 표다).
+        종전에는 `perm`·`tokens` 둘만 냈다. 나머지 둘은 **화면이 아니라 동작**이라
+        (`do` 만 실어 두면 *"선언은 있고 배선이 없는 칸"* 이 된다는 pytmux-20 의 규율)
+        빠져 있었는데, 그 둘은 성격이 서로 다르고 각자 갈 길이 있었다:
+
+        - `remote` — 정본에서도 **판**이다(`_open_remote_control` = 원격 제어를 설명하는
+          InfoScreen + `[r]` 토글). 그러니 나머지 화면과 같은 길이다: `opens` 를 싣고
+          클라가 `plugin_open` 으로 되돌려 보낸다(`footerzones.OPENS`).
+        - `interrupt` — 정본에서도 팝업이 아니라 `send_input_pane(pid, ESC)` 한 줄이다.
+          그러니 **칠 글자를 자리와 함께** 싣는다(`footerzones.SENDS`). 클라는 그 뜻을
+          모른 채 그 패널로 넘길 뿐이라 계약(설계 §4.4)은 그대로다.
+
+        ⛔ **`plugin_overlay_action` 은 이 자리들의 길이 아니다.** 그 명령은 보낸 이름을
+        넘기기 전에 *"그 클라가 그 오버레이를 켰나"* 를 본다(`servercmd` 의
+        `state is None → return`). Claude footer 는 오버레이가 아니라 **패널 내용**에서
+        나오는 자리라 그 상태가 영영 없고, 그래서 그리로 보낸 클릭은 **조용히 사라진다** —
+        눌렀는데 아무 일도 안 나는, 이 저장소의 상습 결함 그대로다.
+
+        # 차례가 곧 우선순위다
+
+        `zones` 는 목록이고 클라는 **먼저 맞는 것**을 집는다. 그래서 싣는 차례가 그
+        클라의 우선순위가 된다 — 정본이 자기 안에 갖고 있던 그 순서(`interrupt` 먼저)를
+        `footerzones.PRIORITY` 한 벌로 옮겨 여기서도 같은 차례로 싣는다.
         """
-        from .footerzones import OPENS, scan_pane
+        from .footerzones import OPENS, PRIORITY, SENDS, scan_pane
         from .servermixin import screen_text
         win = getattr(sess, "active_window", None) if sess is not None else None
         if win is None:
@@ -1652,12 +1675,19 @@ class _ClaudeCodePlugin:
             except Exception:
                 continue
             found = scan_pane(lines[:r["h"]], r["x"], r["y"], r["w"], r["h"])
-            for kind, (x0, x1, y) in found.items():
-                opens = OPENS.get(kind)
-                if not opens or x1 <= x0:
+            for kind in PRIORITY:
+                got = found.get(kind)
+                if got is None:
+                    continue
+                x0, x1, y = got
+                opens, send = OPENS.get(kind, ""), SENDS.get(kind, "")
+                # 둘 다 없으면 **자리를 안 만든다** — 누를 수는 있는데 아무 일도 안 나는
+                # 칸이 그 순간 생긴다(pytmux-20 의 규율).
+                if x1 <= x0 or not (opens or send):
                     continue
                 zones.append({"x": x0, "y": y, "w": x1 - x0, "h": 1,
-                              "pane": r["id"], "do": kind, "opens": opens})
+                              "pane": r["id"], "do": kind,
+                              "opens": opens, "send": send})
         return {"zones": zones}
 
     # 이 이름들이 한도 팝업을 연다 — 정본의 `handle_command` 갈래와 **같은 표**다
