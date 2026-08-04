@@ -5348,14 +5348,26 @@ fn a_pane_without_a_cwd_does_not_borrow_the_active_one() {
     );
 }
 
-// ── 글자 밑줄(SGR 4 · pytmux-123) ────────────────────────────────────────────
+// ── 글자 선 — 밑줄(SGR 4 · pytmux-123) · 취소선(SGR 9 · pytmux-133) ──────────
 //
-// 서버는 밑줄을 정상적으로 싣고 파서도 정상적으로 읽는다. 마지막 한 걸음(칠하기)만
+// 서버는 이 속성들을 정상적으로 싣고 파서도 정상적으로 읽는다. 마지막 한 걸음(칠하기)만
 // 없어서 **아무 오라클도 안 울었다** — 스타일 왕복 테스트는 값이 살아 있는지만 본다.
 // 그래서 여기서 재는 것은 값이 아니라 **그릴 것이 생기는가**다.
 
 fn underlined(fg: Option<proto::style::Color>) -> CellStyle {
     CellStyle { underline: true, fg, ..Default::default() }
+}
+
+fn struck(fg: Option<proto::style::Color>) -> CellStyle {
+    CellStyle { strike: true, fg, ..Default::default() }
+}
+
+/// 밑줄만 골라 본다 — 취소선이 섞여 들어오면 자리 단언이 조용히 어긋난다.
+fn under_only(canvas: &proto::canvas::Canvas) -> Vec<crate::splitter::TextRule> {
+    SessionView::text_rules(canvas)
+        .into_iter()
+        .filter(|r| r.at == crate::splitter::RuleAt::Under)
+        .collect()
 }
 
 #[test]
@@ -5365,7 +5377,7 @@ fn underlined_cells_become_one_line_per_run() {
     canvas.put_text(2, 0, "cd", underlined(None));
     canvas.put_text(4, 0, "ef", CellStyle::default());
 
-    let lines = SessionView::underlines(&canvas);
+    let lines = under_only(&canvas);
     assert_eq!(lines.len(), 1, "이어진 두 칸이 한 선이 아니다: {}", lines.len());
     assert_eq!((lines[0].y, lines[0].x0, lines[0].x1), (0, 2, 4), "자리가 틀렸다");
 }
@@ -5375,7 +5387,7 @@ fn a_canvas_without_underlines_asks_for_no_lines() {
     let mut canvas = proto::canvas::Canvas::new(6, 1);
     canvas.put_text(0, 0, "hello", CellStyle::default());
     assert!(
-        SessionView::underlines(&canvas).is_empty(),
+        under_only(&canvas).is_empty(),
         "밑줄이 없는 화면에 선을 그리려 한다"
     );
 }
@@ -5387,7 +5399,7 @@ fn runs_break_where_the_colour_changes() {
     canvas.put_text(0, 0, "ab", underlined(proto::style::Color::parse("red")));
     canvas.put_text(2, 0, "cd", underlined(proto::style::Color::parse("blue")));
 
-    let lines = SessionView::underlines(&canvas);
+    let lines = under_only(&canvas);
     assert_eq!(lines.len(), 2, "색이 갈렸는데 한 선으로 이었다");
     assert_eq!((lines[0].x0, lines[0].x1), (0, 2));
     assert_eq!((lines[1].x0, lines[1].x1), (2, 4));
@@ -5401,7 +5413,7 @@ fn runs_do_not_wrap_across_rows() {
     canvas.put_text(2, 0, "ab", underlined(None));
     canvas.put_text(0, 1, "cd", underlined(None));
 
-    let lines = SessionView::underlines(&canvas);
+    let lines = under_only(&canvas);
     assert_eq!(lines.len(), 2);
     assert_eq!((lines[0].y, lines[0].x0, lines[0].x1), (0, 2, 4));
     assert_eq!((lines[1].y, lines[1].x0, lines[1].x1), (1, 0, 2));
@@ -5414,7 +5426,7 @@ fn a_wide_character_is_underlined_across_both_of_its_cells() {
     let mut canvas = proto::canvas::Canvas::new(6, 1);
     canvas.put_text(0, 0, "한", underlined(None));
 
-    let lines = SessionView::underlines(&canvas);
+    let lines = under_only(&canvas);
     assert_eq!(lines.len(), 1);
     assert_eq!((lines[0].x0, lines[0].x1), (0, 2), "넓은 글자의 뒤 칸이 빠졌다");
 }
@@ -5432,7 +5444,7 @@ fn a_reversed_run_underlines_in_the_colour_the_eye_sees() {
     };
     canvas.put_text(0, 0, "ab", style);
 
-    let lines = SessionView::underlines(&canvas);
+    let lines = under_only(&canvas);
     assert_eq!(lines.len(), 1);
     let plain = CellStyle { fg: proto::style::Color::parse("red"), ..Default::default() };
     assert_eq!(lines[0].color, colors(&plain).0, "반전을 안 푼 색으로 그었다");
@@ -5461,7 +5473,7 @@ fn an_underlined_cell_from_the_server_reaches_the_overlay() {
     }
     view.pump_headless();
 
-    let lines = view.underline_marks();
+    let lines = view.rule_marks();
     assert_eq!(
         lines.len(),
         1,
@@ -5478,5 +5490,210 @@ fn a_plain_screen_reaches_the_overlay_with_nothing_to_draw() {
         tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
     }
     view.pump_headless();
-    assert!(view.underline_marks().is_empty());
+    assert!(view.rule_marks().is_empty());
+}
+
+// ── 취소선(SGR 9 · pytmux-133) ───────────────────────────────────────────────
+
+#[test]
+fn struck_cells_become_a_line_through_the_run() {
+    let mut canvas = proto::canvas::Canvas::new(10, 1);
+    canvas.put_text(0, 0, "ab", CellStyle::default());
+    canvas.put_text(2, 0, "cd", struck(None));
+
+    let rules = SessionView::text_rules(&canvas);
+    assert_eq!(rules.len(), 1, "취소선 한 구간이 안 생겼다: {}", rules.len());
+    assert_eq!(rules[0].at, crate::splitter::RuleAt::Through, "밑줄 자리에 그었다");
+    assert_eq!((rules[0].y, rules[0].x0, rules[0].x1), (0, 2, 4), "자리가 틀렸다");
+}
+
+/// ★ 한 칸이 **둘 다** 가질 수 있다. 속성마다 따로 훑지 않으면 둘이 한 구간으로
+/// 뭉개져 선 하나만 남는다(그러면 그중 하나가 화면에서 사라진다).
+#[test]
+fn a_cell_that_is_both_underlined_and_struck_gets_both_lines() {
+    let mut canvas = proto::canvas::Canvas::new(4, 1);
+    canvas.put_text(
+        0,
+        0,
+        "ab",
+        CellStyle { underline: true, strike: true, ..Default::default() },
+    );
+
+    let rules = SessionView::text_rules(&canvas);
+    assert_eq!(rules.len(), 2, "선이 둘 다 안 생겼다: {rules:?}");
+    let mut at: Vec<_> = rules.iter().map(|r| r.at).collect();
+    at.sort_by_key(|a| format!("{a:?}"));
+    assert_eq!(
+        at,
+        vec![crate::splitter::RuleAt::Through, crate::splitter::RuleAt::Under],
+        "같은 자리에 같은 선을 두 번 그었다"
+    );
+}
+
+/// 옆칸이 **다른 속성**이면 이어 붙이지 않는다 — 한 번에 훑으며 "선이 있나"로 묶으면
+/// 밑줄 칸과 취소선 칸이 한 구간이 돼 **없던 선**이 생긴다.
+#[test]
+fn an_underlined_run_does_not_join_a_struck_neighbour() {
+    let mut canvas = proto::canvas::Canvas::new(6, 1);
+    canvas.put_text(0, 0, "ab", underlined(None));
+    canvas.put_text(2, 0, "cd", struck(None));
+
+    let rules = SessionView::text_rules(&canvas);
+    assert_eq!(rules.len(), 2, "두 속성이 한 구간으로 뭉갰다: {rules:?}");
+    let under = rules.iter().find(|r| r.at == crate::splitter::RuleAt::Under).unwrap();
+    let through = rules.iter().find(|r| r.at == crate::splitter::RuleAt::Through).unwrap();
+    assert_eq!((under.x0, under.x1), (0, 2), "밑줄이 옆칸까지 뻗었다");
+    assert_eq!((through.x0, through.x1), (2, 4), "취소선이 옆칸까지 뻗었다");
+}
+
+/// ★ **배선까지** 본다 — 규칙만 재면 `render` 에서 부르는 줄을 지워도 통과한다.
+#[test]
+fn a_struck_cell_from_the_server_reaches_the_overlay() {
+    let (mut view, tx, _sent) = harness();
+    let msgs: Vec<ServerMessage> = vec![
+        serde_json::from_value(serde_json::json!({
+            "t": "layout", "cols": 20, "rows": 3, "active": 1,
+            "panes": [{"id": 1, "x": 0, "y": 0, "w": 20, "h": 3, "active": true}]
+        }))
+        .unwrap(),
+        serde_json::from_value(serde_json::json!({
+            "t": "screen", "pane": 1,
+            "rows": [[["ab", {}], ["cd", {"st": true}]]],
+            "cursor": null, "wrap": [], "top": 0
+        }))
+        .unwrap(),
+    ];
+    for msg in msgs {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+
+    let rules = view.rule_marks();
+    assert_eq!(
+        rules.len(),
+        1,
+        "서버가 보낸 취소선이 오버레이까지 못 왔다(칠하는 쪽이 없으면 여기가 빈다)"
+    );
+    assert_eq!(rules[0].at, crate::splitter::RuleAt::Through);
+    assert_eq!((rules[0].y, rules[0].x0, rules[0].x1), (0, 2, 4));
+}
+
+// ── 굵게·기울임(SGR 1·3 · pytmux-133) ────────────────────────────────────────
+//
+// 선이 아니라 **글꼴 변형**이라 오버레이가 아니라 `Text` 가 그린다. 그래서 오라클도
+// 다르다 — 여기서는 요구가 옳게 만들어지는지만 재고, 그 요구가 `Text` 까지 가는지는
+// 라이브 스크린샷이 잡는다(`client/CLAUDE.md`: GUI 배선 누락은 그것만이 잡는다).
+
+#[test]
+fn a_plain_run_asks_for_no_font_variant() {
+    let props = font_properties(&CellStyle::default());
+    assert_eq!(props, warpui::fonts::Properties::default(), "맨 글자에 변형을 요구했다");
+}
+
+#[test]
+fn bold_and_italic_each_ask_for_their_own_face() {
+    use warpui::fonts::{Style, Weight};
+
+    let bold = font_properties(&CellStyle {
+        bold: true,
+        ..Default::default()
+    });
+    assert_eq!(bold.weight, Weight::Bold);
+    assert_eq!(bold.style, Style::Normal, "굵게가 기울임까지 켰다");
+
+    let italic = font_properties(&CellStyle {
+        italic: true,
+        ..Default::default()
+    });
+    assert_eq!(italic.style, Style::Italic);
+    assert_eq!(italic.weight, Weight::Normal, "기울임이 굵기까지 올렸다");
+
+    let both = font_properties(&CellStyle {
+        bold: true,
+        italic: true,
+        ..Default::default()
+    });
+    assert_eq!((both.weight, both.style), (Weight::Bold, Style::Italic));
+}
+
+/// 굵게·기울임은 **오버레이로 새지 않는다** — 선을 긋는 자리와 글꼴을 고르는 자리가
+/// 갈려 있다는 것을 못박는다(한쪽이 다른 쪽 일을 하면 굵은 글자마다 줄이 그어진다).
+#[test]
+fn bold_and_italic_do_not_leak_into_the_overlay() {
+    let mut canvas = proto::canvas::Canvas::new(4, 1);
+    canvas.put_text(
+        0,
+        0,
+        "ab",
+        CellStyle { bold: true, italic: true, ..Default::default() },
+    );
+    assert!(
+        SessionView::text_rules(&canvas).is_empty(),
+        "굵게·기울임에 선을 그었다"
+    );
+}
+
+// ── 호출이 지워지지 않았나 (원문 가드) ───────────────────────────────────────
+//
+// ★ 위 오라클들은 **값이 옳은가**만 잰다. `render` 가 그 값을 부르는 줄을 지우면 화면은
+// 통째로 잃는데 테스트는 전부 통과한다 — 루트 `CLAUDE.md` 가 "뮤테이션에 '호출 제거'
+// 를 포함할 것"이라고 적은 그 구멍이고, 밑줄 슬라이스(pytmux-123)가 그대로 남긴 것이다.
+//
+// 이 크레이트에는 그린 것을 되읽는 하네스가 없다(`Scene` 은 글리프 id 만 들고 있고
+// `pump_headless` 는 렌더를 안 돌린다). 그래서 **원문을 읽어** 판정한다 — 저장소에 이미
+// 같은 방식의 가드가 있다(`tests/test_harness_window_lookup.py`). 화면을 못 재는 대신
+// **배선이 사라지는 것**만은 확실히 잡는다.
+
+/// 원문에서 `head` 가 처음 나오는 자리부터 `len` 글자를 떼어 본다.
+fn source_after(head: &str, len: usize) -> String {
+    let src = include_str!("session_view.rs");
+    let at = src.find(head).unwrap_or_else(|| panic!("원문에서 못 찾았다: {head}"));
+    src[at..].chars().take(len).collect()
+}
+
+#[test]
+fn the_overlay_is_still_handed_the_text_rules() {
+    assert!(
+        source_after("SplitterOverlay::new(", 400).contains("self.rule_marks()"),
+        "오버레이에 글자 선을 안 넘긴다 — 밑줄·취소선이 화면에서 통째로 사라진다"
+    );
+}
+
+#[test]
+fn the_row_still_asks_for_the_font_variant() {
+    let body = source_after("fn render_row(", 3000);
+    assert!(
+        body.contains("font_properties(&style)"),
+        "런의 글꼴 변형을 안 만든다 — 굵게·기울임이 조용히 사라진다"
+    );
+    assert!(
+        body.contains(".with_style(fallback_safe(props, boxed))"),
+        "만든 변형을 Text 에 안 넘긴다 — 값만 살아 있고 화면은 종전 그대로다"
+    );
+}
+
+/// ★ 라이브가 잡은 것을 오라클로 굳힌다(실측 2026-08-04): 기울임을 보조 글꼴 조각에
+/// 걸면 한글이 **두부**가 된다. 안 기울어지는 것은 참을 수 있지만 글자가 사라지는 것은
+/// 아니다.
+#[test]
+fn italic_is_dropped_where_the_fallback_font_would_have_no_face() {
+    use warpui::fonts::{Style, Weight};
+
+    let want = font_properties(&CellStyle {
+        bold: true,
+        italic: true,
+        ..Default::default()
+    });
+
+    let ascii = fallback_safe(want, false);
+    assert_eq!(ascii.style, Style::Italic, "ASCII 조각에서 기울임을 잃었다");
+    assert_eq!(ascii.weight, Weight::Bold);
+
+    let boxed = fallback_safe(want, true);
+    assert_eq!(boxed.style, Style::Normal, "보조 글꼴 조각에 기울임을 걸었다 — 두부가 된다");
+    assert_eq!(
+        boxed.weight,
+        Weight::Bold,
+        "굵게까지 뺐다 — 보조 글꼴에는 굵은 얼굴이 있다(실측)"
+    );
 }

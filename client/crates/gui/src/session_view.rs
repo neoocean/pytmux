@@ -42,7 +42,7 @@ use warpui::elements::{
     EventHandler, Expanded, Flex, Hoverable, MainAxisSize, MouseStateHandle, ParentElement, Rect,
     Stack, Text,
 };
-use warpui::fonts::FamilyId;
+use warpui::fonts::{FamilyId, Properties, Style as FontStyle, Weight};
 use warpui::{
     AppContext, Element, Entity, SingletonEntity as _, TypedActionView, View, ViewContext,
 };
@@ -160,6 +160,61 @@ fn colors(style: &CellStyle) -> (ColorU, Option<ColorU>) {
         (bg.unwrap_or(palette::BG), Some(fg))
     } else {
         (fg, bg)
+    }
+}
+
+/// 한 런이 요구하는 **글꼴 변형** — 굵게(SGR 1)·기울임(SGR 3) (pytmux-133).
+///
+/// # 왜 오버레이가 아닌가
+///
+/// 밑줄·취소선은 칸을 가로지르는 **선**이라 오버레이가 그리지만, 이 둘은 글자 모양
+/// 자체가 다른 것이라 그릴 수 있는 곳이 `Text` 뿐이다.
+///
+/// # 없는 변형을 **합성하지 않는다** (사용자 결정 2026-08-04)
+///
+/// `select_font` 는 그 family 안에서 **가장 가까운 얼굴**을 고른다 — 굵은 얼굴이 없는
+/// family 면 보통 얼굴이 그대로 돌아온다. 그래서 여기서 할 일은 요구를 얹는 것뿐이고,
+/// 없으면 화면은 종전과 같다. 가짜 볼드(획을 겹쳐 그리기)는 **안 만든다**: 고정폭
+/// 격자에서 넓어진 글자는 옆 칸을 침범하고, 그러면 잃는 것(자리)이 얻는 것(굵기)보다
+/// 크다. 대신 `parity.rs` 에 갈림으로 선언한다.
+///
+/// # 왜 폭이 안 틀어지나
+///
+/// 고정폭 family 는 **모든 얼굴이 같은 전진폭**을 갖는다(Consolas·Menlo·DejaVu Sans
+/// Mono 실측). `render_row` 가 ASCII 조각의 폭을 안 못박고 자연폭에 맡기는 것이 그
+/// 전제 위에 서 있으므로, 이 값이 그 전제를 깨면 줄이 통째로 밀린다 — 변형 글꼴을
+/// 늘릴 때 확인할 자리다.
+fn font_properties(style: &CellStyle) -> Properties {
+    Properties {
+        weight: if style.bold { Weight::Bold } else { Weight::Normal },
+        style: if style.italic { FontStyle::Italic } else { FontStyle::Normal },
+    }
+}
+
+/// 보조 글꼴로 갈 조각에서 **없는 얼굴을 요구하지 않도록** 변형을 깎는다(pytmux-133).
+///
+/// # 왜 필요한가 — 라이브가 잡은 것
+///
+/// 기울임을 그냥 걸었더니 한글이 **두부(▯)** 로 떨어졌다(실측 2026-08-04, 캡처
+/// `2026-08-04-text-attrs.md`). 한글은 고정폭 family 에 없어서 보조 글꼴이 그리는데
+/// (`mono_font::FALLBACK_CANDIDATES`), 그 이름들(`Malgun Gothic`·`Apple SD Gothic Neo`·
+/// `Noto Sans CJK KR`)에는 **기울임 얼굴이 없다**. 그러면 글리프를 못 찾아 두부가 된다 —
+/// 즉 "안 기울어진다"가 아니라 **글자가 통째로 사라진다**. 굵게는 그 셋에 얼굴이 있어
+/// 멀쩡히 그려진다(같은 캡처에서 확인).
+///
+/// # 왜 ASCII 인가 (이 판정의 한계)
+///
+/// 정확한 물음은 *"이 글자를 그릴 얼굴에 그 변형이 있나"* 인데, 그건 글리프를 실제로
+/// 찾아봐야 안다. 여기서 쓰는 것은 그 대용이다 — `render_row` 가 폭을 못박을지 정할 때
+/// 이미 쓰는 바로 그 판정(ASCII 냐)이고, "ASCII 가 아니면 보조 글꼴로 간다"는 뜻이다.
+/// 사용자 결정(2026-08-04)이 *"실제 변형 글꼴만, 없으면 안 그린다"* 이므로 **덜 그리는
+/// 쪽으로 틀린다** — 기울임 얼굴이 있는 비ASCII 글꼴이 나중에 들어오면 그때 이 자리를
+/// 넓힌다(두부보다 안 기울어진 글자가 낫다).
+fn fallback_safe(props: Properties, boxed: bool) -> Properties {
+    if boxed {
+        Properties { style: FontStyle::Normal, ..props }
+    } else {
+        props
     }
 }
 
@@ -6586,44 +6641,59 @@ impl SessionView {
         out
     }
 
-    /// 지금 화면이 요구하는 글자 밑줄들 — `render` 가 오버레이에 넘기는 그 값.
+    /// 지금 화면이 요구하는 글자 선들 — `render` 가 오버레이에 넘기는 그 값.
     ///
-    /// 규칙([`underlines`](Self::underlines))과 갈라 둔 이유는 **오라클**이다: 순수
+    /// 규칙([`text_rules`](Self::text_rules))과 갈라 둔 이유는 **오라클**이다: 순수
     /// 함수만 재면 이걸 부르는 줄을 지워도 테스트가 통과한다(`client/CLAUDE.md` 가
     /// 경고하는 공허 통과). 이 함수는 서버 메시지 → 합성 캔버스 → 규칙까지를 한 줄로
     /// 묶으므로, 테스트가 **진짜 프레임을 먹여** 그릴 것이 생기는지 볼 수 있다.
-    fn underline_marks(&self) -> Vec<crate::splitter::Underline> {
+    fn rule_marks(&self) -> Vec<crate::splitter::TextRule> {
         self.composite_for_paint()
             .as_ref()
-            .map(Self::underlines)
+            .map(Self::text_rules)
             .unwrap_or_default()
     }
 
-    /// 밑줄(SGR 4)이 켜진 칸들을 **이어진 구간**으로 모은다(pytmux-123).
+    /// 그 앱이 그은 선 전부 — 밑줄(SGR 4 · pytmux-123)과 취소선(SGR 9 · pytmux-133).
+    ///
+    /// 한 칸이 **둘 다** 가질 수 있으므로 속성마다 따로 훑는다. 한 번에 훑으며 "선이
+    /// 있나"로 묶으면 밑줄만 있는 칸과 취소선만 있는 칸이 한 구간으로 이어져, 없던
+    /// 선이 생긴다.
+    fn text_rules(canvas: &proto::canvas::Canvas) -> Vec<crate::splitter::TextRule> {
+        let mut out = Self::rule_runs(canvas, crate::splitter::RuleAt::Under, |s| s.underline);
+        out.extend(Self::rule_runs(canvas, crate::splitter::RuleAt::Through, |s| s.strike));
+        out
+    }
+
+    /// `want` 가 켜진 칸들을 **이어진 구간**으로 모은다.
     ///
     /// # 왜 이게 없었나
     ///
-    /// 서버는 밑줄을 정상적으로 싣고 파서도 정상적으로 읽는다(`CellStyle::underline`).
+    /// 서버는 이 속성들을 정상적으로 싣고 파서도 정상적으로 읽는다(`CellStyle`).
     /// 마지막 한 걸음, **칠하는 쪽만** 없었다 — `colors()` 는 fg·bg·reverse 만 본다.
     /// 그래서 아무 오라클도 안 울었다(스타일 왕복 테스트는 값이 살아 있는지만 본다).
-    /// `man`·`less`·`git diff` 가 밑줄을 쓰므로 실제로 정보가 사라졌다.
+    /// `man`·`less`·`git diff` 가 이 속성들을 쓰므로 실제로 정보가 사라졌다.
     ///
     /// # 왜 칸을 이어 붙이나
     ///
     /// 칸마다 따로 그리면 인접한 사각형 사이에 반픽셀 틈이 생겨 **점선처럼** 보인다.
-    /// 색이 같고 붙어 있으면 한 구간이다. 색이 갈리면 끊는다 — 서로 다른 색의 밑줄을
-    /// 한 선으로 이으면 그중 하나가 거짓이 된다.
+    /// 색이 같고 붙어 있으면 한 구간이다. 색이 갈리면 끊는다 — 서로 다른 색의 선을
+    /// 한 줄로 이으면 그중 하나가 거짓이 된다.
     ///
     /// 넓은 글자의 뒤 칸(`continuation`)도 **같은 스타일**을 갖고 있어 자연히 이어진다.
-    fn underlines(canvas: &proto::canvas::Canvas) -> Vec<crate::splitter::Underline> {
+    fn rule_runs(
+        canvas: &proto::canvas::Canvas,
+        at: crate::splitter::RuleAt,
+        want: impl Fn(&proto::style::CellStyle) -> bool,
+    ) -> Vec<crate::splitter::TextRule> {
         let (w, h) = canvas.size();
-        let mut out: Vec<crate::splitter::Underline> = Vec::new();
+        let mut out: Vec<crate::splitter::TextRule> = Vec::new();
         for y in 0..h {
-            let mut run: Option<crate::splitter::Underline> = None;
+            let mut run: Option<crate::splitter::TextRule> = None;
             for x in 0..w {
                 let color = canvas
                     .cell(x, y)
-                    .filter(|cell| cell.style.underline)
+                    .filter(|cell| want(&cell.style))
                     .map(|cell| colors(&cell.style).0);
                 match (&mut run, color) {
                     // 이어진다 — 끝만 늘린다.
@@ -6633,11 +6703,12 @@ impl SessionView {
                     // 끊겼거나 색이 갈렸다 — 앞 구간을 내려놓고 새로 연다.
                     (_, Some(c)) => {
                         out.extend(run.take());
-                        run = Some(crate::splitter::Underline {
+                        run = Some(crate::splitter::TextRule {
                             y: y as u16,
                             x0: x as u16,
                             x1: x as u16 + 1,
                             color: c,
+                            at,
                         });
                     }
                     (_, None) => out.extend(run.take()),
@@ -6868,6 +6939,7 @@ impl SessionView {
                 cx += proto::compose::char_cells(ch).max(1);
             }
             let (fg, bg) = colors(&style);
+            let props = font_properties(&style);
             for (piece, cells) in Self::grid_segments(&text2) {
                 // 이 조각 안에서 자리표를 붙일 ASCII 글자의 위치(없으면 안 붙인다).
                 let mark = (!*probed)
@@ -6877,21 +6949,23 @@ impl SessionView {
                             .position(|c| c.is_ascii() && !c.is_ascii_control())
                     })
                     .flatten();
-                // 캔버스도 **같은 배율**을 탄다(§10-21ⓐ) — 여기만 빼면 "앱 전체"가 아니다.
-                // 칸 크기가 바뀌면 `report_size` 가 자리표를 다시 재어 서버에 새 격자를
-                // 알린다(창을 키운 것과 같은 길이라 새 배관이 없다).
-                let mut cell =
-                    Text::new_inline(piece.clone(), self.font, self.scaled(13.)).with_color(fg);
-                if let Some(index) = mark {
-                    *probed = true;
-                    cell = cell.with_saved_char_position(index, Self::CELL_PROBE.to_owned());
-                }
-                let mut cell = cell.finish();
                 // ★ 못박는 것은 **ASCII 가 아닌 조각만**이다. ASCII 는 고정폭 글꼴이
                 //   그리므로 자연폭이 곧 `칸수 × 칸너비`고, 거기에 우리가 잰 값을 덮어
                 //   씌우면 부동소수 반올림 한 톨 차이로 마지막 글자가 흐려질 수 있다
                 //   (`layout_line` 은 max_width 를 넘으면 페이드한다).
                 let boxed = piece.chars().any(|c| !c.is_ascii() || c.is_ascii_control());
+                // 캔버스도 **같은 배율**을 탄다(§10-21ⓐ) — 여기만 빼면 "앱 전체"가 아니다.
+                // 칸 크기가 바뀌면 `report_size` 가 자리표를 다시 재어 서버에 새 격자를
+                // 알린다(창을 키운 것과 같은 길이라 새 배관이 없다).
+                let mut cell = Text::new_inline(piece.clone(), self.font, self.scaled(13.))
+                    .with_color(fg)
+                    // 굵게·기울임(pytmux-133). 조각이 보조 글꼴로 갈 것이면 기울임을 뺀다.
+                    .with_style(fallback_safe(props, boxed));
+                if let Some(index) = mark {
+                    *probed = true;
+                    cell = cell.with_saved_char_position(index, Self::CELL_PROBE.to_owned());
+                }
+                let mut cell = cell.finish();
                 if let (Some(w), true) = (cell_w, boxed) {
                     cell = ConstrainedBox::new(cell).with_width(w * cells as f32).finish();
                 }
@@ -7011,7 +7085,7 @@ impl View for SessionView {
                         self.cursor_cell(),
                         self.scroll_hints(),
                         self.span_marks(),
-                        self.underline_marks(),
+                        self.rule_marks(),
                         Self::CELL_PROBE,
                     )
                     .finish(),
