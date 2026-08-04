@@ -53,6 +53,10 @@ _ORPHAN_GRACE_DEFAULT = 60.0
 # 이 대기가 사실상 0이다. 아무 프레임도 안 오면 probe 아님으로 보고 채택한다.
 _PROBE_DECL_TIMEOUT = 0.2
 
+# 종료 시 `serve_forever()` 태스크의 취소를 기다리는 상한(pytmux-134). 그 취소가
+# `wait_closed` 를 타 **열린 연결을 기다리므로** 무한정 기다리면 host 가 안 죽는다.
+_SERVING_CANCEL_TIMEOUT = 0.5
+
 
 def orphan_grace() -> float:
     """소유자 사망 후 self-shutdown 까지의 유예(초). 0/음수면 워치독 비활성(탈출구).
@@ -476,9 +480,20 @@ class PtyHost:
         try:
             await self._stop.wait()
         finally:
+            # ⛔ **`await serving` 을 무한정 기다리지 않는다**(pytmux-134). 바로 위 주석이
+            #    `async with server` 를 피한 이유가 `wait_closed` 인데, **`serve_forever()`
+            #    의 취소 경로도 같은 자리로 들어간다** — 실측(2026-08-04)에서 serve 는
+            #    `await serving` 에, 그 serving 은 `serve_forever → wait_closed` 에 잠겨
+            #    있었다. `wait_closed` 는 **열린 연결이 전부 끝나야** 풀리는데, 하필
+            #    `shutdown` 을 물어다 준 그 연결이 열려 있다. 그래서 host 는 shutdown 을
+            #    정상 처리하고도(패널 정리 4ms, `_stop` set 확인) 죽지 않고 ping 을 계속
+            #    받았다 — **종료가 피어의 선의에 달려 있었다.**
+            #    서버를 **먼저 닫아** 새 연결을 끊고, serving 은 짧게만 기다린다(취소가
+            #    안 끝나도 아래 정리와 os._exit 로 결정적으로 내려간다).
+            self._server.close()
             serving.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await serving
+                await asyncio.wait_for(serving, _SERVING_CANCEL_TIMEOUT)
             if self._watchdog is not None:
                 self._watchdog.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import socket
 import time
 import traceback
 
@@ -209,8 +210,78 @@ class PtyHostClient:
 
     def shutdown_host(self):
         """host 프로세스 자체를 내린다(모든 패널 종료). 서버의 '진짜' 종료에서만 —
-        재시작 경로는 호출하지 않는다(연결만 끊어 host·세션 보존)."""
+        재시작 경로는 호출하지 않는다(연결만 끊어 host·세션 보존).
+
+        ⚠ 이것만 부르고 곧바로 `close()` 하면 **프레임이 유실될 수 있다**(pytmux-134).
+        보낸 뒤 `half_close()` 로 쓰기단만 닫는 것이 안전한 순서다 — 아래 참조."""
         self._send(proto.encode_json({"op": "shutdown"}))
+
+    def half_close(self) -> bool:
+        """쓰기단만 닫아 host 에 EOF 를 알리고 **읽기단은 열어 둔다**. 닫았으면 True.
+
+        # 왜 필요한가 (pytmux-134)
+
+        `shutdown` 을 보낸 직후 소켓을 **통째로** 닫으면 그 프레임이 사라질 수 있다.
+        실측(2026-08-04): host 가 `spawn` 처리로 이벤트 루프를 ~1.5초 막고 있는 사이에
+        클라가 `shutdown` 을 보내고 닫으면, host 는 spawn 을 마치며 `spawned` 응답을
+        **이미 닫힌 피어**에 쓰고 → RST → **커널 수신 버퍼에 있던 `shutdown` 이 버려진다**.
+        host 는 그 프레임 대신 EOF 를 보고 «재시작 경로»(세션 보존)로 읽어 **영원히 산다**
+        — 고아 워치독도 소유자가 살아 있으면 안 죽이므로 아무도 회수하지 않는다.
+
+        쓰기단만 닫으면 host 의 응답 쓰기가 여전히 유효해 RST 가 안 나고, 이미 보낸
+        프레임이 순서대로 도착한다.
+
+        ★ **이 저장소에 이미 같은 지혜가 있다** — `ptyhostmgr.shutdown_host_sync` 는
+        처음부터 `s.shutdown(socket.SHUT_WR)` 을 한다. 두 경로 중 한쪽만 갖고 있었다."""
+        writer = self.writer
+        if writer is None:
+            return False
+        # asyncio 스트림에는 반쪽 닫기가 없다 — 바닥 소켓에 직접 건다.
+        sock = None
+        with contextlib.suppress(Exception):
+            sock = writer.get_extra_info("socket")
+        if sock is None:
+            return False
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            return False        # 이미 끊긴 연결 — 할 일이 없다
+        return True
+
+    async def shutdown_host_and_wait(self, timeout: float = 10.0) -> bool:
+        """`shutdown` 을 보내고 **host 가 연결을 끊을 때까지 기다린 뒤** 닫는다.
+
+        host 가 끊었으면(=프레임을 받아 질서있게 내려갔으면) True.
+
+        # 왜 기다려야 하나 (pytmux-134)
+
+        반쪽 닫기([`half_close`](#))만으로는 부족했다. 실측(2026-08-04): 반쪽으로 닫아도
+        **곧바로 완전히 닫으면** host 가 `spawn` 을 마치며 쓰는 응답이 닫힌 소켓을 때려
+        RST 가 돌아오고, 그 RST 가 **host 의 커널 수신 버퍼에 있던 `shutdown` 프레임을
+        버린다**. host 는 그것 대신 EOF 를 보고 «연결만 끊김 = 재시작»으로 읽어 영원히
+        산다 — 고아 워치독은 소유자가 살아 있으면 안 죽이므로 아무도 회수하지 않는다.
+
+        그래서 순서가 계약이다: **보낸다 → 흘린다 → 쓰기단만 닫는다 → 저쪽이 끊기를
+        기다린다 → 닫는다.** 기다리는 동안 읽기단이 열려 있어 host 의 응답 쓰기가
+        유효하므로 RST 가 안 난다.
+
+        기다림에는 상한이 있다(`timeout`). 넘으면 False 를 주고 닫는다 — 종료 경로가
+        남의 상태 때문에 영원히 멈추면 안 된다.
+        """
+        self.shutdown_host()
+        with contextlib.suppress(Exception):
+            if self.writer is not None:
+                await self.writer.drain()
+        self.half_close()
+        closed = False
+        task = self._read_task
+        if task is not None:
+            # shield: 타임아웃이 나도 태스크를 여기서 죽이지 않는다(아래 close 가 정리).
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(task), timeout)
+                closed = True
+        await self.close()
+        return closed
 
     # ---- 콜백 등록·조회 ----
     def register(self, pane_id, on_data, on_eof):

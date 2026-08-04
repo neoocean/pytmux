@@ -238,12 +238,13 @@ async def test_real_host_shutdown_terminates_process_and_child():
         await asyncio.sleep(0.3)
         assert proc.is_alive(host_pid), "host 가 안 떴다"
 
-        client.shutdown_host()              # 모든 패널 종료 + host serve 루프 정지
-        # fire-and-forget 송신이라 close 전에 drain 으로 프레임이 실제로 host 에 닿게 한다
-        # (안 하면 close 가 버퍼를 비우기 전에 writer 를 닫아 shutdown op 가 유실된다).
-        with contextlib.suppress(Exception):
-            await client.writer.drain()
-        await client.close()
+        # ★ 순서가 계약이다(pytmux-134): 보낸다 → 흘린다 → **쓰기단만** 닫는다 →
+        #   **저쪽이 끊기를 기다린다** → 닫는다. 그냥 보내고 닫으면, host 가 `spawn` 으로
+        #   루프를 막고 있던 사이 응답을 쓰다 RST 를 받고 **아직 안 읽은 shutdown 프레임을
+        #   버린다** — 그러면 host 는 EOF 만 보고 «재시작»으로 읽어 영원히 산다(소유자가
+        #   살아 있어 고아 워치독도 안 온다).
+        assert await client.shutdown_host_and_wait(timeout=20.0), \
+            "host 가 연결을 안 끊었다 — shutdown 프레임이 안 닿았거나 serve 가 안 빠졌다"
         client = None
         # host 프로세스가 질서있게 내려가야 한다(자식 셸도 함께 = 고아 없음).
         # Windows 는 종료가 느릴 수 있다 — ConPTY reader 스레드가 ReadFile 에서 풀리고
@@ -252,6 +253,44 @@ async def test_real_host_shutdown_terminates_process_and_child():
         assert await _await(lambda: _host_dead(host_pid), timeout=20.0), \
             "shutdown 후에도 host 프로세스가 살아 있다(고아)"
         host_pid = 0                         # 정상 종료 — 백스톱 불필요
+    finally:
+        await _kill_host(host_pid, *( (client,) if client else () ))
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def test_real_host_shutdown_does_not_wait_for_the_caller_to_hang_up():
+    """`shutdown` 을 받으면 **연결이 아직 열려 있어도** host 가 내려간다(pytmux-134 D2).
+
+    ★ 이게 없어서 종료가 **피어의 선의에 달려 있었다.** `serve` 의 finally 가
+    `serve_forever()` 태스크를 취소하고 `await` 하는데, 그 취소 경로가 `wait_closed()` 를
+    타고 **열린 연결이 전부 끝나기를 기다린다** — 하필 `shutdown` 을 물어다 준 그 연결이
+    열려 있다. 실측(2026-08-04): host 는 패널을 4ms 에 정리하고 `_stop` 까지 set 한 뒤
+    그대로 살아 `ping` 을 계속 받았다. 바로 옆 줄 주석이 `async with server` 를 피한 이유가
+    **정확히 그 `wait_closed`** 인데 취소 경로에 같은 함정이 있었다.
+
+    그래서 여기서는 **일부러 안 닫는다** — 위 테스트(질서있는 순서)와 대비되는 짝이다.
+    """
+    tmp = tempfile.mkdtemp(prefix="pytmux-ph-sd2-")
+    loop = asyncio.get_event_loop()
+    host_pid = 0
+    client = None
+    PANE = 5
+    try:
+        host_pid, endpoint = await _spawn_real_host(tmp)
+        client = await _connect(loop, endpoint)
+        client.register(PANE, lambda d: None, None)
+        client.spawn(PANE, [sys.executable, "-c", _TICKER], 80, 24)
+        # 자식이 실제로 붙을 때까지 — 패널이 없으면 이 결함을 안 밟는다(자식 없이는
+        # `spawn` 이 루프를 안 막아 종전 코드도 통과한다).
+        await wait_for(lambda: client.is_alive(PANE), timeout=10.0, step=0.05)
+
+        client.shutdown_host()
+        with contextlib.suppress(Exception):
+            await client.writer.drain()
+        # ⛔ 여기서 close() 하지 않는다. 그것이 이 테스트의 전부다.
+        assert await _await(lambda: _host_dead(host_pid), timeout=20.0), \
+            "연결이 열려 있다고 host 가 안 내려간다 — 종료가 피어의 선의에 달려 있다"
+        host_pid = 0
     finally:
         await _kill_host(host_pid, *( (client,) if client else () ))
         shutil.rmtree(tmp, ignore_errors=True)

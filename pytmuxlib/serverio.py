@@ -1637,6 +1637,16 @@ class ServerIOMixin:
         if self._pty_host is not None:
             with contextlib.suppress(Exception):
                 self._pty_host.shutdown_host()
+                # ★ 보낸 **뒤 쓰기단만 닫는다**(pytmux-134). 통째로 닫으면 host 가
+                #   응답을 쓰다 RST 를 받아 **아직 안 읽은 shutdown 프레임을 버리고**,
+                #   그걸 «연결만 끊김 = 재시작»으로 읽어 영원히 산다(고아 워치독도
+                #   소유자가 살아 있으면 안 죽인다). 반쪽 닫기는 host 의 응답 쓰기를
+                #   유효하게 둬 그 RST 를 안 만든다 — `shutdown_host_sync` 와 같은 모양.
+                #   ⚠ 여기서 **기다리지는 않는다**(`shutdown_host_and_wait` 아님) — 이
+                #   경로는 이미 루프를 멈추는 중이라 await 할 자리가 아니다. 반쪽으로
+                #   닫아 두면 서버 프로세스가 실제로 끝나 소켓이 닫힐 때까지 host 의
+                #   읽기단이 살아 있어 프레임이 안 버려진다.
+                self._pty_host.half_close()
         elif ptyhostmgr.host_enabled():
             # 폴백 모드로 돌던 서버의 종료(PTYHOST_ORPHAN_2026-07-24 P3/R2): host 연결이
             # 6초 예산 안에 안 붙어 인프로세스 백엔드로 돌아섰는데, 그 사이 뒤늦게 뜬
