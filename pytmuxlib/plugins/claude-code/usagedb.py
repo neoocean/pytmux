@@ -173,11 +173,33 @@ def _enable_wal(conn: sqlite3.Connection) -> bool:
     return False
 
 
+def is_readonly_error(exc: BaseException) -> bool:
+    """이 예외가 "**DB 가 읽기 전용**"인가 — 코드 결함과 환경 상태를 가르는 판정.
+
+    p4 워크스페이스는 열지 않은 파일을 읽기 전용으로 둔다. 토큰 DB 가 그런 자리에
+    있으면 쓰기가 전부 이 예외로 떨어지는데, 그건 **크래시가 아니라 환경 상태**다
+    (고칠 것은 코드가 아니라 파일 권한이다). 부르는 쪽은 이 판정으로 "조용히 물러날
+    것"과 "error.log 에 트레이스백을 남길 것"을 가른다.
+
+    ⚠ 메시지로 가르는 이유: sqlite3 는 이 조건에 **전용 예외 타입을 두지 않는다** —
+    `sqlite3.OperationalError: attempt to write a readonly database` 한 줄뿐이다.
+    `PRAGMA query_only=1` 로 우리가 막은 경우도 같은 문구라 함께 걸린다."""
+    return (isinstance(exc, sqlite3.OperationalError)
+            and "readonly" in str(exc).lower())
+
+
 def connect(path: str) -> sqlite3.Connection:
     """DB 연결을 열고(없으면 파일·디렉터리 생성) 스키마/WAL/타임아웃을 보장한다.
 
     path=":memory:" 면 인메모리(테스트). 파일이면 0700 디렉터리·0600 파일을
-    지향한다(토큰 데이터는 캡처처럼 호스트 로컬·버전관리 제외)."""
+    지향한다(토큰 데이터는 캡처처럼 호스트 로컬·버전관리 제외).
+
+    **여는 것과 스키마를 세우는 것은 갈라져 있다**(pytmux-124): DB 가 읽기 전용이면
+    스키마·마이그레이션 단계를 통째로 건너뛰고 **읽기용 연결을 그대로 돌려준다**.
+    종전엔 사다리의 단계마다 `except sqlite3.Error` 가 있는데 **마지막
+    `PRAGMA user_version=` + `commit()` 만 가드가 없어서**, 여는 것만으로 예외가 나
+    토큰 동기화 워커가 매 주기 넘어졌다(읽는 일까지 같이 죽는 건 과했다 — 마이그레이션은
+    쓰기가 되는 날 다음 connect 가 다시 시도한다)."""
     if path != ":memory:":
         d = os.path.dirname(path) or "."
         os.makedirs(d, exist_ok=True)
@@ -209,6 +231,23 @@ def connect(path: str) -> sqlite3.Connection:
             except OSError:
                 pass
     conn.execute("PRAGMA busy_timeout=3000")
+    try:
+        _ensure_schema(conn)
+    except sqlite3.OperationalError as e:
+        if not is_readonly_error(e):
+            raise
+        # 읽기 전용 DB — 스키마를 세울 수 없다. 연결은 살려 둔다(읽기는 다 된다).
+        # 뒤이은 쓰기도 같은 예외로 떨어지므로 부르는 쪽이 is_readonly_error 로 가른다.
+    return conn
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """스키마를 세우고 마이그레이션 사다리를 올린다 — **쓰기가 되는 DB 에서만**.
+
+    단계 하나가 넘어지면 `user_version` 을 그 앞 버전으로 낮춰 **다음 connect 가
+    다시 시도**하게 한다(부분 적용 상태로 버전만 올려 두면 영영 안 고쳐진다).
+    DB 자체가 읽기 전용이면 이 함수는 첫 쓰기에서 예외로 끝나고, 그 판정은
+    connect() 가 한다."""
     conn.executescript(_SCHEMA)
     cur_v = int(conn.execute("PRAGMA user_version").fetchone()[0])
     new_v = SCHEMA_VERSION
@@ -254,7 +293,6 @@ def connect(path: str) -> sqlite3.Connection:
             new_v = min(new_v, 9)
     conn.execute(f"PRAGMA user_version={new_v}")
     conn.commit()
-    return conn
 
 
 def _migrate_v3_dedup_residue(conn) -> int:

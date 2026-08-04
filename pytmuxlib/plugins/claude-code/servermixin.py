@@ -1182,6 +1182,28 @@ class ServerClaudeMixin:
         self._perm_reset(p)
         p._scan_seq = -1   # 스캔 게이팅(B1) 무시하고 다음 프레임에 구동 시작
 
+    def toggle_claude_remote(self, sess: Session, pane_id=None):
+        """원격 제어 토글 — 그 패널의 Claude Code 에 `/rc` 한 줄을 넣는다(pytmux-2 잔여).
+
+        정본 클라는 이 일을 자기가 한다(`_toggle_remote_control` 이 `input` 프레임으로
+        `/rc\\r` 을 민다). 네이티브 클라는 그 자리를 **화면**으로 열고 `[r]` 을 여기로
+        되돌려 보내므로, 같은 일을 서버 쪽에서 한 번 더 할 자리가 필요하다.
+
+        치는 것은 사용자가 직접 친 것과 **같은 입력**이다 — 우리가 원격 제어의 켜짐/꺼짐을
+        따로 세지 않는다는 뜻이기도 하다(그 상태의 주인은 Claude Code CLI 다). 그래서
+        토글이 먹었는지는 다음 프레임의 패널 화면이 답한다.
+
+        `set_claude_perm_mode` 와 같은 규약: 패널을 못 찾으면 활성 패널, 그것도 없으면
+        조용히 아무 일도 안 한다(늦게 온 클릭은 버린다)."""
+        win = sess.active_window if sess is not None else None
+        if not win:
+            return
+        p = (win.pane_by_id(pane_id) if pane_id is not None else None) \
+            or win.active_pane
+        if not p:
+            return
+        self._pc_inject(p, "/rc")
+
     def _claude_composer_text(self, p):
         """Claude 라이브 입력박스(컴포저)에 지금 들어 있는 텍스트를 서버 화면에서
         긁는다(best-effort). 빈 박스면 "", 입력박스를 못 찾으면 None. 자동 주입

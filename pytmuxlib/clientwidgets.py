@@ -21,7 +21,8 @@ from rich.style import Style
 
 from . import clientnotices, i18n
 from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
-                         _char_cells, _deemoji_text, norm_sep, theme_color)
+                         _char_cells, _deemoji_text, norm_sep, path_at,
+                         remote_title_display, theme_color)
 
 
 def _backdrop_dim_active(app) -> bool:
@@ -75,6 +76,9 @@ class MultiplexerView(Widget):
     def __init__(self):
         super().__init__(id="view")
         self._cells: list[list] = []
+        # §10-21ⓧ2 마우스가 올라온 경로 범위 `(y, x0, x1, 전체경로)`. 밑줄을 그 자리에
+        # 긋고, 클릭하면 전체 경로를 복사한다.
+        self._span_hover = None
         self._dragging = None  # (split_id, orient, rect)
         self._hover_divider = None  # 마우스가 올라간 경계선 rect (x,y,w,h)
         self._sel = None       # 선택 영역 (x0,y0,x1,y1) 전역 좌표
@@ -281,12 +285,19 @@ class MultiplexerView(Widget):
         if y >= len(self._cells):
             return Strip.blank(self.size.width)
         row = self._cells[y]
+        # §10-21ⓧ2: 이 줄에 경로 밑줄이 있나. 배경을 칠하지 않는 이유는 그러면 선택
+        # (드래그 복사)처럼 보이고 그 앱이 칠한 색을 우리가 덮기 때문이다 — 밑줄은
+        # 글자를 안 건드리고 링크 관습과도 맞는다(네이티브 클라도 같은 모양).
+        mark = self._span_hover
+        under = range(mark[1], mark[2]) if (mark and mark[0] == y) else ()
         segs = []
         run = []
         run_st = None
-        for ch, st in row:
+        for cx, (ch, st) in enumerate(row):
             if ch == "":
                 continue  # 와이드 문자의 연속 셀 → 앞 문자가 2칸을 차지함
+            if cx in under:
+                st = st + Style(underline=True) if st else Style(underline=True)
             if st is run_st:
                 run.append(ch)
             else:
@@ -299,6 +310,67 @@ class MultiplexerView(Widget):
         return Strip(segs)
 
     # --- 마우스 ---
+    # ── §10-21ⓧ2 패널 글의 경로 범위(hover 밑줄 · 클릭 = 전체 경로 복사) ──────
+    #
+    # 판정은 `clientutil.find_paths` 한 곳이고 **네이티브 클라와 한 벌**이다(픽스처
+    # `client/scripts/gen_spans_fixture.py` 가 그 함수를 직접 불러 대조한다). 여기서
+    # 하는 일은 그 규칙에 줄을 떠먹이고 자리를 **칸**으로 되돌리는 것뿐이다 —
+    # 한 글자가 두 칸인 글이 있어 그 산수는 셀 격자를 아는 이쪽만 안다.
+    def _span_at(self, x, y):
+        """(x, y) 칸에 걸린 경로 범위 → `(y, x0, x1, 전체경로)`. 없으면 None.
+
+        ⚠ **그 패널의 줄만** 본다. 캔버스 한 행에는 옆 패널의 글도 있어, 행 전체를
+        넘기면 두 패널의 글자가 이어 붙어 없던 경로가 생긴다.
+
+        전체 경로로 못 풀면 **존을 안 만든다** — 밑줄을 그어 놓고 눌러도 아무 일이
+        없으면 그 밑줄이 거짓말이다."""
+        if not (0 <= y < len(self._cells)):
+            return None
+        pane = self._pane_at(x, y)
+        if not pane:
+            return None
+        px, py, pw, ph = pane["x"], pane["y"], pane["w"], pane["h"]
+        if not (px <= x < px + pw and py <= y < py + ph):
+            return None                     # 테두리는 글이 아니다
+        row = self._cells[y]
+        text, cell_of_char, hit = [], [], None
+        for cx in range(px, min(px + pw, len(row))):
+            ch = row[cx][0]
+            if ch == "":                    # 넓은 글자의 뒤 칸 — 앞 글자가 답이다
+                if cx == x and hit is None and cell_of_char:
+                    hit = len(cell_of_char) - 1
+                continue
+            if cx == x:
+                hit = len(cell_of_char)
+            cell_of_char.append(cx)
+            text.append(ch)
+        if hit is None:
+            return None
+        found = path_at("".join(text), hit)
+        if found is None:
+            return None
+        start, end, word = found
+        full = self._resolve_path(word, pane.get("id"))
+        if full is None:
+            return None
+        x0 = cell_of_char[start]
+        x1 = cell_of_char[end] if end < len(cell_of_char) else px + pw
+        return (y, x0, x1, full)
+
+    def _resolve_path(self, word: str, pane_id=None):
+        """상대 경로를 전체 경로로. 기준은 **그 패널의** 작업 디렉터리다.
+
+        셸 통합이 없으면 cwd 를 모르고, 그때는 풀 수 없다 — 모르는 것을 아는 척하지
+        않는다(네이티브 클라의 `resolve_path` 와 같은 판정).
+
+        ⚠ 기준이 **활성 패널이 아니라 hover 한 패널**인 것이 핵심이다. 활성 패널의
+        cwd 로 옆 패널의 글을 풀면 밑줄은 멀쩡히 그어지고 복사한 값만 틀린다 —
+        조용한 오답이라 사용자가 의심할 단서가 없다."""
+        if os.path.isabs(word):
+            return word
+        cwd = (self.app.pane_cwds or {}).get(pane_id)
+        return os.path.join(cwd, word) if cwd else None
+
     def _pane_at(self, x, y):
         for p in self.app.layout.get("panes", []):
             bx, by, bw, bh = p.get("box") or (p["x"], p["y"], p["w"], p["h"])
@@ -390,6 +462,17 @@ class MultiplexerView(Widget):
             zpid, zx, zy0, zh = z
             if event.x == zx and zy0 <= event.y < zy0 + zh:
                 self.app.touch_scroll_action(zpid, zh, event.y - zy0)
+                event.stop()
+                return
+        # §10-21ⓧ2: 밑줄이 그어진 자리는 **그 뜻이 먼저**다 — 그어 놓고 눌렀는데
+        # 선택 드래그가 시작되면 그 밑줄이 거짓말이 된다. 왼쪽 버튼만이다(오른쪽은
+        # 패널 메뉴이고, 그건 정본이 이미 하던 일이다).
+        if event.button == 1:
+            span = self._span_at(event.x, event.y)
+            if span is not None:
+                self.app.copy_text(span[3])
+                self.app.display_message(
+                    i18n.t("span.copied", path=span[3]))
                 event.stop()
                 return
         if self.app.mode == "scroll":  # copy-mode: 드래그로 선택
@@ -487,6 +570,15 @@ class MultiplexerView(Widget):
             if zy == event.y and zx0 <= event.x < zx1:
                 fn = getattr(self.app, "open_remote_control", None)  # 플러그인 설치
                 fn and fn(pid)
+                event.stop()
+                return
+        # Claude 컨텍스트 footer 의 토큰 수치('… /clear to save 386.8k tokens') 클릭
+        # → 토큰 사용량 팝업(pytmux-23). 상태줄 Σ 배지와 **같은 팝업**이다 — 같은 수를
+        # 두 자리에서 눌러 서로 다른 판이 뜨면 그게 더 이상하다.
+        for pid, (zx0, zx1, zy) in getattr(self.app, "_tokens_zone", {}).items():
+            if zy == event.y and zx0 <= event.x < zx1:
+                fn = getattr(self.app, "open_token_log", None)  # 플러그인 설치
+                fn and fn()
                 event.stop()
                 return
         # 현재 탭 닫기 버튼([x]) 클릭(콘텐츠 오른쪽 위)
@@ -625,6 +717,17 @@ class MultiplexerView(Widget):
                 if dv:
                     event.stop()
                     return
+            # §10-21ⓧ2 경로 hover — 그냥 움직임일 때만 잡는다(경계 위는 위에서
+            # 돌아갔고, 드래그 중이면 밑줄이 잡음이다). 패스스루는 **막지 않는다** —
+            # 밑줄은 우리 것이고 모션은 그 앱의 것이라 겹치지 않는다.
+            if self.app.mouse_enabled and self._sel is None:
+                span = self._span_at(event.x, event.y)
+                if span != self._span_hover:
+                    old_mark, self._span_hover = self._span_hover, span
+                    w = self.size.width
+                    for mark in (old_mark, span):
+                        if mark:
+                            self.refresh(Region(0, mark[0], w, 1))
             # 버튼 없는 모션 — any-motion(1003) 앱에만 전달
             pd = self._mouse_target(event.x, event.y)
             if pd is not None and pd.get("mouse", 0) >= 3:
@@ -984,6 +1087,13 @@ class TabBar(Widget):
     PIN_GLYPH = "*"
     PIN_SEP = " ‖ "
 
+    def _remote_title_mode(self) -> str:
+        """원격 탭 제목 표시 형식(§10-21ⓓ2). 앱이 아직 없으면 기본이다.
+
+        앱에서 읽는 이유: 이 값은 설정 파일과 `set remote-title` 이 함께 쥐는 것이라
+        위젯이 자기 사본을 들면 둘이 갈린다."""
+        return getattr(self.app, "remote_title", "full")
+
     def _labels(self):
         out = []
         # 표시 번호는 **시각 순서**(비고정→고정)로 매긴다 — 고정 탭이 오른쪽으로 밀려도
@@ -998,7 +1108,10 @@ class TabBar(Widget):
             # 표시는 1부터(사용자 요청 #21). 내부 index 는 0-based 리스트 위치 그대로
             # 두고(select_window 등 좌표 계산 호환), **보여줄 때만** 시각 번호로 바꾼다.
             num = vis.get(t["index"], t["index"] + 1)
-            out.append(f" {pin}{ic}{num}:{t['name']}{flag} ")
+            # §10-21ⓓ2: 원격 탭 이름은 **그릴 때만** 접는다(값은 서버 계약이라 불변).
+            name = remote_title_display(t["name"], bool(t.get("remote")),
+                                        self._remote_title_mode())
+            out.append(f" {pin}{ic}{num}:{name}{flag} ")
         return out
 
     def index_for_number(self, n):
@@ -1032,7 +1145,9 @@ class TabBar(Widget):
         labels/widths/스크롤 루프를 통째로 건너뛰고, 캐시 당시 안정화된 스크롤을
         복원해 후속 코드 일관성을 유지한다(스크롤 안정화는 멱등)."""
         w = self.size.width
-        sig = (w, self.sel, self._scroll,
+        # ⚠ 시그니처에 **표시 형식**도 넣는다(§10-21ⓓ2) — 안 넣으면 형식만 바꿨을 때
+        #   이름·폭이 그대로라 캐시가 히트하고, 방금 바꾼 설정이 안 먹은 것처럼 보인다.
+        sig = (w, self.sel, self._scroll, self._remote_title_mode(),
                tuple((t["index"], t["name"], t.get("bell"),
                       t.get("activity"),
                       self.app.plugins.client_tab_glyph(self.app, t),

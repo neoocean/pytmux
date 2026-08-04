@@ -193,13 +193,19 @@ async def test_ncd_walks_with_state_and_cd_closes_the_screen():
         plugin = next(p for p in srv.plugins.plugins if getattr(p, "name", "") == "ncd")
         state = {}
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        spec = plugin._dir_spec({"path": here})
+        # ★ 계약이 바뀌었다(pytmux-11 B): 이 화면은 **평면 목록이 아니라 트리**다.
+        #   종전에는 첫 줄이 `..`(부모로 올라가는 길)였는데, 트리에서는 부모가 **실제
+        #   줄로 위에 있고** 올라가는 손은 `←` 다 — 제보가 요구한 그 변화다.
+        spec = plugin._open_tree({"path": here, "cwd": here})
         assert spec["kind"] == "list" and spec["id"] == "ncd"
-        # 첫 줄은 **부모로 올라가는 길**이고, 그 뜻(부모 경로)이 key 에 실린다.
-        assert spec["rows"][0]["label"] == ".."
-        assert spec["rows"][0]["key"] == os.path.dirname(here)
-        # 스펙이 자기 글자 키를 정한다(클라는 이 표에 있는 것만 먹는다).
-        assert spec["keys"] == {"enter": "into", "c": "cd"}
+        # 지금 서 있는 자리가 트리 안에 있고, 커서가 거기 선다.
+        assert spec["rows"][spec["selected"]]["key"] == here, spec["selected"]
+        # 그리고 그 줄은 **현재 자리**로 표시된다(정본은 노랑 + 표식).
+        assert spec["rows"][spec["selected"]]["tag"] == "cwd", spec["rows"][spec["selected"]]
+        # 스펙이 자기 키를 정한다(클라는 이 표에 있는 것만 먹는다). 글자뿐 아니라
+        # **이름 있는 키**도 실린다 — 트리는 `←→` 로 접고 편다.
+        assert spec["keys"] == {"enter": "into", "c": "cd",
+                                "right": "expand", "left": "collapse"}
 
         # `cd` 는 패널에 명령을 넣고 화면을 닫는다 — 정본 Enter 와 같은 결과다.
         pane = sess.active_window.active_pane
@@ -629,10 +635,205 @@ async def test_a_composed_title_carries_the_ingredients_not_just_the_words():
         sess = srv.ensure_default_session(80, 24)
         plugin = _plugin(srv, "ncd")
         path = os.path.abspath(os.sep)
-        spec = plugin._dir_spec({"path": path})
+        spec = plugin._open_tree({"path": path, "cwd": path})
         assert spec["i18n"]["title"]["fmt"] == "디렉터리 — {path}", spec["i18n"]
         assert spec["i18n"]["title"]["args"] == {"path": path}, spec["i18n"]
         # 글도 그대로 온다 — 재료를 모르는 클라는 종전과 똑같은 것을 본다.
         assert spec["title"].endswith(path), spec["title"]
+    finally:
+        await teardown(srv, task, sock)
+
+
+# ---------------------------------------------------------------------------
+# claude-perm-mode(pytmux-2) — 팔레트에 없는 화면이다. **패널 안 footer 를 눌러야**
+# 열리고, 그래서 "어느 패널을 눌렀나"가 뜻의 일부다.
+# ---------------------------------------------------------------------------
+
+class _ScreenSpy:
+    """`plugin_state` 를 가진 클라 — 화면이 판 상태를 여기 적는다(Tier C · P5)."""
+
+    def __init__(self):
+        self.sent = []
+        self.plugin_state = {}
+
+
+async def _screen(srv, sess, client, action, msg):
+    """화면 명령 하나를 태우고 그 클라에게 간 스펙을 돌려준다."""
+    async def fake_send_to(self, c, obj):
+        if c is client:
+            client.sent.append(obj)
+        return True
+
+    from pytmuxlib.servercmd import _CMD_TABLE
+    with harness.patched(type(srv), _send_to=fake_send_to):
+        await _CMD_TABLE[action][0](srv, client, sess, msg)
+    return client.sent[-1] if client.sent else None
+
+
+async def test_the_permission_screen_lists_what_the_canonical_popup_lists():
+    """정본 `PermModeScreen` 과 **같은 표**에서 나와야 한다 — 두 벌이면 한쪽만 모드를
+    하나 더 갖거나 위험 모드를 덜 숨긴다."""
+    import importlib
+    plugin = importlib.import_module("pytmuxlib.plugins.claude-code")
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p._perm_mode = "plan"
+        c = _ScreenSpy()
+        spec = await _screen(srv, sess, c, "plugin_open",
+                             {"name": "claude-perm-mode", "args": [p.id]})
+        assert spec and spec["t"] == "plugin_screen", spec
+        assert spec["id"] == "claude-perm-mode" and spec["kind"] == "list", spec
+        keys = [r["key"] for r in spec["rows"]]
+        assert keys == [k for k, _ in plugin.perm_modes("plan", False)], keys
+        # 위험 모드는 가용할 때만 — 안 그러면 도달 못 하는 모드를 고르게 된다.
+        assert "bypass" not in keys, keys
+        # 지금 모드에 표가 붙는다(어디에 있는지 모른 채 고르면 안 된다).
+        marked = [r["key"] for r in spec["rows"] if r["cols"]]
+        assert marked == ["plan"], spec["rows"]
+
+        p._bypass_seen = True
+        spec2 = await _screen(srv, sess, c, "plugin_open",
+                              {"name": "claude-perm-mode", "args": [p.id]})
+        assert "bypass" == spec2["rows"][-1]["key"], spec2["rows"]
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_permission_screen_changes_the_pane_that_was_clicked():
+    """★ 비활성 Claude 패널의 footer 를 눌렀는데 **활성 패널**의 모드가 바뀌면 안 된다.
+
+    화면 안 동작(`plugin_action`) 프레임에는 패널 칸이 없다(계약이 id·do·row·input
+    넷이다). 그래서 연 패널을 판 상태에 적어 두는데, 그 적기를 빠뜨리면 증상은 조용하다
+    — 팝업은 제대로 뜨고 고르기도 되며 **엉뚱한 패널**이 바뀔 뿐이다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        srv.split_pane(sess, "h")
+        panes = win.panes()
+        assert len(panes) == 2, panes
+        clicked = next(p for p in panes if p is not win.active_pane)
+
+        c = _ScreenSpy()
+        await _screen(srv, sess, c, "plugin_open",
+                      {"name": "claude-perm-mode", "args": [clicked.id]})
+        got = []
+        with harness.patched(type(srv), set_claude_perm_mode=(
+                lambda self, s, target, pane_id=None: got.append((target, pane_id)))):
+            closed = await _screen(srv, sess, c, "plugin_action",
+                                   {"id": "claude-perm-mode", "do": "apply",
+                                    "row": 0, "input": "accept"})
+        assert got == [("accept", clicked.id)], (got, clicked.id,
+                                                 win.active_pane.id)
+        # 고르면 닫는다 — 모드는 바로 안 바뀌므로(서버가 idle 을 기다려 순환 주입한다)
+        # 판을 열어 둔 채 다시 그리면 "안 먹었다"로 보인다.
+        assert closed["t"] == "plugin_screen_close", closed
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_permission_labels_travel_as_keys_not_as_korean():
+    """이 줄들은 이제 소켓을 건넌다 — 한국어 원문을 키로 쓰면 로케일 그물
+    (`gen_server_strings.py` 가 네임스페이스로 고른다)에 안 걸려 **영어 사용자에게
+    한국어로** 뜬다. 종전 자리(`screens.py` 클래스 속성)가 딱 그 모양이었다."""
+    import importlib
+    plugin = importlib.import_module("pytmuxlib.plugins.claude-code")
+    from pytmuxlib import i18n
+
+    for _key, label in plugin.PERM_MODES + [plugin.PERM_BYPASS]:
+        assert label.startswith("pscreen."), label
+        assert i18n._CATALOG["en"].get(label), f"{label} 에 영어 짝이 없다"
+        assert i18n._CATALOG["ko"].get(label), f"{label} 에 한국어 원문이 없다"
+
+
+async def test_a_pane_id_that_arrived_as_text_still_names_that_pane():
+    """★ 와이어의 패널 id 는 **문자열**이다 — 그걸 안 고치면 조용히 활성 패널이 된다.
+
+    GUI 는 자리를 누를 때 `args: ["7"]` 로 보낸다(`pane.to_string()`). 그런데
+    `Window.pane_by_id` 는 `p.id == pid` 로 비교하므로 `3 == "3"` 이 거짓이고, 부르는
+    쪽은 죄다 `... or win.active_pane` 으로 우아하게 내려간다 — 그래서 비활성 Claude
+    패널의 footer 를 눌러도 **활성 패널**이 바뀌었다. id 를 실어 보낸 이유가 통째로
+    사라지는데 증상은 조용하다(팝업은 제대로 뜬다).
+
+    위 오라클이 이걸 못 잡은 이유도 적어 둔다: 그 테스트는 `args: [p.id]` 로 **int** 를
+    넘긴다. 정본이 부르는 모양이지 GUI 가 보내는 모양이 아니었다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        srv.split_pane(sess, "h")
+        clicked = next(p for p in win.panes() if p is not win.active_pane)
+
+        c = _ScreenSpy()
+        await _screen(srv, sess, c, "plugin_open",
+                      {"name": "claude-perm-mode", "args": [str(clicked.id)]})
+        got = []
+        with harness.patched(type(srv), set_claude_perm_mode=(
+                lambda self, s, target, pane_id=None: got.append((target, pane_id)))):
+            await _screen(srv, sess, c, "plugin_action",
+                          {"id": "claude-perm-mode", "do": "apply",
+                           "row": 0, "input": "accept"})
+        assert got == [("accept", clicked.id)], (got, clicked.id,
+                                                 win.active_pane.id)
+    finally:
+        await teardown(srv, task, sock)
+
+
+# ---------------------------------------------------------------------------
+# claude-remote-control(pytmux-2 잔여) — 이것도 팔레트에 없다. 정본에서 그 자리는
+# 곧바로 토글이 아니라 **판을 먼저 열고** `[r]` 로 토글한다.
+# ---------------------------------------------------------------------------
+
+async def test_the_remote_control_screen_says_what_the_canonical_popup_says():
+    """글이 두 벌이 되면 두 클라의 설명이 갈린다 — 같은 카탈로그 키에서 와야 한다."""
+    from pytmuxlib import i18n
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        c = _ScreenSpy()
+        spec = await _screen(srv, sess, c, "plugin_open",
+                             {"name": "claude-remote-control", "args": [str(p.id)]})
+        assert spec and spec["t"] == "plugin_screen", spec
+        assert spec["id"] == "claude-remote-control", spec
+        assert spec["kind"] == "text", spec
+        assert spec["title"] == i18n.t("ccmsg.rc_title"), spec
+        assert spec["text"] == i18n.t("ccmsg.rc_body"), spec
+        # ★ `[r]` 이 **실제로 실린다** — 안 실으면 정본에는 있는 손이 GUI 에만 없고,
+        #   그건 "판은 뜨는데 아무것도 못 한다"가 된다(본문은 [r] 을 쓰라고 적는다).
+        assert spec["keys"] == {"r": "toggle"}, spec
+        assert "[r]" in spec["text"], spec["text"]
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_remote_control_toggle_types_rc_into_the_pane_that_was_clicked():
+    """`[r]` → 그 패널에 `/rc` 주입 + 닫기(정본 `InfoScreen` 의 hide_key 와 같은 손).
+
+    ★ 여기도 **누른 그 패널**이다. 권한모드가 먼저 밟은 자리라 같은 자를 댄다 —
+    화면 안 동작 프레임에는 패널 칸이 없으니 여는 쪽이 판 상태에 적어야 한다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        srv.split_pane(sess, "h")
+        clicked = next(p for p in win.panes() if p is not win.active_pane)
+
+        c = _ScreenSpy()
+        await _screen(srv, sess, c, "plugin_open",
+                      {"name": "claude-remote-control", "args": [str(clicked.id)]})
+        got = []
+        with harness.patched(type(srv), _pc_inject=(
+                lambda self, pane, text: got.append((pane.id, text)))):
+            closed = await _screen(srv, sess, c, "plugin_action",
+                                   {"id": "claude-remote-control", "do": "toggle",
+                                    "row": 0, "input": None})
+        assert got == [(clicked.id, "/rc")], (got, clicked.id, win.active_pane.id)
+        assert closed["t"] == "plugin_screen_close", closed
+        assert closed["id"] == "claude-remote-control", closed
     finally:
         await teardown(srv, task, sock)

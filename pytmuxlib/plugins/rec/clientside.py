@@ -89,16 +89,24 @@ def show_capture_info(app, path=None, size=None):
 def handle_command(app, c, args):
     """rec 클라 명령을 처리한다(코어 clientcmd 의 capture-output/capture-toggle elif
     에서 이전 — delete-to-disable: 디렉토리 삭제 시 이 훅이 사라져 명령이 디스패치
-    어디에도 안 나타난다). on/off/무인자(토글) 파싱 후 서버에 set_capture 전송.
-    처리하면 True."""
-    if c in ("capture-output", "capture-toggle"):
-        val = True if "on" in args else (False if "off" in args else None)
-        app.send_cmd("set_capture", value=val)
-        state = (i18n.t("word.toggle") if val is None
-                 else ("ON" if val else "OFF"))
-        app.display_message(i18n.t("msg.capture_toggle", state=state))
-        return True
-    return False
+    어디에도 안 나타난다). 처리하면 True.
+
+    ★ **이름→액션·인자는 `cmdmap` 한 벌이 정한다**(pytmux-35). 종전에는 그 규칙이
+    여기에만 있어 네이티브 클라가 같은 명령을 보낼 길이 없었다 — 팔레트에 보이는데
+    눌러도 안 먹는 줄이었다. 이제 서버도 같은 표로 푼다.
+
+    알림만 여기 남는다: 토스트는 클라의 일이라 표가 못 나른다."""
+    from .cmdmap import to_action
+    got = to_action(c, args)
+    if got is None:
+        return False
+    action, kw = got
+    app.send_cmd(action, **kw)
+    val = kw.get("value")
+    state = (i18n.t("word.toggle") if val is None
+             else ("ON" if val else "OFF"))
+    app.display_message(i18n.t("msg.capture_toggle", state=state))
+    return True
 
 
 # ---- 통합 상태 팝업의 'REC' 탭(client_status_tabs) ----

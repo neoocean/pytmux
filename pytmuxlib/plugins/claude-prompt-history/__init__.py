@@ -80,6 +80,12 @@ i18n.register({
 })
 
 
+def _cmdmap():
+    """명령→액션 표(`cmdmap`). 하이픈 디렉터리라 일반 import 가 안 돼 지연 로드한다."""
+    from . import cmdmap
+    return cmdmap
+
+
 def _clamp_lines(n) -> int:
     try:
         return max(_MIN_LINES, min(_MAX_LINES, int(n)))
@@ -133,9 +139,22 @@ class _PromptHistoryPlugin:
         from .server import status_fields
         status_fields(server, win, msg, full)
 
+    def plugin_command_action(self, name, args):
+        """`prompt-history-lines` → `(set_ph_max_lines, {n})` (pytmux-35).
+
+        **옮기기만 한다** — 액션을 어느 표가 받는지는 서버가 안다. 규칙 한 벌은
+        `cmdmap.py` 에 있고 정본 클라도 그것을 쓴다."""
+        from .cmdmap import to_action
+        return to_action(name, args)
+
     def server_command(self, server, client, sess, action, msg):
         if action == "set_ph_max_lines":
-            server._ph_max_lines = _clamp_lines(msg.get("n", _DEFAULT_LINES))
+            # ★ `n` 이 없으면(무인자 명령) **다음 값으로 순환**한다 — 같은 표의 3-state
+            #   토글과 같은 규약(cmdmap 머리말). 종전에는 그 경우 아무 일도 안 났다.
+            n = msg.get("n")
+            cur = _clamp_lines(getattr(server, "_ph_max_lines", _DEFAULT_LINES))
+            server._ph_max_lines = _clamp_lines(
+                n if n is not None else (cur % _MAX_LINES) + 1)
             server._save_opts()
             return "broadcast"          # 모든 클라에 새 행수 status 반영
         if action == "ph_scroll_to":
@@ -223,10 +242,12 @@ class _PromptHistoryPlugin:
         if c in _OPEN_ALIASES:
             app.open_prompt_history(app.layout.get("active"))
             return True
-        if c in _LINES_ALIASES:
-            n = next((int(a) for a in args if str(a).lstrip("-").isdigit()), None)
-            if n is not None:
-                app.send_cmd("set_ph_max_lines", n=_clamp_lines(n))
+        # ★ 이름→액션·인자는 `cmdmap` 한 벌이 정한다(pytmux-35). 종전에는 그 규칙이
+        #   여기에만 있어 네이티브 클라가 같은 명령을 보낼 길이 없었다.
+        got = _cmdmap().to_action(c, args)
+        if got is not None:
+            action, kw = got
+            app.send_cmd(action, **kw)
             return True
         return False
 

@@ -329,27 +329,97 @@ def _onoff(args):
     return None
 
 
-def _redraw_arg(args):
-    """claude-auto-redraw 3-state 인자 파싱. corruption/idle/off 명시면 그 모드 문자열,
-    on→idle, off→off, 무인자/toggle→None(서버가 순환). 빈 선택지("")도 None."""
-    s = " ".join(a for a in args if a).lower()
-    if any(k in s for k in ("corrupt", "감지", "깨짐")):
-        return "corruption"
-    if "idle" in s or "완료" in s:
-        return "idle"
-    v = _onoff(args)
-    return "idle" if v is True else "off" if v is False else None
+# 3-state 모드 → **화면에 보일 낱말의 카탈로그 키** 한 벌(정본 설정 팝업 · Tier C 화면
+# 스펙 둘 다 쓴다. 값이 아니라 키인 것에 뜻이 있다 — 아래).
+#
+# 왜 표로 빼나(pytmux-35): 종전에는 이 낱말이 `saver_display` 안의 dict 리터럴이었다.
+# 화면 스펙이 같은 줄을 그리게 되면서 두 벌이 될 참이었고, 갈리는 순간 같은 설정이
+# 클라마다 다른 낱말로 보인다.
+#
+# ⚠ 왜 리터럴이 아니라 **`pscreen.*` 키**인가: 이 낱말은 화면 스펙에 실려 소켓을
+# 건넌다. 서버가 지은 글은 서버 로케일을 타므로, 네이티브 클라가 자기 로케일로 다시
+# 읽으려면 ko→en 짝이 **`gen_server_strings.py` 가 뽑는 네임스페이스** 안에 있어야
+# 한다(그 생성기는 카탈로그를 키의 네임스페이스로 고른다). 한국어 원문을 그대로 키로
+# 쓰면 — 클라 로컬 문자열의 관례다 — 그 그물에 안 걸려 영어 사용자에게 한국어로 뜬다.
+REDRAW_WORDS = {"off": "pscreen.word_off", "idle": "pscreen.word_idle",
+                "corruption": "pscreen.word_corruption"}
+VERIFY_WORDS = {"off": "pscreen.word_off", "weak": "pscreen.word_weak",
+                "strict": "pscreen.word_strict"}
 
-def _verify_arg(args):
-    """claude-resume-verify 3-state 인자 파싱. strict/weak/off 명시면 그 모드,
-    on→weak, off→off, 무인자/toggle→None(서버가 순환). `_redraw_arg` 와 동형."""
-    s = " ".join(a for a in args if a).lower()
-    if any(k in s for k in ("strict", "엄격")):
-        return "strict"
-    if any(k in s for k in ("weak", "약")):
-        return "weak"
-    v = _onoff(args)
-    return "weak" if v is True else "off" if v is False else None
+i18n.register({
+    "ko": {"pscreen.word_off": "끔", "pscreen.word_idle": "완료마다",
+           "pscreen.word_corruption": "깨짐감지", "pscreen.word_weak": "약하게",
+           "pscreen.word_strict": "엄격"},
+    "en": {"pscreen.word_off": "off", "pscreen.word_idle": "each turn",
+           "pscreen.word_corruption": "on corruption", "pscreen.word_weak": "weak",
+           "pscreen.word_strict": "strict"},
+})
+
+
+# 모델·컨텍스트 후보 — `/model <이름> [컨텍스트]` 인자로 그대로 주입한다.
+#
+# ⚠ **여기 사는 이유**(pytmux-35): 종전에는 `screens.py`(Textual)의 클래스 속성이었다.
+# 그런데 그 목록은 이제 화면 스펙도 쓰고, 스펙을 짓는 것은 **서버**다 — 서버가 후보를
+# 얻으려고 `screens.py` 를 읽으면 **서버 프로세스에 Textual 이 딸려 온다**(이 파일
+# 머리말의 무게 규칙 위반). `SAVER_ROWS` 가 먼저 낸 자리이고 `screens.py` 가 그것을
+# 이름으로 참조하는 것과 같은 모양이다.
+MODEL_CHOICES = ["opus", "sonnet", "haiku",
+                 "opus-4.8", "sonnet-4.6", "haiku-4.5", "default"]
+# 컨텍스트 크기: 기본 / 1M(확장). 'default' 면 모델만, 아니면 뒤에 토큰으로 덧붙인다.
+CTX_CHOICES = [("기본", "default"), ("1M", "1m")]
+
+# 권한모드 후보 — footer 를 눌러 여는 선택 팝업의 줄들(pytmux-2). `MODEL_CHOICES` 와
+# **같은 이유로** 여기 산다: 이제 이 목록을 화면 스펙도 쓰고 그것을 짓는 것은 서버다.
+#
+# ⚠ 라벨이 **한국어 원문이 아니라 `pscreen.*` 키**인 것도 그래서다. 이 줄들은 이제 소켓을
+# 건너 GUI 로 나가는데, 한국어 원문을 키로 쓰면(클라 전용 문자열의 관례다) 위 머리말이
+# 적어 둔 그물(`gen_server_strings.py` 가 네임스페이스로 고른다)에 안 걸려 **영어
+# 사용자에게 한국어로 뜬다**. 종전 자리(`screens.py` 의 클래스 속성)가 딱 그 모양이었다.
+PERM_MODES = [
+    ("auto", "pscreen.perm_auto"),
+    ("accept", "pscreen.perm_accept"),
+    ("default", "pscreen.perm_default"),
+    ("plan", "pscreen.perm_plan"),
+]
+# 가용할 때만(또는 현재 모드일 때) 목록 끝에 덧붙는 위험 모드 — 서버가 idle footer 에서
+# bypass 를 관측해 시작 시 `--dangerously-skip-permissions` 가 활성임을 안 경우에만
+# 노출한다. 안 그러면 도달 불가 모드를 실수로 고르게 된다.
+PERM_BYPASS = ("bypass", "pscreen.perm_bypass")
+
+i18n.register({
+    "ko": {
+        "pscreen.perm_auto": "auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)",
+        "pscreen.perm_accept": "accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)",
+        "pscreen.perm_default": "default — 매번 확인 (일반 모드)",
+        "pscreen.perm_plan": "plan — 플랜 모드 (계획만, 실행 안 함)",
+        "pscreen.perm_bypass": "bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)",
+        "pscreen.perm_now": "  ◀ 현재",
+        "pscreen.perm_hint": "↑↓ 이동 · Enter 적용 · Esc 닫기",
+        "pscreen.perm_title": "권한모드 선택 (현재: {current})",
+    },
+    "en": {
+        "pscreen.perm_auto": "auto — auto-accept all, safety checks (⏵⏵ auto mode)",
+        "pscreen.perm_accept":
+            "accept — auto-accept edits·basic FS only (⏵⏵ accept edits)",
+        "pscreen.perm_default": "default — confirm each time (normal)",
+        "pscreen.perm_plan": "plan — plan mode (plan only, no run)",
+        "pscreen.perm_bypass":
+            "bypass — skip permissions, no confirm ⚠️ (Bypass Permission Mode)",
+        "pscreen.perm_now": "  ◀ current",
+        "pscreen.perm_hint": "↑↓ move · Enter apply · Esc close",
+        "pscreen.perm_title": "Select permission mode (current: {current})",
+    },
+})
+
+
+def perm_modes(current, bypass_available=False):
+    """이 패널에 보일 `(키, 라벨)` 목록 — 정본 팝업과 화면 스펙이 **같은 것**을 부른다.
+
+    `bypass` 노출 규칙(가용하거나 이미 그 모드)이 두 벌이면 한쪽만 위험 모드를 숨긴다."""
+    out = list(PERM_MODES)
+    if bool(bypass_available) or current == "bypass":
+        out.append(PERM_BYPASS)
+    return out
 
 
 # 토큰 절감 설정 팝업(ClaudeSaverScreen)의 행/순환 프리셋. clientutil 에서 이리로 이전.
@@ -392,18 +462,21 @@ def saver_display(app, key):
     }
     if key in bools:
         return "●" if bools[key] else "○"
+    # 낱말은 `REDRAW_WORDS`·`VERIFY_WORDS` 한 벌이다(화면 스펙과 같은 것을 쓴다 —
+    # 두 벌이면 같은 설정이 클라마다 다른 낱말로 보인다).
     if key == "claude_auto_redraw":
-        return {"off": "끔", "idle": "완료마다", "corruption": "깨짐감지"}.get(
-            norm_redraw_mode(st.claude_auto_redraw), "끔")
+        return i18n.t(REDRAW_WORDS.get(
+            norm_redraw_mode(st.claude_auto_redraw), REDRAW_WORDS["off"]))
     if key == "claude_resume_verify":
-        return {"off": "끔", "weak": "약하게", "strict": "엄격"}.get(
-            norm_resume_verify(getattr(st, "claude_resume_verify", "off")), "끔")
+        return i18n.t(VERIFY_WORDS.get(
+            norm_resume_verify(getattr(st, "claude_resume_verify", "off")),
+            VERIFY_WORDS["off"]))
     if key == "long_turn":
         v = int(st.claude_long_turn_sec)
-        return "끔" if v <= 0 else f"{v}초 이상"
+        return i18n.t(REDRAW_WORDS["off"]) if v <= 0 else f"{v}초 이상"
     if key == "repeat_alert":
         v = int(st.claude_repeat_alert)
-        return "끔" if v <= 0 else f"{v}회 이상"
+        return i18n.t(REDRAW_WORDS["off"]) if v <= 0 else f"{v}회 이상"
     return ""
 
 
@@ -479,8 +552,13 @@ def _apply_model_config(app, res):
 def _interrupt_pane(app, pane_id):
     """busy footer 의 'esc to interrupt' 클릭 → 그 패널에 ESC(\\x1b)를 주입한다.
     실행 중인 Claude 작업을 중단(키보드 ESC 와 동일). 활성 패널을 바꾸지 않도록
-    send_input_pane 으로 클릭한 패널에 직접 보낸다(비활성 Claude 패널도 가능)."""
-    app.send_input_pane(pane_id, b"\x1b")
+    send_input_pane 으로 클릭한 패널에 직접 보낸다(비활성 Claude 패널도 가능).
+
+    ⚠ **치는 글자는 여기서 정하지 않는다** — [`footerzones.SENDS`](footerzones) 가 정본이다.
+    서버가 GUI 에 그 자리를 실어 보낼 때 같은 표에서 글자를 꺼내므로, 여기 `\\x1b` 를
+    따로 적어 두면 두 클라가 같은 자리에서 다른 것을 치게 된다."""
+    from .footerzones import SENDS
+    app.send_input_pane(pane_id, SENDS["interrupt"].encode("utf-8"))
 
 
 def _open_perm_mode(app, pane_id):
@@ -1136,6 +1214,11 @@ class _ClaudeCodePlugin:
         if action == "set_claude_auto_mode":
             server.set_claude_auto_mode(msg.get("value"))
             return "send_full"
+        if action == "set_claude_auto_launch":
+            # 종전에는 이 액션을 **외부 CLI 만** 부를 수 있었다(_CLI_TOGGLES → server_control).
+            # 팔레트의 `auto-launch` 는 어느 클라에서도 여기 못 닿아 죽은 줄이었다(pytmux-35).
+            server.set_claude_auto_launch(msg.get("value"))
+            return "send_full"
         if action == "set_claude_turn_warn":          # M17 장기턴/반복 임계
             server.set_claude_turn_warn(long_sec=msg.get("long_sec"),
                                         repeat=msg.get("repeat"))
@@ -1278,6 +1361,7 @@ class _ClaudeCodePlugin:
         app._perm_zone = {}             # id -> (x0,x1,y) 권한모드 footer 클릭존
         app._remote_zone = {}           # id -> (x0,x1,y) 원격제어 표시 클릭존
         app._interrupt_zone = {}        # id -> (x0,x1,y) busy footer 'esc to interrupt' 클릭존
+        app._tokens_zone = {}           # id -> (x0,x1,y) '/clear to save N tokens' 토큰 수치 클릭존
         # 헤더 상태/클릭존 글루(코어/clientwidgets 가 getattr 로 호출 — 없으면 no-op).
         app._update_claude = lambda pc: _update_claude(app, pc)
         app.interrupt_pane = lambda pid: _interrupt_pane(app, pid)
@@ -1540,6 +1624,72 @@ class _ClaudeCodePlugin:
         from .statusbadges import badges
         return badges(msg)
 
+    def plugin_triggers(self, server, sess, req):
+        """Claude 패널 **안**의 누르는 자리(pytmux-2 · pytmux-23).
+
+        # 왜 서버가 내나
+
+        규칙(어느 문구가 누르는 자리인가)은 오래 정본 클라 안에만 있었다 — 파이썬/
+        Textual 모양이라 소켓을 못 건넜고, 그래서 GUI 에서는 권한모드 footer 를 눌러도
+        아무 일이 없었다. 이제 규칙은 [`footerzones`](footerzones) 한 벌이고 정본과
+        서버가 **같은 함수**를 부른다. 여기서 하는 일은 그 규칙을 이 클라의 화면 사정
+        (패널 사각형)에 대고 돌려 자리로 옮기는 것뿐이다.
+
+        # 이제 넷을 다 낸다 — 길이 둘이라서
+
+        종전에는 `perm`·`tokens` 둘만 냈다. 나머지 둘은 **화면이 아니라 동작**이라
+        (`do` 만 실어 두면 *"선언은 있고 배선이 없는 칸"* 이 된다는 pytmux-20 의 규율)
+        빠져 있었는데, 그 둘은 성격이 서로 다르고 각자 갈 길이 있었다:
+
+        - `remote` — 정본에서도 **판**이다(`_open_remote_control` = 원격 제어를 설명하는
+          InfoScreen + `[r]` 토글). 그러니 나머지 화면과 같은 길이다: `opens` 를 싣고
+          클라가 `plugin_open` 으로 되돌려 보낸다(`footerzones.OPENS`).
+        - `interrupt` — 정본에서도 팝업이 아니라 `send_input_pane(pid, ESC)` 한 줄이다.
+          그러니 **칠 글자를 자리와 함께** 싣는다(`footerzones.SENDS`). 클라는 그 뜻을
+          모른 채 그 패널로 넘길 뿐이라 계약(설계 §4.4)은 그대로다.
+
+        ⛔ **`plugin_overlay_action` 은 이 자리들의 길이 아니다.** 그 명령은 보낸 이름을
+        넘기기 전에 *"그 클라가 그 오버레이를 켰나"* 를 본다(`servercmd` 의
+        `state is None → return`). Claude footer 는 오버레이가 아니라 **패널 내용**에서
+        나오는 자리라 그 상태가 영영 없고, 그래서 그리로 보낸 클릭은 **조용히 사라진다** —
+        눌렀는데 아무 일도 안 나는, 이 저장소의 상습 결함 그대로다.
+
+        # 차례가 곧 우선순위다
+
+        `zones` 는 목록이고 클라는 **먼저 맞는 것**을 집는다. 그래서 싣는 차례가 그
+        클라의 우선순위가 된다 — 정본이 자기 안에 갖고 있던 그 순서(`interrupt` 먼저)를
+        `footerzones.PRIORITY` 한 벌로 옮겨 여기서도 같은 차례로 싣는다.
+        """
+        from .footerzones import OPENS, PRIORITY, SENDS, scan_pane
+        from .servermixin import screen_text
+        win = getattr(sess, "active_window", None) if sess is not None else None
+        if win is None:
+            return {}
+        zones = []
+        for r in req.get("panes") or []:
+            p = win.pane_by_id(r["id"])
+            if p is None or not getattr(p, "_claude", None):
+                continue
+            try:
+                lines = screen_text(p.screen).split("\n")
+            except Exception:
+                continue
+            found = scan_pane(lines[:r["h"]], r["x"], r["y"], r["w"], r["h"])
+            for kind in PRIORITY:
+                got = found.get(kind)
+                if got is None:
+                    continue
+                x0, x1, y = got
+                opens, send = OPENS.get(kind, ""), SENDS.get(kind, "")
+                # 둘 다 없으면 **자리를 안 만든다** — 누를 수는 있는데 아무 일도 안 나는
+                # 칸이 그 순간 생긴다(pytmux-20 의 규율).
+                if x1 <= x0 or not (opens or send):
+                    continue
+                zones.append({"x": x0, "y": y, "w": x1 - x0, "h": 1,
+                              "pane": r["id"], "do": kind,
+                              "opens": opens, "send": send})
+        return {"zones": zones}
+
     # 이 이름들이 한도 팝업을 연다 — 정본의 `handle_command` 갈래와 **같은 표**다
     # (아래 `elif c in (…)` 와 갈라지면 팔레트에서 되던 이름이 네이티브에서만 죽는다).
     _USAGE_PANEL = ("usage-panel", "usage-limits", "limits")
@@ -1590,16 +1740,24 @@ class _ClaudeCodePlugin:
         낫다(정본도 창이 좁으면 같은 계단으로 떨어진다). `right_align` 은 안 켠다:
         그건 usage-view 오버레이가 켜는 것이고, 이 판은 정본 팝업과 같은 모양이어야 한다.
         """
+        from . import screenspec
         do = req.get("do")
         if do == "open":
-            if req.get("name") not in self._USAGE_PANEL:
-                return None                 # 내 이름이 아니다
-            return self._usage_panel_spec(server)
-        if req.get("id") != "claude-usage-panel":
+            name = req.get("name")
+            if name in self._USAGE_PANEL:
+                return self._usage_panel_spec(server)
+            # 나머지(넷 + 큐 목록 + 권한모드)는 `screenspec` 이 짓는다 — 이 파일이
+            # 화면 여섯을 더 들면 1700줄이 2200줄이 되고, 그 규모가 이 저장소의
+            # '부분 수정 → 회귀' 를 부른다(루트 CLAUDE.md 의 거대 파일 규율).
+            return screenspec.open_spec(server, sess, name,
+                                        req.get("args") or (),
+                                        req.get("state"))
+        sid = req.get("id")
+        if sid == "claude-usage-panel":
+            if do == "close":
+                return {"t": "plugin_screen_close", "id": "claude-usage-panel"}
             return None
-        if do == "close":
-            return {"t": "plugin_screen_close", "id": "claude-usage-panel"}
-        return None
+        return screenspec.action(server, sess, req)
 
     @staticmethod
     def _usage_panel_spec(server):
@@ -1649,6 +1807,8 @@ class _ClaudeCodePlugin:
                 # M19 그림자 /usage 질의: 서버가 숨은 claude 를 띄워 실 세션/주간 한도를
                 # 긁어온다(사용자 화면 무간섭, ~수초). 회신은 status 로 반영.
                 app.display_message(i18n.t("ccmsg.usage_querying"), 4.0)
+            elif action == "pc_queue_clear":
+                app.display_message(i18n.t("ccmsg.pc_cleared"))
         elif c == "claude-token-debug":
             # §10-D 토큰 회계 진단 로그 토글(서버 opts.json 영속, 즉시 발효). 진단용이라
             # 평시엔 거의 안 만지므로 결과를 짧게 알린다(다른 토글은 설정 팝업이 상태를
@@ -1659,28 +1819,22 @@ class _ClaudeCodePlugin:
             app.display_message(
                 "토큰 진단 로그 켜짐" if _v is True else
                 "토큰 진단 로그 꺼짐" if _v is False else "토큰 진단 로그 토글")
-        elif c == "prompt-clear-message":
-            app.send_cmd("set_prompt_clear_message", msg=" ".join(args).strip())
         elif c in ("prompt-clear-queue", "pc-queue"):
-            self._pc_queue(app, args)
+            # 여기 오는 것은 **무인자**뿐이다 — 인자가 있으면 위 `cmdmap` 이 이미
+            # 액션으로 옮겼다(쌓기·비우기). 무인자는 화면이라 표가 못 나른다.
+            self._pc_queue(app)
         else:
             return False
         return True
 
-    def _pc_queue(self, app, args):
-        # prompt-clear-queue [<명령> | -c|clear] — 빈값=현재 큐 목록 팝업(#4), -c/clear=
-        # 큐 비움, 그 외=명령을 큐에 추가(모드 자동 on, doc+/clear 사이클마다 하나씩).
-        if not args:
-            from pytmuxlib.clientscreens import InfoScreen
-            q = app.status.prompt_clear_queue
-            lines = [f"{i + 1}. {cmd}" for i, cmd in enumerate(q)] or \
-                [i18n.t("ccmsg.pc_queue_empty")]
-            app.push_screen(InfoScreen(lines, title=i18n.t("ccmsg.pc_queue_title")))
-        elif args[0].lower() in ("-c", "clear", "--clear"):
-            app.send_cmd("pc_queue_clear")
-            app.display_message(i18n.t("ccmsg.pc_cleared"))
-        else:
-            app.send_cmd("pc_queue_add", cmd=" ".join(args).strip())
+    def _pc_queue(self, app):
+        # prompt-clear-queue(무인자) — 현재 큐 목록 팝업(#4). 인자가 있는 갈래
+        # (`<명령>` 쌓기 · `-c|clear` 비우기)는 `cmdmap.pc_queue_arg` 가 정한다.
+        from pytmuxlib.clientscreens import InfoScreen
+        q = app.status.prompt_clear_queue
+        lines = [f"{i + 1}. {cmd}" for i, cmd in enumerate(q)] or \
+            [i18n.t("ccmsg.pc_queue_empty")]
+        app.push_screen(InfoScreen(lines, title=i18n.t("ccmsg.pc_queue_title")))
 
     def _open_rules(self, app):
         # #27: Claude 시작 규칙 편집 팝업. 저장하면 서버 opts.json 에 영속하고, 새 Claude
@@ -1700,3 +1854,11 @@ class _ClaudeCodePlugin:
 
 
 PLUGIN = _ClaudeCodePlugin()
+
+# ★ 화면 스펙 모듈을 **로드 시점에** 물린다(지연 import 가 아니다). 스펙을 짓는 것은
+#   화면을 열 때지만 그 안의 `i18n.register` 는 **그때 처음 돌면 늦다**: 정본 카탈로그를
+#   훑어 ko→en 짝을 뽑는 자(`client/scripts/gen_server_strings.py`)는 `plugins.load()`
+#   까지만 하므로, 등록이 지연 모듈에 있으면 그 짝이 아예 안 잡혀 **영어 사용자에게
+#   한국어로 뜬다**(claude-name-sync 가 `nsmsg.saved` 로 먼저 밟은 함정 그대로).
+#   무게 규칙은 지킨다 — 이 모듈은 최상단에서 `i18n` 만 읽는다(Textual 은 함수 안에서).
+from . import screenspec  # noqa: E402,F401

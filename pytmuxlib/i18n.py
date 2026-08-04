@@ -180,6 +180,8 @@ register({
         "capture.status_on": "상태: ON (캡처 중)",
         "capture.status_off": "상태: OFF",
         "ui.search": "검색…",
+        # §10-21ⓧ2 — 패널 글의 경로를 눌러 전체 경로를 복사했을 때.
+        "span.copied": "경로를 복사했다: {path}",
         "ui.cmd_mode_badge": "CMD(←↑↓→ 이동, : 명령) ",
     },
     "en": {
@@ -190,6 +192,7 @@ register({
         "capture.status_on": "Status: ON (capturing)",
         "capture.status_off": "Status: OFF",
         "ui.search": "Search…",
+        "span.copied": "Copied path: {path}",
         "ui.cmd_mode_badge": "CMD(←↑↓→ move, : cmd) ",
     },
 })
@@ -331,6 +334,7 @@ register({
         "setting.inactive-dim-ratio": "흐리게 세기",
         "setting.tab-bar": "탭 바 표시",
         "setting.status-position": "상태줄 위치",
+        "setting.remote-title": "원격 탭 제목",
         "setting.single-border": "단일 패널 테두리",
         "setting.pane-border-status": "패널 헤더 표시",
         "setting.language": "언어",
@@ -420,6 +424,7 @@ register({
         "setting.inactive-dim-ratio": "Dim strength",
         "setting.tab-bar": "Tab bar",
         "setting.status-position": "Status bar position",
+        "setting.remote-title": "Remote tab title",
         "setting.single-border": "Single-pane border",
         "setting.pane-border-status": "Pane header",
         "setting.language": "Language",
@@ -625,6 +630,8 @@ register({
         "version.client": "  클라이언트  {ver:<14}  업타임 {up}",
         "version.server": "  서버        {ver:<14}  업타임 {up}",
         "version.pid": "  (서버 pid {pid})",
+        # §10-21ⓐ3 — 이 클라가 무엇인가(서버는 원격일 수 있어 OS 가 다를 수 있다).
+        "version.build": "  (빌드 {name})",
         # 서버 정보(host status) 탭
         "hoststatus.host": "호스트: {host}",
         "hoststatus.conn": "연결: {kind}",
@@ -677,6 +684,7 @@ register({
         "version.client": "  Client  {ver:<14}  uptime {up}",
         "version.server": "  Server  {ver:<14}  uptime {up}",
         "version.pid": "  (server pid {pid})",
+        "version.build": "  (build {name})",
         "hoststatus.host": "Host: {host}",
         "hoststatus.conn": "Connection: {kind}",
         "hoststatus.conn_remote": "remote (ssh)", "hoststatus.conn_local": "local",

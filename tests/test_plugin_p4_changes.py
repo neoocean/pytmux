@@ -126,6 +126,31 @@ async def test_list_changes_p4_missing():
     assert msg["rows"] == [] and "no p4" in msg["err"]
 
 
+async def test_describe_sections_split_at_the_file_list():
+    """§10-21ⓛ2 — 상세를 **구역으로 나눈다**(설명 · 파일 목록).
+
+    제보: 설명 뒤에 `Affected files ...` 가 이어져 눈으로 안 갈린다. 그 경계를 아는
+    쪽은 이 플러그인뿐이다(p4 가 적은 글이라 클라는 그것이 경계인 줄 모른다).
+
+    나눈 뒤 무엇을 그릴지는 뷰가 정한다 — 정본은 선문자 줄, GUI 는 실제 선."""
+    text = "\n".join([
+        "Change 58584 by woojinkim@box on 2026/08/04",
+        "",
+        "\t설명 한 줄",
+        "",
+        "Affected files ...",
+        "",
+        "... //depot/a#1 edit",
+    ])
+    parts = server.describe_sections(text)
+    assert len(parts) == 2, parts
+    assert "설명 한 줄" in parts[0] and "Affected files" not in parts[0]
+    assert parts[1].startswith("Affected files")
+    # 경계를 못 찾으면 **한 구역**이다 — 안 나뉜 것이 잘못 나뉜 것보다 낫다.
+    assert server.describe_sections("설명뿐") == ["설명뿐"]
+    assert server.describe_sections("") == []
+
+
 async def test_describe_text_and_error():
     def fake_ok(argv, **kw):
         return _FakeCompleted(stdout="Change 58585 by woojinkim@office\n\n\tdesc"
@@ -251,11 +276,18 @@ async def test_live_screen_flow():
             assert pop._change == "58584"
             # ④ 상세 메시지 채움 — 팝업 내용이 갱신된다.
             app._dispatch({"t": "p4_describe", "change": "58584",
-                           "text": "Change 58584 by woojinkim\n\n\t둘째 상세",
+                           "text": "Change 58584 by woojinkim\n\n\t둘째 상세\n"
+                                   "Affected files ...\n... //depot/a#1 edit",
                            "err": None})
             await wait_until(pilot,
                              lambda: any("58584" in ln for ln in pop._view._lines))
             assert any("58584" in ln for ln in pop._view._lines)
+            # §10-21ⓛ2: 설명과 파일 목록 **사이에 선**이 있다. 나누는 함수만 재면 그것을
+            # 붙이는 호출을 지워도 통과한다 — 호출부까지 단언한다.
+            lines = pop._view._lines
+            at = next(i for i, ln in enumerate(lines)
+                      if ln.startswith("Affected files"))
+            assert set(lines[at - 1]) == {"─"}, lines[max(0, at - 3):at + 1]
             # ⑤ Esc → 팝업만 닫히고 목록으로.
             await pilot.press("escape")
             await wait_until(

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import threading
 import time
 
@@ -812,6 +813,16 @@ async def run_worker(server, make_client=None, sleep=None):
             # (GHA ubuntu · cryptography 없는 로컬 3.11 양쪽에서 실측).
             fails += 1
             _note_state(server, e)
+        except sqlite3.OperationalError as e:
+            # 읽기 전용 토큰 DB 도 같은 부류다(pytmux-124) — p4 워크스페이스는 열지
+            # 않은 파일을 읽기 전용으로 두고, 그 자리에 DB 가 있으면 push 의 첫 쓰기
+            # (backfill_limits_lkey)부터 전부 이 예외다. 고칠 것은 코드가 아니라 파일
+            # 권한이므로 사유만 남기고(패널이 읽는다) 트레이스백은 안 쌓는다.
+            fails += 1
+            if usagedb.is_readonly_error(e):
+                _note_state(server, e)
+            else:
+                _note_error(server, e)
         except Exception as e:  # noqa: BLE001
             fails += 1
             _note_error(server, e)

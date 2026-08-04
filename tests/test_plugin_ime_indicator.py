@@ -54,12 +54,16 @@ class _FakeApp:
         self.ime_state = "EN"
         self.composited = 0
         self.messages = []
+        self.sent = []            # (액션, 인자) — 서버로 나간 것
 
     def _composite(self):
         self.composited += 1
 
     def display_message(self, m):
         self.messages.append(m)
+
+    def send_cmd(self, action, **kw):
+        self.sent.append((action, kw))
 
 
 class _Ev:
@@ -162,6 +166,80 @@ async def test_toggle_command():
     assert "ON" in app.messages[-1]
     # 모르는 명령은 처리 안 함.
     assert PLUGIN.handle_command(app, "clock-mode", []) is False
+    # ★ **서버로도 나간다**(pytmux-35): 표시 여부는 서버 옵션이라 이 명령이 서버에
+    #   닿지 않으면 네이티브 클라의 배지(서버가 `plugin_cells` 로 그린다)는 안 꺼지고,
+    #   껐다 켠 것이 재시작에서 사라진다. 낙관적 로컬 반영은 위에서 이미 쟀다.
+    assert [a for a, _kw in app.sent] == ["set_ime_indicator"] * 2
+
+
+async def test_toggle_command_carries_the_explicit_value():
+    """`on`/`off` 는 **그대로** 실린다 — 무인자만 서버가 뒤집는다(값 `None`)."""
+    app = _FakeApp()
+    PLUGIN.handle_command(app, "ime-indicator", ["off"])
+    assert app.sent[-1] == ("set_ime_indicator", {"value": False})
+    assert app.ime_show is False
+    PLUGIN.handle_command(app, "ime-indicator", ["on"])
+    assert app.sent[-1] == ("set_ime_indicator", {"value": True})
+    assert app.ime_show is True
+    PLUGIN.handle_command(app, "ime-indicator", [])
+    assert app.sent[-1] == ("set_ime_indicator", {"value": None})
+
+
+class _FakeServer:
+    def __init__(self, show=True):
+        self.ime_show = show
+        self.saved = 0
+
+    def _save_opts(self):
+        self.saved += 1
+
+
+async def test_server_owns_whether_the_badge_shows():
+    """값이 서버에 있어야 **두 클라가 같은 상태**를 본다(pytmux-35).
+
+    종전에는 이 값이 정본 클라의 인스턴스 속성뿐이라, 네이티브 클라의 배지는 서버가
+    그리는데 끌 방법이 아예 없었다 — 팔레트에 보이는데 안 먹는 줄."""
+    server = _FakeServer()
+    # 무인자 = 뒤집기, 명시값 = 그 값. 바뀌면 영속하고 모든 클라에 알린다.
+    assert PLUGIN.server_command(server, None, None, "set_ime_indicator", {}) == "broadcast"
+    assert server.ime_show is False and server.saved == 1
+    PLUGIN.server_command(server, None, None, "set_ime_indicator", {"value": True})
+    assert server.ime_show is True
+    # 내 액션이 아니면 안 집는다(코어가 다음 소비자에게 넘긴다).
+    assert PLUGIN.server_command(server, None, None, "set_capture", {}) is None
+
+
+async def test_status_and_opts_carry_the_flag():
+    server = _FakeServer(show=False)
+    assert PLUGIN.server_opts_serialize(server) == {"ime_show": False}
+    # 정적 옵션이라 **full 일 때만** 싣는다(C4) — 주기 프레임에 없다고 꺼진 게 아니다.
+    msg = {}
+    PLUGIN.server_status(server, None, None, msg, False)
+    assert "ime_show" not in msg
+    PLUGIN.server_status(server, None, None, msg, True)
+    assert msg["ime_show"] is False
+    # opts 왕복: plugin_opts 네임스페이스, 없으면 기본 ON(종전 동작).
+    fresh = _FakeServer()
+    PLUGIN.server_opts_init(fresh, {"plugin_opts": {"ime_show": False}})
+    assert fresh.ime_show is False
+    PLUGIN.server_opts_init(fresh, {})
+    assert fresh.ime_show is True
+
+
+async def test_cells_are_silent_when_the_badge_is_off():
+    """꺼 두면 **그림 자체가 안 나간다** — 클라가 걸러 주기를 기대하지 않는다."""
+    server = _FakeServer(show=False)
+    req = {"facts": {"ime": "한"}, "active": 1,
+           "panes": [{"id": 1, "x": 0, "y": 0, "w": 40, "h": 10}]}
+    assert PLUGIN.plugin_cells(server, None, req) == []
+    server.ime_show = True
+    # 켜면 실제로 런이 나온다(부정 단언만 있는 오라클은 배선이 빠져도 통과한다).
+    assert PLUGIN.plugin_cells(server, _NoSession(), req)
+
+
+class _NoSession:
+    """`_cursor_row` 가 화면 모델을 못 읽는 경우 — 조용히 폴백해야 한다."""
+    active_window = None
 
 
 # ---- 3.5) §10-B OS 실측(macOS TIS) 경로 — 전부 스텁(환경 비의존) ----

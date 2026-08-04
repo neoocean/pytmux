@@ -51,7 +51,8 @@ from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
 from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
                      config_path_for_write, load_config, normalize_binding_key,
                      set_config_option, textual_key_to_tmux)
-from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
+from .protocol import (CLIENT_CAPS, MIN_H, MIN_W, PROTO_VERSION,
+                       read_msg, write_msg)
 from .clientconn import (  # noqa: F401  (PytmuxApp 믹스인 — 4-1 파일 분할)
     _NetReconnectMixin, _RestartVersionMixin)
 from .clientcmd import _CommandMixin  # noqa: F401
@@ -596,6 +597,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 거리를 계산하는 유일한 입력이다 — `pane_top` 과 짝을 이뤄 "위로 갈 수
             # 있는 최대치 = top + scr" 를 준다(clientrender.scrollbar_chars 주석).
             self.pane_scroll = {}
+            # id -> 그 패널 셸의 작업 디렉터리(서버 `cwd` 프레임. 셸 통합이 없으면 없다).
+            # 패널 글 안의 **상대경로를 푸는 기준**이다(§10-21ⓧ2 / pytmux-24) — 없으면
+            # 그 패널에서는 절대경로만 눌린다(못 풀면 존을 안 만든다).
+            # ⚠ **패널별**이라야 한다: 활성 패널의 cwd 로 남의 패널 글을 풀면 밑줄은
+            # 그어지고 복사한 값만 틀린다(조용해서 더 나쁘다).
+            self.pane_cwds = {}
             # §1.7 페더레이션 회복: baseline(직전 full) 없이 screen-delta 만 온 패널.
             # redraw 를 1회 요청해 full 을 끌어오고, full 수신 시 비운다(중복 요청 디바운스).
             self._delta_no_base = set()
@@ -751,6 +758,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._ambig_auto_wide = config.get("_ambig_auto_wide", False)
             self.mode_keys = config.get("mode_keys", "vi")
             self.status_position = config.get("status_position", "bottom")
+            # §10-21ⓓ2 원격 탭 제목을 **표시할 때** 접는 형식(full·host·name).
+            # 값(이름)은 서버 계약이라 안 건드린다 — 접는 것은 그리는 순간뿐이다.
+            self.remote_title = config.get("remote_title", "full")
             self.status_interval = config.get("status_interval", 15)
             self._status_timer = None
             self.set_titles = config.get("set_titles", False)
@@ -849,7 +859,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.exit(message=i18n.t("msg.connect_failed"))
                 return
             cols, rows = self._content_size()
-            hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols, "rows": rows}
+            hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols,
+                     "rows": rows, "caps": list(CLIENT_CAPS)}
             if cellwidth.ambiguous_wide():    # 서버 pyte 격자도 모호폭=2 로 맞추도록
                 hello["ambig"] = "wide"
             tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
@@ -1198,7 +1209,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                              if isinstance(p, dict)}
                 if _declared:                     # 빈 layout 은 정리 보류(중간 상태 방지)
                     for _cache in (self.pane_content, self.pane_wrap,
-                                   self.pane_top, self.pane_scroll):
+                                   self.pane_top, self.pane_scroll,
+                                   self.pane_cwds):
                         for _pid in [k for k in _cache if k not in _declared]:
                             del _cache[_pid]
                     self._delta_no_base &= _declared
@@ -1212,6 +1224,17 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if not self._attached:
                     self._attached = True
                     self._fire_hook("client-attached")
+            elif t == "cwd":
+                # 패널 셸의 작업 디렉터리(§10-21ⓧ2). 서버는 이 클라가 `cwd` 를 광고했을
+                # 때만 보낸다. **없어졌다는 소식도 온다**(cwd=null) — 셸 통합이 꺼졌는데
+                # 옛 기준으로 계속 풀면 조용히 틀린 경로를 복사한다.
+                _pid = msg.get("pane")
+                _cwd = msg.get("cwd")
+                if _pid is not None:
+                    if isinstance(_cwd, str) and _cwd:
+                        self.pane_cwds[_pid] = _cwd
+                    else:
+                        self.pane_cwds.pop(_pid, None)
             elif t == "screen":
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
                 self.pane_wrap[msg["pane"]] = set(msg.get("wrap") or ())
@@ -1885,6 +1908,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif name == "status-position":
                 self.status_position = "top" if val == "top" else "bottom"
                 self.status.styles.dock = self.status_position
+            elif name == "remote-title":
+                from .clientutil import REMOTE_TITLE_CHOICES
+                self.remote_title = (val if val in REMOTE_TITLE_CHOICES
+                                     else "full")
+                # 탭바는 이름·폭 시그니처로 캐시한다 — 형식이 바뀌면 그 시그니처도
+                # 바뀌지만, 새로 그리라고 여기서 한 번 깨워 준다(다음 status 를 기다리면
+                # 방금 바꾼 것이 안 먹은 것처럼 보인다).
+                self.tabbar.refresh()
             elif name == "status-interval":
                 try:
                     self.status_interval = max(1, int(val))
@@ -1939,6 +1970,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return "always" if self.tab_bar_always else "auto"
             if key == "status-position":
                 return self.status_position
+            if key == "remote-title":
+                return self.remote_title
             if key == "single-border":
                 return "on" if self.single_border_on else "off"
             if key == "language":

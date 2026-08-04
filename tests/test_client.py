@@ -108,9 +108,37 @@ async def test_restart_check_command_opens_popup():
         # 고정 pause 유지: push_screen 직후 스택은 **즉시** 바뀌므로 조건 폴링은 0회
         # 대기가 된다 — 여기서 기다리는 것은 스택이 아니라 InfoScreen 의 **마운트**
         # (compose→ListView)다. 폴링으로 바꾸면 마운트 전에 진행해 NoMatches 로 깨진다.
-        await wait_mounted(pilot, InfoScreen)
+        scr = await wait_mounted(pilot, InfoScreen)
         assert isinstance(app.screen, InfoScreen)
+        # §10-21ⓓ3: 이 판도 짧아 **가운데** 선다(버전 판과 같은 예외). 이 값이 곧
+        # 두 클라의 자리 계약이다 — 앵커 픽스처가 이 인자를 뽑아 Rust 쪽과 맞춘다.
+        assert scr._center is True
     await _with_app(body)
+
+
+async def test_restart_check_labels_follow_the_server_os():
+    """§10-21ⓔ3 — Windows 서버에는 **POSIX 조건을 적지 않는다.**
+
+    제보: Windows 이진에서도 `✗ 서버 re-exec 지원(POSIX·이벤트루프)` 이 떠, 못 하는
+    것이 정상인 조건을 실패로 보여 "재시작 불가"로 읽혔다. 재는 값(reexec_supported)은
+    서버가 이미 OS 별로 갈라 보내고 있었고 — POSIX 는 execv, Windows 는 pty-host
+    인수인계 — 갈리지 않은 것은 라벨뿐이었다.
+
+    ⚠ 클라의 OS 로 판단하면 안 된다: 서버는 원격일 수 있다. 그래서 서버가 보낸
+    `server_os` 만 본다."""
+    from pytmuxlib.clientutil import _restart_check_eval
+    base = {"reexec_supported": True, "has_sessions": True, "serialize_ok": True,
+            "panes": 2, "panes_with_fd": 2}
+    win = _restart_check_eval(dict(base, server_os="windows"), True)[1]
+    assert "pty-host" in win[0][1], win[0]
+    assert "POSIX" not in win[0][1], win[0]
+    posix = _restart_check_eval(dict(base, server_os="posix"), True)[1]
+    assert "POSIX" in posix[0][1], posix[0]
+    # 옛 서버(칸 없음)는 지어내지 않고 종전 문구로 남는다.
+    assert _restart_check_eval(base, True)[1][0][1] == posix[0][1]
+    # 값·순서·개수는 안 움직인다 — 갈린 것은 라벨뿐이다.
+    assert [ok for ok, _ in win] == [ok for ok, _ in posix]
+    assert len(win) == len(posix) == 5
 
 
 async def test_stale_dismiss_after_popup_closed_is_noop_not_crash():
@@ -174,6 +202,9 @@ async def test_version_command_opens_popup():
         assert "p4:" not in joined, joined         # 접두사 제거
         assert "폴백" not in joined and "동기화된" not in joined, joined
         assert "서버 pid 42" in joined, joined
+        # §10-21ⓐ3: **이 클라가 무엇인가**가 판에 있다. 헬퍼(version.client_build)만
+        # 재면 그것을 붙이는 호출을 지워도 통과한다 — 호출부까지 단언한다.
+        assert "빌드" in joined and "Textual" in joined, joined
         assert scr._center is True
         # 업타임은 tick_cb 로 매 초 갱신된다 — 강제 tick 이 줄 수를 보존하며 라벨을
         # in-place 갱신(에러 없이 동작)하는지 확인. tick_cb 는 호출마다 현재 시각으로
@@ -4973,6 +5004,34 @@ async def test_mac_option_number_row_switches_tab_and_is_never_typed():
     await _with_app(body)
 
 
+async def test_remote_tab_title_folds_only_at_draw_time():
+    """§10-21ⓓ2 — 원격 탭 제목을 **그릴 때만** 접는다.
+
+    제보: `번호:⇄계정@서버:탭이름` 이 고정이라 정작 탭 이름이 밀려난다. 원격은 이미
+    색으로 구분되므로(§1.7-a 분홍) 아이콘·호스트를 접을 수 있어야 한다.
+
+    ⚠ **이름 자체는 못 바꾼다** — 서버가 짓고 `remote-detach` 의 인자이며 "`⇄` 와 첫
+    `:` 사이가 호스트"라는 계약이다. 그래서 접는 것은 탭바에 찍는 글자뿐이고, 값으로
+    쓰는 자리(`t["name"]`)는 그대로 남아야 한다."""
+    async def body(app, pilot, srv):
+        app.tabbar.set_tabs([
+            {"index": 0, "name": "local"},
+            {"index": 1, "name": "⇄boxA:build", "remote": True},
+        ], 0)
+        app.remote_title = "full"
+        assert "2:⇄boxA:build" in app.tabbar._labels()[1]
+        app.remote_title = "host"
+        # ⚠ 캐시 시그니처에 형식이 안 들어 있으면 여기서 옛 글자가 나온다(공허 통과).
+        assert "2:boxA:build" in app.tabbar._labels()[1], app.tabbar._labels()
+        app.remote_title = "name"
+        assert "2:build" in app.tabbar._labels()[1], app.tabbar._labels()
+        # 로컬 탭은 무엇을 골랐든 그대로다(판정은 remote 플래그로 한다).
+        assert "1:local" in app.tabbar._labels()[0]
+        # 그리고 **값은 안 바뀐다** — 접기가 이름을 갉아먹으면 remote-detach 가 깨진다.
+        assert app.tabbar.tabs[1]["name"] == "⇄boxA:build"
+    await _with_app(body)
+
+
 async def test_tab_number_follows_visual_order_when_pinned_reordered():
     # 07-14: 고정/원격 탭이 오른쪽 구역으로 밀려 그려지면 표시 번호와 esc+숫자 이동이
     # **시각 순서**(비고정→고정)를 따라야 "보이는 순서 = 번호" 가 맞는다. 원격
@@ -6637,6 +6696,34 @@ async def test_claude_footer_no_hover_highlight_but_keyboard_focus():
     await _with_app(body)
 
 
+async def test_the_interrupt_zone_wins_when_the_perm_zone_swallows_the_line():
+    """겹치는 자리에서 **인터럽트가 먼저**다(규칙 = `footerzones.PRIORITY`).
+
+    좁은 창에서는 권한모드 문구가 잘려 안 보이고, 그러면 그 자리는 예전대로 **줄
+    전체**로 넓어진다(팝업 진입로는 남긴다는 fallback). 그 줄에 `esc to interrupt`
+    가 같이 있으면 인터럽트 자리는 통째로 덮이는데, 그때 perm 이 이기면 **하던 일을
+    멈추려고 누른 손이 권한모드 팝업을 연다**.
+
+    ⚠ 이 순서는 종전에 `footer_zone_at` 안에만 있었다 — 그래서 같은 규칙을 쓰는 GUI
+    는 못 물려받았다. 이제 규칙 쪽 한 벌이라 여기서 재는 것이 그쪽도 지킨다."""
+    async def body(app, pilot, srv):
+        pid = app.layout["panes"][0]["id"]
+        app.pane_claude = {pid: {"id": pid, "claude": "busy",
+                                 "perm_mode": "default"}}
+        # 모드 문구가 없는 줄인데 perm 신호는 있다 → perm 이 줄 전체를 먹는다.
+        line = "shift+tab to  ✳ Thinking… (esc to interrupt)"
+        app.pane_content[pid] = ([[(line, {})]], None)
+        app._composite()
+        pzone = app._perm_zone[pid]
+        izone = app._interrupt_zone[pid]
+        assert pzone[0] <= izone[0] and izone[1] <= pzone[1], (pzone, izone)
+        assert app._footer_zone_at(izone[0], izone[2]) == (pid, "interrupt"), \
+            "겹친 자리에서 권한모드가 이겼다 — 멈추려던 손이 팝업을 연다"
+        # 겹치지 않는 자리는 종전대로 권한모드다.
+        assert app._footer_zone_at(pzone[0], pzone[2]) == (pid, "perm")
+    await _with_app(body)
+
+
 async def test_perm_mode_click_outside_closes():
     """§10-A #3: 권한모드 팝업 박스(#perm) 바깥(백드롭) 클릭 시 dismiss(None) 로 닫힌다.
     박스 안 클릭은 닫지 않는다(InfoScreen 의 inside-box 판정 패턴)."""
@@ -7763,4 +7850,38 @@ async def test_remote_attach_via_splits_relay_host():
         assert ("remote_attach", {"host": "NATGAMES\\user@host",
                                   "via": "jump1"}) in sent, sent
         assert ("remote_attach", {"host": "via B"}) in sent, sent
+    await _with_app(body)
+
+
+async def test_token_footer_click_opens_the_token_popup():
+    """pytmux-23: Claude 가 그린 `… /clear to save 386.8k tokens` 의 **수치**를 누르면
+    토큰 사용량 팝업이 열린다 — 상태줄 Σ 배지와 같은 판이다(같은 수를 두 자리에서
+    눌러 서로 다른 판이 뜨면 그게 더 이상하다).
+
+    ★ 히트테스트만 재지 않고 **호출부까지** 단언한다: 존을 만들어 놓고 그 존을 여는
+    호출을 지워도 통과하는 오라클이 이 저장소에서 두 번 나왔다(공허 통과)."""
+    async def body(app, pilot, srv):
+        pane = app.layout["panes"][0]
+        pid, py = pane["id"], pane["y"]
+        app.pane_claude = {pid: {"id": pid, "claude": "idle",
+                                 "perm_mode": "default"}}
+        app.pane_content[pid] = ([
+            [("트랜스크립트 — 386.8k tokens 라고 적힌 본문", {})],
+            [("new task? /clear to save 386.8k tokens", {})],
+        ], None)
+        app._composite()
+        # 본문의 같은 문구는 존이 아니다(footer 서명 `/clear` 이 없다).
+        assert pid in app._tokens_zone, app._tokens_zone
+        zx0, zx1, zy = app._tokens_zone[pid]
+        assert zy == py + 1, (zy, py)
+        assert app._footer_zone_at(zx0, py) is None, "본문 줄이 존이 됐다"
+        # 존은 수치만 덮는다 — 'new task? /clear to save' 는 클릭 대상이 아니다.
+        assert zx1 - zx0 == len("386.8k tokens"), (zx0, zx1)
+        assert app._footer_zone_at(zx0, zy) == (pid, "tokens")
+        assert app._footer_zone_at(zx0 - 1, zy) is None
+
+        opened = []
+        app.open_token_log = lambda *a, **k: opened.append(1)
+        app.view.on_mouse_down(_FakeMouse(zx0, zy, 1))
+        assert opened, "존은 만들었는데 누르면 아무 일도 안 난다"
     await _with_app(body)

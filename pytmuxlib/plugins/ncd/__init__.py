@@ -23,11 +23,13 @@ i18n.register({
         "ncd.title": "디렉터리 — {path}",
         "ncd.hint": "↑↓ 이동 · Enter 들어가기 · c 여기로 cd · Esc 닫기",
         "ncd.empty": "하위 디렉터리가 없습니다",
+        "ncd.too_many": "줄이 너무 많아 일부만 보입니다 — 접으면 줄어듭니다",
     },
     "en": {
         "ncd.title": "Directory — {path}",
         "ncd.hint": "↑↓ move · Enter open · c cd here · Esc close",
         "ncd.empty": "No subdirectories",
+        "ncd.too_many": "Too many rows — collapse to see fewer",
     },
 })
 
@@ -220,14 +222,25 @@ class _NcdPlugin:
             from .server import nc_list_resolve_cwd
             # cwd 추정은 **세션 상태를 읽으므로 루프에서**(fs 나열만 오프로드 — LOOP-1).
             mine["path"] = nc_list_resolve_cwd(server, sess) or os.path.abspath(os.sep)
-            return _offload(self._dir_spec, mine)
+            # 셸이 지금 서 있는 자리 — 목록에서 **강조**할 줄을 고르는 데 쓴다
+            # (정본은 노랑 + 표식으로 가리킨다. pytmux-11 A).
+            mine["cwd"] = mine["path"]
+            return _offload(self._open_tree, mine)
         if req.get("id") != "ncd":
             return None
         if do == "into":
+            # 트리에서 `Enter` 는 **그 자리로 cd** 다(정본과 같다) — 평면 목록 시절의
+            # "들어가기"가 아니다. 이름은 계약이라 그대로 두고 뜻만 정본에 맞춘다.
             target = str(req.get("input") or "")
             if target:
-                mine["path"] = target
-            return _offload(self._dir_spec, mine)
+                mine["cwd"] = target
+                cmd = ("cd /d " if os.name == "nt" else "cd ") + _quote(target)
+                self._send_to_pane(server, sess, cmd + "\r")
+            return {"t": "plugin_screen_close", "id": "ncd"}
+        if do == "expand":
+            return _offload(self._expand, mine, str(req.get("input") or ""))
+        if do == "collapse":
+            return _offload(self._collapse, mine, str(req.get("input") or ""))
         if do == "cd":
             # 정본과 **같은 결과**: 그 자리에서 패널에 cd 를 친다. 셸 방언은 이 서버의
             # OS 가 정한다(클라의 것을 쓰면 Windows 클라가 macOS 패널에 `cd /d` 를 흘린다).
@@ -247,32 +260,180 @@ class _NcdPlugin:
         if pane is not None:
             pane.write(text.encode("utf-8", "replace"))
 
-    def _dir_spec(self, mine):
-        """지금 디렉터리의 목록 스펙(순수 fs — executor 에서 돈다)."""
+    # ---- 트리(pytmux-11 B) --------------------------------------------------
+    #
+    # 종전 이 화면은 **한 디렉터리씩 보이는 평면 목록**이었고, 그것은 설계 §6("스펙은
+    # 내용과 선택을 정하고 표현은 각 클라 관례를 따른다")에 기대 의도한 선이었다.
+    # 제보가 그 선을 옮겼다: *"정본은 트리 구조를 직접 내비게이팅하는데 GUI 는 조회와
+    # 이동만 된다 — 완전히 같게."*
+    #
+    # 그래서 스펙이 **깊이와 펼침 상태**를 나른다. 트리의 모양(무엇이 펼쳐져 있나)은
+    # 보는 사람마다 다르므로 `req["state"]` — 그 클라의 연결에 매달린 보관함 — 에 산다.
+
+    @staticmethod
+    def _norm(path):
         import os
+        return os.path.normcase(os.path.normpath(path)) if path else ""
+
+    def _kids(self, mine, path):
+        """`path` 의 하위 디렉터리(한 번 읽으면 그 클라 보관함에 남는다).
+
+        지연 로드가 규칙이다 — 뿌리에서 전부 훑으면 네트워크 드라이브 하나에 화면이
+        멎는다(정본이 같은 이유로 한 단계씩 읽는다).
+
+        # 상한은 **층마다** 있다 (실측)
+
+        형제가 수만인 디렉터리가 실제로 있다(임시 디렉터리 하나에서 89142). 전체 줄
+        수로만 자르면 앞쪽 형제가 상한을 다 먹어 **정작 내가 서 있는 자리가 잘린다** —
+        그건 자른 것이 아니라 화면을 못 쓰게 만든 것이다. 그래서 층마다 자르고,
+        **사슬 위의 줄은 반드시 남긴다**(잘라도 길은 보인다).
+        """
         from .server import _list_dirs
-        path = mine.get("path") or os.path.abspath(os.sep)
+        cache = mine.setdefault("kids", {})
+        key = self._norm(path)
+        if key not in cache:
+            kids = _list_dirs(path)
+            if len(kids) > self._MAX_KIDS:
+                keep = set(mine.get("open") or ())
+                head = kids[:self._MAX_KIDS]
+                # 사슬(펼쳐 둔 것) 위의 형제는 잘려도 되살린다 — 길이 끊기면 안 된다.
+                on_path = [k for k in kids[self._MAX_KIDS:] if self._norm(k) in keep]
+                kids = head + on_path
+                mine["cut"] = True
+            cache[key] = kids
+        return cache[key]
+
+    @staticmethod
+    def _parent(path):
+        """`path` 의 부모(뿌리면 자기 자신).
+
+        ⚠ **구분자를 깎고 dirname 하지 말 것**: `C:\` 를 깎으면 `C:` 가 되고, 그것은
+        Windows 에서 **드라이브의 현재 디렉터리**라는 전혀 다른 곳이다. 그렇게 하면
+        트리의 뿌리가 엉뚱한 자리를 가리켜 사슬이 통째로 끊긴다(실측: 8단 사슬이
+        한 단만 펼쳐졌다)."""
+        import os
+        parent = os.path.dirname(path) or path
+        return parent
+
+    def _chain(self, path):
+        """뿌리 → `path` 의 조상 사슬(그 경로 자신 포함)."""
+        import os
+        out, cur = [], os.path.abspath(path)
+        while True:
+            out.append(cur)
+            parent = self._parent(cur)
+            if self._norm(parent) == self._norm(cur):
+                break
+            cur = parent
+        out.reverse()
+        return out
+
+    def _open_tree(self, mine):
+        """열 때의 트리 — 뿌리부터 셸이 서 있는 자리까지 **펼쳐 둔다**(정본과 같다).
+
+        그래야 창이 뜨자마자 지금 어디에 있는지가 보이고, 위아래 형제로 바로 옮길 수 있다.
+        """
+        cwd = mine.get("cwd") or mine.get("path")
+        chain = self._chain(cwd)
+        mine["root"] = chain[0]
+        # 사슬 위의 노드는 전부 펼친다(마지막 = cwd 도 — 그 안이 보여야 한다).
+        mine["open"] = [self._norm(p) for p in chain]
+        for p in chain:
+            self._kids(mine, p)
+        return self._tree_spec(mine)
+
+    #: 한 프레임에 실을 줄 상한. 트리는 펼친 만큼 커지고, 형제가 수만인 디렉터리가
+    #: 실제로 있다(실측: 임시 디렉터리 하나에서 89142 줄). 그걸 그대로 소켓에 실으면
+    #: 화면이 멎는다 — mdir 이 같은 이유로 `_MAX_ENTRIES` 를 둔다.
+    #:
+    #: ⚠ **말없이 자르지 않는다**: 잘렸으면 `note` 로 알리고 무엇을 하면 되는지(접기)를
+    #:    함께 말한다. 조용한 절단은 "다 보인다"로 읽힌다.
+    _MAX_ROWS = 4000
+    #: 한 디렉터리에서 보일 하위 수 상한(위 `_kids` 문서 참조).
+    _MAX_KIDS = 500
+
+    def _rows(self, mine, path, depth, out):
+        """펼쳐진 것만 따라 내려가며 줄을 만든다(정본 `_flatten` 과 같은 차례)."""
+        import os
+        if len(out) >= self._MAX_ROWS:
+            return
+        opened = set(mine.get("open") or [])
+        kids = self._kids(mine, path)
+        cwd = self._norm(mine.get("cwd"))
+        me = self._norm(path)
+        out.append({
+            "key": path,
+            # 이름은 **자료 그대로**다 — 들여쓰기를 글자로 섞으면 타이핑 찾기·복사가
+            # 그 공백을 물고 간다(그래서 깊이를 따로 싣는다).
+            "label": os.path.basename(path.rstrip(os.sep)) or path,
+            "cols": [],
+            "depth": depth,
+            # 접힘과 **잎**은 다르다 — 빈 디렉터리에 눌러도 안 열리는 화살표를 안 붙인다.
+            "expand": ("open" if me in opened else "shut") if kids else "",
+            "tag": "cwd" if me == cwd else "dir",
+        })
+        if me in opened:
+            for kid in kids:
+                self._rows(mine, kid, depth + 1, out)
+
+    def _tree_spec(self, mine):
+        """지금 트리의 스펙(순수 fs — executor 에서 돈다)."""
+        import os
+        root = mine.get("root") or os.path.abspath(os.sep)
         rows = []
-        parent = os.path.dirname(path.rstrip(os.sep)) or path
-        if parent and parent != path:
-            # `..` 는 **자리가 아니라 뜻**으로 나른다(부모 경로 그대로).
-            rows.append({"key": parent, "label": "..", "cols": []})
-        for d in _list_dirs(path):
-            rows.append({"key": d, "label": os.path.basename(d), "cols": []})
-        # 자리가 있는 글은 **재료까지** 싣는다(로케일 ⓑ) — 경로는 로케일 중립이라
-        # 인자로 넘겨도 언어가 안 섞인다.
-        title, title_spec = i18n.phrase("ncd.title", path=path)
+        self._rows(mine, root, 0, rows)
+        over = len(rows) >= self._MAX_ROWS or bool(mine.get("cut"))
+        # 커서는 **셸이 서 있는 줄**에 둔다 — 열자마자 지금 자리가 골라져 있어야
+        # `Enter` 한 번이 뜻을 갖는다.
+        cwd = self._norm(mine.get("cwd"))
+        sel = next((i for i, r in enumerate(rows) if self._norm(r["key"]) == cwd), 0)
+        title, title_spec = i18n.phrase("ncd.title", path=mine.get("cwd") or root)
         return {
             "t": "plugin_screen", "id": "ncd", "kind": "list",
             "title": title,
             "hint": i18n.t("ncd.hint"),
             "rows": rows,
-            "selected": 0,
-            # 키 → 액션. `enter` 말고도 **글자 키**를 실을 수 있다(클라가 그 표만 본다).
-            "keys": {"enter": "into", "c": "cd"},
-            "note": "" if rows else i18n.t("ncd.empty"),
+            "selected": sel,
+            # 키 → 액션. 글자뿐 아니라 **이름 있는 키**도 실을 수 있다(pytmux-11 B) —
+            # 트리는 `←→` 로 접고 펴는 것이 손버릇이고 그 둘은 글자가 아니다.
+            "keys": {"enter": "into", "c": "cd",
+                     "right": "expand", "left": "collapse"},
+            "note": (i18n.t("ncd.too_many") if over
+                     else "" if rows else i18n.t("ncd.empty")),
             "i18n": {"title": title_spec},
         }
+
+    def _expand(self, mine, path):
+        """그 줄을 편다. 이미 펴져 있으면 그대로(첫 자식으로 내려가는 것은 `↓` 의 일)."""
+        if path:
+            opened = set(mine.get("open") or [])
+            if self._kids(mine, path):
+                opened.add(self._norm(path))
+                mine["open"] = sorted(opened)
+        return self._tree_spec(mine)
+
+    def _collapse(self, mine, path):
+        """접는다. **이미 접혀 있으면 부모로 올라간다** — 정본 `←` 의 두 뜻이다.
+
+        한 키에 두 뜻을 두는 것이 손버릇이다(접힌 잎에서 `←` 를 눌렀는데 아무 일도 안
+        나면 사람은 그 키가 죽은 줄 안다)."""
+        import os
+        if not path:
+            return self._tree_spec(mine)
+        opened = set(mine.get("open") or [])
+        me = self._norm(path)
+        if me in opened:
+            opened.discard(me)
+            mine["open"] = sorted(opened)
+            return self._tree_spec(mine)
+        parent = self._parent(path)
+        spec = self._tree_spec(mine)
+        pkey = self._norm(parent)
+        for i, r in enumerate(spec["rows"]):
+            if self._norm(r["key"]) == pkey:
+                spec["selected"] = i
+                break
+        return spec
 
 
 def _quote(path: str) -> str:

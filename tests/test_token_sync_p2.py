@@ -407,6 +407,56 @@ async def test_missing_crypto_backs_off_without_logging_a_traceback():
     assert slept[1] > slept[0], "그래도 백오프는 해야 한다(매 30s 재시도 금지)"
 
 
+async def test_readonly_db_backs_off_without_logging_a_traceback():
+    """읽기 전용 토큰 DB 도 **환경 상태**다 — error.log 를 안 건드린다(pytmux-124).
+
+    p4 워크스페이스는 열지 않은 파일을 읽기 전용으로 둔다. 그 자리에 DB 가 있으면
+    push 의 첫 쓰기(backfill_limits_lkey)부터 전부 같은 예외라 **매 주기** 다시 난다 —
+    cryptography 미설치와 똑같은 모양이고, 그래서 처방도 같다(사유는 남기고
+    트레이스백은 안 쌓는다). 락(`database is locked`)은 여기 안 걸린다: 그건 재시도로
+    풀리는 일이고 안 풀리면 진짜 신호다."""
+    import asyncio
+    import sqlite3
+
+    class FakeServer:
+        running = True
+        token_sync = "server"
+        token_sync_url = "https://x"
+        token_sync_sec = 60
+
+        def __init__(self):
+            self.logged = []
+
+        def _log_error(self, m):
+            self.logged.append(m)
+
+    async def run(exc):
+        srv, slept = FakeServer(), []
+
+        async def fake_sleep(n):
+            slept.append(n)
+            if len(slept) >= 3:
+                raise asyncio.CancelledError
+
+        def boom(_s):
+            raise exc
+
+        try:
+            await tokensync.run_worker(srv, make_client=boom, sleep=fake_sleep)
+        except asyncio.CancelledError:
+            pass
+        return srv, slept
+
+    srv, slept = await run(
+        sqlite3.OperationalError("attempt to write a readonly database"))
+    assert srv.logged == [], "읽기 전용 DB 를 error.log 에 적었다: %r" % srv.logged
+    assert slept[1] > slept[0], "그래도 백오프는 해야 한다"
+    # 같은 예외형의 다른 사유는 여전히 진짜 실패로 남는다(가드를 넓히면 이게 깨진다).
+    srv2, _ = await run(sqlite3.OperationalError("database is locked"))
+    assert srv2.logged and "token_sync" in srv2.logged[0], \
+        "락까지 조용히 삼켰다 — 진짜 실패가 묻힌다"
+
+
 # ── 설정 경로(켜는 방법이 코드 안에 있어야 한다) ────────────────────────────
 
 async def test_configure_persists_and_validates_url():

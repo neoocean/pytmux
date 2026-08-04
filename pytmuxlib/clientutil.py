@@ -479,6 +479,94 @@ _style_cache: dict = {}
 REMOTE_PINK = "#ff5fd7"        # hot pink (256색 #206 근사)
 REMOTE_PINK_DIM = "#af5f87"    # 비활성 외곽선(어두운 분홍)
 
+# §10-21ⓧ2 패널 글에서 **경로처럼 보이는 범위**를 찾는다.
+#
+# 넓히면 아프다: 산문 속 `a/b` 나 날짜 `2026/08/02` 도 경로처럼 보인다. 그래서 두 조건을
+# **둘 다** 요구한다 — ⑴ 구분자(`/`·`\`)가 있고 ⑵ 마지막 조각에 확장자가 있다.
+#
+# ★ 이 규칙은 **네이티브 클라와 한 벌**이라야 한다(`client/crates/base/src/spans.rs`).
+# 두 클라가 각자 판정하면 같은 줄에서 서로 다른 자리를 짚고, 그 어긋남은 나란히 놓아야만
+# 보인다. 픽스처(`client/scripts/gen_spans_fixture.py`)가 이 함수를 직접 불러 대조한다.
+_PATH_WRAP = set("()[]{}\"'`<>,")
+_PATH_TRAIL = set(".,;:!?)]}>\"'`")
+
+
+def _looks_like_path(word: str) -> bool:
+    if len(word) < 3 or "://" in word:
+        return False                       # 링크는 링크의 것이다
+    if "/" not in word and "\\" not in word:
+        return False                       # 낱말 하나는 경로로 안 본다
+    last = word.replace("\\", "/").rsplit("/", 1)[-1]
+    dot = last.rfind(".")
+    return 0 < dot < len(last) - 1
+
+
+def find_paths(line: str) -> list:
+    """줄에서 경로 범위들을 `[(start, end, text)]` 로(글자 인덱스, `[start, end)`)."""
+    out, i, n = [], 0, len(line)
+    while i < n:
+        if line[i].isspace() or line[i] in _PATH_WRAP:
+            i += 1
+            continue
+        end = i
+        while end < n and not line[end].isspace() and line[end] not in _PATH_WRAP:
+            end += 1
+        stop = end
+        while stop > i and line[stop - 1] in _PATH_TRAIL:
+            stop -= 1
+        word = line[i:stop]
+        if _looks_like_path(word):
+            out.append((i, stop, word))
+        i = max(end, i + 1)
+    return out
+
+
+def path_at(line: str, index: int):
+    """그 자리(글자 인덱스)에 걸친 경로 범위. 없으면 `None`."""
+    for start, end, text in find_paths(line):
+        if start <= index < end:
+            return (start, end, text)
+    return None
+
+
+# §10-21ⓓ2 원격 탭 제목을 **표시할 때만** 접는 형식. 값(이름 자체)은 안 바꾼다.
+REMOTE_TITLE_CHOICES = ("full", "host", "name")
+
+
+def remote_title_display(name: str, remote: bool, mode: str) -> str:
+    """원격 탭 이름 `⇄호스트:이름` 을 표시 형식에 맞게 접는다(§10-21ⓓ2).
+
+    # ⚠ 이름 자체는 못 바꾼다
+
+    그 문자열을 짓는 자리는 서버 한 곳이고(`serverremote.py`), 그것이 **`remote-detach`
+    의 인자**이자 여러 소비자가 "`⇄` 와 첫 `:` 사이가 호스트"로 읽는 계약이다. 그래서
+    접는 것은 **그리는 순간뿐**이고, 값으로 쓰는 자리는 원래 이름을 그대로 쓴다.
+
+    # 왜 접나
+
+    원격은 **이미 색으로 구분된다**(§1.7-a 분홍). 그 위에 아이콘·호스트까지 늘 붙어
+    있으면 탭바에서 정작 탭 **이름**이 밀려난다 — 제보가 그 말이다.
+
+    | 형식 | 보이는 것 |
+    |---|---|
+    | `full` | `⇄host:name`(기본 — 종전 그대로) |
+    | `host` | `host:name`(아이콘만 뺀다 — 색이 이미 원격을 말한다) |
+    | `name` | `name` |
+
+    로컬 탭이면 무엇을 골랐든 그대로다. 판정은 **`remote` 플래그**로 한다 — 사용자가 탭
+    이름을 `⇄…` 로 지어도 속지 않으려고 서버가 그 플래그를 따로 보낸다.
+    모양이 예상과 다르면 통째로 이름으로 쓴다(파싱 실패가 탭을 지우면 안 된다)."""
+    if not remote or mode == "full":
+        return name
+    rest = name[1:] if name.startswith("⇄") else name
+    if mode == "host":
+        return rest
+    if mode == "name":
+        head, sep, tail = rest.partition(":")
+        return tail if sep else rest
+    return name
+
+
 # p4v-tui 와 동일한 textual-dark 테마 색을 따른다(없으면 폴백).
 _THEME_FALLBACK = {
     "primary": "#0178D4", "secondary": "#004578", "accent": "#FEA62B",
@@ -753,15 +841,34 @@ def _client_relaunch_ok() -> bool:
     return bool(a0) and (a0.endswith(".py") or os.access(a0, os.X_OK))
 
 
+def _restart_server_relaunch_label(server_os) -> str:
+    """첫 점검 줄의 라벨 — **그 서버의 OS 가 실제로 재는 것**을 적는다(§10-21ⓔ3).
+
+    제보: Windows 이진에서도 `✗ 서버 re-exec 지원(POSIX·이벤트루프)` 이 떠, **못 하는
+    것이 정상인 조건**을 실패로 보여 "재시작 불가"로 읽혔다. 실제로는 조건 자체가 이미
+    OS 별로 갈려 있다 — POSIX 는 `os.execv` 로 자기를 덮어쓰고, Windows 는 그 시스템콜이
+    없어 **pty-host 인수인계**(옵션 C)로 같은 일을 한다(`Server.restart_check` 의
+    `reexec_supported` 가 그 둘을 이미 OR 로 잰다). 갈려 있던 것은 **라벨뿐**이었다.
+
+    ⚠ 클라의 OS 로 판단하면 안 된다 — 서버는 원격일 수 있다(페더레이션·ssh). 그래서
+    서버가 `server_os` 를 적어 보내고, 모르면(옛 서버) 종전 문구로 남는다."""
+    if server_os == "windows":
+        return "서버 재기동 지원(pty-host 인수인계)"
+    return "서버 re-exec 지원(POSIX·이벤트루프)"
+
+
 def _restart_check_eval(m, cli_ok, kind="all"):
     """서버 restart_check 결과(m) + 클라 측 점검(cli_ok)을 (safe, checks) 로 평가.
 
     kind="server" 는 클라를 relaunch 하지 않으므로 relaunch 점검을 제외한다.
-    checks 는 (통과여부, 라벨) 리스트(팝업 표시용), safe 는 전체 AND."""
+    checks 는 (통과여부, 라벨) 리스트(팝업 표시용), safe 는 전체 AND.
+
+    첫 줄의 **라벨만** 서버 OS 를 따른다(§10-21ⓔ3) — 재는 값도 순서도 그대로다."""
     panes, with_fd = m.get("panes", 0), m.get("panes_with_fd", 0)
     fd_ok = (panes == with_fd and panes > 0)
     checks = [
-        (m.get("reexec_supported"), "서버 re-exec 지원(POSIX·이벤트루프)"),
+        (m.get("reexec_supported"),
+         _restart_server_relaunch_label(m.get("server_os"))),
         (m.get("has_sessions"), "복원할 세션 존재"),
         (m.get("serialize_ok"), "상태 직렬화 round-trip"),
         (fd_ok, f"패널 master fd 보유 ({with_fd}/{panes})"),
@@ -972,6 +1079,7 @@ _SET_OPTION_NAMES = (
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
     "set-titles", "set-titles-string", "tab-bar", "default-path",
+    "remote-title",
 )
 
 # `set <옵션> <값>` 의 선택지(enum/bool) — 값 자동완성(ghost)·후보 추천(↑↓)용.
@@ -988,6 +1096,7 @@ SET_OPTION_CHOICES = {
     "mode-keys": ("vi", "emacs"),
     "tab-bar": ("always", "auto"),
     "status-position": ("bottom", "top"),
+    "remote-title": REMOTE_TITLE_CHOICES,
     "status": ("on", "off"),
     "set-titles": ("on", "off"),
 }
@@ -1086,6 +1195,9 @@ SETTINGS = [
      "cmd": "single-border", "backend": "server"},
     {"key": "pane-border-status", "cat": "표시", "type": "bool",
      "cmd": "pane-border-status", "backend": "server"},
+    {"key": "remote-title", "cat": "표시", "type": "enum",
+     "choices": list(REMOTE_TITLE_CHOICES), "cmd": "set remote-title",
+     "backend": "config"},
     {"key": "language", "cat": "표시", "type": "enum",
      "choices": ["ko", "en"], "cmd": "lang", "backend": "lang"},
     # 입력/키

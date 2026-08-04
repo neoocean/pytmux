@@ -122,6 +122,34 @@ def list_changes_msg(server, sess, count: int, cwd=_UNSET) -> dict:
     return {"t": "p4_changes", "rows": rows, "err": perr, "info": info}
 
 
+# `p4 describe -s` 의 출력에서 **파일 목록이 시작하는 줄**. p4 가 적는 글이라
+# 우리가 정하는 것이 아니다 — 그래서 표식이 아니라 **그 줄 자체**를 찾는다.
+_AFFECTED = "Affected files ..."
+
+
+def describe_sections(text: str) -> list:
+    """CL 상세를 **구역으로 나눈다**(§10-21ⓛ2) — 설명과 파일 목록.
+
+    # 왜 플러그인이 나누나
+
+    상세는 `p4 describe -s` 의 **원문 텍스트 한 덩이**라, 클라는 `Affected files ...`
+    가 경계인 줄 모른다(그건 p4 가 적은 글이지 우리 서식이 아니다). 그 출력 형식을 아는
+    쪽은 이 플러그인뿐이므로 여기서 가른다.
+
+    나눠 주면 두 뷰가 각자 자기 모양으로 사이를 긋는다 — GUI 는 실제 선, 정본은
+    선문자(테두리에서 이미 그렇게 갈라 그린다).
+
+    경계를 못 찾으면 **한 구역**이다(안 나뉜 것이 잘못 나뉜 것보다 낫다). 빈 글도 마찬가지.
+    """
+    if not text:
+        return []
+    lines = text.splitlines()
+    at = next((i for i, ln in enumerate(lines) if ln.startswith(_AFFECTED)), None)
+    if at is None:
+        return ["\n".join(lines)]
+    return ["\n".join(lines[:at]).rstrip(), "\n".join(lines[at:]).rstrip()]
+
+
 def describe_msg(server, sess, change: str, cwd=_UNSET) -> dict:
     """체인지리스트 `change` 의 상세(설명+영향 파일)를 사람이 읽기 좋은 텍스트로 회신한다.
 

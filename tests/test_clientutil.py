@@ -323,3 +323,61 @@ async def test_wait_until_settled_stall_vs_progress_vs_met():
                                         timeout=0.2, step=0.0, settle=5)
     assert ok is False
     assert loop.time() - t0 >= 0.2 - 0.05, "진행 중이면 timeout 까지 인내"
+
+
+# --------------------------------------------------------------------------- #
+# §10-21ⓧ2 패널 글의 경로 범위 — 네이티브 클라와 **한 벌**이어야 한다
+# --------------------------------------------------------------------------- #
+async def test_find_paths_is_narrow_on_purpose():
+    """넓히면 아프다 — 산문 속 `a/b` 나 날짜 `2026/08/02` 도 경로처럼 보인다.
+
+    ★ 이 규칙은 `client/crates/base/src/spans.rs` 와 한 벌이고, 픽스처
+    (`client/scripts/gen_spans_fixture.py`)가 이 함수를 직접 불러 대조한다 — 두 클라가
+    같은 줄에서 서로 다른 자리를 짚으면 밑줄도 복사한 값도 갈린다."""
+    from pytmuxlib.clientutil import find_paths, path_at
+    assert find_paths("2026/08/02 에 고쳤다") == [], "날짜를 경로로 잡았다"
+    assert find_paths("a/b 를 보라") == [], "확장자가 없다"
+    assert find_paths("readme.md 하나") == [], "구분자가 없다"
+    got = find_paths("Update(server/test/x.mjs)")
+    assert got == [(7, 24, "server/test/x.mjs")], got
+    # 감싼 괄호는 범위에 안 든다 — 복사한 값이 그대로 경로라야 한다.
+    assert path_at("Update(server/test/x.mjs)", 10)[2] == "server/test/x.mjs"
+    assert path_at("Update(server/test/x.mjs)", 0) is None, "괄호 밖"
+    # 링크는 링크의 것이다(§10-21ⓥ2 — 그쪽은 GUI 전용이다).
+    assert find_paths("https://x.dev/a/b.html") == []
+
+
+async def test_relative_path_resolves_against_that_pane_cwd():
+    """상대경로의 기준은 **hover 한 그 패널**의 cwd 다(pytmux-24 남은 절반).
+
+    ⚠ 활성 패널의 cwd 로 옆 패널 글을 풀면 밑줄은 멀쩡히 그어지고 **복사한 값만**
+    틀린다 — 조용한 오답이라 사용자가 의심할 단서가 없다. 그래서 서버가 패널별로
+    보내고(`cwd` 프레임) 클라도 패널별로 푼다.
+
+    못 풀면 **존을 안 만든다**: 밑줄을 그어 놓고 눌러도 아무 일이 없으면 그 밑줄이
+    거짓말이다(절대경로는 cwd 없이도 풀리므로 계속 눌린다)."""
+    import os
+
+    from pytmuxlib.clientwidgets import MultiplexerView
+
+    class FakeApp:
+        pane_cwds = {1: os.path.join(os.sep, "a", "one"),
+                     2: os.path.join(os.sep, "b", "two")}
+
+    # `app` 은 Textual 의 읽기전용 property 라 인스턴스를 못 만들고 세운다 — 재는 것은
+    # 위젯이 아니라 **푸는 규칙**이므로 그 메서드만 떼어 가짜 앱에 물린다.
+    class _Probe:
+        app = FakeApp()
+        _resolve_path = MultiplexerView._resolve_path
+
+    resolve = _Probe()._resolve_path
+
+    assert resolve("x.mjs", 1) == os.path.join(os.sep, "a", "one", "x.mjs")
+    assert resolve("x.mjs", 2) == os.path.join(os.sep, "b", "two", "x.mjs"), \
+        "다른 패널의 글을 남의 cwd 로 풀었다"
+    assert resolve("x.mjs", 3) is None, "cwd 를 모르는 패널은 못 푼다(존 없음)"
+    assert resolve("x.mjs", None) is None, "패널을 모르면 못 푼다"
+    # ⚠ Windows 에서 앞이 `\` 하나뿐인 경로는 3.13 부터 **절대경로가 아니다**(드라이브가
+    # 없다). 그 OS 의 진짜 절대경로를 만들어 쓴다 — 아니면 이 단언이 OS 를 탄다.
+    absolute = os.path.abspath(os.path.join(os.sep, "abs", "x.mjs"))
+    assert resolve(absolute, 3) == absolute, "절대경로는 cwd 없이도 그대로 풀린다"

@@ -425,6 +425,18 @@ class _NameSyncPlugin:
             return {"t": "namesync_saved", "count": len(server._namesync_rules)}
         return None
 
+    # ---- 서버 측: 화면 스펙(Tier C · pytmux-35) ----
+    def plugin_screen(self, server, sess, req):
+        """네이티브 클라용 규칙 판 — 무엇을 그릴지·무엇을 담지 않았는지는
+        [`screenspec`](screenspec) 머리말에 있다.
+
+        정본은 이 훅을 안 쓴다(자기 프로세스에서 Textual 편집기를 띄운다). 이 훅이
+        없던 동안 `namesync` 는 네이티브 클라에서 죽은 줄이었다."""
+        from . import screenspec
+        if req.get("do") == "open":
+            return screenspec.open_spec(server, sess, req.get("name"))
+        return screenspec.action(server, sess, req)
+
     # ---- 클라이언트 측 ----
     def attach_client(self, app):
         """편집기 진입점을 인스턴스에 설치한다(handle_command 가 호출). 서버에 현재
@@ -469,3 +481,8 @@ class _NameSyncPlugin:
 
 
 PLUGIN = _NameSyncPlugin()
+
+# ★ 화면 스펙 모듈을 **로드 시점에** 물린다 — 그 안의 `i18n.register` 가 화면을 처음
+#   열 때 돈다면 ko→en 짝을 뽑는 자(`gen_server_strings.py`)의 눈에 안 띈다. 위
+#   `nsmsg.saved` 주석이 적어 둔 함정과 같은 것이고, 거기서 얻은 규칙 그대로다.
+from . import screenspec  # noqa: E402,F401
