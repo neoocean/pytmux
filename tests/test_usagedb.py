@@ -2,6 +2,7 @@
 import os
 import shutil
 import sqlite3
+import stat
 import tempfile
 import threading
 import time
@@ -897,3 +898,61 @@ async def test_xc_ts_iso_normalized_to_epoch():
     (day, val), = daily.items()
     assert val == 100 and day.startswith("2026-06-2")   # 로컬 tz 로 22 또는 인접일
     conn.close()
+
+
+# ── 읽기 전용 DB(pytmux-124) ────────────────────────────────────────────────
+
+def _sqlite_can_write(path):
+    """이 러너에서 그 파일이 **정말** 읽기 전용인가(root 는 chmod 를 무시한다)."""
+    c = sqlite3.connect(path)
+    try:
+        c.execute("PRAGMA user_version=99")
+        c.commit()
+        return True
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        c.close()
+
+
+async def test_is_readonly_error_separates_environment_from_defect():
+    """"쓸 수 없는 자리"와 "코드가 틀렸다"를 가르는 판정 — 부르는 쪽이 이걸로
+    트레이스백을 쌓을지 말지 정하므로 넓히면 진짜 결함이 묻힌다."""
+    assert usagedb.is_readonly_error(
+        sqlite3.OperationalError("attempt to write a readonly database"))
+    assert not usagedb.is_readonly_error(sqlite3.OperationalError("database is locked")), \
+        "락은 환경 상태가 아니라 재시도 대상이다"
+    assert not usagedb.is_readonly_error(sqlite3.OperationalError("no such table: usage")), \
+        "스키마 결함을 읽기 전용으로 읽으면 조용히 묻힌다"
+    assert not usagedb.is_readonly_error(ValueError("readonly")), "문구만 같은 남의 예외"
+
+
+async def test_connect_survives_readonly_db_and_still_reads():
+    """읽기 전용 DB 는 **여는 것만으로 죽지 않는다**(pytmux-124).
+
+    p4 워크스페이스는 열지 않은 파일을 읽기 전용으로 둔다. 종전엔 마이그레이션
+    사다리의 단계마다 `except sqlite3.Error` 가 있는데 마지막 `PRAGMA user_version=`
+    + `commit()` 만 가드가 없어, 그 자리의 DB 를 여는 순간 예외가 나 토큰 동기화
+    워커가 매 주기 넘어졌다 — **읽기는 다 되는데도**. 그래서 이 테스트는 "안 터진다"
+    만이 아니라 **읽은 값**까지 본다(연결만 돌려주고 내용이 안 보이면 고친 게 아니다)."""
+    d = tempfile.mkdtemp(prefix="pytmux-ro-db-")
+    path = os.path.join(d, "usage.db")
+    try:
+        conn = usagedb.connect(path)
+        assert usagedb.insert(conn, _rec(1_700_000_000.0, 0, 1, 1, "me@x.org", 1900))
+        conn.close()
+        os.chmod(path, stat.S_IREAD)
+        if _sqlite_can_write(path):
+            from run import skip
+            skip("이 러너는 읽기 전용 파일에도 쓴다(root 컨테이너) — 조건을 못 만든다")
+        conn = usagedb.connect(path)            # ⛔ 종전: OperationalError
+        recs = usagedb.query_records(conn)
+        assert len(recs) == 1 and recs[0]["tokens"] == 1900, \
+            "읽기 전용이어도 읽기는 그대로여야 한다: %r" % (recs,)
+        conn.close()
+    finally:
+        try:
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        except OSError:
+            pass
+        shutil.rmtree(d, ignore_errors=True)
