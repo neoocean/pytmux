@@ -369,6 +369,19 @@ pub enum Action {
     /// 왜 필요한가: 채널이 막혀 화면이 굳으면 클라를 끄고 다시 띄우는 것 말고는 길이
     /// 없었다. 그 사이 탭 배치·스크롤 위치가 초기화된다.
     Reconnect,
+    /// 창을 **전체 화면**으로 넣었다 뺐다(§10-21ⓘ3 · `Alt`+`Enter`).
+    ///
+    /// # 이것은 허용되는 갈림이다 (ⓒ OS 창 통합)
+    ///
+    /// 정본(Textual TUI)의 풀스크린은 **호스트 단말의 일**이라 우리가 건드릴 자리가
+    /// 없다(`pytmuxlib` 전체에 창 전환 코드 0건). GUI 는 자기 창을 가지므로 할 수 있다 —
+    /// 패리티 표에 `iv` 로 선언한다.
+    ///
+    /// # 상태는 **우리가 안 든다**
+    ///
+    /// 진실은 창에 있다(`fullscreen_state()`). 뷰가 사본을 들면 OS 가 바꾼 상태(맥의
+    /// 초록 버튼 · `F11`)와 갈린다 — 그러면 토글이 한 번 헛돈다.
+    ToggleFullscreen,
     /// 서버 재시작 + **이 클라 자신의 재기동**(`restart-all`).
     ///
     /// 둘 다 드라이런([`crate::restart`])을 먼저 지난다 — 되돌릴 수 없는 동작이다.
@@ -509,6 +522,7 @@ impl Action {
             Action::TogglePromptClear => "프롬프트 클리어",
             Action::SetLang(_) => "언어",
             Action::Reconnect => "재접속",
+            Action::ToggleFullscreen => "전체 화면",
             Action::RestartAll => "전체 재시작",
             Action::Quit => "종료",
         })
@@ -1199,6 +1213,8 @@ pub static PALETTE: &[PaletteEntry] = &[
     // 화면이라 별칭이 있으면 손버릇이 갈리지 않는다.
     pe("reconnect", "설정/기타", Action::Reconnect),
     pe("resync", "설정/기타", Action::Reconnect),
+    // 키를 모르는 사람의 입구 — 팔레트에도 낸다(제보가 요구한 `Alt`+`Enter` 외에).
+    pe("fullscreen", "설정/기타", Action::ToggleFullscreen),
     pe("restart-all", "설정/기타", Action::RestartAll),
     pe("restart-check", "설정/기타", Action::RequestRestartCheck),
     pe("merge-remote-tab", "설정/기타", Action::MergeRemoteTab),
@@ -1704,10 +1720,11 @@ fn variant_index(action: Action) -> usize {
         Action::SearchAgain { .. } => 103,
         Action::FontScale { .. } => 106,
         Action::FontScaleReset => 107,
+        Action::ToggleFullscreen => 112,
     }
 }
 
-const ACTION_COUNT: usize = 112;
+const ACTION_COUNT: usize = 113;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1821,6 +1838,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::ShowInfoTabs,
         Action::ToggleAutoresume,
         Action::Reconnect,
+        Action::ToggleFullscreen,
         Action::RestartAll,
         Action::SetLang("ko"),
         Action::TogglePromptClear,

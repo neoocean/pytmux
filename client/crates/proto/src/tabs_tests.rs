@@ -119,7 +119,7 @@ fn the_label_carries_every_mark_the_server_set() {
     // **같은 탭이 화면마다 달라 보인다**(한쪽에만 종 표시가 빠지는 식). 그 어긋남은
     // 조용해서 둘을 나란히 놓고 봐야 안다.
     let bar = bar();
-    let labels = bar.labels();
+    let labels = bar.labels(crate::tabs::FULL_TITLE);
     let pinned = &labels[0];
     assert!(pinned.starts_with("* "), "핀이 앞에 안 붙었다: {pinned}");
     assert!(pinned.ends_with('#'), "활동 표식이 없다: {pinned}");
@@ -143,7 +143,7 @@ fn the_visible_number_follows_the_visible_order_not_the_index() {
     let bar = bar();
     // 픽스처: [0]=고정, [1]=로컬, [2]=원격. 화면에는 비고정([1],[2])이 먼저 온다.
     assert_eq!(bar.visual_numbers(), vec![3, 1, 2], "시각 순서 번호가 아니다");
-    let labels = bar.labels();
+    let labels = bar.labels(crate::tabs::FULL_TITLE);
     // 번호 앞에는 핀·상태 글리프가 붙는다(정본 `{핀}{글리프}{번호}:{이름}{플래그}`) —
     // 그래서 "1번이다"는 `1:이름` 조각으로 잰다.
     assert!(labels[1].contains("1:빌드"), "첫 비고정 탭이 1번이 아니다: {}", labels[1]);
@@ -159,7 +159,7 @@ fn a_plain_tab_gets_no_decoration() {
         name: "shell".into(),
         ..Tab::default()
     };
-    assert_eq!(tab.label(1), "1:shell");
+    assert_eq!(tab.label(1, crate::tabs::FULL_TITLE), "1:shell");
 }
 
 #[test]
@@ -234,4 +234,49 @@ fn at_least_one_tab_is_always_drawn() {
     assert_eq!((w.start, w.end), (0, 1));
     // 빈 목록은 빈 창.
     assert_eq!(tab_window(&[], None, 5, 10).end, 0);
+}
+
+// ── 원격 제목을 **그릴 때만** 접는다(§10-21ⓓ2) ─────────────────────────────────
+
+#[test]
+fn the_remote_title_folds_only_what_the_setting_asks_for() {
+    // ★ 이름 자체는 못 바꾼다 — 서버가 짓고 `remote-detach` 의 인자이며 "`⇄` 와 첫
+    //   `:` 사이가 호스트"라는 계약이다. 접는 것은 탭바에 찍는 글자뿐이다.
+    let tab = Tab { index: 0, name: "⇄boxA:build".into(), remote: true, ..Tab::default() };
+    assert_eq!(tab.label(1, "full"), "1:⇄boxA:build");
+    assert_eq!(tab.label(1, "host"), "1:boxA:build", "아이콘만 뺀다(색이 원격을 말한다)");
+    assert_eq!(tab.label(1, "name"), "1:build");
+    // 값은 그대로다 — 접는 것이 이름을 갉아먹으면 안 된다.
+    assert_eq!(tab.name, "⇄boxA:build");
+}
+
+#[test]
+fn a_local_tab_is_never_folded() {
+    // 판정은 **`remote` 플래그**로 한다 — 사용자가 탭 이름을 `⇄…` 로 지어도 안 속는다.
+    let tab = Tab { index: 0, name: "⇄not:remote".into(), remote: false, ..Tab::default() };
+    for mode in ["full", "host", "name"] {
+        assert_eq!(tab.label(1, mode), "1:⇄not:remote", "{mode}");
+    }
+}
+
+#[test]
+fn an_unexpected_shape_is_kept_whole_instead_of_vanishing() {
+    // 파싱 실패가 탭을 사라지게 하면 안 된다 — `:` 가 없으면 통째로 이름이다.
+    let tab = Tab { index: 0, name: "⇄weird".into(), remote: true, ..Tab::default() };
+    for mode in ["full", "host", "name"] {
+        assert_eq!(tab.label(1, mode), "1:weird", "{mode}");
+    }
+    // 모르는 형식 낱말은 **접지 않는다**(설정 파일이 낡았거나 오타일 때).
+    let ok = Tab { index: 0, name: "⇄boxA:build".into(), remote: true, ..Tab::default() };
+    assert_eq!(ok.label(1, "그런건없다"), "1:⇄boxA:build");
+}
+
+#[test]
+fn the_flags_survive_the_fold() {
+    // 접기가 벨·활동 표식을 먹으면 그 탭이 부르는 것을 못 본다.
+    let tab = Tab {
+        index: 0, name: "⇄boxA:build".into(), remote: true, bell: true, pinned: true,
+        ..Tab::default()
+    };
+    assert_eq!(tab.label(2, "name"), "* 2:build!");
 }

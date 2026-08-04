@@ -1578,6 +1578,9 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         // 전체 재시작은 **드라이런을 먼저** 지나야 한다(`base::restart`). 여기서 바로
         // `restart_server` 를 돌려주면 점검을 건너뛰게 되고, 그건 되돌릴 수 없다.
         Action::RestartAll => None,
+        // 창을 전체 화면으로 넣는 것은 **이 클라의 창** 일이다 — 서버는 창이 없다
+        // (§10-21ⓘ3 · 허용되는 갈림 ⓒ OS 창 통합).
+        Action::ToggleFullscreen => None,
         Action::Quit => None,
         // ── prefix 모드(패리티 G1) ──────────────────────────────────────────
         //

@@ -479,6 +479,44 @@ _style_cache: dict = {}
 REMOTE_PINK = "#ff5fd7"        # hot pink (256색 #206 근사)
 REMOTE_PINK_DIM = "#af5f87"    # 비활성 외곽선(어두운 분홍)
 
+# §10-21ⓓ2 원격 탭 제목을 **표시할 때만** 접는 형식. 값(이름 자체)은 안 바꾼다.
+REMOTE_TITLE_CHOICES = ("full", "host", "name")
+
+
+def remote_title_display(name: str, remote: bool, mode: str) -> str:
+    """원격 탭 이름 `⇄호스트:이름` 을 표시 형식에 맞게 접는다(§10-21ⓓ2).
+
+    # ⚠ 이름 자체는 못 바꾼다
+
+    그 문자열을 짓는 자리는 서버 한 곳이고(`serverremote.py`), 그것이 **`remote-detach`
+    의 인자**이자 여러 소비자가 "`⇄` 와 첫 `:` 사이가 호스트"로 읽는 계약이다. 그래서
+    접는 것은 **그리는 순간뿐**이고, 값으로 쓰는 자리는 원래 이름을 그대로 쓴다.
+
+    # 왜 접나
+
+    원격은 **이미 색으로 구분된다**(§1.7-a 분홍). 그 위에 아이콘·호스트까지 늘 붙어
+    있으면 탭바에서 정작 탭 **이름**이 밀려난다 — 제보가 그 말이다.
+
+    | 형식 | 보이는 것 |
+    |---|---|
+    | `full` | `⇄host:name`(기본 — 종전 그대로) |
+    | `host` | `host:name`(아이콘만 뺀다 — 색이 이미 원격을 말한다) |
+    | `name` | `name` |
+
+    로컬 탭이면 무엇을 골랐든 그대로다. 판정은 **`remote` 플래그**로 한다 — 사용자가 탭
+    이름을 `⇄…` 로 지어도 속지 않으려고 서버가 그 플래그를 따로 보낸다.
+    모양이 예상과 다르면 통째로 이름으로 쓴다(파싱 실패가 탭을 지우면 안 된다)."""
+    if not remote or mode == "full":
+        return name
+    rest = name[1:] if name.startswith("⇄") else name
+    if mode == "host":
+        return rest
+    if mode == "name":
+        head, sep, tail = rest.partition(":")
+        return tail if sep else rest
+    return name
+
+
 # p4v-tui 와 동일한 textual-dark 테마 색을 따른다(없으면 폴백).
 _THEME_FALLBACK = {
     "primary": "#0178D4", "secondary": "#004578", "accent": "#FEA62B",
@@ -991,6 +1029,7 @@ _SET_OPTION_NAMES = (
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
     "set-titles", "set-titles-string", "tab-bar", "default-path",
+    "remote-title",
 )
 
 # `set <옵션> <값>` 의 선택지(enum/bool) — 값 자동완성(ghost)·후보 추천(↑↓)용.
@@ -1007,6 +1046,7 @@ SET_OPTION_CHOICES = {
     "mode-keys": ("vi", "emacs"),
     "tab-bar": ("always", "auto"),
     "status-position": ("bottom", "top"),
+    "remote-title": REMOTE_TITLE_CHOICES,
     "status": ("on", "off"),
     "set-titles": ("on", "off"),
 }
@@ -1105,6 +1145,9 @@ SETTINGS = [
      "cmd": "single-border", "backend": "server"},
     {"key": "pane-border-status", "cat": "표시", "type": "bool",
      "cmd": "pane-border-status", "backend": "server"},
+    {"key": "remote-title", "cat": "표시", "type": "enum",
+     "choices": list(REMOTE_TITLE_CHOICES), "cmd": "set remote-title",
+     "backend": "config"},
     {"key": "language", "cat": "표시", "type": "enum",
      "choices": ["ko", "en"], "cmd": "lang", "backend": "lang"},
     # 입력/키

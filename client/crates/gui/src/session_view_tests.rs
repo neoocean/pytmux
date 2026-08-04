@@ -2815,7 +2815,7 @@ fn the_pane_frame_becomes_real_line_segments() {
     // 양성 오라클: 네 모서리가 **뻗는 방향까지** 옳아야 한다. 비트를 잘못 옮기면 모서리가
     // 바깥으로 삐져나가거나 안쪽이 뚫려 보인다 — 눈으로는 한참 봐야 보이는 종류다.
     let (canvas, layout) = framed_canvas();
-    let segs = SessionView::frame_segments(&canvas, Some(&layout));
+    let segs = SessionView::frame_segments(&canvas, Some(&layout), base::tint::BorderTint::Local);
     let at = |x: u16, y: u16| segs.iter().find(|s| s.x == x && s.y == y).map(|s| s.bits);
     assert_eq!(at(0, 0), Some(0b0101), "┌ 는 아래·오른쪽으로만 뻗는다");
     assert_eq!(at(9, 0), Some(0b0110), "┐ 는 아래·왼쪽");
@@ -2830,7 +2830,7 @@ fn a_box_character_inside_a_pane_is_left_alone() {
     // ★ 테두리를 네이티브로 그리는 것이지 **남의 화면을 고쳐 그리는 것이 아니다.**
     //   캔버스를 통째로 훑으면 패널 안 앱(`htop` 등)이 그린 선문자까지 선으로 바뀐다.
     let (canvas, layout) = framed_canvas();
-    let segs = SessionView::frame_segments(&canvas, Some(&layout));
+    let segs = SessionView::frame_segments(&canvas, Some(&layout), base::tint::BorderTint::Local);
     assert!(
         !segs.iter().any(|s| s.x == 3 && s.y == 2),
         "패널 안의 선문자를 크롬으로 잡았다"
@@ -2841,7 +2841,7 @@ fn a_box_character_inside_a_pane_is_left_alone() {
 fn the_cells_we_draw_as_lines_are_exactly_the_cells_we_blank() {
     // 한쪽만 바뀌면 선이 두 겹으로 보이거나(글자가 남음) 테두리가 통째로 사라진다.
     let (canvas, layout) = framed_canvas();
-    let segs = SessionView::frame_segments(&canvas, Some(&layout));
+    let segs = SessionView::frame_segments(&canvas, Some(&layout), base::tint::BorderTint::Local);
     let cells = SessionView::frame_cells(&canvas, Some(&layout));
     assert!(!cells.is_empty(), "빈 목록은 통과가 아니라 고장이다");
     assert_eq!(cells.len(), segs.len());
@@ -2864,7 +2864,7 @@ fn a_divider_cell_is_left_to_the_splitter_bar() {
         h: 1,
         ..Default::default()
     }];
-    let segs = SessionView::frame_segments(&canvas, Some(&layout));
+    let segs = SessionView::frame_segments(&canvas, Some(&layout), base::tint::BorderTint::Local);
     assert!(
         !segs.iter().any(|s| s.x == 0 && s.y == 2),
         "스플리터 바가 있는 칸에 테두리 선까지 그렸다"
@@ -2880,6 +2880,7 @@ fn split_canvas() -> (proto::canvas::Canvas, proto::message::Layout) {
     let mut canvas = Canvas::new(10, 5);
     canvas.draw_box(0, 0, 5, 5, CellStyle::default());
     canvas.draw_box(4, 0, 6, 5, CellStyle::default());
+    // 첫 패널이 **활성**이다 — 테두리 색이 두 단인 것을 재려면 그 갈림이 있어야 한다.
     let pane = |id, x| PaneLayout {
         id,
         x: x + 1,
@@ -2887,6 +2888,7 @@ fn split_canvas() -> (proto::canvas::Canvas, proto::message::Layout) {
         w: 3,
         h: 3,
         boxrect: Some([x, 0, if x == 0 { 5 } else { 6 }, 5]),
+        active: id == 1,
         ..Default::default()
     };
     let layout = Layout {
@@ -2916,7 +2918,7 @@ fn split_canvas() -> (proto::canvas::Canvas, proto::message::Layout) {
 #[test]
 fn the_junction_cells_of_a_divider_stay_with_the_frame() {
     let (canvas, layout) = split_canvas();
-    let segs = SessionView::frame_segments(&canvas, Some(&layout));
+    let segs = SessionView::frame_segments(&canvas, Some(&layout), base::tint::BorderTint::Local);
     let at = |x: u16, y: u16| segs.iter().find(|s| s.x == x && s.y == y).map(|s| s.bits);
     assert_eq!(at(4, 0), Some(0b0111), "┬ 는 좌·우·아래 — 가로 테두리가 이어져야 한다");
     assert_eq!(at(4, 4), Some(0b1011), "┴ 는 좌·우·위");
@@ -2939,6 +2941,7 @@ fn the_bar_skips_the_cells_the_frame_owns() {
         w: divider.w,
         h: divider.h,
         active: false,
+        tint: None,
         skip: frame
             .iter()
             .copied()
@@ -2966,6 +2969,7 @@ fn a_divider_without_junctions_is_still_painted_in_one_piece() {
         w: 1,
         h: 5,
         active: false,
+        tint: None,
         skip: Default::default(),
     };
     assert_eq!(bar.runs(), vec![(0, 5)]);
@@ -2977,16 +2981,64 @@ fn a_divider_without_junctions_is_still_painted_in_one_piece() {
         w: 4,
         h: 1,
         active: false,
+        tint: None,
         skip: [(3, 3)].into_iter().collect(),
     };
     assert_eq!(across.runs(), vec![(2, 1), (4, 2)]);
+}
+
+// ── 테두리가 **상태를 말한다**(§10-21ⓩ) ───────────────────────────────────────
+
+/// ★ 원격 탭이면 테두리도 분홍이다 — 탭 라벨만 분홍이고 테두리는 파랗던 자리다.
+///
+/// 그리고 **활성/비활성이 두 단**이라야 원격 탭 안에서 어느 패널이 키를 받는지가 남는다.
+#[test]
+fn a_remote_tab_paints_the_frame_pink_in_two_shades() {
+    use base::tint::BorderTint;
+    let (canvas, layout) = split_canvas();
+    // `split_canvas` 의 첫 패널이 활성이다(id 1 · layout.active = 1).
+    let segs = SessionView::frame_segments(&canvas, Some(&layout), BorderTint::Remote);
+    let at = |x: u16, y: u16| segs.iter().find(|s| s.x == x && s.y == y).map(|s| s.color);
+    assert_eq!(at(0, 2), Some(REMOTE_PINK), "활성 패널 왼 변이 밝은 분홍이 아니다");
+    assert_eq!(at(9, 2), Some(REMOTE_PINK_DIM), "비활성 패널 오른 변이 어두운 분홍이 아니다");
+    // 두 색이 실제로 달라야 두 단인 뜻이 산다(같은 상수를 두 번 쓰면 오라클이 공허하다).
+    assert_ne!(REMOTE_PINK, REMOTE_PINK_DIM);
+}
+
+/// degraded 는 **원격보다 먼저**이고 활성·비활성이 같은 빨강이다.
+///
+/// 그 순간 중요한 것은 "어느 패널이 활성인가"가 아니라 "끊기고 있다"는 사실이다.
+#[test]
+fn a_degraded_link_paints_every_frame_red() {
+    use base::tint::BorderTint;
+    let (canvas, layout) = split_canvas();
+    let segs = SessionView::frame_segments(&canvas, Some(&layout), BorderTint::Degraded);
+    assert!(!segs.is_empty(), "빈 목록은 통과가 아니라 고장이다");
+    assert!(
+        segs.iter().all(|s| s.color == palette::RED),
+        "빨갛지 않은 칸이 있다: {:?}",
+        segs.iter().find(|s| s.color != palette::RED).map(|s| (s.x, s.y))
+    );
+}
+
+/// 평소에는 **캔버스 색을 그대로** 둔다 — 서버의 활성/비활성 판정이 그 색에 들어 있다.
+#[test]
+fn a_local_tab_leaves_the_canvas_colours_alone() {
+    use base::tint::BorderTint;
+    let (canvas, layout) = split_canvas();
+    let segs = SessionView::frame_segments(&canvas, Some(&layout), BorderTint::Local);
+    assert!(!segs.is_empty());
+    assert!(
+        segs.iter().all(|s| s.color != REMOTE_PINK && s.color != palette::RED),
+        "평소인데 상태색을 칠했다"
+    );
 }
 
 #[test]
 fn without_a_layout_nothing_is_converted() {
     // 첫 프레임(배치 없음)에 크롬을 지어내면 없는 테두리가 잠깐 번쩍인다.
     let (canvas, _) = framed_canvas();
-    assert!(SessionView::frame_segments(&canvas, None).is_empty());
+    assert!(SessionView::frame_segments(&canvas, None, base::tint::BorderTint::Local).is_empty());
 }
 
 // ── 판이 서는 자리 — 정본 앵커(`Screen::anchor`)를 뷰가 실제로 따르나 ────────────
@@ -5084,4 +5136,31 @@ fn clicking_the_interrupt_footer_types_into_that_pane() {
             .any(|f| f["action"] == "plugin_open" || f["action"] == "plugin_overlay_action"),
         "치는 자리가 화면/오버레이 길로도 나갔다: {frames:?}"
     );
+}
+
+// ── 전체 화면(§10-21ⓘ3) ───────────────────────────────────────────────────────
+
+/// `Alt`+`Enter` 만 잡는다 — 넓으면 패널 안 프로그램의 키가 사라지고, 좁으면 안 먹는다.
+#[test]
+fn only_alt_enter_asks_for_fullscreen() {
+    use warpui::keymap::Keystroke;
+    let k = |s: &str| Keystroke::parse(s).unwrap();
+    assert!(SessionView::is_fullscreen_chord(&k("alt-enter")));
+    // 맥의 `cmd` 는 여기서 alt 취급이 아니다(창 조작은 OS 관습이 따로 있다).
+    assert!(!SessionView::is_fullscreen_chord(&k("enter")), "맨 Enter 를 먹으면 줄바꿈이 죽는다");
+    assert!(!SessionView::is_fullscreen_chord(&k("ctrl-alt-enter")));
+    assert!(!SessionView::is_fullscreen_chord(&k("alt-shift-enter")));
+    assert!(!SessionView::is_fullscreen_chord(&k("alt-a")));
+}
+
+/// 액션은 **요청 한 번**을 남긴다 — 상태를 들지 않는다(진실은 창에 있다).
+#[test]
+fn the_fullscreen_action_leaves_a_request_not_a_state() {
+    let (link, _tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    assert!(!view.fullscreen_requested_for_test());
+    assert!(view.apply_action_for_test(base::Action::ToggleFullscreen));
+    // ★ 요청 **한 번**이지 상태가 아니다 — 전체 화면인지의 진실은 창에 있다
+    //   (`fullscreen_state()`). 사본을 들면 OS 가 바꾼 상태와 갈려 토글이 헛돈다.
+    assert!(view.fullscreen_requested_for_test(), "요청이 안 남았다");
 }

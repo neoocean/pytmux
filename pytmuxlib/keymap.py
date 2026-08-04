@@ -254,6 +254,15 @@ def load_config(path: str | None = None) -> dict:
                         cfg["status_right"] = val
                     elif opt == "status-position":
                         cfg["status_position"] = "top" if val == "top" else "bottom"
+                    elif opt == "remote-title":
+                        # §10-21ⓓ2 원격 탭 제목을 **표시할 때** 접는 형식. 모르는 값은
+                        # 기본(full)으로 — 이름을 잘못 접느니 다 보이는 편이 낫다.
+                        # 어휘의 주인은 clientutil 한 곳이다(설정 표·자동완성도 그것을
+                        # 쓴다). 함수 안에서 들이는 이유는 모듈 수준 순환을 안 만들려는
+                        # 것뿐이다 — 이 파일은 client*.py 가 먼저 들이는 모듈이다.
+                        from .clientutil import REMOTE_TITLE_CHOICES
+                        cfg["remote_title"] = (
+                            val if val in REMOTE_TITLE_CHOICES else "full")
                     elif opt == "status-interval":
                         try:
                             cfg["status_interval"] = max(1, int(val))

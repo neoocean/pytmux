@@ -751,6 +751,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._ambig_auto_wide = config.get("_ambig_auto_wide", False)
             self.mode_keys = config.get("mode_keys", "vi")
             self.status_position = config.get("status_position", "bottom")
+            # §10-21ⓓ2 원격 탭 제목을 **표시할 때** 접는 형식(full·host·name).
+            # 값(이름)은 서버 계약이라 안 건드린다 — 접는 것은 그리는 순간뿐이다.
+            self.remote_title = config.get("remote_title", "full")
             self.status_interval = config.get("status_interval", 15)
             self._status_timer = None
             self.set_titles = config.get("set_titles", False)
@@ -1885,6 +1888,14 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif name == "status-position":
                 self.status_position = "top" if val == "top" else "bottom"
                 self.status.styles.dock = self.status_position
+            elif name == "remote-title":
+                from .clientutil import REMOTE_TITLE_CHOICES
+                self.remote_title = (val if val in REMOTE_TITLE_CHOICES
+                                     else "full")
+                # 탭바는 이름·폭 시그니처로 캐시한다 — 형식이 바뀌면 그 시그니처도
+                # 바뀌지만, 새로 그리라고 여기서 한 번 깨워 준다(다음 status 를 기다리면
+                # 방금 바꾼 것이 안 먹은 것처럼 보인다).
+                self.tabbar.refresh()
             elif name == "status-interval":
                 try:
                     self.status_interval = max(1, int(val))
@@ -1939,6 +1950,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return "always" if self.tab_bar_always else "auto"
             if key == "status-position":
                 return self.status_position
+            if key == "remote-title":
+                return self.remote_title
             if key == "single-border":
                 return "on" if self.single_border_on else "off"
             if key == "language":

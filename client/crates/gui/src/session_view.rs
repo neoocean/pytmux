@@ -90,6 +90,29 @@ mod palette {
 /// 세 클라가 원격을 서로 다른 색으로 그리면 그게 곧 혼란이다.
 const REMOTE_PINK: ColorU = ColorU { r: 0xff, g: 0x5f, b: 0xd7, a: 0xff };
 
+/// 같은 분홍의 **어두운 변형** — 비활성 패널 테두리용(정본 `REMOTE_PINK_DIM`).
+///
+/// 두 값인 이유: 활성/비활성이 한 색이면 원격 탭 안에서 **어느 패널이 키를 받는지**가
+/// 사라진다. 로컬이 파랑 두 단(밝은/어두운)으로 그 일을 하는 것과 같은 자리다.
+const REMOTE_PINK_DIM: ColorU = ColorU { r: 0xaf, g: 0x5f, b: 0x87, a: 0xff };
+
+/// 이 뷰가 [`BorderTint`](base::tint::BorderTint) 를 그리는 색.
+///
+/// `Local` 은 `None` 이다 — **캔버스가 이미 칠한 색을 그대로 둔다**는 뜻이고, 그 색에는
+/// 서버의 활성/비활성 판정이 이미 들어 있다.
+///
+/// degraded 는 활성·비활성이 **같은 빨강**이다: 정본도 `error` 한 색으로 칠하고 굵기만
+/// 나눈다(선에는 굵기가 없다). 그리고 그 순간 중요한 것은 "어느 패널이 활성인가"가
+/// 아니라 "끊기고 있다"는 사실이다.
+fn tint_color(tint: base::tint::BorderTint, active: bool) -> Option<ColorU> {
+    use base::tint::BorderTint;
+    match tint {
+        BorderTint::Local => None,
+        BorderTint::Remote => Some(if active { REMOTE_PINK } else { REMOTE_PINK_DIM }),
+        BorderTint::Degraded => Some(palette::RED),
+    }
+}
+
 /// proto 색 → 이 뷰의 색. 셀 스타일과 상태줄이 **같은 표**를 쓴다.
 fn to_gui_color(color: &CellColor) -> ColorU {
     match *color {
@@ -260,6 +283,12 @@ pub struct SessionView {
     /// 마지막으로 세운 창 제목(설정 `set-titles`). 같은 값을 다시 안 세우려는 것이다.
     last_title: Option<String>,
     quit_requested: bool,
+    /// 이번 펌프에서 창을 전체 화면으로 넣었다 뺄까(§10-21ⓘ3).
+    ///
+    /// 액션 처리(`apply_action`)에는 창이 없다 — `ViewContext` 를 쥔 자리에서 해야 해서
+    /// `quit_requested` 와 같은 모양으로 한 프레임 실어 나른다. **상태를 드는 것이
+    /// 아니다**(전체 화면인지의 진실은 창에 있다) — 이건 "해 달라"는 요청 한 번이다.
+    fullscreen_requested: bool,
 
     // ── 마우스(P7) · 스플리터(§4.2) ─────────────────────────────────────────
     /// 지금 끌고 있는 분할 경계의 id. 놓으면 비운다.
@@ -438,6 +467,7 @@ impl SessionView {
             pending_restart: None,
             last_title: None,
             quit_requested: false,
+            fullscreen_requested: false,
             dragging: None,
             divider_hover: None,
             press: None,
@@ -502,6 +532,28 @@ impl SessionView {
             && keystroke.shift
             && !(keystroke.alt || keystroke.meta || keystroke.cmd)
             && keystroke.key.eq_ignore_ascii_case("v")
+    }
+
+    /// 이 키가 **전체 화면 토글**인가(§10-21ⓘ3) — `Alt`+`Enter`.
+    ///
+    /// # 왜 GUI 만 할 수 있나
+    ///
+    /// 정본(Textual TUI)의 풀스크린은 **호스트 단말의 일**이라 우리가 건드릴 자리가
+    /// 없다 — 허용되는 갈림 ⓒ(OS 창 통합)다.
+    ///
+    /// ⚠ **가로채면 패널 안 프로그램의 `Alt`+`Enter` 가 사라진다.** `Ctrl+Shift+V`·
+    /// `Ctrl+Tab` 때와 같은 판단이고, 제보가 그것을 요구한 것으로 읽는다. 그리고
+    /// `Alt`+`Enter` 는 Windows 콘솔의 오랜 풀스크린 관습이라 손버릇도 맞다.
+    ///
+    /// 순수 함수인 이유도 같다 — 이 판정이 틀리면 아무 소리 없이 어긋난다(좁으면 안
+    /// 먹고, 넓으면 패널의 키가 사라진다).
+    /// ⚠ 키 **이름**을 여기 적지 않는다 — 이름 표의 주인은 core 다
+    /// (`base::keys::from_name` · 계층 게이트 ④가 그것을 강제한다). 그래서 조합을
+    /// 중립 키로 옮긴 뒤 그 값과 견준다.
+    fn is_fullscreen_chord(keystroke: &warpui::keymap::Keystroke) -> bool {
+        (keystroke.alt || keystroke.meta)
+            && !(keystroke.ctrl || keystroke.shift || keystroke.cmd)
+            && matches!(Self::key_from_keystroke(keystroke), Some((Key::Enter, _)))
     }
 
     /// 이 키가 **탭 전환**인가(§10-21ⓕ) — `Ctrl+Tab` / `Ctrl+Shift+Tab`.
@@ -1076,6 +1128,12 @@ impl SessionView {
     ///
     /// 별칭 하나를 두는 이유: `apply_action` 자체를 `pub` 로 열면 뷰 밖에서 액션을 밀어
     /// 넣는 길이 생기고, 그러면 "키 → 액션 → 명령" 한 줄기라는 계약이 흐려진다.
+    /// 전체 화면 요청이 남아 있나(§10-21ⓘ3). 창 없이 물을 수 있는 유일한 관측점이다.
+    #[cfg(test)]
+    pub(crate) fn fullscreen_requested_for_test(&self) -> bool {
+        self.fullscreen_requested
+    }
+
     #[cfg(test)]
     pub(crate) fn apply_action_for_test(&mut self, action: Action) -> bool {
         self.apply_action(action)
@@ -1085,6 +1143,11 @@ impl SessionView {
         match action {
             Action::Quit => {
                 self.quit_requested = true;
+                return true;
+            }
+            // 창 일이라 여기서 못 한다 — `ViewContext` 를 쥔 자리로 한 프레임 넘긴다.
+            Action::ToggleFullscreen => {
+                self.fullscreen_requested = true;
                 return true;
             }
             Action::ToggleClaudeDetail => {
@@ -3157,7 +3220,7 @@ impl SessionView {
         let ctx = self.chrome_ctx(&chrome_tabs, &badges);
         let spot = self.chrome.spot(&ctx);
         // 라벨(번호 포함)은 proto 가 만든다 — 번호는 **목록 전체**가 정한다(시각 순서).
-        let labels = self.state.tabs().labels();
+        let labels = self.state.tabs().labels(&self.config.remote_title);
         for (i, tab) in tabs.iter().enumerate() {
             // 원격은 분홍 — 파이썬 클라·TUI 와 같은 관습이다(`clientutil::REMOTE_PINK`).
             let fg = if tab.remote { REMOTE_PINK } else { palette::FG };
@@ -4618,6 +4681,7 @@ impl SessionView {
             status_bg: self.config.status_bg.clone(),
             status_fg: self.config.status_fg.clone(),
             status_position: self.config.status_position.clone(),
+            remote_title: self.config.remote_title.clone(),
             status_interval: self.config.status_interval,
             mouse_drag_threshold: self.config.mouse_drag_threshold,
             ambiguous_width: self.config.ambiguous_width.clone(),
@@ -6218,9 +6282,16 @@ impl SessionView {
     ///
     /// 분할 경계 칸은 **뺀다** — 거기는 스플리터 바가 자기 그림을 그리고, 선까지 겹치면
     /// 잡는 자리가 두 겹으로 보인다.
+    /// # 색을 우리가 덮어쓰는 자리 하나 (§10-21ⓩ)
+    ///
+    /// 원격·degraded 는 **서버가 안 칠한다** — 정본도 클라가 자기 합성 단계에서 칠한다
+    /// (`clientio.py` 의 `_box_style_sig`). 그래서 그 두 뜻일 때만 칸 색을 덮어쓰고,
+    /// 평소(`Local`)는 캔버스 색을 그대로 둔다. 무엇이 우선인지는 core 가 정한다
+    /// ([`base::tint::border`]).
     fn frame_segments(
         canvas: &proto::canvas::Canvas,
         layout: Option<&proto::message::Layout>,
+        tint: base::tint::BorderTint,
     ) -> Vec<crate::splitter::Seg> {
         let Some(layout) = layout else {
             return Vec::new();
@@ -6229,6 +6300,10 @@ impl SessionView {
         //   훑으면 `htop` 이 그린 `┌` 까지 선으로 바꾸게 되는데, 그건 "테두리를 네이티브로"가
         //   아니라 남의 화면을 고쳐 그리는 것이다.
         let mut chrome: std::collections::BTreeSet<(usize, usize)> = Default::default();
+        // 활성 패널의 테두리 칸 — 원격 분홍이 두 단이라 어느 칸이 활성인지 알아야 한다.
+        // 두 패널이 나눠 쓰는 칸(이음새)은 **활성 쪽이 이긴다**: 정본도 활성 테두리를
+        // 위에 그린다(밝은 쪽이 "여기가 키를 받는다"를 말한다).
+        let mut active_cells: std::collections::BTreeSet<(usize, usize)> = Default::default();
         for pane in &layout.panes {
             let Some([x, y, w, h]) = pane.boxrect else { continue };
             let (x, y, w, h) = (x as usize, y as usize, w as usize, h as usize);
@@ -6238,10 +6313,18 @@ impl SessionView {
             for gx in x..x + w {
                 chrome.insert((gx, y));
                 chrome.insert((gx, y + h - 1));
+                if pane.active {
+                    active_cells.insert((gx, y));
+                    active_cells.insert((gx, y + h - 1));
+                }
             }
             for gy in y..y + h {
                 chrome.insert((x, gy));
                 chrome.insert((x + w - 1, gy));
+                if pane.active {
+                    active_cells.insert((x, gy));
+                    active_cells.insert((x + w - 1, gy));
+                }
             }
         }
         // 제목줄(`pane-border-status`)의 채움도 `─` 다 — 같은 크롬이다.
@@ -6281,10 +6364,22 @@ impl SessionView {
                 if divider_owns(x, y, bits) {
                     return None;
                 }
-                let (fg, _) = colors(&cell.style);
-                Some(crate::splitter::Seg { x: x as u16, y: y as u16, bits, color: fg })
+                // 평소에는 캔버스 색을 그대로(서버의 활성/비활성 판정이 들어 있다).
+                // 원격·degraded 만 우리가 덮어쓴다 — 그 둘은 서버가 모르는 사실이다.
+                let color = tint_color(tint, active_cells.contains(&(x, y)))
+                    .unwrap_or_else(|| colors(&cell.style).0);
+                Some(crate::splitter::Seg { x: x as u16, y: y as u16, bits, color })
             })
             .collect()
+    }
+
+    /// 지금 테두리가 무엇을 말해야 하나 — 재료를 모아 core 에 묻는다(§10-21ⓩ).
+    ///
+    /// 원격은 **이름이 아니라 탭의 `remote` 플래그**로 본다(서버가 그렇게 해 뒀다 —
+    /// 사용자가 탭 이름을 `⇄…` 로 지어도 속지 않으려고). degraded 는 우리가 재는 값이다
+    /// (`rtt.degraded` — pong 왕복이 임계를 넘으면 켜진다).
+    fn border_tint(&self) -> base::tint::BorderTint {
+        base::tint::border(self.state.active_tab_is_remote(), self.state.rtt().degraded)
     }
 
     /// 블록 문자 칸들을 **사각형**으로 옮긴다(§10-21ⓘ).
@@ -6383,7 +6478,8 @@ impl SessionView {
         canvas: &proto::canvas::Canvas,
         layout: Option<&proto::message::Layout>,
     ) -> std::collections::BTreeSet<(u16, u16)> {
-        Self::frame_segments(canvas, layout)
+        // 색은 안 보므로 tint 는 아무거나 — `Local` 이 "안 덮어쓴다"라 가장 싸다.
+        Self::frame_segments(canvas, layout, base::tint::BorderTint::Local)
             .into_iter()
             .map(|seg| (seg.x, seg.y))
             .collect()
@@ -6594,6 +6690,8 @@ impl View for SessionView {
                         &mut probed,
                     ));
                 }
+                // 테두리가 무슨 상태를 말하나 — 원격·degraded 면 우리가 칠한다(§10-21ⓩ).
+                let tint = self.border_tint();
                 // 경계 칸 위 네이티브 스플리터 바 — 잡고 있거나 hover 면 FOCUS 강조.
                 let bars = self
                     .state
@@ -6607,6 +6705,10 @@ impl View for SessionView {
                         h: d.h,
                         active: self.dragging == Some(d.split_id)
                             || self.divider_hover == Some(d.split_id),
+                        // 경계도 테두리의 일부다 — 원격 탭에서 테두리만 분홍이고 경계가
+                        // 파랗게 남으면 그 자리가 도리어 눈에 띈다(§10-21ⓩ). 활성 색은
+                        // **잡는 신호**라 tint 를 안 탄다(그건 상태가 아니라 조작이다).
+                        tint: tint_color(tint, false),
                         // 테두리가 주인인 이음새 칸은 바가 건드리지 않는다(§10-21ⓟ).
                         // `frame` 이 이미 "선으로 그릴 칸"이라 그 교집합이 곧 이음새다 —
                         // 판정이 한 곳이라 둘이 갈릴 수 없다.
@@ -6623,7 +6725,7 @@ impl View for SessionView {
                     crate::splitter::SplitterOverlay::new(
                         rows.finish(),
                         bars,
-                        Self::frame_segments(&canvas, self.state.layout()),
+                        Self::frame_segments(&canvas, self.state.layout(), tint),
                         blocks,
                         self.cursor_cell(),
                         Self::CELL_PROBE,
@@ -6702,6 +6804,13 @@ impl View for SessionView {
                 //   사라지는 것은 제보가 감수한 결정이다.
                 if let Some(forward) = Self::tab_switch_chord(keystroke) {
                     evt.dispatch_typed_action(ViewAction::AltTab(forward));
+                    return DispatchEventResult::StopPropagation;
+                }
+                // ★ 전체 화면(§10-21ⓘ3) — 상류 창이 `toggle_fullscreen()` 을 주는데
+                //   이 크레이트가 한 번도 안 부르고 있었다(ⓕ2 의 수정키 뗌과 같은
+                //   모양의 미배선).
+                if Self::is_fullscreen_chord(keystroke) {
+                    evt.dispatch_typed_action(ViewAction::Act(base::Action::ToggleFullscreen));
                     return DispatchEventResult::StopPropagation;
                 }
                 match Self::key_from_keystroke(keystroke) {
@@ -6911,6 +7020,20 @@ impl TypedActionView for SessionView {
             }
         };
         if dirty {
+            ctx.notify();
+        }
+        // ★ 전체 화면(§10-21ⓘ3) — **창을 쥔 자리**가 여기다.
+        //
+        //   상태를 우리가 안 든다: 토글은 상류가 창에 대고 하고, "지금 전체 화면인가"의
+        //   진실은 `fullscreen_state()` 에 있다. 사본을 들면 OS 가 바꾼 상태(맥의 초록
+        //   버튼·`F11`)와 갈려 토글이 한 번 헛돈다.
+        //
+        //   격자 재보고는 따로 안 한다 — 창 크기가 바뀌면 자리표가 다시 재지고
+        //   `report_size` 가 그 값으로 서버에 알린다(평소 리사이즈와 같은 길).
+        if std::mem::take(&mut self.fullscreen_requested) {
+            if let Some(window) = ctx.windows().platform_window(ctx.window_id()) {
+                window.toggle_fullscreen();
+            }
             ctx.notify();
         }
         // 큐에 쌓인 것은 다음 펌프가 보낸다. 여기서 바로 보내지 않는 이유는 실패 처리와

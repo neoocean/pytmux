@@ -1595,7 +1595,9 @@ impl SessionState {
     /// 그 탭 + 그 패널로 간다(뷰의 `picked` 가 트리와 같은 팔로 푼다).
     pub fn switcher_rows(&self) -> Vec<TreeRow> {
         let mut rows = Vec::new();
-        let labels = self.tabs().labels();
+        // 스위처는 **고르는 화면**이라 접지 않는다 — 호스트를 접으면 다른 서버의
+        // 같은 이름 탭이 구분되지 않는다(§10-21ⓓ2).
+        let labels = self.tabs().labels(crate::tabs::FULL_TITLE);
         for (i, tab) in self.tabs().tabs.iter().enumerate() {
             rows.push(TreeRow {
                 depth: 0,

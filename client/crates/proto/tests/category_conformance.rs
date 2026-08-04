@@ -117,6 +117,10 @@ static PALETTE_OURS: &[(&str, &str)] = &[
     ("font-scale-down", "설정/기타"),
     ("font-scale-reset", "설정/기타"),
     ("font-scale-up", "설정/기타"),
+    // ★ **GUI 만의 것**(§10-21ⓘ3) — 정본(Textual TUI)의 풀스크린은 호스트 단말의 일이라
+    //   저쪽에 같은 이름이 있을 수 없다(허용되는 갈림 ⓒ OS 창 통합). 키(`Alt`+`Enter`)가
+    //   주 입구이고 팔레트는 그 키를 모르는 사람의 입구다.
+    ("fullscreen", "설정/기타"),
     ("menu", "설정/기타"),
     ("notice-history", "설정/기타"),
     ("pane-border-status", "패널"),

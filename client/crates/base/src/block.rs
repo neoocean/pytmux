@@ -286,6 +286,7 @@ impl BlockList {
             | Action::SearchScrollback
             | Action::SearchAgain { .. }
             | Action::Reconnect
+            | Action::ToggleFullscreen
             | Action::RestartAll
             | Action::ToggleAutoRename => false,
             Action::SelectLast => {

@@ -116,6 +116,12 @@ pub struct Config {
     ///
     /// 파이썬과 같은 기본값이다. 우리 탭바는 **늘 위**라 `top` 은 탭바 **위**를 뜻한다.
     pub status_position: String,
+    /// 원격 탭 제목을 **그릴 때** 얼마나 접을까 — `full`(기본) · `host` · `name`.
+    ///
+    /// ⚠ **이름 자체는 안 바꾼다**(§10-21ⓓ2). 그 문자열은 서버가 짓고
+    /// (`serverremote.py`) `remote-detach` 의 인자이자 "`⇄` 와 첫 `:` 사이가 호스트"라는
+    /// 계약이라, 값으로 쓰는 자리는 원래 이름 그대로다. 접는 것은 그리는 순간뿐이다.
+    pub remote_title: String,
     /// 상태줄을 몇 초마다 다시 그릴까(1~60, 파이썬 기본값 15).
     ///
     /// 서버 메시지가 없어도 `%H:%M` 이 흘러야 하므로 이 주기가 필요하다.
@@ -198,6 +204,7 @@ impl Default for Config {
             status_bg: String::new(),
             status_fg: String::new(),
             status_position: "bottom".to_owned(),
+            remote_title: REMOTE_TITLES[0].to_owned(),
             status_interval: 15,
             mouse_drag_threshold: 1,
             ambiguous_width: "auto".to_owned(),
@@ -386,6 +393,13 @@ impl Config {
                         config.status_position = value.to_owned();
                     }
                 }
+                // 모르는 값은 **버린다**(기본 `full` 로 남는다) — 이름을 잘못 접느니
+                // 다 보이는 편이 낫다. 파이썬 `keymap._apply_set` 과 같은 판정이다.
+                "remote-title" => {
+                    if REMOTE_TITLES.contains(&value) {
+                        config.remote_title = value.to_owned();
+                    }
+                }
                 "status-interval" => {
                     if let Ok(n) = value.parse::<u16>() {
                         config.status_interval = n.clamp(1, 60);
@@ -442,6 +456,12 @@ impl Config {
         config
     }
 }
+
+/// 원격 탭 제목을 그릴 때 접는 정도 — 정본 `clientutil::REMOTE_TITLE_CHOICES` 와 같다.
+///
+/// 첫 값이 기본이다(`full` — 종전 그대로 다 보인다). 어휘가 갈리면 같은 설정 파일을
+/// 두 클라가 다르게 읽으므로, 표를 한 곳에 두고 파싱·설정 표가 그것을 참조한다.
+pub static REMOTE_TITLES: &[&str] = &["full", "host", "name"];
 
 /// 설정 화면의 한 줄.
 ///
@@ -542,6 +562,8 @@ pub struct SettingValues {
     pub status_bg: String,
     pub status_fg: String,
     pub status_position: String,
+    /// 원격 탭 제목 표시 형식(§10-21ⓓ2) — 설정 파일이 쥔다.
+    pub remote_title: String,
     pub status_interval: u16,
     pub sync: bool,
     pub monitor_activity: bool,
@@ -582,6 +604,7 @@ impl Default for SettingValues {
             status_bg: String::new(),
             status_fg: String::new(),
             status_position: String::new(),
+            remote_title: String::new(),
             status_interval: 15,
             sync: false,
             monitor_activity: false,
@@ -644,6 +667,12 @@ pub const SETTINGS: &[Setting] = &[
     // 파이썬 `SETTINGS` 의 `{"key": "language", "cat": "표시", "backend": "lang"}` 과
     // 같은 자리다. `ConfigEnum` 이 아닌 이유: 값의 주인이 설정 파일이 아니라
     // **런타임 로케일 + `.lang` 영속**이다(`i18n` 모듈 문서 — 영속이 설정 파일을 이긴다).
+    // §10-21ⓓ2 — 원격은 이미 **색으로** 구분되므로 아이콘·호스트를 접을 수 있어야 한다.
+    Setting {
+        key: "remote-title",
+        cat: "표시",
+        kind: SettingKind::ConfigEnum(REMOTE_TITLES),
+    },
     Setting {
         key: "language",
         cat: "표시",
@@ -888,6 +917,7 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     // 정본에 이 줄이 없다(GUI 만의 설정) → `NO_CANON_LABEL` 에 사유와 함께 적어 뒀다.
     ("font-scale", "글자 크기 배율"),
     ("status-position", "상태줄 위치"),
+    ("remote-title", "원격 탭 제목"),
     ("language", "언어"),
     ("prefix", "prefix 키"),
     ("mouse", "마우스"),
@@ -1070,6 +1100,7 @@ impl Setting {
             "status-bg" => theme_or(&values.status_bg),
             "status-fg" => theme_or(&values.status_fg),
             "status-position" => values.status_position.clone(),
+            "remote-title" => values.remote_title.clone(),
             "status-interval" => values.status_interval.to_string(),
             "ambiguous-width" => values.ambiguous_width.clone(),
             "mouse-drag-threshold" => values.mouse_drag_threshold.to_string(),
@@ -1335,6 +1366,7 @@ pub fn set_config(
         "mode-keys" => next.mode_keys = value.to_owned(),
         "ambiguous-width" => next.ambiguous_width = value.to_owned(),
         "status-position" => next.status_position = value.to_owned(),
+        "remote-title" => next.remote_title = value.to_owned(),
         "default-path" => next.default_path = value.to_owned(),
         "status-left" => next.status_left = value.to_owned(),
         "status-right" => next.status_right = value.to_owned(),

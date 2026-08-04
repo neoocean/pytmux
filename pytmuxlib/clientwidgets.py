@@ -21,7 +21,8 @@ from rich.style import Style
 
 from . import clientnotices, i18n
 from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
-                         _char_cells, _deemoji_text, norm_sep, theme_color)
+                         _char_cells, _deemoji_text, norm_sep,
+                         remote_title_display, theme_color)
 
 
 def _backdrop_dim_active(app) -> bool:
@@ -993,6 +994,13 @@ class TabBar(Widget):
     PIN_GLYPH = "*"
     PIN_SEP = " ‖ "
 
+    def _remote_title_mode(self) -> str:
+        """원격 탭 제목 표시 형식(§10-21ⓓ2). 앱이 아직 없으면 기본이다.
+
+        앱에서 읽는 이유: 이 값은 설정 파일과 `set remote-title` 이 함께 쥐는 것이라
+        위젯이 자기 사본을 들면 둘이 갈린다."""
+        return getattr(self.app, "remote_title", "full")
+
     def _labels(self):
         out = []
         # 표시 번호는 **시각 순서**(비고정→고정)로 매긴다 — 고정 탭이 오른쪽으로 밀려도
@@ -1007,7 +1015,10 @@ class TabBar(Widget):
             # 표시는 1부터(사용자 요청 #21). 내부 index 는 0-based 리스트 위치 그대로
             # 두고(select_window 등 좌표 계산 호환), **보여줄 때만** 시각 번호로 바꾼다.
             num = vis.get(t["index"], t["index"] + 1)
-            out.append(f" {pin}{ic}{num}:{t['name']}{flag} ")
+            # §10-21ⓓ2: 원격 탭 이름은 **그릴 때만** 접는다(값은 서버 계약이라 불변).
+            name = remote_title_display(t["name"], bool(t.get("remote")),
+                                        self._remote_title_mode())
+            out.append(f" {pin}{ic}{num}:{name}{flag} ")
         return out
 
     def index_for_number(self, n):
@@ -1041,7 +1052,9 @@ class TabBar(Widget):
         labels/widths/스크롤 루프를 통째로 건너뛰고, 캐시 당시 안정화된 스크롤을
         복원해 후속 코드 일관성을 유지한다(스크롤 안정화는 멱등)."""
         w = self.size.width
-        sig = (w, self.sel, self._scroll,
+        # ⚠ 시그니처에 **표시 형식**도 넣는다(§10-21ⓓ2) — 안 넣으면 형식만 바꿨을 때
+        #   이름·폭이 그대로라 캐시가 히트하고, 방금 바꾼 설정이 안 먹은 것처럼 보인다.
+        sig = (w, self.sel, self._scroll, self._remote_title_mode(),
                tuple((t["index"], t["name"], t.get("bell"),
                       t.get("activity"),
                       self.app.plugins.client_tab_glyph(self.app, t),

@@ -5004,6 +5004,34 @@ async def test_mac_option_number_row_switches_tab_and_is_never_typed():
     await _with_app(body)
 
 
+async def test_remote_tab_title_folds_only_at_draw_time():
+    """§10-21ⓓ2 — 원격 탭 제목을 **그릴 때만** 접는다.
+
+    제보: `번호:⇄계정@서버:탭이름` 이 고정이라 정작 탭 이름이 밀려난다. 원격은 이미
+    색으로 구분되므로(§1.7-a 분홍) 아이콘·호스트를 접을 수 있어야 한다.
+
+    ⚠ **이름 자체는 못 바꾼다** — 서버가 짓고 `remote-detach` 의 인자이며 "`⇄` 와 첫
+    `:` 사이가 호스트"라는 계약이다. 그래서 접는 것은 탭바에 찍는 글자뿐이고, 값으로
+    쓰는 자리(`t["name"]`)는 그대로 남아야 한다."""
+    async def body(app, pilot, srv):
+        app.tabbar.set_tabs([
+            {"index": 0, "name": "local"},
+            {"index": 1, "name": "⇄boxA:build", "remote": True},
+        ], 0)
+        app.remote_title = "full"
+        assert "2:⇄boxA:build" in app.tabbar._labels()[1]
+        app.remote_title = "host"
+        # ⚠ 캐시 시그니처에 형식이 안 들어 있으면 여기서 옛 글자가 나온다(공허 통과).
+        assert "2:boxA:build" in app.tabbar._labels()[1], app.tabbar._labels()
+        app.remote_title = "name"
+        assert "2:build" in app.tabbar._labels()[1], app.tabbar._labels()
+        # 로컬 탭은 무엇을 골랐든 그대로다(판정은 remote 플래그로 한다).
+        assert "1:local" in app.tabbar._labels()[0]
+        # 그리고 **값은 안 바뀐다** — 접기가 이름을 갉아먹으면 remote-detach 가 깨진다.
+        assert app.tabbar.tabs[1]["name"] == "⇄boxA:build"
+    await _with_app(body)
+
+
 async def test_tab_number_follows_visual_order_when_pinned_reordered():
     # 07-14: 고정/원격 탭이 오른쪽 구역으로 밀려 그려지면 표시 번호와 esc+숫자 이동이
     # **시각 순서**(비고정→고정)를 따라야 "보이는 순서 = 번호" 가 맞는다. 원격

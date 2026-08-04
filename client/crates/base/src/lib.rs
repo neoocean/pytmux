@@ -35,6 +35,7 @@ pub mod keys;
 pub mod restart;
 pub mod screens;
 pub mod scrollbar;
+pub mod tint;
 
 pub use block::{Block, BlockList, BlockState};
 pub use chrome::{Badge, Chrome, ChromeCtx, ChromeFocus, ChromeKey, TabSpot};

@@ -55,6 +55,11 @@ pub struct Bar {
     ///
     /// 그래서 이음새 칸의 주인은 **테두리**다([`Seg`]) — 바는 그 사이만 그린다.
     pub skip: std::collections::BTreeSet<(u16, u16)>,
+    /// 평상시 선 색을 덮어쓰는 값 — 원격(분홍)·degraded(빨강)일 때만 있다(§10-21ⓩ).
+    ///
+    /// 경계도 테두리의 일부라, 테두리만 분홍인데 경계가 파랗게 남으면 그 자리가 도리어
+    /// 눈에 띈다. `None` 이면 종전대로 [`theme::BORDER`] 다.
+    pub tint: Option<ColorU>,
 }
 
 impl Bar {
@@ -331,7 +336,12 @@ impl Element for SplitterOverlay {
                         vec2f(cover.width(), px),
                     )
                 };
-                let color = if bar.active { theme::FOCUS } else { theme::BORDER };
+                // 잡는 중이면 FOCUS — 그건 **조작의 신호**라 상태색(tint)을 안 탄다.
+                let color = if bar.active {
+                    theme::FOCUS
+                } else {
+                    bar.tint.unwrap_or(theme::BORDER)
+                };
                 let painted = ctx
                     .scene
                     .draw_rect_without_hit_recording(thin)

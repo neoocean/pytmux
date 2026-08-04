@@ -285,6 +285,11 @@ static SETTINGS: &[Item] = &[
     i("plugins", Done, "설정의 링크 항목 — 관리 화면이 섰다"),
     i("prefix", Done, "설정 파일의 set prefix 를 읽는다(파이썬과 같은 파일·같은 탐색 순서)"),
     i(
+        "remote-title",
+        Done,
+        "설정 화면 · 팔레트 - full/host/name · 원격 탭 제목을 **그릴 때만** 접는다(이름은 서버 계약이라 불변)",
+    ),
+    i(
         "set-titles",
         Done,
         "설정 화면 - TUI 는 OSC 2 로 단말 제목, GUI 는 창 제목 · 형식은 set-titles-string(#S:#I:#W)",
@@ -393,7 +398,7 @@ static SCORE: &[(&str, usize, usize)] = &[
     ("commands", 87, 0),
     ("prefix_keys", 32, 0),
     ("esc_keys", 17, 0),
-    ("settings", 36, 0),
+    ("settings", 37, 0),
     ("screens", 17, 0),
 ];
 

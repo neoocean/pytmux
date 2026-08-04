@@ -240,6 +240,7 @@ pub static EN: &[(&str, &str)] = &[
     // GUI 만의 줄(§10-21ⓐ) — 정본에 짝이 없어 이름도 번역도 우리가 짓는다.
     ("setting\u{0004}글자 크기 배율", "Text size"),
     ("setting\u{0004}상태줄 위치", "Status bar position"),
+    ("setting\u{0004}원격 탭 제목", "Remote tab title"),
     ("setting\u{0004}언어", "Language"),
     ("setting\u{0004}prefix 키", "Prefix key"),
     ("setting\u{0004}마우스", "Mouse"),

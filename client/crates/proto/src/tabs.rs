@@ -15,6 +15,13 @@
 
 use serde::Deserialize;
 
+/// 접지 않는 표시 형식 — **고르는 화면**의 기본이다(§10-21ⓓ2).
+///
+/// 좁은 자리(탭바)를 위해 접는 설정이므로, 넓은 목록에서까지 접으면 다른 서버의 같은
+/// 이름 탭이 구분되지 않는다. 낱말을 박아 두지 않고 상수로 두는 이유는 그 뜻("접지
+/// 않는다")을 부르는 자리에서 읽히게 하려는 것이다.
+pub const FULL_TITLE: &str = "full";
+
 /// 탭 하나.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Tab {
@@ -103,7 +110,13 @@ impl Tab {
     ///
     /// 플래그는 **하나만** 선다(벨이 활동을 이긴다) — 정본과 같다. 둘을 겹쳐 찍던
     /// 종전 판은 탭 이름이 그만큼 길어져 넘침이 빨라졌다.
-    pub fn label(&self, number: usize) -> String {
+    /// # 원격 제목은 **그릴 때만** 접는다 (§10-21ⓓ2)
+    ///
+    /// `mode` 는 설정 `remote-title`(`full`·`host`·`name`)이다. 이름 자체는 서버가 짓고
+    /// `remote-detach` 의 인자이기도 하므로 값으로 쓰는 자리는 원래 이름 그대로다 —
+    /// 여기서 접는 것은 탭바에 찍는 글자뿐이다. 로컬 탭은 무엇을 골랐든 그대로다
+    /// (판정은 `remote` 플래그로 한다 — 이름을 파싱하지 않는다).
+    pub fn label(&self, number: usize, mode: &str) -> String {
         let label = self.display();
         let mut out = String::new();
         if self.pinned {
@@ -115,7 +128,13 @@ impl Tab {
         out.push_str(&number.to_string());
         out.push(':');
         match label.host {
-            Some(host) => out.push_str(&format!("⇄{host}:{}", label.name)),
+            // 원격은 이미 **색으로** 구분된다(§1.7-a 분홍) — 그래서 아이콘·호스트를
+            // 접어도 무엇인지 안 잃는다.
+            Some(host) => match mode {
+                "name" => out.push_str(label.name),
+                "host" => out.push_str(&format!("{host}:{}", label.name)),
+                _ => out.push_str(&format!("⇄{host}:{}", label.name)),
+            },
             None => out.push_str(label.name),
         }
         if self.bell {
@@ -231,9 +250,13 @@ impl TabBar {
     }
 
     /// 탭바에 찍을 라벨들(리스트 순서). 번호까지 붙은 최종 문자열이다.
-    pub fn labels(&self) -> Vec<String> {
+    ///
+    /// `mode` = 설정 `remote-title`(§10-21ⓓ2). 접는 것은 **좁은 자리**를 위한 것이므로
+    /// 넓은 목록(탭 스위처)은 [`FULL_TITLE`] 로 부른다 — 거기서 호스트를 접으면 다른
+    /// 서버의 같은 이름 탭이 구분되지 않아, 고르는 화면이 제 일을 못 한다.
+    pub fn labels(&self, mode: &str) -> Vec<String> {
         let nums = self.visual_numbers();
-        self.tabs.iter().zip(nums).map(|(t, n)| t.label(n)).collect()
+        self.tabs.iter().zip(nums).map(|(t, n)| t.label(n, mode)).collect()
     }
 }
 
