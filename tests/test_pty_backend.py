@@ -353,21 +353,37 @@ async def test_owned_conpty_reads_in_feed_slice_chunks():
     reader = threading.Thread(target=p._read_loop, daemon=True)
     reader.start()
     try:
-        await asyncio.sleep(0.08)
-        assert sizes, "읽기가 일어나야"
+        # ⚠ 여기는 **고정 대기를 쓰지 않는다**(pytmux-139). 종전엔 0.08/0.06/0.04 초를
+        #   세어 스레드와 창을 맞췄는데, 그 창은 이 상자에서만 넉넉했다 — 더 느리거나
+        #   스케줄링이 다른 러너에서는 «3회 전부 실패» 로 늘 모자랐다. 조건 대기는
+        #   빠른 상자에서 더 빠르고 느린 상자에서 인내한다.
+        assert await harness.wait_for(lambda: len(sizes) >= 2), "읽기가 일어나야"
         assert all(m == FEED_SLICE for m in sizes), sizes[:5]   # 64KB 아님
         n_before = len(sizes)
         p.pause_reader()
-        await asyncio.sleep(0.06)
+        # ★ pause 는 «더 안 읽는다» 는 **없음**의 단언이라 폴링으로 못 잰다. 그래서
+        #   읽기가 **멎을 때까지**(연속 3회 불변) 기다린 뒤 늘어난 양을 본다 — 시간이
+        #   아니라 «정착» 을 재므로 느린 러너에서도 뜻이 같다.
+        seen = {"n": None, "same": 0}
+
+        def _settled():
+            n = len(sizes)
+            if n == seen["n"]:
+                seen["same"] += 1
+            else:
+                seen["n"], seen["same"] = n, 0
+            return seen["same"] >= 3
+
+        assert await harness.wait_for(_settled, step=0.02), \
+            f"pause 했는데 리더가 계속 읽는다({n_before} → {len(sizes)})"
         n_paused = len(sizes)
         assert n_paused - n_before <= 1, (n_before, n_paused)   # in-flight 최대 1건
         p.resume_reader()
-        await asyncio.sleep(0.04)
-        assert len(sizes) > n_paused, "resume 후 다시 읽어야"
+        assert await harness.wait_for(lambda: len(sizes) > n_paused), "resume 후 다시 읽어야"
         assert bytes(got), "데이터가 전달됨"
     finally:
         p.stop_reader()
-        reader.join(timeout=0.5)
+        reader.join(timeout=2.0)
 
 
 async def test_owned_conpty_watcher_fires_eof_on_child_exit():
@@ -394,6 +410,7 @@ async def test_owned_conpty_watcher_fires_eof_on_child_exit():
             self._closed = threading.Event()
             self._alive = True
             self.close_calls = 0
+            self.wait_calls = 0
 
         def read(self, maxlen):
             # close 전까진 데이터 없이 블록(자식 죽어도 EOF 안 오는 버그 상황),
@@ -403,6 +420,7 @@ async def test_owned_conpty_watcher_fires_eof_on_child_exit():
             return b""
 
         def wait(self, timeout_ms):
+            self.wait_calls += 1         # 감시자가 실제로 돌았나(아래 단언의 전제)
             if self._alive:
                 time.sleep(0.005)        # WaitForSingleObject 타임아웃 모사
                 return None
@@ -418,17 +436,22 @@ async def test_owned_conpty_watcher_fires_eof_on_child_exit():
     got = bytearray()
     p.start_reader(loop, got.extend, eof_called.set)
     try:
-        await asyncio.sleep(0.05)
+        # ⚠ 고정 대기를 안 쓴다(pytmux-140 — 위 형제 테스트와 같은 이유).
+        # ★ «생존 중엔 EOF 가 없다» 는 **없음**의 단언이라, 그냥 기다렸다 재면 감시자가
+        #   아직 한 바퀴도 안 돈 것을 «잘 참았다» 로 오독할 수 있다. 그래서 감시자가
+        #   **실제로 돌았는지**(wait 를 두 번 이상 불렀는지)를 먼저 기다린 뒤 단언한다.
+        assert await harness.wait_for(lambda: fake.wait_calls >= 2), "감시자가 안 돈다"
         assert not eof_called.is_set(), "자식 생존 중엔 EOF 가 불리면 안 됨"
         assert fake.close_calls == 0, "생존 중엔 콘솔 hangup 금지"
         fake._alive = False              # 셸 exit 모사
-        await asyncio.sleep(0.08)
-        assert fake.close_calls >= 1, "감시자가 종료 감지 후 콘솔 hangup 해야"
-        assert eof_called.is_set(), "hangup 으로 read EOF → _fire_eof 가 불려야"
+        assert await harness.wait_for(lambda: fake.close_calls >= 1), \
+            "감시자가 종료 감지 후 콘솔 hangup 해야"
+        assert await harness.wait_for(eof_called.is_set), \
+            "hangup 으로 read EOF → _fire_eof 가 불려야"
     finally:
         p.stop_reader()
-        p._reader.join(timeout=0.5)
-        p._watcher.join(timeout=0.5)
+        p._reader.join(timeout=2.0)
+        p._watcher.join(timeout=2.0)
 
 
 async def test_owned_conpty_watcher_quiet_on_teardown():

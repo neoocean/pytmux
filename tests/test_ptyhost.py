@@ -4,6 +4,7 @@ host↔서버 프로토콜·spawn·스트리밍·입력 에코·list·**재연�
 실제 `pytmuxlib.ptyhost.PtyHost` + 셸로 검증한다. Windows 의 ConPTY primitive 는 이미 라이브
 검증(Phase 0 스파이크)이므로 여기선 OS 독립 기계만 본다 → Windows 에선 스킵."""
 import asyncio
+import contextlib
 import os
 import tempfile
 
@@ -66,6 +67,102 @@ async def _read_until(reader, pane_id, needle: bytes, timeout=4.0):
     return bytes(buf), others
 
 
+class _SlowFakePty:
+    """만드는 데 시간이 걸리는 가짜 PTY — 루프가 막히는지 재는 용도(pytmux-136)."""
+
+    SPAWN_SECONDS = 0.4
+
+    def __init__(self):
+        import time
+        time.sleep(self.SPAWN_SECONDS)     # ConPTY 생성이 느린 것을 흉내낸다
+        self.pid = 4242
+        self.closed = False
+
+    def start_reader(self, loop, on_data, on_eof):
+        pass
+
+    def stop_reader(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+    def reap(self, *, block=False):
+        return None
+
+
+async def test_spawn_does_not_block_the_event_loop():
+    """패널을 만드는 동안에도 **이벤트 루프가 돈다**(pytmux-136).
+
+    ★ 이게 없어서 새 패널 하나를 여는 값을 **열려 있는 모든 패널이 함께** 치렀다.
+    실측(2026-08-04 · Windows): `spawn` op 처리가 0.138s→1.659s, 그 1.5초 동안 host 는
+    어떤 프레임도 안 읽고 안 썼다 — 그 순간 전 세션의 입출력이 멎는다. [[pytmux-134]]
+    의 경합도 이 창이 열어 준 것이었다.
+
+    재는 방법: 만드는 데 시간이 걸리는 가짜 PTY 를 물리고, 그 사이 **루프가 콜백을
+    몇 번 돌리는지** 센다. 동기로 돌면 0 이다(루프 자체가 멈추므로).
+    OS 를 안 탄다 — 느린 것은 백엔드가 아니라 우리가 심은 가짜다.
+
+    ⚠ 재는 자에 **고정 대기를 안 쓴다**(폴링 규약). `call_soon` 사슬은 "루프가 도는가"를
+    시간이 아니라 **사건 수**로 재므로 느린 러너에서도 안 흔들린다.
+    """
+    from harness import patched
+    host = ptyhost.PtyHost()
+    host._stop = asyncio.Event()           # serve 밖이라 직접 세운다(종료 판정에 쓰인다)
+    loop = asyncio.get_event_loop()
+    ticks = 0
+    beating = True
+
+    def _beat():
+        nonlocal ticks
+        if not beating:
+            return
+        ticks += 1
+        loop.call_soon(_beat)              # 루프가 살아 있는 한 계속 이어진다
+
+    loop.call_soon(_beat)
+    try:
+        with patched(pty_backend, spawn=lambda *a, **k: _SlowFakePty()):
+            await host._spawn({"pane": 1, "argv": ["/bin/sh"], "cols": 80, "rows": 24})
+    finally:
+        beating = False
+
+    assert 1 in host.panes, "패널이 안 세워졌다"
+    # 동기로 돌면 정확히 0 이다(루프가 멈추므로 사슬이 한 번도 안 이어진다).
+    assert ticks >= 3, (
+        f"패널을 만드는 동안 루프가 멎었다(콜백 {ticks}회) — 그 시간만큼 "
+        "**열려 있는 모든 패널의 입출력이 함께 멈춘다**")
+
+
+async def test_spawn_in_flight_does_not_survive_a_shutdown():
+    """만드는 중에 `shutdown` 이 오면 그 패널은 **등록되지 않고 스스로 닫힌다**(pytmux-136).
+
+    비동기로 바꾸면서 새로 생긴 창이다: 예전엔 spawn 이 한 호흡에 끝나 이런 사이가
+    없었다. 등록해 버리면 이미 지나간 정리 루프가 그 패널을 못 봐서 **자식이 고아로
+    남는다** — 이 슬라이스가 없애려던 것과 같은 부류를 새로 만드는 셈이다.
+    """
+    from harness import patched
+    host = ptyhost.PtyHost()
+    host._stop = asyncio.Event()
+    made = []
+
+    def _make(*a, **k):
+        pty = _SlowFakePty()
+        made.append(pty)
+        return pty
+
+    with patched(pty_backend, spawn=_make):
+        task = asyncio.ensure_future(
+            host._spawn({"pane": 7, "argv": ["/bin/sh"], "cols": 80, "rows": 24}))
+        # 고정 대기가 아니라 **예약이 실제로 잡힐 때까지** 기다린다(폴링 규약).
+        await wait_for(lambda: 7 in host._spawning, timeout=4.0, step=0.01)
+        host._stop.set()                   # = shutdown op 가 세우는 그 표식
+        await task
+
+    assert 7 not in host.panes, "내려가는 중인데 패널을 등록했다 — 자식이 고아로 남는다"
+    assert made and made[0].closed, "등록도 안 하고 닫지도 않았다 — PTY 가 통째로 샌다"
+
+
 async def test_spawn_drops_corrupt_argv_without_touching_backend():
     """손상 `argv` 는 **백엔드를 건드리기 전에** 드롭한다(레드팀 2026-07-31).
 
@@ -74,6 +171,8 @@ async def test_spawn_drops_corrupt_argv_without_touching_backend():
     돌아, Windows 실측에서 인증 후 그 한 프레임이 host 를 **응답 정지**시켰다
     (프로세스는 생존 · ping 무응답 → host 가 모든 패널 셸 I/O 를 들고 있으므로 세션
     전체 정지). 문서화된 손상-프레임 드롭 계약이 `list(str)` 성공 때문에 못 걸렀다.
+    (그 "루프에서 동기로" 는 pytmux-136 에서 executor 로 내려갔다 — **검증은 여전히
+    루프에서** 하므로 이 테스트가 재는 계약은 그대로다.)
 
     `pty_backend.spawn` 을 폭탄으로 갈아 끼워 **호출 자체가 없음**을 단언한다 —
     소켓·셸이 필요 없는 순수 경로라 OS 무관으로 돈다(Windows 도 실행)."""
@@ -85,9 +184,9 @@ async def test_spawn_drops_corrupt_argv_without_touching_backend():
 
     with patched(pty_backend, spawn=_boom):
         for bad in ("not-a-list", {"a": 1}, 5, ["ok", 7], [None], []):
-            host._spawn({"pane": 9, "argv": bad})
+            await host._spawn({"pane": 9, "argv": bad})
             assert host.panes == {}, (bad, host.panes)
-        host._spawn({"pane": 9})          # argv 부재 = 종전대로 무동작
+        await host._spawn({"pane": 9})    # argv 부재 = 종전대로 무동작
         assert host.panes == {}
 
 
