@@ -31,6 +31,41 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 다중 클라 미러링 시 세션 공유 격자 크기 규칙(tmux window-size 와 동형, _session_size).
 _WINDOW_SIZE_MODES = ("smallest", "latest", "largest")
 
+# 전역 검색(pytmux-27 ①)의 상한. ⛔ **상한을 두는 것은 괜찮고 숨기는 것이 안 된다** —
+# 걸리면 결과에 실어 보내고 판이 제목 줄에 그대로 적는다(루트 CLAUDE.md 의 no silent caps).
+# 값의 근거: 패널당 스크롤백이 10,000행(protocol.HISTORY)이라 흔한 낱말 하나가 수천 건을
+# 만든다. 목록으로 고르는 화면이므로 200건이면 이미 사람이 훑을 수 있는 한계를 넘고, 그
+# 이상은 "검색어를 좁혀라"가 옳은 답이다. 패널당 상한은 시끄러운 패널 하나가 목록을
+# 독차지해 **다른 탭의 히트를 밀어내는 것**을 막는다(전체 상한만으로는 못 막는다).
+SEARCH_ALL_MAX_HITS = 200        # 결과 전체 상한
+SEARCH_ALL_MAX_PER_PANE = 20     # 패널 하나가 목록을 독차지하지 않게
+SEARCH_ALL_PREVIEW_CHARS = 200   # 목록 한 줄에 싣는 본문 미리보기 길이
+
+# bracketed paste 마커. **붙여넣는 글에 이것이 들어 있으면 지운다**(검수 2026-08-05).
+#
+# `_write_paste` 는 앱이 켰을 때 텍스트를 `ESC[200~ … ESC[201~` 로 감싼다. 그런데 감싸는
+# 글 자체가 종료 마커를 품고 있으면 괄호가 **거기서** 닫히고, 그 뒤 바이트는 셸에
+# "사람이 친 것" 으로 들어간다 — 뒤에 `\r` 을 붙여 두면 사용자가 Enter 를 누르기 전에
+# 실행된다. 클립보드는 남이 심을 수 있는 자리라(웹페이지의 복사 버튼·악의적 README)
+# 이것이 곧 원클릭 명령 실행이다. 실측 2026-08-05:
+#   `echo benign` + ESC[201~ + `\r` + `curl …|sh\r` → 괄호 밖으로 `curl …|sh\r` 이 샜다.
+# 정본 터미널들(xterm·alacritty·iTerm2)이 붙여넣기에서 이 마커를 지우는 것과 같은 처방.
+_PASTE_MARKERS = (b"\x1b[200~", b"\x1b[201~")
+
+
+def _strip_paste_markers(data: bytes) -> bytes:
+    """붙여넣을 바이트에서 bracketed paste 마커를 지운다(위 상수 주석 참조).
+
+    ⛔ **자르지 말고 지운다.** 자르면 남은 글이 조용히 사라져 "붙여넣기가 반만 됐다"가
+    되고, 그건 사용자가 원인을 못 찾는 결함이다. 마커만 빼면 나머지는 **괄호 안에서**
+    그대로 셸의 편집 버퍼로 들어간다(= 실행되지 않는다).
+
+    앱이 bracketed 를 안 켰을 때도 지운다 — 그때 이 바이트는 어차피 앱이 이해 못 할
+    잔해이고, 여기서만 지워야 두 자리가 갈라지지 않는다.
+    """
+    for marker in _PASTE_MARKERS:
+        data = data.replace(marker, b"")
+    return data
 
 
 # 선택적 플러그인이 기여하는 서버측 믹스인(plugins/claude-code 의 ServerClaudeMixin 등)
@@ -313,7 +348,7 @@ class Server(*_SERVER_BASES):
     def _write_paste(self, pane: Pane, text: str):
         """텍스트를 패널에 입력. 내부 앱이 bracketed paste 를 켰으면 마커로 감싼다
         (멀티라인 붙여넣기가 줄마다 실행되지 않고 한 번의 붙여넣기로 처리됨)."""
-        data = text.encode("utf-8")
+        data = _strip_paste_markers(text.encode("utf-8"))
         # 붙여넣기(모바일 받아쓰기·자동완성 포함)도 프롬프트 추적에 반영한다(Claude
         # 헤더용 — server_paste 훅, 플러그인 없으면 no-op). 이게 없으면 붙여넣은 Claude
         # 프롬프트는 last_prompt 에 안 잡혀 헤더가 셸 실행 명령("claude")에 머문다.
@@ -730,6 +765,147 @@ class Server(*_SERVER_BASES):
         target_start = max(0, found - lines // 2)
         p.scroll = max(0, min(hist, hist - target_start))
         p.dirty = True
+
+    # ---- 전역 검색(pytmux-27 ① — 로컬 탭 전수) ----
+    def search_all_hit_line(self, texts, line: int, query: str) -> int:
+        """결과 줄의 **지금** 위치. 어긋났으면 같은 검색어를 가장 가까운 곳에서 다시 찾는다.
+
+        목록에 실린 절대 행 번호는 **검색한 그 순간의 스냅샷**이다. 그 뒤 그 패널이
+        출력을 더 내면 스크롤백 상한(protocol.HISTORY)에서 옛 줄이 밀려 나가 번호가
+        통째로 당겨진다 — 번호를 그대로 믿고 뛰면 엉뚱한 줄이 뷰 가운데 오고, 그건
+        "점프가 가끔 빗나간다"로만 보인다. 못 찾으면(그 줄이 아예 밀려 나갔다)
+        클램프한 번호로 간다 — 안 뛰는 것보다 그 근처가 낫다."""
+        n = len(texts)
+        if not n:
+            return 0
+        clamped = max(0, min(n - 1, line))
+        if not query:
+            return clamped
+        ql = query.lower()
+        if 0 <= line < n and ql in texts[line].lower():
+            return line
+        best = None
+        for i, t in enumerate(texts):
+            if ql in t.lower() and (best is None
+                                    or abs(i - line) < abs(best - line)):
+                best = i
+        return clamped if best is None else best
+
+    def _search_scan_pane(self, out, widx, tab, pane, ql, limit, per_pane) -> bool:
+        """패널 하나를 훑어 `out["items"]` 에 담는다. **전체 상한**에 걸렸으면 True.
+
+        검색 한 번이 서버 메모리를 영구히 부풀리지 않게, 원래 캐시가 없던 패널은 훑은
+        뒤 도로 비운다 — `_pane_text_lines` 는 결과를 패널에 캐시하는데(n/N 내비게이션
+        용) 전역 검색은 그것을 **전 패널에** 만들고, 패널당 스크롤백이 10,000행이라
+        탭이 늘면 그대로 누적된다. 이미 캐시가 있던 패널은 그 패널이 쓰고 있다는
+        뜻이라 건드리지 않는다."""
+        had_cache = getattr(pane, "_txt_cache", None) is not None
+        items = out["items"]
+        hits = 0
+        try:
+            for i, text in enumerate(self._pane_text_lines(pane)):
+                if ql not in text.lower():
+                    continue
+                if hits >= per_pane:
+                    out["capped_panes"] += 1
+                    return False
+                items.append({
+                    "win": widx, "wid": tab.wid, "tab": tab.name,
+                    "pane": pane.id, "title": pane.title, "line": i,
+                    "text": text.strip()[:SEARCH_ALL_PREVIEW_CHARS],
+                })
+                hits += 1
+                if len(items) >= limit:
+                    out["truncated"] = True
+                    return True
+            return False
+        finally:
+            if not had_cache:
+                pane._txt_cache = None
+
+    async def search_all_panes(self, sess: Session, query,
+                               limit: int = SEARCH_ALL_MAX_HITS,
+                               per_pane: int = SEARCH_ALL_MAX_PER_PANE):
+        """열린 **모든 로컬 탭·패널**의 스크롤백에서 query 를 찾아 결과 목록을 만든다.
+
+        `search_pane` 과 갈리는 지점: 그쪽은 활성 패널 **하나 안에서** 다음 히트로
+        옮겨 다니는 것(n/N)이고, 이쪽은 **목록**을 만든다 — 모양이 다르므로 명령도
+        다르다(`search` vs `search_all`).
+
+        ⛔ **여기서 훑는 것은 로컬 패널뿐이다.** 원격 탭의 스크롤백은 이 서버에 없다
+        (상류가 갖고 있고 우리는 중계된 화면을 본다 — `serverremote`). 거기까지
+        모으는 것은 **호출부**가 한다: `_cmd_search_all` 이 이 결과에
+        `remote_search_merge` 로 상류 결과를 합쳐 한 벌로 내보낸다(pytmux-27 ②).
+        경계를 여기에 그은 이유는 이 함수가 **순수하게 로컬**이어야 시험이 팬아웃
+        없이 로컬 성질만 재고, 팬아웃 시험이 로컬 스캔에 안 얽히기 때문이다.
+
+        `limit` 은 와이어에서 올 수 있다(다운스트림이 자기 남은 예산을 실어 보낸다) —
+        상수를 넘지 못하게 **여기서** 조인다. 상한이 사는 자리가 곧 상한을 지키는
+        자리다.
+
+        ⚠ 서버는 **단일 스레드 asyncio 루프**다. 패널 수 × 스크롤백 길이를 한 번에
+        훑으면 그동안 모든 화면이 멎으므로 **패널 하나마다 루프에 양보한다**(한 번에
+        멎는 최대치 = 패널 하나의 스크롤백). 그리고 결과 수에 상한을 둔다 —
+        ⛔ **상한에 걸리면 조용히 자르지 않고 말한다**(`truncated`·`capped_panes`).
+        판이 그 사실을 제목 줄에 그대로 그린다.
+
+        팝업 패널(`display-popup`)은 트리 밖이라 `window.panes()` 에 안 잡힌다 —
+        수명이 모달만큼 짧아 목록의 항목으로 삼을 값이 없다(일부러 제외).
+        """
+        q = (query or "").strip()
+        # ⚠ `limit` 만 조인다 — `per_pane` 은 와이어에 없는 **호출부 손잡이**다
+        # (시험이 상한 동작을 재려고 크게 준다). 신뢰불가 입력만 좁힌다.
+        limit = max(1, min(SEARCH_ALL_MAX_HITS, int(limit)))
+        out = {"items": [], "panes": 0, "truncated": False, "capped_panes": 0,
+               "cap": limit, "per_pane": per_pane}
+        if not q:
+            return out
+        ql = q.lower()
+        for widx, tab in enumerate(sess.tabs):
+            for pane in tab.window.panes():
+                # 단일 스레드 루프에 숨 쉴 틈 — 패널 경계마다 한 번(위 ⚠).
+                await asyncio.sleep(0)
+                out["panes"] += 1
+                if self._search_scan_pane(out, widx, tab, pane, ql,
+                                          limit, per_pane):
+                    return out           # 전체 상한 — 여기서 멈춘다
+        return out
+
+    def search_goto(self, sess: Session, wid=None, win=None, pane=None,
+                    line: int = 0, query: str = "") -> bool:
+        """결과 한 줄이 가리키는 자리(탭 + 패널 + 스크롤)로 간다. 갔으면 True.
+
+        탭은 **wid 로 먼저** 찾는다 — 목록을 보는 동안 탭이 닫히거나 자리를 옮기면
+        index 는 다른 탭을 가리키기 때문이다(index 는 그다음 폴백).
+
+        찾은 줄은 뷰 **가운데**에 둔다. `claude_jump_prompt` 이 상단에 놓는 것과
+        갈리는데, 그쪽은 프롬프트가 **한 턴의 시작**이라 아래로 읽어 내려가는 것이고
+        검색 히트는 앞뒤 맥락을 같이 봐야 하기 때문이다(= `search_pane` 과 같은 규칙).
+
+        점프한 뒤 `search_query`/`_match_abs` 를 그 자리에 세워 둔다 — 목록을 닫고
+        곧바로 n/N 으로 그 패널 안을 이어서 훑을 수 있다."""
+        idx = None
+        if wid is not None:
+            idx = next((i for i, t in enumerate(sess.tabs) if t.wid == wid), None)
+        if idx is None and isinstance(win, int) and 0 <= win < len(sess.tabs):
+            idx = win
+        if idx is None:
+            return False
+        w = sess.tabs[idx].window
+        p = w.pane_by_id(pane)
+        if p is None:
+            return False
+        self.select_window(sess, idx)
+        w.active_pane = p
+        found = self.search_all_hit_line(self._pane_text_lines(p), line, query)
+        if query:
+            p.search_query = query
+        p._match_abs = found
+        hist = p._history_len()
+        target_start = max(0, found - p.screen.lines // 2)
+        p.scroll = max(0, min(hist, hist - target_start))
+        p.dirty = True
+        return True
 
     def select_pane_cycle(self, sess: Session):
         win = sess.active_window

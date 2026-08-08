@@ -198,6 +198,14 @@ _REMOTE_REQ_TOKEN_ACTIONS = {"request_token_log", "request_buffers"}
 _REMOTE_BLOCK_ACTIONS = {
     "break_pane", "join_pane", "move_pane_to_tab", "kill_window",
     "move_tab", "move_window", "swap_window", "move_current_tab",
+    # ⛔ 전역 검색(search_all·search_goto)은 **여기 없다** — pytmux-27 ② 에서 뺐다.
+    # ①에서는 "원격 탭을 보는 중엔 거부"였다(로컬 탭만 훑는 명령이라 보이지 않는
+    # 로컬 패널의 결과가 뜨는 §1.7-c 였다). ②가 그 전제를 없앴다: 이 명령은 이제
+    # 로컬 + **전 상류**를 합쳐 한 벌로 돌려주고 결과 한 줄마다 어느 탭인지를 이름
+    # (`⇄host:탭`)으로 밝힌다 — 보이지 않는 것을 조용히 훑는 것이 아니라 **보이는
+    # 탭 전부**를 훑는 것이라 §1.7-c 의 대상이 아니다. 릴레이 목록에도 넣지 않는다:
+    # 팬아웃은 "한 링크로 넘긴다"가 아니라 "전 링크에 물어 합친다"라 모양이 다르고
+    # (remote_search_merge), 점프는 route 의 첫 홉으로 갈린다(remote_search_goto).
 }
 
 
@@ -358,6 +366,13 @@ def _strip_ctrl(s: str) -> str:
     strip 으로 처리되므로 여기선 전 제어문자를 공백으로 접는다."""
     return "".join(" " if (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f) else c
                    for c in s)
+
+
+def _int_or0(v) -> int:
+    """상류가 준 셈값을 int 로 — 아니면 0. 신뢰불가 입력이 `+=` 에 들어가는 자리에
+    쓴다(상류가 `{"panes": "많음"}` 을 보내면 TypeError 로 팬아웃 전체가 죽는다).
+    bool 을 제외하는 이유는 _win_key 와 같다(True 는 int 지만 셈값이 아니다)."""
+    return v if isinstance(v, int) and not isinstance(v, bool) else 0
 
 
 async def _kill_proc(proc) -> None:
@@ -1127,6 +1142,13 @@ class ServerRemoteMixin:
                     break
                 if t == "restarting":
                     break
+                if t == "search_results" and isinstance(msg.get("_req_token"),
+                                                        str):
+                    # 우리가 물어본 전역 검색의 회신(pytmux-27 ② · 토큰이 문자열이면
+                    # 우리 것, int 면 뷰어 라우팅용 id(client)다). 팬아웃이 받아
+                    # 로컬 결과와 **합쳐서 한 벌로** 내보내므로 여기서 흘리지 않는다.
+                    self._remote_search_reply(msg)
+                    continue
                 # §4.1: 요청 클라 식별자가 echo 돼 왔으면(request_token_log 회신) 그
                 # 클라에게만 전달한다 — 같은 호스트를 보는 다른 다운스트림 클라에
                 # 응답(토큰 팝업)이 새지 않게. 라우팅 전용 필드라 클라에 보내기 전 제거.
@@ -1629,6 +1651,225 @@ class ServerRemoteMixin:
         out["src"] = ri                       # 병합 전역 index → 원격 로컬 index
         try:
             asyncio.create_task(self._link_write(link, out))
+        except (OSError, ConnectionError):
+            return False
+        return True
+
+    # ---- 전역 검색 팬아웃(pytmux-27 ②) ----
+    # ⛔ **기다리는 쪽이 시한을 쥔다.** 옛 버전 상류는 `search_all` 을 몰라 테이블에서
+    # 떨어져 `_dispatch_plugin_cmd` 로 흐르고, 거기서 아무도 안 받으면 **회신이 아예
+    # 없다** — ①이 이 단계를 미룬 이유가 그것이었다. 무한 대기는 "검색을 쳤는데
+    # 결과 판이 영영 안 열린다"가 되므로, 시한을 넘긴 상류는 결과에 **무응답으로
+    # 적어서** 돌려준다(루트 CLAUDE.md 의 no silent caps). 시험이 이 값을 낮춰 쓴다.
+    _REMOTE_SEARCH_TIMEOUT = 2.0
+    # 상류 하나가 보낼 수 있는 항목 수 상한. 상류는 신뢰불가라(모듈 docstring) 우리가
+    # 통제하지 않는다 — 침해된 상류가 100만 줄짜리 목록으로 다운스트림을 얼리지
+    # 못하게 경계에서 자른다(_REMOTE_BLOCKS_MAX 와 같은 부류).
+    _REMOTE_SEARCH_ITEMS_MAX = 200
+    # 목록 한 줄의 표시 문자열 상한(로컬 미리보기 200자 + 여유). 탭 이름(F-E)과 같은
+    # 이유로 제어문자도 함께 접는다 — 이 문자열은 결과 판에 그대로 렌더된다.
+    _REMOTE_SEARCH_TEXT_MAX = 400
+    # 홉 상한. ⛔ **자기 endpoint attach 만 막혀 있지 고리는 막혀 있지 않다**
+    # (A→B, B→A). 팬아웃은 상류에서 또 팬아웃하므로 고리가 있으면 영원히 번진다 —
+    # 홉을 세어 상한에서 멈추고 그 사실도 결과에 싣는다.
+    _REMOTE_SEARCH_MAX_HOPS = 4
+
+    def _search_waiters(self) -> dict:
+        """{토큰: Future} — 상류 회신을 기다리는 팬아웃. 지연 초기화(_remotes_dict 결)."""
+        d = getattr(self, "_search_wait", None)
+        if d is None:
+            d = self._search_wait = {}
+        return d
+
+    def _remote_search_reply(self, msg: dict) -> None:
+        """상류의 `search_results` 를 기다리던 팬아웃에 건넨다(**릴레이하지 않는다**).
+
+        ⛔ 이 프레임을 보는 클라에 그냥 흘리면 안 된다 — 물어본 것은 우리지 클라가
+        아니고, 클라가 받아야 하는 것은 로컬 + 전 상류를 **합친 한 벌**이다. 조각을
+        먼저 보내면 결과 판이 상류 수만큼 열린다."""
+        fut = self._search_waiters().pop(msg.get("_req_token"), None)
+        if fut is not None and not fut.done():
+            fut.set_result(msg)
+
+    async def _remote_search_ask(self, link: RemoteLink, query: str,
+                                 hops: int, limit: int):
+        """상류 하나에 같은 검색을 중계하고 회신을 기다린다 → (상태, 회신|None).
+
+        토큰은 **문자열**(`sa:N`)로 짓는다: 뷰어 라우팅용 `_req_token` 은 `id(client)`
+        = int 라, 타입만으로 "내가 물어본 것"과 "클라가 물어본 것"이 갈린다
+        (_remote_reader 의 가로채기 조건)."""
+        seq = getattr(self, "_search_tok_seq", 0) + 1
+        self._search_tok_seq = seq
+        tok = f"sa:{seq}"
+        fut = self.loop.create_future()
+        self._search_waiters()[tok] = fut
+        try:
+            try:
+                await self._link_write(link, {
+                    "t": "cmd", "action": "search_all", "query": query,
+                    "hops": hops, "limit": limit, "_req_token": tok})
+            except (OSError, ConnectionError):
+                return "down", None
+            try:
+                return "ok", await asyncio.wait_for(
+                    fut, self._REMOTE_SEARCH_TIMEOUT)
+            except asyncio.TimeoutError:
+                return "timeout", None
+        finally:
+            self._search_waiters().pop(tok, None)
+
+    @classmethod
+    def _sanitize_search_items(cls, items) -> list:
+        """상류 결과 목록을 **경계에서** 정규화한다(_sanitize_windows 와 같은 부류).
+
+        거르는 것 셋: ⑴ 컨테이너·항목 모양(list of dict) ⑵ 좌표류가 진짜 int 인가 —
+        이 값들은 그대로 index 연산에 들어가고 다시 상류로 릴레이된다 ⑶ 표시 문자열의
+        제어문자·길이(탭 이름 F-E 와 같은 이유 — 결과 판이 그대로 렌더한다).
+
+        `route` 는 이 항목이 사는 **최종 서버까지의 홉 이름**이다. 길이와 원소 타입을
+        함께 잡는다: 침해된 상류가 긴 리스트를 실어 보내면 그것이 그대로 우리 릴레이
+        경로가 된다.
+
+        `gwin` 은 그 상류의 **병합 탭 index**(= link.windows 안 위치)이고 `win` 은
+        **최종 서버의 로컬 탭 index**다. 캐스케이드에서 둘은 다르다 — 표시는 앞의
+        것으로, 점프는 뒤의 것으로 한다(자리를 섞으면 2단에서 엉뚱한 탭으로 뛴다)."""
+        if not isinstance(items, list):
+            return []
+
+        def _i(v):
+            return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+        def _s(v):
+            return _strip_ctrl(v[:cls._REMOTE_SEARCH_TEXT_MAX]) \
+                if isinstance(v, str) else ""
+
+        out = []
+        for u in items[:cls._REMOTE_SEARCH_ITEMS_MAX]:
+            if not isinstance(u, dict):
+                continue
+            win, pane, line = _i(u.get("win")), _i(u.get("pane")), _i(u.get("line"))
+            if win is None or pane is None or line is None or line < 0:
+                continue                  # 점프 재료가 없는 줄은 목록에 실을 값이 없다
+            gwin = _i(u.get("gwin"))
+            route = u.get("route")
+            if not isinstance(route, list):
+                route = []
+            route = [h for h in route[:cls._REMOTE_SEARCH_MAX_HOPS]
+                     if isinstance(h, str)]
+            out.append({"win": win, "wid": _i(u.get("wid")),
+                        "gwin": win if gwin is None else gwin,
+                        "pane": pane, "line": line, "route": route,
+                        "title": _s(u.get("title")), "text": _s(u.get("text"))})
+        return out
+
+    async def remote_search_merge(self, sess, out: dict, query: str,
+                                  hops: int = 0) -> None:
+        """로컬 결과 `out` 에 **모든 상류의 결과**를 합친다(pytmux-27 ②).
+
+        ①은 로컬 탭만 훑었다. 원격 탭의 스크롤백은 이 서버에 없으므로(상류가 갖고
+        있고 우리는 중계된 화면을 본다) 같은 검색을 **상류에 그대로 중계**해 받아
+        온다 — 이슈 본문이 "가장 큰 설계 포인트"로 지목한 갈래다.
+
+        합치면서 자리를 두 벌로 나눈다: `gwin` = **우리 병합 탭 index**(표시·번호),
+        `win`/`wid`/`route` = **점프 경로**(최종 서버의 로컬 좌표 + 거기까지의 홉).
+        하나로 뭉치면 2단(A→B→C)에서 표시 번호로 점프하게 돼 엉뚱한 탭으로 뛴다.
+
+        ⛔ **빠진 것은 반드시 말한다**(`hosts`): 시한을 넘긴 상류·끊긴 링크·홉 상한·
+        이 뷰에서 숨긴 탭(remote-detach 단일 탭)의 히트는 결과에 **없다**. 그 사실을
+        안 적으면 "저 서버엔 없구나"라는 거짓을 읽게 된다.
+        """
+        links = list(self._remotes_dict().values())
+        if not links:
+            return
+        hosts = out.setdefault("hosts", [])
+        # 홉 상한: 고리(A→B→A)에서 팬아웃이 영원히 번지지 않게 여기서 멈춘다.
+        if hops >= self._REMOTE_SEARCH_MAX_HOPS:
+            out["hops_capped"] = True
+            hosts.extend({"host": link.host, "state": "hops", "n": 0}
+                         for link in links)
+            return
+        # 남은 예산으로만 묻는다 — 로컬만으로 이미 전체 상한을 채웠으면 상류에
+        # 물어봐야 실을 자리가 없다. 그때도 "안 물어봤다"를 적는다.
+        budget = int(out.get("cap", 0)) - len(out["items"])
+        if budget <= 0:
+            hosts.extend({"host": link.host, "state": "skipped", "n": 0}
+                         for link in links)
+            return
+        replies = await asyncio.gather(*[
+            self._remote_search_ask(link, query, hops + 1, budget)
+            for link in links])
+        # 병합 탭 번호의 시작점 — _remote_tabs 와 **같은 순서·같은 계산**이어야
+        # 목록의 번호가 탭바의 번호와 맞는다(esc <n> 과도 같은 탭).
+        base = len(sess.tabs)
+        for link, (state, reply) in zip(links, replies):
+            vis = {ri: base + k
+                   for k, (ri, _rw) in enumerate(self._visible_windows(link))}
+            base += len(vis)
+            info = {"host": link.host, "state": state, "n": 0}
+            hosts.append(info)
+            if reply is None:
+                continue
+            out["panes"] += _int_or0(reply.get("panes"))
+            out["capped_panes"] += _int_or0(reply.get("capped_panes"))
+            if reply.get("truncated"):
+                info["truncated"] = True
+                out["truncated"] = True
+            for u in self._sanitize_search_items(reply.get("items")):
+                ri = u["gwin"]
+                disp = vis.get(ri)
+                if disp is None:
+                    # 이 뷰에서 숨긴 탭(remote-detach 단일 탭)의 히트 — 탭바에 없는
+                    # 자리라 뛸 곳이 없다. 세어서 말하고 목록에는 안 싣는다.
+                    info["hidden"] = info.get("hidden", 0) + 1
+                    continue
+                if len(out["items"]) >= int(out.get("cap", 0)):
+                    # ⛔ 여기서 return 하면 **뒤 상류들이 결과에서 통째로 사라진다** —
+                    # 물어봤고 답도 받았는데 `hosts` 에 한 줄도 안 남으니 사용자에게는
+                    # "저기엔 없구나"로 보인다. 그래서 세기만 하고 끝까지 돈다.
+                    out["truncated"] = True
+                    info["dropped"] = info.get("dropped", 0) + 1
+                    continue
+                out["items"].append({
+                    # 표시 — 병합 탭 번호와 `⇄host:탭` 이름.
+                    "gwin": disp, "tab": self._remote_tab_name(link,
+                                                               link.windows[ri]),
+                    "title": u["title"], "text": u["text"],
+                    # 점프 — 최종 서버의 좌표와 거기까지의 홉.
+                    "route": [link.host] + u["route"],
+                    "win": u["win"], "wid": u["wid"],
+                    "pane": u["pane"], "line": u["line"],
+                    "remote": True,
+                })
+                info["n"] += 1
+
+    async def remote_search_goto(self, client, sess, msg) -> bool:
+        """전역 검색 결과가 가리키는 **원격** 자리로 간다(pytmux-27 ②).
+
+        `route` 의 첫 홉이 우리가 쥔 링크다 — 그 링크로 보기를 돌리고 **나머지 홉**을
+        실어 `search_goto` 를 그대로 릴레이한다. 상류는 자기 로컬이면 그 자리로 가고
+        (그 FULL 프레임이 우리 링크로 와 _remote_reader 가 보는 클라에 전달한다),
+        홉이 남았으면 같은 일을 한 번 더 한다(캐스케이드 — remote_search_merge 가
+        route 를 그렇게 쌓는다).
+
+        ⛔ **보기를 먼저 돌린다.** 뒤에 돌리면 상류 프레임이 도착했을 때 이 클라가
+        아직 로컬을 보고 있어 _remote_reader 가 그 프레임을 버린다 = "골랐는데 화면이
+        안 바뀐다". 링크가 없거나(끊김·detach) 죽었으면 False — 호출부가 거부를 말한다.
+        """
+        route = msg.get("route")
+        if not isinstance(route, list) or not route:
+            return False
+        host = route[0]
+        link = self._remotes_dict().get(host) if isinstance(host, str) else None
+        if link is None or not link.alive:
+            return False
+        client.remote_view = link.host
+        try:
+            await self._link_write(link, {
+                "t": "cmd", "action": "search_goto",
+                "route": [h for h in route[1:] if isinstance(h, str)],
+                "wid": msg.get("wid"), "win": msg.get("win"),
+                "pane": msg.get("pane"), "line": msg.get("line"),
+                "query": str(msg.get("query", ""))})
         except (OSError, ConnectionError):
             return False
         return True

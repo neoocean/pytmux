@@ -33,3 +33,10 @@ db/
 .pytmux/state/
 .pytmux/db/
 .pytmux/captures/
+# QA 런 산출물(`qa/run.py` → qa/out/<runId>/findings.json·REPORT.md). 매 런 새로 나고
+# 호스트 로컬 경로·머신명이 찍히며, **결함의 정본은 이 파일이 아니라 이슈 트래커**다
+# (pytmux 는 M2 — 저장소의 docs/internal/qa/issues/*.md 는 그 미러다). depot 에 두면
+# 같은 결함이 두 곳에 살아 어느 쪽이 진짜인가가 되살아난다.
+# ★ 루트에 **앵커**한다(`/qa/out/`) — 앵커 없는 `out/` 은 어느 깊이든 먹어 다른 곳의
+#   추적 대상을 조용히 삼킨다(`/reports/` 규칙이 겪은 그 함정과 같은 쌍).
+/qa/out/

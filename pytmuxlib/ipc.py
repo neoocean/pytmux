@@ -673,7 +673,30 @@ async def open_connection(endpoint: str, *, portfile: Optional[str] = None
             return await asyncio.open_connection(host, rport)
         return await asyncio.wait_for(
             asyncio.open_connection(host, rport), cap)
+    _guard_local_socket(kind[1])
     return await asyncio.open_unix_connection(path=kind[1])
+
+
+def _guard_local_socket(path: str) -> None:
+    """`validate_local_socket` 을 **연결 경로에서** 부른다(F3 후속, 검수 2026-08-05).
+
+    종전에는 이 검사를 `ptyhostclient.connect` 하나만 불렀다. 클라↔서버 경로
+    (`clientconn._connect_and_hello` → `open_connection`, `launcher` → `control_socket`)
+    에는 아무 검사가 없었고, `resolve_default_endpoint` 는 `default_endpoint_candidates`
+    가 **문자열로 지은** 후보를 `probe` 로 찔러 살아 있으면 그대로 돌려준다 —
+    `default_state_dir` 안에 사는 `_validate_state_dir`(F3)를 한 번도 지나지 않는다.
+    그래서 `/tmp/pytmux-<uid>` 를 선점한 다른 사용자의 소켓에 그대로 붙었다(실측
+    2026-08-05: `default_endpoint()` 는 심링크를 거부하는데 `resolve_default_endpoint()`
+    는 같은 자리를 돌려주고 hello 프레임이 그 리스너에 도착했다). 소유자가 아닌 자의
+    소켓에 붙는다는 것은 **키 입력 전량이 그쪽으로 간다**는 뜻이다.
+
+    예외는 `ConnectionError`(= OSError 하위)로 바꿔 던진다 — 재접속 루프
+    (`except OSError`)와 `control_socket` 이 이미 그 모양을 다룬다. `RuntimeError`
+    그대로면 클라 리더 워커 밖으로 새어 앱이 통째로 죽는다."""
+    try:
+        validate_local_socket(path)
+    except RuntimeError as e:
+        raise ConnectionError(str(e)) from e
 
 
 # 루프백 TCP connect 타임아웃 캡. Windows 는 리스너 없는 루프백 포트로의 connect 가
@@ -740,6 +763,10 @@ def control_socket(endpoint: str, *, portfile: Optional[str] = None,
     else:
         if not os.path.exists(kind[1]):
             return None
+        try:                       # 남의 소켓에는 안 붙는다(_guard_local_socket 참조)
+            _guard_local_socket(kind[1])
+        except OSError:
+            return None            # probe → False → 발견 경로가 그 후보를 버린다
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         target = kind[1]
     s.settimeout(timeout)

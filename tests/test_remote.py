@@ -2447,6 +2447,11 @@ async def test_remote_attach_silent_upstream_warns_not_merged():
             pass
 
     mute_srv = await asyncio.start_unix_server(_mute, path=mute_path)
+    # 실물처럼 0600 으로 좁힌다. `ipc.start_server` 가 진짜 서버 소켓에 하는 일이고,
+    # 클라 연결 경로가 그것을 검사하기 때문이다(검수 2026-08-05 · `_guard_local_socket`).
+    # 안 좁히면 이 가짜 상류는 umask(0755) 라 「남에게 열린 소켓」으로 거부돼, 이 테스트가
+    # 재려는 것(무응답 상류 → attach_silent)에 닿기도 전에 attach_fail 이 난다.
+    os.chmod(mute_path, 0o600)
     reader = writer = None
     try:
         srvA.ensure_default_session(80, 24)

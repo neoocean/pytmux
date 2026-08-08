@@ -1199,6 +1199,24 @@ class ServerIOMixin:
                     "remote-new-tab {target} 실패 — {why}",
                     sticky=True, severity="error", detail=detail, target=target))
             return
+        if action == "search_goto":
+            # 전역 검색 결과가 **원격 탭**을 가리키면(route 가 있으면 · pytmux-27 ②)
+            # 그 첫 홉 링크로 보기를 돌리고 나머지를 실어 릴레이한다 — 화면은 상류
+            # _send_full 전달분이 그리므로 여기서 return 한다(_cmd_search_goto 는
+            # FULL 이라 그대로 두면 보이지 않는 **로컬** 화면을 덮어써 원격 뷰를
+            # 날린다). route 가 없으면 로컬 자리이므로 그냥 아래 표로 내려간다
+            # (select_window 와 같은 모양 — 갈래는 여기, 수행은 표).
+            # ⛔ 실패해도 로컬 폴백은 없다: 남의 서버 좌표를 우리 탭에 대고 뛰면
+            # 엉뚱한 자리로 간다 — 못 갔으면 못 갔다고 말한다. select_window 와
+            # 갈리는 지점이다(그쪽 index 는 처음부터 우리 공간이다).
+            if msg.get("route"):
+                if await self.remote_search_goto(client, sess, msg):
+                    return
+                await self._send_to(client, self._notice_msg(
+                    "rnotice.search_goto_gone",
+                    "그 원격 탭으로 갈 수 없습니다 — 링크가 끊겼거나 해제됐습니다",
+                    severity="warn"))
+                return
         if action == "select_window":
             idx = int(msg.get("index", 0))
             if idx >= len(sess.tabs):

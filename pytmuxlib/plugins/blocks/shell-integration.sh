@@ -36,7 +36,26 @@ __pytmux_shell_integration=1
 __pytmux_osc() { printf '\033]%s\033\\' "$1"; }
 
 # cwd 를 URL 로. 공백·한글 경로도 그대로 다룰 수 있게 file:// 형식을 쓴다.
-__pytmux_report_cwd() { __pytmux_osc "7;file://${HOSTNAME:-localhost}${PWD}"; }
+#
+# ⛔ **제어문자는 퍼센트 인코딩한다**(검수 2026-08-05). 머리말은 "제어문자는 escape
+# 한다"고 적어 뒀는데 그 규율이 명령줄(`__pytmux_report_cmd`)에만 있었다 — BEL·ESC 가
+# 든 디렉터리 이름은 POSIX 에서 만들 수 있고(압축 파일 하나면 된다), 그 이름으로 `cd`
+# 하면 OSC 7 이 거기서 끊겨 ⑴ cwd 가 잘리고 ⑵ 남은 바이트가 화면 스트림으로 샌다
+# (실측: `/tmp/loot\x07;echo PWNED` → 파서가 본 cwd 는 `/tmp/loot`, 화면에 `;echo PWNED`).
+# 잘린 cwd 는 그대로 §10-21ⓧ2 의 **상대경로 해석 기준**이 되므로 조용한 오답도 된다.
+#
+# `\xHH`(명령줄 규약) 가 아니라 **퍼센트**인 이유: 이 필드는 URL 이고 서버가
+# `_parse_file_url` 에서 `unquote` 한다 — `%07` 은 BEL 로 되돌아와 `_sanitize_path` 가
+# 공백으로 접는다. `\x07` 이면 백슬래시가 경로에 그대로 남는다(cwd 는 `_unescape` 를
+# 안 탄다).
+__pytmux_report_cwd() {
+	local s="${HOSTNAME:-localhost}${PWD}"
+	s=${s//"$__pytmux_esc"/%1B}
+	s=${s//"$__pytmux_bel"/%07}
+	s=${s//"$__pytmux_cr"/%0D}
+	s=${s//"$__pytmux_nl"/%0A}
+	__pytmux_osc "7;file://$s"
+}
 
 # 명령줄을 OSC 필드로 안전하게 만든다. 패턴을 따옴표로 감싸 **글자 그대로** 치환한다
 # (bash·zsh 공통 — 안 감싸면 백슬래시가 패턴 escape 로 먹힌다).

@@ -123,6 +123,49 @@ class ServerCmdMixin:
     async def _cmd_search(self, client, sess, msg):
         self.search_pane(sess, msg.get("query"), msg.get("direction", "up"))
 
+    @_cmd("search_all", HANDLED)
+    async def _cmd_search_all(self, client, sess, msg):
+        """전역 검색(pytmux-27 ①·②) — 회신이 **목록**이라 요청 클라에게만 보낸다.
+
+        HANDLED 인 이유: 세션 상태를 하나도 안 바꾼다(읽기만 한다). 재동기할 캔버스가
+        없고 다음 동작은 클라가 `search_goto` 로 되묻는다 — `request_buffers` 와 같은
+        결이다. 회신을 브로드캐스트하지 않는 이유도 같다: 남의 화면에 남이 친 검색
+        결과 판이 뜨면 안 된다.
+        ⚠ HANDLED 는 원격 보기 중에도 **필수**다 — FULL 이면 검색 한 번이 보이지
+        않는 로컬 화면을 그 클라에 덮어써 원격 뷰를 날린다.
+
+        ②: 로컬을 훑은 뒤 **같은 검색을 전 상류에 중계해 합친다**
+        (`remote_search_merge`). 이 핸들러는 다운스트림이 릴레이한 요청도 그대로
+        받으므로(그때 `client` 는 그 페더레이션 링크다) 캐스케이드가 저절로 된다 —
+        `hops` 가 고리에서 무한히 번지는 것을 막고, `_req_token` 은 물어본 쪽이
+        자기 회신을 알아보는 표식이라 **그대로 돌려준다**(§4.1 릴레이 라우팅 규약.
+        테이블 디스패치에는 `_dispatch_plugin_cmd` 의 echo 가 없어 여기서 한다)."""
+        q = str(msg.get("query", ""))
+        limit = _int(msg.get("limit"), 0)
+        res = await (self.search_all_panes(sess, q, limit=limit) if limit > 0
+                     else self.search_all_panes(sess, q))
+        await self.remote_search_merge(sess, res, q,
+                                       hops=_int(msg.get("hops"), 0))
+        resp = dict(res, t="search_results", query=q)
+        if msg.get("_req_token") is not None:
+            resp["_req_token"] = msg["_req_token"]
+        await self._send_to(client, resp)
+
+    @_cmd("search_goto", FULL)
+    async def _cmd_search_goto(self, client, sess, msg):
+        """결과 한 줄이 가리키는 탭·패널·스크롤로 간다(**로컬 자리 전용**).
+
+        FULL 인 이유: 탭 전환 + 패널 전환 + 스크롤을 한꺼번에 바꾸므로 요청 클라가
+        그 자리를 곧바로 봐야 한다(`select_window` 와 같은 갈래).
+
+        원격 자리(`route` 가 비어 있지 않은 결과 줄)는 여기까지 오지 않는다 —
+        `serverio._handle_cmd` 가 앞에서 갈라 `remote_search_goto` 로 보낸다. 화면을
+        상류 프레임이 그리므로 그쪽은 FULL 이면 안 되기 때문이다(pytmux-27 ②)."""
+        self.search_goto(sess, wid=msg.get("wid"), win=_int(msg.get("win"), -1),
+                         pane=_int(msg.get("pane"), -1),
+                         line=_int(msg.get("line"), 0),
+                         query=str(msg.get("query", "")))
+
     # ── 버퍼 / 붙여넣기 / 캡처 ────────────────────────────────────────────
     @_cmd("set_buffer", HANDLED)
     async def _cmd_set_buffer(self, client, sess, msg):

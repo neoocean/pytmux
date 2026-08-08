@@ -16,6 +16,14 @@ Textual 클라는 그 능력을 광고하지 않으므로 프레임이 늘지 �
 
 블록은 서버가 만든다. 클라는 받아 그리기만 한다 — 두 클라(파이썬·네이티브)가 각자
 경계를 추정하면 서로 다른 블록을 보게 된다.
+
+# ⚠ 여기가 유일한 출처는 아니다 (pytmux-21)
+
+**Claude 는 OSC 를 안 보낸다.** 그래서 Claude 패널의 경계는 화면 글의 프롬프트 마커에서
+나오고, 그 판정은 `plugins/claude-code/promptblocks.py` 에 있다 — 같은 `blocks` 메시지로
+가므로 **클라는 둘을 구별하지 않는다**(고르기·강조·복사가 한 벌). 한 패널에 둘 다 걸릴 수
+있어서 누가 이기는지는 `Registry._blocks_sources`(`blocks_rank`)가 정한다. 이 디렉토리를
+지우면 셸 블록만 사라지고 Claude 턴은 남는다.
 """
 from .segment import MAX_BLOCKS, Segmenter
 
