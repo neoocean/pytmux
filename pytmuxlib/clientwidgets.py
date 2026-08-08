@@ -1192,6 +1192,22 @@ class TabBar(Widget):
                sum(widths[unpinned_pos[j]]
                    for j in range(self._scroll, sel_uidx + 1)) > mid_w - 2):
             self._scroll += 1
+        # ⛔ **끝을 지나 밀리지 않는다**(pytmux-149). 위 루프는 스크롤을 *올리기만* 하고
+        #   내리는 코드가 어디에도 없었다 — 그래서 좁은 폭에서 한 번 밀린 값이 폭이
+        #   넓어져도 그대로 남는다. 기동 직후가 정확히 그 창이다: 진짜 터미널 폭이 오기
+        #   전 프레임에서 mid_w 가 한 칸짜리라 _scroll 이 밀리고, 폭이 와도 안 돌아온다.
+        #   증상은 **재부착하면 탭 1이 ◀ 뒤에 숨은 채 온다**(둘 다 들어가는 폭인데도).
+        #   스크롤 가능한 것의 당연한 불변식을 여기서 세운다: 상한은 «[s..끝] 이 가운데
+        #   구역에 들어가는 가장 작은 s». 다 들어가면 그 값이 0 이라 ◀ 자체가 사라진다.
+        #   ⚠ 자리가 **이 루프 뒤**인 이유: 앞에 두면 위 루프가 다시 밀어 올린다(판정
+        #   기준이 mid_w-2 라 한 칸 어긋난다). 뒤에 두어도 선택 탭은 계속 보인다 —
+        #   s=max_scroll 이면 [max_scroll..끝] 이 통째로 들어가므로 그 안에 sel 도 있다.
+        suffix = sum(widths[k] for k in unpinned_pos)
+        max_scroll = 0
+        while max_scroll < nu - 1 and suffix + (1 if max_scroll else 0) > mid_w:
+            suffix -= widths[unpinned_pos[max_scroll]]   # ◀ 한 칸은 s>0 일 때만 든다
+            max_scroll += 1
+        self._scroll = min(self._scroll, max_scroll)
         entries, mid_used = [], 0
         if self.LEAD:                              # 왼쪽 여백(첫 탭 한 칸 오른쪽)
             entries.append(("lead", None, " " * self.LEAD))

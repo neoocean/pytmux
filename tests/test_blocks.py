@@ -306,7 +306,18 @@ async def test_real_shell_integration_escapes_control_chars_in_the_cwd():
                           "shell-integration.sh")
     base = tempfile.mkdtemp()
     evil = os.path.join(base, "loot\x07;echo PWNED")
-    os.mkdir(evil)
+    try:
+        os.mkdir(evil)
+    except OSError as e:
+        # ⚠ **재료를 못 만드는 상자가 있다.** 이 테스트의 전제는 docstring 이 적어 둔
+        #   그대로 «제어문자가 든 디렉터리는 POSIX 에서 만들 수 있다» 인데, NTFS 는
+        #   1..31 을 파일명에 금지한다 — Windows 에서는 `os.mkdir` 이 WinError 123 으로
+        #   죽는다. 그런데 이 상자에도 Git Bash 가 있어 위 `_posix_shell()` 가드는
+        #   통과하므로, 가드 없이 두면 **환경 실패가 제품 결함처럼** 빨간 줄로 남는다
+        #   (실측 2026-08-08 alienware — 이 파일이 들어온 p4 70724 는 맥에서 났다).
+        #   OS 이름이 아니라 «만들어지나»로 가르는 이유: 판정을 막는 것은 플랫폼이
+        #   아니라 파일시스템의 능력이고, 그 둘은 같지 않다(맥의 FAT 볼륨도 걸린다).
+        skip(f"이 파일시스템은 제어문자가 든 디렉터리를 못 만든다: {e}")
     out = subprocess.run(
         [shell, "-c", "source %s; cd %s; HOSTNAME=h __pytmux_report_cwd"
                       % (shlex.quote(script), shlex.quote(evil))],

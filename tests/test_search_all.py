@@ -27,11 +27,39 @@
 """
 
 import asyncio
+import os
 
 import harness  # noqa: F401  (경로 설정)
 from harness import server_only, teardown, wait_for
+from run import skip
 from test_remote import _attach_client, _read_until
 from pytmuxlib.protocol import read_msg, write_msg
+
+
+def _skip_if_two_servers_need_a_client_on_windows():
+    """서버 **둘 이상 + 그중 하나에 클라가 붙는** 시나리오는 Windows 에서 못 잰다.
+
+    이유는 ssh 도 PTY 도 아니라 **상태파일 이름**이다. Windows 는 AF_UNIX 대신 TCP 로
+    가는데, `ipc` 는 TCP 엔드포인트의 상태 prefix·포트파일·토큰을 전부 상태 디렉터리의
+    **고정 이름**(`default`·`default.port`·`default.token`)으로 접는다 — 포트가 재기동
+    마다 바뀌어도 발견이 안정적이어야 하기 때문이다(WINDOWS_PORT.md §7-c-4). Unix 는
+    소켓 경로가 곧 prefix 라 서버마다 저절로 갈린다.
+
+    그래서 `harness.server_only()` 의 «테스트마다 유니크한 LOCALAPPDATA» 격리는 **한
+    테스트 안의 두 서버**를 못 가른다: B 가 뜨면서 같은 자리의 `default.token` 을
+    덮어쓰고, 그 뒤 A 에 붙는 클라는 `read_token()` 으로 **B 의 토큰**을 읽어 A 에
+    내민다 → A 가 `auth_failed` 로 끊는다(실측 2026-08-08 alienware).
+
+    ⚠ 그래서 서버가 둘이어도 **클라를 안 붙이는** 테스트(서버 API 직접 호출)는 여기서
+    잘 돈다 — 이 파일의 원격 테스트 여럿이 그렇다. 가르는 선은 «서버가 둘»이 아니라
+    «둘 뜬 뒤에 토큰으로 붙는가» 다.
+
+    형제 모듈 `test_remote.py` 는 같은 벽을 같은 방식으로 이미 건너뛴다.
+    """
+    if os.name == "nt":
+        skip("Windows 는 서버마다 토큰/포트파일이 안 갈린다"
+             "(TCP 는 상태 prefix 가 고정 `default` — 두 번째 서버가 첫 서버의 "
+             "default.token 을 덮어써 클라 attach 가 auth_failed 로 끊긴다)")
 
 
 async def _fill(pane, lines):
@@ -237,6 +265,7 @@ async def test_search_all_relays_to_the_upstream_and_merges_one_list():
 
     그리고 조각으로 흘리지 않는다 — 클라가 받는 `search_results` 는 **한 벌**이다
     (상류 회신을 그대로 재방송하면 결과 판이 상류 수만큼 열린다)."""
+    _skip_if_two_servers_need_a_client_on_windows()
     srvA, taskA, sockA, srvB, taskB, sockB, sessA, sessB, link = \
         await _linked_pair()
     reader = writer = None
@@ -339,6 +368,7 @@ async def test_search_goto_into_a_remote_hit_switches_view_and_jumps_upstream():
 
     ⛔ 보기를 먼저 돌려야 상류 프레임이 이 클라에 전달된다 — 뒤에 돌리면 프레임이
     버려져 "골랐는데 화면이 안 바뀐다"가 된다."""
+    _skip_if_two_servers_need_a_client_on_windows()
     srvA, taskA, sockA, srvB, taskB, sockB, sessA, sessB, link = \
         await _linked_pair()
     reader = writer = None
@@ -447,6 +477,7 @@ async def test_search_all_is_no_longer_refused_while_viewing_a_remote_tab():
     ②가 그 전제를 없앴다 — 이제 로컬 + 전 상류를 합쳐 돌려주고 줄마다 어느 탭인지를
     이름으로 밝힌다. 거부가 남아 있으면 "원격 탭을 보는 중엔 전역 검색이 안 된다"는
     정확히 반대의 화면이 된다."""
+    _skip_if_two_servers_need_a_client_on_windows()
     from pytmuxlib.serverremote import _REMOTE_BLOCK_ACTIONS
     assert "search_all" not in _REMOTE_BLOCK_ACTIONS
     assert "search_goto" not in _REMOTE_BLOCK_ACTIONS
@@ -482,6 +513,7 @@ async def test_search_all_reaches_across_a_cascade_and_jumps_back_through_it():
     여기가 두 좌표계를 섞으면 곧바로 드러나는 자리다: 표시 번호(`gwin`, 보는 쪽 병합
     탭바)와 점프 좌표(`win`/`wid`, **최종 서버**의 로컬 탭)가 캐스케이드에서 갈린다.
     하나로 뭉치면 "번호는 맞는데 엉뚱한 탭으로 뛴다"가 된다."""
+    _skip_if_two_servers_need_a_client_on_windows()
     srvA, taskA, sockA = await server_only()
     srvB, taskB, sockB = await server_only()
     srvC, taskC, sockC = await server_only()

@@ -3735,6 +3735,77 @@ async def test_tab_bar_scroll_and_hide_bottom():
     await _with_app(body, size=(38, 12))
 
 
+async def test_tab_bar_scroll_returns_when_the_width_grows():
+    """pytmux-149: 좁을 때 밀린 스크롤이 **폭이 넓어지면 돌아와야** 한다.
+
+    QA T0 가 재부착 스텝에서 잡은 결함이다 — 탭 둘이 다 들어가는 폭인데 상태줄이
+    `◀ 2:zsh` 로 오고 탭 1이 숨었다. 원인은 재부착이 아니라 **기동 창**이다: 진짜
+    터미널 폭이 오기 전 프레임에서 `_scroll` 이 밀리는데, `_entries()` 에 그 값을
+    *올리는* 코드만 있고 내리는 코드가 없어 폭이 와도 그대로 남았다.
+
+    ⚠ 그래서 «스크롤 상태를 손으로 심고 0 이 되나»로 재면 **재현이 아니다**. 좁은
+    폭에서 실제로 밀리는 것을 먼저 확인하고(그게 전제다), 그 다음 넓혀서 본다.
+    """
+    async def body(app, pilot, srv):
+        # ⚠ 탭은 **서버에 진짜로** 만든다. 손으로 `status.windows` 를 심으면 리사이즈가
+        #   부르는 재동기가 그것을 서버 상태로 덮어써, 넓힌 뒤에 보는 것이 탭 하나짜리
+        #   화면이 된다(실측 — 그러면 이 테스트는 아무것도 안 재고 통과한다).
+        app.send_cmd("new_window")
+        await wait_until(pilot, lambda: len(app.tabbar.tabs) == 2)
+        # ① 전제 — 좁은 폭(14)에서는 라벨 둘(각 7칸 안팎)이 가운데 구역
+        #   (14 - "  [+]" 5 - LEAD 1 = 8)에 **정말로** 안 들어가 밀린다.
+        #   ⚠ 20 으로 재면 안 된다 — 거기선 14 ≤ 14 로 딱 들어간다(실측). 그런데도
+        #   옛 코드는 `mid_w - 2` 여유를 요구해 밀었다: 그 한 칸 차이가 이 결함의
+        #   본체라, 20 을 쓰면 «고쳤더니 전제가 사라지는» 테스트가 된다.
+        await wait_until(pilot, lambda: (app.tabbar._entries(),
+                                         app.tabbar._scroll > 0)[1])
+        bar_narrow = "".join(s.text for s in app.tabbar.render_line(0))
+        assert "◀" in bar_narrow, bar_narrow
+
+        # ② 폭이 넓어지면 되돌아온다 — ◀ 가 사라지고 탭 둘이 다 보인다.
+        await pilot.resize_terminal(100, 30)
+        await wait_until(pilot, lambda: app.tabbar.size.width >= 100)
+        app.tabbar._entries()
+        assert app.tabbar._scroll == 0, \
+            f"다 들어가는 폭인데 스크롤이 남았다: _scroll={app.tabbar._scroll}"
+        bar_wide = "".join(s.text for s in app.tabbar.render_line(0))
+        assert "◀" not in bar_wide, f"스크롤 표시가 남았다: {bar_wide!r}"
+        # 탭 번호 둘 다 — QA T0 오라클(`client/renders_tree`)이 보는 것과 같은 재료다.
+        assert "1:" in bar_wide and "2:" in bar_wide, bar_wide
+    await _with_app(body, size=(14, 12), cfg={"tab_bar_always": True})
+
+
+async def test_tab_bar_scroll_never_passes_the_end():
+    """같은 불변식의 일반형: 넘치는 폭이어도 «끝을 지나» 밀리지는 않는다.
+
+    탭이 실제로 넘칠 때 ▶ 로 오른쪽 끝까지 민 뒤에는, 마지막 탭이 오른쪽 끝에 붙고
+    그 뒤로 더 밀리지 않아야 한다(밀리면 오른쪽에 빈칸이 생기고 왼쪽 탭만 잃는다).
+    """
+    async def body(app, pilot, srv):
+        names = [f"window-name-{i}" for i in range(6)]     # 6*≈17 > 100 → 넘친다
+        # ⚠ **마지막 탭이 활성**이라야 오른쪽 스크롤이 유지된다 — 활성 탭이 왼쪽에
+        #   있으면 «선택 탭은 늘 보인다» 규칙이 스크롤을 즉시 0 으로 되돌린다(실측).
+        app.status.windows = [{"index": i, "name": n, "active": (i == 5)}
+                              for i, n in enumerate(names)]
+        app._update_tabbar()
+        app.tabbar.set_tabs(app.status.windows, 5)
+        app.tabbar.scroll_by(99)                # 끝까지(그리고 그 너머로) 민다
+        ents = app.tabbar._entries()
+        shown = [i for k, i, _ in ents if k == "tab"]
+        # ★ **양성 오라클**로 적는다. "▶ 가 없다 · 마지막 탭이 보인다"만 재면 스크롤이
+        #   끝까지(5) 밀려 **탭 하나만** 남은 화면도 통과한다 — 실제로 그렇게 적었다가
+        #   뮤테이션(클램프 제거)을 못 잡았다. 재야 하는 것은 «오른쪽에 빈칸을 남기지
+        #   않는다» 다: 라벨 17칸 × 6 = 102 > 가운데 94 라 하나만 밀리면 나머지 다섯
+        #   (85 + ◀ 1 = 86 ≤ 94)이 전부 들어간다.
+        assert app.tabbar._scroll == 1, \
+            f"끝을 지나 밀렸다(오른쪽에 빈칸이 생긴다): _scroll={app.tabbar._scroll}"
+        assert shown == [1, 2, 3, 4, 5], shown
+        # 왼쪽엔 가려진 것이 있고(◀), 오른쪽엔 더 없다(▶ 없음).
+        kinds = [k for k, _, _ in ents]
+        assert "scroll_left" in kinds and "scroll_right" not in kinds, kinds
+    await _with_app(body, cfg={"tab_bar_always": True})
+
+
 async def test_tab_bar_force_always():
     async def body(app, pilot, srv):
         assert app.tabbar.display is True, "tab-bar always 면 1탭도 표시"

@@ -40,10 +40,23 @@ for _s in (sys.stdout, sys.stderr):
 
 
 def run(cmd, cwd=ROOT):
-    """(rc, stdout) — 실패해도 예외 대신 rc 로 돌려준다(도구 부재 진단용)."""
+    """(rc, stdout) — 실패해도 예외 대신 rc 로 돌려준다(도구 부재 진단용).
+
+    ⛔ **`encoding` 을 반드시 못박는다.** `text=True` 만 주면 파이썬이
+    `locale.getpreferredencoding()` 으로 디코드하는데, 이 상자(Windows-KR)에서 그것은
+    **cp1252** 다 — 그러면 이 저장소의 한국어 커밋 메시지·p4 디스크립션이
+    `UnicodeDecodeError` 로 죽는다. 죽는 자리가 이 함수 **밖**이라(여기 except 는
+    OSError/Timeout 만 받는다) 증상은 엉뚱하게 나온다: 호출부가 `None` 을 받아
+    `AttributeError: 'NoneType' object has no attribute 'splitlines'`.
+
+    ⚠ 이 결함은 **미푸시 커밋이 하나라도 있어야** 드러난다 — 없으면 `git log` 출력이
+    비어 디코드할 것이 없다. 그래서 "게이트가 초록이었다"가 «드리프트가 없다»가 아니라
+    «잴 것이 없었다» 였다. 이 저장소의 커밋 메시지는 전부 한국어라, 사실상
+    **Windows 에서 미푸시를 한 번도 보고할 수 없었다**(실측 2026-08-08).
+    """
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                           timeout=60)
+                           encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
         return 127, f"{e}"
     return p.returncode, p.stdout
