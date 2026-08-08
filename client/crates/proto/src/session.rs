@@ -2484,6 +2484,20 @@ impl SessionState {
         Some(self.screens.get(&pane_id)?.scroll)
     }
 
+    /// 이 패널에서 **지금 살아 있는 마지막 줄**의 절대 행. 화면을 아직 못 받았으면 `None`.
+    ///
+    /// 뷰포트 첫 줄(`top`)은 스크롤한 만큼 위로 가 있으므로, 라이브 하단은
+    /// `top + scroll + h - 1` 이다(스크롤이 0 이면 그냥 뷰포트의 마지막 줄).
+    ///
+    /// 쓰는 곳: 아직 안 끝난 블록의 **끝 행**([`crate::blocks::row_span`]). 그 블록은
+    /// 지금도 자라는 중이라 서버가 끝을 안 알려 준다 — 물어볼 수 있는 것은 "지금까지
+    /// 어디까지 찼나"뿐이다.
+    pub fn pane_live_bottom(&self, pane_id: i64) -> Option<usize> {
+        let screen = self.screens.get(&pane_id)?;
+        let (_, _, _, h) = self.pane_rect(pane_id)?;
+        Some(screen.top + screen.scroll + usize::from(h).saturating_sub(1))
+    }
+
     /// 패널의 **내용** 사각형 `(x, y, w, h)`. 테두리는 뺀 안쪽이다.
     ///
     /// 선택은 테두리를 포함하지 않는다 — 테두리는 서버가 그린 글자가 아니라 클라가

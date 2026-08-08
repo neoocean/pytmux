@@ -1715,6 +1715,11 @@ async def test_command_table_disposition_golden():
         "select_pane_id": FULL, "cycle_pane": FULL, "last_pane": FULL,
         "set_sync": FULL, "set_pane_title": FULL, "set_border_status": FULL,
         "respawn_pane": FULL, "search": FULL,
+        # 전역 검색(pytmux-27 ① · 2026-08-05) — 골든이 바뀌는 "의도적 계약 변경"의
+        # 그 경우다. `search_all` 은 세션을 안 바꾸고 **목록만 회신**하므로 HANDLED
+        # (request_buffers 와 같은 결), `search_goto` 는 탭·패널·스크롤을 한꺼번에
+        # 바꾸므로 FULL(select_window 와 같은 결).
+        "search_all": HANDLED, "search_goto": FULL,
         # 버퍼/붙여넣기/캡처
         "set_buffer": HANDLED, "paste_buffer": HANDLED, "paste": HANDLED,
         "request_buffers": HANDLED, "clear_history": HANDLED,

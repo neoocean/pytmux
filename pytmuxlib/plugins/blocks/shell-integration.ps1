@@ -71,6 +71,19 @@ function global:__pytmux_escape([string]$s) {
 # cwd 를 file:// URL 로. `D:\a\b` → `file:///D:/a/b` 가 규격이고, 서버가 앞의 `/` 를
 # 뗀다(`_parse_file_url`). PowerShell 의 위치는 파일시스템이 아닐 수 있으므로
 # (`Cert:\`·`HKLM:\`) 파일시스템일 때만 보낸다 — 아니면 cwd 가 경로가 아닌 것이 된다.
+# URL 필드에 실을 글에서 **OSC 종결자를 퍼센트 인코딩**한다(검수 2026-08-05 · `.sh` 와
+# 같은 수정). 명령줄 쪽(`__pytmux_escape`)에만 있던 규율이 cwd 에는 없어서, BEL·ESC 가
+# 든 디렉터리 이름 하나가 OSC 7 을 끊고 남은 바이트를 화면으로 흘렸다. `\xHH` 가 아니라
+# 퍼센트인 이유는 서버가 이 필드를 `unquote` 하기 때문이다(`.sh` 주석 참조).
+function global:__pytmux_urlsafe([string]$s) {
+    if ($null -eq $s) { return '' }
+    $s = $s.Replace([string][char]27, '%1B')
+    $s = $s.Replace([string][char]7, '%07')
+    $s = $s.Replace("`r", '%0D')
+    $s = $s.Replace("`n", '%0A')
+    return $s
+}
+
 function global:__pytmux_report_cwd() {
     $loc = Get-Location
     if ($loc.Provider.Name -ne 'FileSystem') { return }
@@ -81,7 +94,7 @@ function global:__pytmux_report_cwd() {
     if (-not $p.StartsWith('/')) { $p = "/$p" }
     $host_ = $env:COMPUTERNAME
     if (-not $host_) { $host_ = 'localhost' }
-    __pytmux_osc "7;file://$host_$p"
+    __pytmux_osc ("7;file://" + (__pytmux_urlsafe ($host_ + $p)))
 }
 
 function global:__pytmux_report_cmd([string]$line) {

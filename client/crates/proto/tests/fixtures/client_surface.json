@@ -309,6 +309,7 @@
     "e_down": "↓ (최하단에서)",
     "e_e": "e",
     "e_esc": "ESC",
+    "e_f": "f",
     "e_help": "?",
     "e_ins": "Insert / Shift+Delete",
     "e_jump": "Ctrl+↑ / Ctrl+↓",
@@ -344,6 +345,7 @@
     "rename_window",
     "rotate",
     "search",
+    "search_all",
     "select_layout",
     "settings",
     "split_lr",
@@ -441,6 +443,7 @@
     "NoticeHistoryScreen",
     "PluginManagerScreen",
     "PromptScreen",
+    "SearchResultsScreen",
     "SettingsScreen",
     "TabSwitcherScreen",
     "_SettingInputScreen"

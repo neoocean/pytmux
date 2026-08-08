@@ -1121,7 +1121,36 @@ class _ClaudeCodePlugin:
     #: 페더레이션: 이 서버가 업스트림에 붙을 때 광고할 능력. 이게 없으면 업스트림이
     #: 트랜스크립트 꼬리를 안 보내고, 원격 탭을 보는 네이티브 클라는 Claude 뷰가 로컬
     #: 탭에서만 보이는 비대칭을 겪는다(blocks 와 같은 구조 — `plugins/blocks`).
-    upstream_caps = ("claude",)
+    #: `blocks` 도 함께 광고한다 — 원격 탭의 Claude 패널도 턴 경계를 받아야 한다
+    #: (`promptblocks`). 셸 블록만 쓰던 때는 `plugins/blocks` 가 그 자리를 대신했지만,
+    #: 그 디렉터리를 지우면 Claude 턴까지 조용히 사라졌을 것이다.
+    upstream_caps = ("claude", "blocks")
+
+    # ---- 블록 경계: Claude 패널의 **턴**(pytmux-21) ----
+    #
+    # 같은 패널에 경계의 출처가 둘일 수 있다 — 셸 통합(OSC 133)과 프롬프트 마커다.
+    # Claude 패널에서 고르고 싶은 것은 **턴**이지 그 패널을 띄운 `claude` 명령 하나가
+    # 아니므로, 더 구체적인 이쪽이 이긴다(`blocks_rank`). 셸 패널에서는 `promptblocks`
+    # 가 스스로 빠진다(`> ` 로 시작하는 인용·diff 오인 방지).
+    blocks_rank = 10
+
+    # ⚠ `promptblocks` 는 **지연 import** 다. 그 모듈이 `pytmuxlib.model` 을 읽는데
+    #   model 은 `pytmuxlib.plugins` 를 읽으므로, 여기서 최상단 import 를 하면
+    #   plugins.load() 한복판에서 순환이 된다(반쯤 초기화된 모듈을 잡는다).
+    @staticmethod
+    def blocks_wire(pane):
+        from . import promptblocks
+        return promptblocks.wire(pane)
+
+    @staticmethod
+    def blocks_dirty(pane):
+        from . import promptblocks
+        return promptblocks.dirty(pane)
+
+    @staticmethod
+    def clear_blocks_dirty(pane):
+        from . import promptblocks
+        promptblocks.clear_dirty(pane)
 
     def claude_tail(self, server, pane, force=False):
         """이 패널의 Claude 트랜스크립트 **꼬리 원문**. 보낼 것이 없으면 None.

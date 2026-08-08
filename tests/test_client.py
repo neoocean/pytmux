@@ -2659,6 +2659,121 @@ async def test_context_menu_new_pane_ops_wired():
     await _with_app(body)
 
 
+async def test_search_all_has_two_entrances_and_one_destination():
+    """전역 검색(pytmux-27 ①) — 입구 둘(esc f · 컨텍스트 메뉴)이 같은 곳으로 간다.
+
+    ⛔ **스크롤백 검색과 섞이면 안 된다**: `/`(그리고 메뉴 `search`)는 `search` 를,
+    이쪽은 `search_all` 을 보낸다. 두 목적이 같은 프롬프트를 타면 Enter 한 번의 뜻이
+    두 개가 되고, 그건 사용자에게 "가끔 다른 게 뜬다"로만 보인다."""
+    async def body(app, pilot, srv):
+        opened = []
+        app.open_prompt = lambda purpose, ph="", **k: opened.append(purpose)
+        app._run_menu_action("search_all")
+        assert opened == ["search_all"], opened
+        # esc f — esc 모드를 빠지면서 같은 프롬프트로.
+        opened.clear()
+        app.mode = "esc"
+        await pilot.press("f")
+        assert opened == ["search_all"], (opened, app.mode)
+        assert app.mode != "esc", "키를 먹었으면 esc 모드는 빠진다"
+    await _with_app(body)
+
+
+async def test_search_all_result_pick_jumps_and_enters_scroll_mode():
+    """결과 회신 → 판 → 고른 줄로 점프. **대기 중일 때만** 판이 열린다.
+
+    점프는 뷰를 라이브 하단에서 떼어 놓으므로 스크롤 모드로 들어간다(esc ctrl+↑/↓
+    프롬프트 점프와 같은 규약) — 안 그러면 ↑↓·n/N 이 셸로 새어 들어간다."""
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientscreens import SearchResultsScreen
+        pushed, sent = [], []
+        app.push_screen = lambda scr, cb=None, *a, **k: (
+            pushed.append((scr, cb)) or None)
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        msg = {"t": "search_results", "query": "NEEDLE", "panes": 2,
+               "truncated": True, "capped_panes": 1, "cap": 200, "per_pane": 20,
+               "items": [{"win": 1, "wid": 7, "tab": "win", "pane": 4,
+                          "title": "zsh", "line": 42, "text": "여기 NEEDLE"}]}
+
+        # ① 대기 중이 아니면 조용히 무시한다(뒤늦게 온 회신에 판이 열리지 않게).
+        app._want_search_all = False
+        app._dispatch(dict(msg))
+        assert not pushed, "안 물어봤는데 판이 떴다"
+
+        # ② 대기 중이면 판이 열리고, 상한에 걸린 사실이 제목 줄에 남는다.
+        app._want_search_all = True
+        app._dispatch(dict(msg))
+        assert len(pushed) == 1, pushed
+        scr, cb = pushed[0]
+        assert isinstance(scr, SearchResultsScreen)
+        title = scr.title_text()
+        assert "NEEDLE" in title and "200" in title and "20" in title, title
+
+        # ③ 고르면 그 자리로 — 화면이 돌려준 항목이 그대로 명령의 인자가 된다.
+        #    route 는 원격 홉 사슬(pytmux-27 ②) — 로컬 히트면 빈 리스트다.
+        cb(msg["items"][0])
+        assert ("search_goto", {"wid": 7, "win": 1, "pane": 4, "line": 42,
+                                "route": [], "query": "NEEDLE"}) in sent, sent
+        assert app.mode == "scroll", app.mode
+
+        # ④ 취소(Esc)면 아무 데도 안 간다.
+        sent.clear()
+        cb(None)
+        assert sent == [], sent
+    await _with_app(body)
+
+
+async def test_search_all_result_panel_speaks_about_the_remote_hosts():
+    """원격까지 합친 목록(pytmux-27 ②) — **빠진 상류를 말하고**, 번호는 병합 탭바 것.
+
+    ⛔ 여기서 조용하면 "저 서버엔 없구나"라는 거짓을 읽게 된다. 무응답 상류가 있으면
+    그 사실이 제목 줄에 남아야 한다(로컬 상한과 같은 no silent caps 규율).
+
+    번호는 `gwin`(우리 병합 탭 번호)이지 `win`(그 상류의 로컬 탭 번호 = 점프 좌표)이
+    아니다 — 섞으면 목록의 번호가 탭바와 어긋난다. 그리고 고를 때는 **받은 route 를
+    그대로** 되돌려준다(좌표계를 아는 것은 서버지 화면이 아니다)."""
+    async def body(app, pilot, srv):
+        from pytmuxlib.clientscreens import SearchResultsScreen
+        pushed, sent = [], []
+        app.push_screen = lambda scr, cb=None, *a, **k: (
+            pushed.append((scr, cb)) or None)
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        msg = {"t": "search_results", "query": "NEEDLE", "panes": 3,
+               "truncated": False, "capped_panes": 0, "cap": 200, "per_pane": 20,
+               "hosts": [{"host": "B", "state": "ok", "n": 1, "hidden": 2,
+                          "dropped": 3},
+                         {"host": "C", "state": "timeout", "n": 0}],
+               "items": [{"win": 0, "wid": 7, "tab": "local", "pane": 4,
+                          "title": "zsh", "line": 3, "text": "로컬 NEEDLE"},
+                         {"win": 1, "wid": 9, "gwin": 5, "tab": "⇄B:빌드",
+                          "pane": 2, "title": "make", "line": 42,
+                          "route": ["B"], "remote": True,
+                          "text": "원격 NEEDLE"}]}
+        app._want_search_all = True
+        app._dispatch(dict(msg))
+        scr, cb = pushed[0]
+        assert isinstance(scr, SearchResultsScreen)
+
+        # ① 상류 요약: 답한 곳 수 + **빠진 곳과 그 사유**(무응답·숨긴 탭).
+        hosts = scr.hosts_text()
+        assert "1/2" in hosts, hosts
+        assert "C(" in hosts and "B(" in hosts, ("빠진 곳을 안 말했다", hosts)
+        # 한 상류에 사유가 둘이면 둘 다 적는다(숨긴 탭 2 + 상한에 3).
+        assert "2" in hosts and "3" in hosts, ("사유가 하나로 접혔다", hosts)
+        assert hosts in scr.title_text(), "요약이 제목 줄에 없다"
+
+        # ② 번호는 병합 탭바 것(gwin+1=6)이지 상류 로컬 번호(win+1=2)가 아니다.
+        row = scr._row_text(msg["items"][1]).plain
+        assert row.startswith("6:⇄B:빌드"), row
+        assert scr._row_text(msg["items"][0]).plain.startswith("1:local")
+
+        # ③ 고르면 route 가 그대로 되돌아간다 — 서버가 첫 홉으로 보기를 돌린다.
+        cb(msg["items"][1])
+        assert ("search_goto", {"wid": 9, "win": 1, "pane": 2, "line": 42,
+                                "route": ["B"], "query": "NEEDLE"}) in sent, sent
+    await _with_app(body)
+
+
 async def test_context_menu_plugin_items_join_and_mouse_help():
     """§2.7+§2.2: ① 플러그인 메뉴 항목(clock/calendar — key=그 플러그인 명령 이름)이
     컨텍스트 메뉴에 병합되고, 코어에 없는 key 는 _run_menu_action 이 _run_command 로
@@ -6176,6 +6291,119 @@ async def test_status_host_click_opens_server_tab():
         app.status.on_mouse_down(ev)
         assert called == [2], called
     await _with_app(body)
+
+
+async def test_status_session_click_starts_inline_edit_and_enter_renames():
+    """§10-21ⓛ 제보: 상태줄 `#S` 를 클릭하면 **그 자리에서** 글자를 고치고(판을
+    띄우지 않는다) Enter 가 `rename_session` 을 보낸다.
+
+    값을 만드는 헬퍼(_expand_parts 가 session 런을 내는가)만 재면 그 값을 쓰는
+    호출을 지워도 통과하므로(루트 CLAUDE.md '공허 통과'), 여기서는 ①존이 실제로
+    채워지는지 ②클릭이 편집을 여는지 ③편집 중 키가 패널로 새지 않는지 ④Enter 가
+    명령을 큐에 넣는지까지 잰다."""
+    async def body(app, pilot, srv):
+        from textual import events
+        app.status.render_line(0)
+        sz = app.status._session_zone
+        assert sz is not None, "세션 이름(#S) 클릭존 등록"
+        name = app.status.session
+        assert name, "세션 이름이 있어야 누를 자리가 있다"
+        assert sz[1] - sz[0] == len(name), (sz, name)   # 이름 폭 = 클릭 폭
+        sent, typed = [], []
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        app.send_input = lambda data: typed.append(data)
+        y = app.status.size.height - 1
+        ev = events.MouseDown(app.status, sz[0], y, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        assert app.status.session_editing(), "클릭 → 제자리 편집 시작"
+        assert len(app.screen_stack) == 1, "판(모달)을 띄우지 않는다"
+        assert app.status.session_edit == name, "현재 이름이 실려 있다"
+        for _ in range(len(name)):                 # 커서는 끝 → 통째로 지우고
+            await pilot.press("backspace")
+        for ch in "zeta":                          # 새 이름을 친다
+            await pilot.press(ch)
+        assert app.status.session_edit == "zeta", app.status.session_edit
+        txt = "".join(s.text for s in app.status.render_line(0))
+        assert "zeta" in txt, repr(txt)            # 편집칸이 **그 자리에** 그려진다
+        assert typed == [], f"편집 중 키가 패널로 새면 안 된다: {typed}"
+        assert not sent, f"Enter 전에는 아무것도 안 보낸다: {sent}"
+        await pilot.press("enter")
+        assert ("rename_session", {"name": "zeta"}) in sent, sent
+        assert not app.status.session_editing(), "Enter → 편집 종료"
+    await _with_app(body, cfg={"status_left": " #S "})
+
+
+async def test_status_session_edit_escape_cancels_without_rename():
+    """Esc 는 편집을 취소하고 이름을 안 바꾼다. 키 라우팅이 ESC 오토리핏 디바운스
+    **앞**에 있어야 첫 Esc 가 씹히지 않는다(디바운스 뒤면 취소가 먹통)."""
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda action, **kw: sent.append(action)
+        app.status.render_line(0)
+        assert app.begin_session_rename() is True
+        await pilot.press("x")
+        assert app.status.session_edit.endswith("x"), app.status.session_edit
+        await pilot.press("escape")                # 첫 Esc 로 즉시 취소
+        assert not app.status.session_editing(), "Esc → 편집 취소"
+        assert "rename_session" not in sent, sent
+        assert app.mode != "esc", "취소 Esc 가 명령 모드로 새지 않는다"
+    await _with_app(body, cfg={"status_left": " #S "})
+
+
+async def test_status_session_zone_absent_when_not_shown():
+    """status-left 기본값은 두 클라 모두 `" "` 라 `#S` 가 화면에 없다 — 그때는
+    클릭할 자리 자체가 없고 아무 일도 안 일어나는 것이 정상이다(설계 확정 사항)."""
+    async def body(app, pilot, srv):
+        from textual import events
+        app.status.render_line(0)
+        assert app.status._session_zone is None, "#S 미표시 → 클릭존 없음"
+        assert app.begin_session_rename() is False, "열 자리가 없으면 no-op"
+        y = app.status.size.height - 1
+        ev = events.MouseDown(app.status, 0, y, 0, 0, 1, False, False, False)
+        app.status.on_mouse_down(ev)
+        assert not app.status.session_editing(), "빈 자리를 눌러도 편집 안 열림"
+    await _with_app(body)
+
+
+async def test_status_session_edit_cursor_moves_by_cell_not_index():
+    """편집 커서 조작(←→/Home/End/Delete)과 **셀 기준** 클릭 위치 매핑. 한글처럼
+    두 칸을 먹는 글자에서 index 로 재면 커서가 어긋난다."""
+    async def body(app, pilot, srv):
+        app.status.session = "가나다"
+        app.status.render_line(0)
+        sz = app.status._session_zone
+        assert sz is not None and sz[1] - sz[0] == 6, sz   # 와이드 3글자 = 6칸
+        assert app.begin_session_rename() is True
+        assert app.status.session_edit_cur == 3, "커서는 끝에서 시작"
+        app.status.session_edit_cursor_at(sz[0] + 2)       # 둘째 글자의 첫 칸
+        assert app.status.session_edit_cur == 1, app.status.session_edit_cur
+        await pilot.press("delete")                        # '나' 삭제
+        assert app.status.session_edit == "가다", app.status.session_edit
+        await pilot.press("home")
+        assert app.status.session_edit_cur == 0
+        await pilot.press("right")
+        await pilot.press("backspace")                     # '가' 삭제
+        assert app.status.session_edit == "다", app.status.session_edit
+        await pilot.press("end")
+        assert app.status.session_edit_cur == 1
+        await pilot.press("escape")
+    await _with_app(body, cfg={"status_left": " #S "})
+
+
+async def test_status_session_edit_ends_when_field_disappears():
+    """편집 중에 `#S` 자리가 사라지면(포맷 변경 등) 편집을 끝낸다 — 안 그러면
+    보이지도 않는 입력칸이 키를 계속 삼켜 패널이 먹통이 된다."""
+    async def body(app, pilot, srv):
+        typed = []
+        app.send_input = lambda data: typed.append(data)
+        app.status.render_line(0)
+        assert app.begin_session_rename() is True
+        app.status.left_fmt = " "            # `#S` 를 빼 버린다
+        app.status.render_line(0)
+        assert not app.status.session_editing(), "자리가 없어지면 편집 종료"
+        await pilot.press("k")
+        assert typed, "편집이 끝났으니 키는 다시 패널로 간다"
+    await _with_app(body, cfg={"status_left": " #S "})
 
 
 async def test_info_tabs_close_button_and_esc():

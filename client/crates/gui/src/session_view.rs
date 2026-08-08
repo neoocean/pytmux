@@ -47,7 +47,7 @@ use warpui::{
     AppContext, Element, Entity, SingletonEntity as _, TypedActionView, View, ViewContext,
 };
 
-use crate::{mono_font, theme};
+use crate::{mono_font, theme, titlebar};
 
 /// 서버 팔레트의 구체 값. 이름은 `NamedColor` 와 1:1 이다.
 ///
@@ -311,6 +311,22 @@ pub struct SessionView {
     /// 크롬 풀과 갈라 두는 이유: 색인이 **렌더 순서**라, 한 풀을 쓰면 탭 수가 바뀔 때
     /// 판 안 위젯의 자리가 통째로 밀린다(그 프레임의 hover 가 엉뚱한 줄에 붙는다).
     panel_click_states: std::cell::RefCell<Vec<MouseStateHandle>>,
+    /// 창 버튼(최소화·최대화·닫기)의 마우스 상태(`pytmux-1`). **또 갈라 둔다** — 이
+    /// 자리 수는 OS 가 정하고(맥은 0) 탭 수와 무관한데, 크롬 풀에 얹으면 탭이 하나
+    /// 늘거나 줄 때마다 창 버튼의 hover 가 엉뚱한 칸으로 옮겨 간다.
+    titlebar_click_states: std::cell::RefCell<Vec<MouseStateHandle>>,
+    /// 상태줄 세션 이름(`#S`) 자리와 편집 중 글자칸들의 마우스 상태(pytmux-3).
+    ///
+    /// **또 갈라 둔다** — 이 자리 수는 **이름의 글자 수**를 따라 프레임마다 변한다.
+    /// 크롬 풀에 얹으면 한 글자를 칠 때마다 뒤따르는 배지들의 색인이 통째로 밀려,
+    /// hover 가 엉뚱한 배지에 붙는다(창 버튼을 가른 것과 같은 사정).
+    status_click_states: std::cell::RefCell<Vec<MouseStateHandle>>,
+    /// 세션 이름을 **그 자리에서** 고치는 중인가(pytmux-3 제보). 판을 안 띄우므로
+    /// [`Screens`] 스택에 자리가 없다 — 값도 키 라우팅도 뷰가 직접 든다.
+    ///
+    /// ⛔ 이것이 `Some` 인 동안에는 **모든 키가 편집칸의 것**이다. 한 갈래라도 빠뜨리면
+    /// 그 키가 패널로 새서 편집 중에 셸이 글자를 받는다(`session_edit_key` 참조).
+    session_edit: Option<base::SessionEdit>,
     /// 드래그 중인 탭(리스트 위치) — 판정은 core `drag_drop`(G9w · TUI 와 한 벌).
     tab_drag: Option<usize>,
     /// 드래그 중 가리키는 드롭 대상 탭(강조용).
@@ -337,6 +353,15 @@ pub struct SessionView {
     pending_restart: Option<base::restart::Kind>,
     /// 마지막으로 세운 창 제목(설정 `set-titles`). 같은 값을 다시 안 세우려는 것이다.
     last_title: Option<String>,
+    /// 마지막으로 창에게 말한 **끌 수 있는 띠**의 높이(`refresh_titlebar_band`).
+    /// `last_title` 과 같은 모양 — 값이 바뀐 때만 창을 두드린다.
+    titlebar_band: Option<f32>,
+    /// 이번 펌프에서 창에게 시킬 일(`pytmux-1`). `fullscreen_requested` 와 같은 모양으로
+    /// 한 프레임 실어 나른다 — 액션 처리에는 창이 없다.
+    ///
+    /// **닫기는 여기 안 온다** — 그건 `quit_requested` 와 같은 길을 탄다(뒤처리가 이미
+    /// 그쪽 한 곳에 있다). 그래서 이 값에 남는 것은 최소화·최대화 둘뿐이다.
+    window_op: Option<titlebar::Button>,
     quit_requested: bool,
     /// 이번 펌프에서 창을 전체 화면으로 넣었다 뺄까(§10-21ⓘ3).
     ///
@@ -362,6 +387,20 @@ pub struct SessionView {
     press: Option<(i64, u16, u16)>,
     /// 끌고 있는 선택. 놓으면 비운다.
     selection: Option<Selection>,
+    /// 블록 선택 모드에서 고른 블록 — **(패널 id, 목록 안의 자리)**(pytmux-18).
+    ///
+    /// # 왜 패널 id 를 같이 드나
+    ///
+    /// 블록 목록은 패널마다 따로다(`SessionState::blocks`). 자리만 들면 그 사이에 포커스가
+    /// 옮겨졌을 때 **옆 패널의 같은 번호 블록**이 골라진 것처럼 보이고, 그 상태로 복사하면
+    /// 화면에 강조된 것과 다른 글이 클립보드로 간다 — 조용한 오답이다. 드래그 선택이
+    /// `Selection::pane` 을 드는 것과 같은 이유다.
+    ///
+    /// 자리(index)를 절대 행이 아니라 **목록 인덱스**로 드는 이유: 마지막 블록은 아직
+    /// 자라는 중이라 끝 행이 매 프레임 바뀐다. 인덱스는 새 블록이 붙어도 안 움직인다
+    /// (목록이 상한에서 잘려 앞이 밀리면 어긋나는데, 그때는 강조가 한 칸 밀릴 뿐
+    /// 범위 계산은 그 자리의 블록으로 다시 한다).
+    block_pick: Option<(i64, usize)>,
     /// 지금 **앱에게 넘기는 중인** 드래그(패널 id, 버튼). Shift+드래그로만 선다.
     ///
     /// 시작한 패널을 붙잡아 두는 이유는 선택과 같다 — 포인터가 이웃 패널로 넘어가도
@@ -517,6 +556,9 @@ impl SessionView {
             chrome: Default::default(),
             chrome_click_states: Default::default(),
             panel_click_states: Default::default(),
+            titlebar_click_states: Default::default(),
+            status_click_states: Default::default(),
+            session_edit: None,
             tab_drag: None,
             tab_drag_over: None,
             last_status: Instant::now(),
@@ -526,6 +568,8 @@ impl SessionView {
             hook_watch: Default::default(),
             pending_restart: None,
             last_title: None,
+            titlebar_band: None,
+            window_op: None,
             quit_requested: false,
             fullscreen_requested: false,
             dragging: None,
@@ -533,6 +577,7 @@ impl SessionView {
             span_hover: None,
             press: None,
             selection: None,
+            block_pick: None,
             mouse_fwd: None,
             flash: None,
             alt_tab: false,
@@ -781,6 +826,20 @@ impl SessionView {
     pub fn handle_key(&mut self, key: Key, mods: Mods) -> bool {
         // 직전 이벤트가 연 물음의 이력을 지금 채운다(이 키부터 후보가 산다).
         self.refill_prompt_history();
+        // ★ 세션 이름 제자리 편집(pytmux-3): 상태줄 `#S` 를 눌러 그 자리가 입력칸이 된
+        //   동안에는 **모든 키를 여기서 먹는다**. 판을 안 띄우므로 화면 스택이 비어
+        //   있고, 그래서 이 분기가 없으면 키가 전부 패널로 흐른다 — 편집 중에 셸이
+        //   글자를 받는다.
+        //
+        //   자리는 화면 검사 **앞**이다(정본은 모달 검사 직후). 화면이 떠 있으면 그
+        //   화면의 것이라는 규칙은 그대로 지킨다 — 판이 열리면 편집칸을 먼저 닫는다.
+        if self.session_editing() {
+            if self.screens.top().is_some() {
+                self.session_edit = None;
+            } else {
+                return self.session_edit_key(key, mods);
+            }
+        }
         // ★ 화면이 떠 있으면 **모든 키가 화면의 것**이다(core 규칙). 여기서 안 가로채면
         // 화면 뒤 패널로 키가 새고, 사용자는 자기가 무엇을 조작하는지 알 수 없다.
         // 어느 화면에서 고른 것인지는 **누르기 전에** 알아 둬야 한다 — 확정과 동시에
@@ -1105,6 +1164,10 @@ impl SessionView {
         // 모드 전이는 core 의 상태기계가 끝낸다. 여기서는 결과를 프레임으로 옮기기만 한다.
         let outcome = self.mode.press_in(&self.config.mode_keys, key, mods);
         self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
+        // 블록 모드를 벗어나면 고른 것도 **같이** 버린다 — 안 버리면 강조가 화면에 남아
+        // "아직 고르는 중"이라고 말하는데 키는 이미 패널로 간다(esc 모드에서 크롬
+        // 포커스를 같이 푸는 것과 같은 규율. 자리도 나란히 둔다).
+        self.drop_block_pick_unless_selecting();
         // esc 모드를 벗어나면 크롬 포커스도 **같이** 푼다 — 안 풀면 다음 esc 때 지난번
         // 포커스가 살아나 방향키가 패널이 아니라 탭바를 움직인다.
         if self.mode.mode() != InputMode::Command {
@@ -1119,6 +1182,7 @@ impl SessionView {
                 self.scroll(amount);
                 true
             }
+            KeyOutcome::Block(what) => self.block_key(what),
             KeyOutcome::ModeChanged(_) => true,
             KeyOutcome::Action(action) => self.apply_action(action),
             KeyOutcome::Ignored => false,
@@ -1288,6 +1352,12 @@ impl SessionView {
                     self.mode.enter_scroll();
                     self.state.set_scroll_mode(true);
                 }
+                return true;
+            }
+            // 캔버스 위에서 블록 하나를 고른다(pytmux-18). 들어갈지 말지는 **여기서**
+            // 정한다 — core 는 그 패널에 블록이 있는지 모른다(`ModeState::enter_block`).
+            Action::SelectBlocks => {
+                self.enter_block_select();
                 return true;
             }
             Action::SearchScrollback => {
@@ -1640,8 +1710,17 @@ impl SessionView {
     /// 평소 모드에서만 패널로 보낸다. 명령 모드에서 확정된 글자는 명령이 아니므로 **버린다**
     /// — 거기서 패널로 흘리면 사용자가 pytmux 에게 말하는 중에 셸에 글자가 찍힌다.
     pub fn handle_typed(&mut self, text: &str) -> bool {
-        match Self::typed_target(self.mode.mode(), self.screens.top().is_some(), text) {
+        match Self::typed_target(
+            self.mode.mode(),
+            self.screens.top().is_some(),
+            self.session_editing(),
+            text,
+        ) {
             TypedTo::Drop => false,
+            // ★ **한글은 이 길로만 온다**(pytmux-3). 조합이 끝난 글자는 키가 아니라
+            //   확정 문자열로 오므로, 이 갈래가 없으면 편집 중에 친 한글이 그대로
+            //   패널(셸)로 샌다 — 정본이 `on_paste` 를 같은 이유로 잡았다.
+            TypedTo::SessionEdit => self.session_edit_typed(text),
             TypedTo::Pane => {
                 self.pending.push(Outgoing::Input(text.as_bytes().to_vec()));
                 true
@@ -1759,12 +1838,27 @@ impl SessionView {
     ///
     /// 넓게 푸는 것(모드를 안 보고 다 패널로)은 반대쪽 결함을 살린다 — 명령 모드에서
     /// 셸에 글자가 찍힌다. 그래서 **판이 열렸나**를 한 칸 더 본다.
-    fn typed_target(mode: InputMode, screen_open: bool, text: &str) -> TypedTo {
+    ///
+    /// # 왜 넷이 됐나 (pytmux-3)
+    ///
+    /// 상태줄 세션 이름의 **제자리 편집**은 판을 안 띄운다 — 그래서 `screen_open` 이
+    /// 거짓이고 모드도 `Normal` 이라, 종전 표에서는 확정된 글자가 **패널로 갔다**.
+    /// 편집 중에 한글을 치면 셸에 찍히는 그 갈래다(영문은 키 이벤트로도 와서 안 새고
+    /// 한글만 새는 부류라, 눈으로만 보면 "한글이 안 된다"로 보인다).
+    fn typed_target(
+        mode: InputMode,
+        screen_open: bool,
+        session_editing: bool,
+        text: &str,
+    ) -> TypedTo {
         if text.is_empty() {
             return TypedTo::Drop;
         }
         if screen_open {
             return TypedTo::Screen;
+        }
+        if session_editing {
+            return TypedTo::SessionEdit;
         }
         if mode == InputMode::Normal {
             TypedTo::Pane
@@ -1794,9 +1888,192 @@ impl SessionView {
         }
     }
 
+    // ── 블록 선택(pytmux-18) ────────────────────────────────────────────────
+    //
+    // 제보 그대로다: *"warp 처럼 「명령 하나 + 그 출력」을 블록으로 고를 수 있어야 한다"* —
+    // ⑴ 고르기 ⑵ `↑`/`↓` 로 한 블록씩 ⑶ `Ctrl`+`C` 로 그 블록 전체 복사.
+    //
+    // ★ **재료는 이미 다 있었다.** 경계는 서버의 셸 통합(OSC 133)이 절대 행으로 알려
+    //   주고(`proto::blocks`), 범위를 글로 바꾸는 것은 드래그 복사가 쓰는 `CopyRange`
+    //   한 명령이 이미 한다. 없던 것은 **캔버스 위의 상호작용**뿐이라, 새로 만든 것도
+    //   그것뿐이다(모드 하나 · 고른 자리 하나 · 강조 하나).
+
+    /// 블록 선택 모드로 들어간다. 고를 것이 없으면 **안 들어가고 그렇다고 말한다**.
+    ///
+    /// # 왜 빈 목록에서 안 들어가나 (제보의 ⚠ 셋째)
+    ///
+    /// 블록 경계는 셸 통합(OSC 133)이 보내 주는 것이라, 그 스크립트를 안 읽은 셸
+    /// (`cmd.exe`·통합 전 세션)에는 블록이 **하나도 없다**. 그 패널에서 모드에 들여보내면
+    /// 배지만 켜진 채 `↑`/`↓`·`Ctrl+C` 가 통째로 죽는다 — 사용자에게는 "이 기능이
+    /// 고장났다"로 보이고, 진짜 원인(셸 통합)은 화면 어디에도 안 적혀 있다. 그래서
+    /// **들어가는 대신 이유를 한 줄로 말한다.**
+    ///
+    /// ⚠ **그 한 줄이 패널마다 달라야 한다**(pytmux-21). Claude 패널의 경계는 OSC 133 이
+    /// 아니라 화면 글의 프롬프트 마커에서 나오므로(`promptblocks.py`), 거기서 "셸 통합을
+    /// 켜라"고 말하면 **고칠 수 없는 것을 고치라는 안내**가 된다 — 셸 통합을 아무리 깔아도
+    /// Claude 는 OSC 를 안 보낸다. 그 패널에서 비어 있다는 것은 아직 프롬프트를 한 번도
+    /// 안 보냈다는 뜻이고, 그것이 사용자가 할 수 있는 일이다.
+    ///
+    /// # 첫 선택이 왜 마지막 블록인가
+    ///
+    /// 방금 친 명령의 출력을 집으려는 것이 이 기능의 첫 쓰임이고, 그것이 목록의 끝이다.
+    /// 첫 블록에서 시작하면 스크롤백이 긴 패널에서 `↑`을 수십 번 눌러야 한다.
+    fn enter_block_select(&mut self) -> bool {
+        let Some(pane) = self.state.active_pane() else {
+            return false;
+        };
+        let count = self.state.blocks(pane).len();
+        if count == 0 {
+            let why = if self.state.is_claude_pane(pane) {
+                t("이 패널에는 아직 고를 턴이 없다 — 프롬프트를 한 번 보내면 턴 단위로 골라진다")
+            } else {
+                t("이 패널에는 블록이 없다 — 셸 통합(OSC 133)이 명령 경계를 알려 줘야 생긴다")
+            };
+            self.note_flash(why.to_owned(), Severity::Warn);
+            return false;
+        }
+        self.mode.enter_block();
+        self.state.set_scroll_mode(false);
+        self.block_pick = Some((pane, count - 1));
+        true
+    }
+
+    /// 블록 모드를 벗어났으면 고른 것도 버린다. 모드가 풀리는 **모든 길**이 여기를 지난다.
+    ///
+    /// 포커스가 **다른 패널로 옮겨간 것**도 벗어난 것으로 친다. 블록 목록은 패널마다
+    /// 따로라, 그때 모드를 붙잡고 있으면 `↑`/`↓` 가 지금 보고 있지 않은 패널의 블록을
+    /// 옮긴다 — 화면에는 아무 반응이 없고 `Ctrl+C` 만 엉뚱한 글을 담는다.
+    fn drop_block_pick_unless_selecting(&mut self) {
+        let stale = self
+            .block_pick
+            .is_some_and(|(pane, _)| self.state.active_pane() != Some(pane));
+        if stale {
+            self.mode.reset();
+        }
+        if self.mode.mode() != InputMode::Block {
+            self.block_pick = None;
+        }
+    }
+
+    /// 블록 모드 안의 키 하나. 반환값은 "다시 그릴 것이 있나".
+    fn block_key(&mut self, what: base::keys::BlockKey) -> bool {
+        use base::keys::BlockKey;
+        let Some((pane, index)) = self.block_pick else {
+            return false;
+        };
+        let count = self.state.blocks(pane).len();
+        if count == 0 {
+            return false;
+        }
+        // 목록이 상한에서 잘리거나 패널이 바뀌었을 수 있다 — 자리를 **읽을 때마다** 접는다.
+        let index = index.min(count - 1);
+        match what {
+            // 목록은 오래된 것 → 최근 순이고 화면도 그 순서로 아래로 흐른다. 그래서
+            // `↓`(Next)가 곧 **더 최근**이다 — 화면에서 아래로 가는 것과 같은 방향이라야
+            // 손이 안 어긋난다.
+            BlockKey::Next => {
+                if index + 1 >= count {
+                    return false;
+                }
+                self.block_pick = Some((pane, index + 1));
+                true
+            }
+            BlockKey::Prev => {
+                if index == 0 {
+                    return false;
+                }
+                self.block_pick = Some((pane, index - 1));
+                true
+            }
+            BlockKey::Copy => self.copy_selected_block(),
+        }
+    }
+
+    /// 고른 블록 전체(명령 + 그 출력)를 복사한다.
+    ///
+    /// **드래그 복사와 같은 길**이다 — 같은 `CopyRange` 를 보내고, 회신
+    /// (`ServerMessage::Selection`)이 오면 접힘 되돌리기·페이스트 버퍼·클립보드·
+    /// "N자 복사됨" 한 줄까지 그 경로가 그대로 한다. 여기서 따로 클립보드를 건드리면
+    /// 두 복사가 서로 다른 규칙(`copy-unwrap` 등)을 타기 시작한다.
+    ///
+    /// 열 범위가 `0..w-1` 인 이유: 블록은 **줄 단위**다. 서버의 추출
+    /// (`model.Pane.extract_range`)은 첫 줄을 `x0` 부터, 끝 줄을 `x1` 까지 뽑으므로
+    /// 줄 전체를 원하면 패널 폭 끝을 준다(넘겨도 서버가 클램프한다).
+    fn copy_selected_block(&mut self) -> bool {
+        let Some((pane, index)) = self.block_pick else {
+            return false;
+        };
+        let Some((y0, y1)) = self.block_rows(pane, index) else {
+            return false;
+        };
+        let Some((_, _, w, _)) = self.state.pane_rect(pane) else {
+            return false;
+        };
+        // 접힘을 되돌릴 기하 — 드래그 복사가 재는 것과 같은 값이다(폭, 첫 열).
+        self.copy_geom = Some((w as usize, 0));
+        self.pending.push(Outgoing::Command(Command::CopyRange {
+            pane,
+            y0,
+            x0: 0,
+            y1,
+            x1: w.saturating_sub(1),
+        }));
+        true
+    }
+
+    /// 이 패널의 `index` 번째 블록이 차지하는 **절대 행 범위**(양끝 포함).
+    ///
+    /// 판정은 proto 한 곳이 한다([`proto::blocks::row_span`]) — 강조를 그리는 자리와
+    /// 복사할 범위를 정하는 자리가 각자 세면, 화면에 밝은 것과 클립보드에 담기는 것이
+    /// 조용히 어긋난다.
+    fn block_rows(&self, pane: i64, index: usize) -> Option<(usize, usize)> {
+        let bottom = self.state.pane_live_bottom(pane)?;
+        proto::blocks::row_span(self.state.blocks(pane), index, bottom)
+    }
+
+    /// 고른 블록을 캔버스 어디에 강조할 것인가 — **뷰포트에 걸친 부분만**.
+    ///
+    /// 창 없이 물을 수 있는 관측점이다(`scroll_hints` 와 같은 자리·같은 이유).
+    ///
+    /// # 왜 잘라 내나
+    ///
+    /// 블록은 스크롤백 좌표라 화면보다 길 수 있다(수백 줄짜리 빌드 로그가 흔하다).
+    /// 안 자르면 강조가 패널 밖으로 새어 이웃 패널·크롬 위에 그려진다. 통째로 화면
+    /// 밖이면 `None` — 그릴 것이 없다는 뜻이지 선택이 풀린 것은 아니다.
+    fn block_mark(&self) -> Option<crate::splitter::BlockPick> {
+        // 판이 떠 있으면 안 그린다 — 그때 키는 그 판의 것이라, 강조가 남아 있으면
+        // "여기서 ↑↓ 가 블록을 옮긴다"는 거짓말이 된다(`cursor_cell` 과 같은 규칙).
+        if self.screens.top().is_some() {
+            return None;
+        }
+        let (pane, index) = self.block_pick?;
+        // 포커스가 옮겨갔으면 안 그린다. 모드를 푸는 것은 다음 키가 하고
+        // ([`drop_block_pick_unless_selecting`](Self::drop_block_pick_unless_selecting)),
+        // 여기는 `&self` 라 고칠 수 없다 — 그림만은 즉시 사실과 맞춘다.
+        if self.state.active_pane() != Some(pane) {
+            return None;
+        }
+        let (y0, y1) = self.block_rows(pane, index)?;
+        let top = self.state.pane_top(pane)?;
+        let (px, py, w, h) = self.state.pane_rect(pane)?;
+        let last = top + usize::from(h).saturating_sub(1);
+        if y1 < top || y0 > last {
+            return None;
+        }
+        let from = y0.max(top) - top;
+        let to = y1.min(last) - top;
+        Some(crate::splitter::BlockPick {
+            x: px,
+            y: py + from as u16,
+            w,
+            h: (to - from + 1) as u16,
+        })
+    }
+
     /// 원문을 `paste` 명령으로 넘겨 판정을 맡긴다(TUI·파이썬 클라와 같다).
     pub fn handle_paste(&mut self, text: &str) -> bool {
         self.mode.reset();
+        self.drop_block_pick_unless_selecting();
         self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
         if text.is_empty() {
             return false;
@@ -2646,6 +2923,7 @@ impl SessionView {
         // ★ 제목은 **창이 있는 판에서만** 세운다(`pump_headless` 에는 창이 없다). 크기
         // 보고와 같은 자리다 — 그 둘이 이 판에만 있는 이유가 같다.
         self.refresh_title(ctx);
+        self.refresh_titlebar_band(ctx);
         self.pump_tail(dirty)
     }
 
@@ -3263,6 +3541,21 @@ impl SessionView {
             self.flash = None;
             return true;
         }
+        // ★ 세션 이름 자리(pytmux-3)도 액션 표를 안 지난다 — 여는 것이 화면이 아니라
+        //   **이 클라의 편집 상태**다. 이미 편집 중이면 커서만 누른 자리로 옮긴다
+        //   (파이썬 `on_mouse_down` 의 그 분기와 같다).
+        match target {
+            base::chrome::ClickTarget::SessionName => return self.begin_session_rename(),
+            base::chrome::ClickTarget::SessionCursor(i) => {
+                let Some(edit) = self.session_edit.as_mut() else {
+                    // 편집이 아닌데 글자칸이 눌렸다 — 프레임 사이에 편집이 끝났다.
+                    return self.begin_session_rename();
+                };
+                edit.set_cursor(i);
+                return true;
+            }
+            _ => {}
+        }
         // ★ 플러그인 표식(pytmux-20)도 액션 표를 안 지난다 — **무엇이 열리는지는 서버가
         //   정한다**. 표식이 실어 온 이름을 그대로 되돌려 보내고, 그 이름의 뜻은 우리가
         //   모른다(오버레이의 `do` 와 같은 규약). 이름이 없으면 아무 일도 안 한다 —
@@ -3329,6 +3622,97 @@ impl SessionView {
             .finish()
     }
 
+    // ── 세션 이름 제자리 편집(pytmux-3) ────────────────────────────────────────
+    //
+    // 제보 그대로다: *"세션 이름을 클릭하면 그 자리에서 바로 글자를 고쳐 리네임할 수
+    // 있어야 한다"* — **판을 안 띄운다.** 그래서 이 편집에는 키를 가져갈 화면이 없고,
+    // 값·키 라우팅·커밋을 뷰가 직접 잇는다(버퍼와 키 표는 core: `base::SessionEdit`).
+
+    /// 지금 화면에 `#S` 가 펼쳐진 자리가 **있나**.
+    ///
+    /// 기본 `status-left` 는 두 클라 모두 `" "` 라, 사용자가 `set status-left " #S "`
+    /// 같은 것을 넣기 전에는 **누를 대상이 없는 것이 정상**이다(제보의 ⛔ 그대로).
+    fn session_zone_visible(&self) -> bool {
+        let sctx = self.state.status_ctx();
+        [&self.config.status_left, &self.config.status_right].iter().any(|fmt| {
+            status::expand_parts(fmt, &sctx)
+                .iter()
+                .any(|(kind, text)| *kind == status::StatusRun::Session && !text.is_empty())
+        })
+    }
+
+    /// 편집 중인가 — **묻는 김에 유령이면 끝낸다**.
+    ///
+    /// ⛔ 편집 중에 `#S` 자리가 사라지면(형식이 바뀌었다·세션 이름이 비었다) 보이지도
+    /// 않는 입력칸이 키를 계속 삼켜 **패널이 먹통**이 된다(파이썬이 렌더 꼬리에서 같은
+    /// 것을 막는다). 여기는 그리기가 `&self` 라 그 자리에 못 두므로, 키가 들어오는
+    /// 길목에서 판정한다 — 먹통을 만드는 것이 바로 그 키들이다.
+    fn session_editing(&mut self) -> bool {
+        if self.session_edit.is_some() && !self.session_zone_visible() {
+            self.session_edit = None;
+        }
+        self.session_edit.is_some()
+    }
+
+    /// 세션 이름 자리를 눌렀다 — 그 자리를 입력칸으로 연다.
+    ///
+    /// `#S` 가 안 펼쳐졌으면 아무 일도 안 일어난다(누를 자리가 없다). 다른 모드
+    /// (prefix·scroll·esc)에 있었다면 평소 모드로 되돌린다 — 그 모드들이 편집을
+    /// 가로채지는 않지만(키 라우팅이 앞선다), 편집을 끝낸 뒤 엉뚱한 모드에 남아 있으면
+    /// 안 된다(파이썬 `begin_session_rename` 과 같은 뒷정리).
+    pub(crate) fn begin_session_rename(&mut self) -> bool {
+        // ⚠ 판이 떠 있으면 안 연다 — **키가 그 판의 것**이라(core 규칙) 열어 봐야 글자를
+        //   못 받는 입력칸이 된다. 상태줄은 판 뒤에서도 눌리므로 여기서 막는다.
+        if self.session_edit.is_some()
+            || self.screens.top().is_some()
+            || !self.session_zone_visible()
+        {
+            return false;
+        }
+        self.session_edit = Some(base::SessionEdit::new(&self.state.status_ctx().session));
+        self.mode.reset();
+        self.state.set_scroll_mode(false);
+        self.chrome.reset();
+        true
+    }
+
+    /// 편집 중 키 하나. **여기서 전부 먹는다** — 한 갈래라도 흘리면 편집 중에 셸이
+    /// 글자를 받는다. 표는 core 가 갖는다(두 클라가 같아야 하는 것이다).
+    fn session_edit_key(&mut self, key: Key, mods: Mods) -> bool {
+        let Some(edit) = self.session_edit.as_mut() else {
+            return false;
+        };
+        match edit.press(key, mods) {
+            base::SessionEditKey::Consumed => {}
+            base::SessionEditKey::Cancel => self.session_edit = None,
+            base::SessionEditKey::Commit(name) => {
+                self.session_edit = None;
+                // 비었거나 그대로면 안 보낸다 — 서버도 같은 판정을 하지만 뜻 없는
+                // 왕복을 만들지 않는다(파이썬과 같다).
+                if !name.is_empty() && name != self.state.status_ctx().session {
+                    self.pending
+                        .push(Outgoing::Command(Command::RenameSession { name }));
+                }
+            }
+        }
+        true
+    }
+
+    /// 확정된 글자(입력기)를 편집칸에 넣는다 — 한글의 **유일한** 입구다.
+    fn session_edit_typed(&mut self, text: &str) -> bool {
+        let Some(edit) = self.session_edit.as_mut() else {
+            return false;
+        };
+        edit.insert_str(text);
+        true
+    }
+
+    /// 편집 중인 이름과 커서(오라클용 — 창 없는 판에서 읽는다).
+    #[cfg(test)]
+    pub(crate) fn session_edit_for_test(&self) -> Option<(String, usize)> {
+        self.session_edit.as_ref().map(|e| (e.text(), e.cursor()))
+    }
+
     /// 판 안 위젯 `i` 에 마우스가 올라와 있나 — hover 강조용.
     /// 판 안 `i` 번째 위젯에 마우스가 올라와 있나 — 크롬과 **같은 규칙**이다
     /// ([`chrome_hovered`](Self::chrome_hovered) 의 §왜 `config.mouse` 를 보나).
@@ -3365,6 +3749,81 @@ impl SessionView {
             }
         }
         true
+    }
+
+    /// 창 버튼 `i` 번째의 마우스 상태(크롬·판 풀과 또 별개 — 위 필드 문서 참조).
+    fn titlebar_mouse_state(&self, i: usize) -> MouseStateHandle {
+        let mut states = self.titlebar_click_states.borrow_mut();
+        while states.len() <= i {
+            states.push(Default::default());
+        }
+        states[i].clone()
+    }
+
+    /// 머리줄 — **OS 타이틀바를 대신하는 줄**이다(`pytmux-1` · 자리 확정 2026-08-04).
+    ///
+    /// 세 가지를 겸한다: 끌어서 창 옮기기(상류가 한다 — `titlebar` 모듈 머리말) · 제목
+    /// 표시(`pytmux-gui · <엔드포인트>` — 종전 머리줄의 그 글자 그대로) · 창 버튼.
+    ///
+    /// ⛔ **`config.mouse` 를 안 본다.** `set mouse off` 는 pytmux 안의 마우스를 끄는
+    /// 설정이지 창 장식의 마우스가 아니다 — OS 타이틀바가 그 설정을 볼 리 없듯이, 그
+    /// 자리를 물려받은 이 줄도 안 본다. ⚠ 그러지 않으면 `set mouse off` 한 사람이
+    /// **창을 닫지 못한다**(그 설정을 되돌릴 화면조차 마우스로 못 연다).
+    fn render_titlebar(&self) -> Box<dyn Element> {
+        let title = self.text(
+            format!("pytmux-gui · {}", self.link.socket()),
+            12.,
+            palette::DIM,
+        );
+        let buttons = titlebar::BUTTONS
+            .iter()
+            .enumerate()
+            .map(|(i, button)| {
+                let hovered = self.mouse_over(&self.titlebar_click_states, i);
+                let fg = if hovered { palette::FG } else { palette::DIM };
+                let slot = titlebar::slot(
+                    self.config.font_scale,
+                    self.text(button.glyph(), 12., fg),
+                    hovered.then(|| button.hover_bg()),
+                );
+                let button = *button;
+                Hoverable::new(self.titlebar_mouse_state(i), |_| slot)
+                    // ★ `on_click`(뗄 때)이라야 한다. 누름은 **상류의 창 끌기와 같은
+                    //   이벤트**라, 여기서 Hoverable 이 그것을 "먹었다"고 표시해 주는
+                    //   덕에 버튼 자리가 드래그 영역에서 빠진다(제보의 ⚠ 그대로).
+                    //   `on_mouse_down` 으로 바꾸면 누르는 즉시 창이 닫힌다.
+                    .on_click(move |evt, _, _| {
+                        evt.dispatch_typed_action(ViewAction::WindowButton(button));
+                    })
+                    .finish()
+            })
+            .collect();
+        titlebar::row(self.config.font_scale, title, buttons)
+    }
+
+    /// 창 버튼 하나 — **뜻만 정한다.** 창을 실제로 건드리는 줄은 `handle_action` 의
+    /// 꼬리에 있다(그 자리에만 `ViewContext` 가 있다).
+    ///
+    /// 갈래를 여기 두는 이유: 창 없는 판에서 잴 수 있어야 한다. 세 버튼이 같은 일을
+    /// 하거나 한 버튼이 아무 일도 안 하는 회귀는 **화면으로는 안 보인다** — 눌러 봐야
+    /// 알고, 눌러 보는 것은 라이브뿐이다.
+    ///
+    /// 닫기가 [`quit_requested`](Self::quit_requested) 로 접히는 이유: 상류
+    /// `close_window` 는 이 백엔드에서 창을 안 닫는다(2026-07-30 실측 — `handle_action`
+    /// 꼬리의 주석). 그 뒤처리가 이미 한 곳에 있으므로 갈래를 둘로 늘리지 않는다.
+    pub(crate) fn press_window_button(&mut self, button: titlebar::Button) -> bool {
+        match button {
+            titlebar::Button::Close => self.quit_requested = true,
+            other => self.window_op = Some(other),
+        }
+        // 다시 그릴 것은 없다 — 창이 바뀌면 창이 알린다(리사이즈·최소화 모두).
+        false
+    }
+
+    /// 이번 프레임에 창에게 시킬 일(오라클용 — 창 없는 판에서 읽는다).
+    #[cfg(test)]
+    pub(crate) fn window_op_for_test(&self) -> Option<titlebar::Button> {
+        self.window_op
     }
 
     /// 크롬 한 자리를 클릭 대상으로 감싼다 — 자리는 레이아웃(Hoverable)이 재고,
@@ -3548,6 +4007,165 @@ impl SessionView {
         }
     }
 
+    /// 왼쪽 상태 형식(`status-left`)을 **런으로 펴서** 그린다(pytmux-3).
+    ///
+    /// 종전에는 통짜 문자열 `Text` 하나였다. 그래서는 `#S` 가 어디부터 어디까지인지 몰라
+    /// 누를 자리를 만들 수 없다 — 정본이 같은 이유로 왼쪽을 `_expand_parts` 에 태웠다.
+    ///
+    /// ⚠ **바깥 `left` 의 여백(6px)이 조각 사이로 새면 안 된다.** 그래서 런들을 여백
+    /// 0 인 자기 줄에 담아 **한 자식**으로 넘긴다 — 그림은 종전과 같은 글자·같은 간격이다.
+    /// 돌려주는 `bool` 은 **이 줄에 `#S` 가 있었나**다 — 양쪽에 다 뒀으면 왼쪽이
+    /// 편집 자리다(파이썬 `_render_main` 의 "먼저 그린 쪽 우선"과 같은 규칙).
+    fn render_status_left(
+        &self,
+        sctx: &status::StatusCtx,
+        fg: ColorU,
+        ids: &mut usize,
+    ) -> (Box<dyn Element>, bool) {
+        let runs = status::expand_parts(&self.config.status_left, sctx);
+        // 조각이 없으면(형식이 빈 문자열) 빈 `Text` 하나 — 종전과 같은 그림이고,
+        // 자리표(`FOOTER_PROBE`)의 주인이 사라지지 않는다.
+        if runs.is_empty() {
+            return (self.status_text("", fg, true), false);
+        }
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(0.);
+        let mut has_session = false;
+        for (i, (kind, text)) in runs.into_iter().enumerate() {
+            let probe = i == 0;
+            row = row.with_child(match kind {
+                status::StatusRun::Session => {
+                    has_session = true;
+                    self.render_session_run(&text, fg, ids, probe)
+                }
+                _ => self.status_text(&text, fg, probe),
+            });
+        }
+        (row.finish(), has_session)
+    }
+
+    /// 상태줄 글자 한 조각. `probe` 면 이 조각이 [`FOOTER_PROBE`](Self::FOOTER_PROBE)
+    /// 자리표를 진다 — 한 프레임에 **하나만** 참이라야 한다.
+    fn status_text(&self, text: &str, fg: ColorU, probe: bool) -> Box<dyn Element> {
+        let mut t = Text::new_inline(text.to_owned(), self.ui_font, self.scaled(12.)).with_color(fg);
+        if probe {
+            t = t.with_saved_char_position(0, Self::FOOTER_PROBE.to_owned());
+        }
+        t.finish()
+    }
+
+    /// 세션 이름(`#S`) 한 런 — 평소엔 **누를 자리**, 편집 중엔 **입력칸**(pytmux-3).
+    ///
+    /// 판을 안 띄우므로 "지금 여기를 고치는 중"을 보여 줄 곳이 이 자리뿐이다. 그래서
+    /// 편집 중에는 반전 칩(모드 배지와 같은 문법)이 되고 커서 자리가 한 번 더 뒤집힌다.
+    fn render_session_run(
+        &self,
+        name: &str,
+        fg: ColorU,
+        ids: &mut usize,
+        probe: bool,
+    ) -> Box<dyn Element> {
+        let Some(edit) = self.session_edit.as_ref() else {
+            let i = Self::take_id(ids);
+            // 눌리는 자리는 hover 로 그 사실을 보인다(N4 — 다른 클릭존과 같은 규율).
+            let mut boxed = Container::new(self.status_text(name, fg, probe))
+                .with_horizontal_padding(2.)
+                .with_corner_radius(theme::PILL_RADIUS);
+            if self.status_hovered(i) {
+                boxed = boxed.with_background_color(theme::HOVER);
+            }
+            return self.clickable_status(
+                i,
+                base::chrome::ClickTarget::SessionName,
+                boxed.finish(),
+            );
+        };
+        let buf: Vec<char> = edit.text().chars().collect();
+        let cur = edit.cursor();
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(0.);
+        // ⚠ **글자마다 자기 자리를 준다** — 그래야 누른 자리로 커서가 간다(파이썬은
+        //   절대 x 를 셀 폭으로 되짚는데, 여기는 셀 격자가 없다). 덤으로 한글에서
+        //   폭 계산이 어긋날 여지가 아예 없어진다.
+        for (i, ch) in buf.iter().enumerate() {
+            let at_cursor = i == cur;
+            let cell = self.session_edit_cell(&ch.to_string(), at_cursor, probe && i == 0);
+            let id = Self::take_id(ids);
+            row = row.with_child(self.clickable_status(
+                id,
+                base::chrome::ClickTarget::SessionCursor(i),
+                cell,
+            ));
+        }
+        // 커서가 끝에 있으면 한 칸을 덧대 커서를 보이게 한다(파이썬 `_session_segs` 와
+        // 같다) — 안 그러면 이름 끝에서 커서가 사라져 편집 중인지 알 수 없다.
+        if cur >= buf.len() {
+            let cell = self.session_edit_cell(" ", true, probe && buf.is_empty());
+            let id = Self::take_id(ids);
+            row = row.with_child(self.clickable_status(
+                id,
+                base::chrome::ClickTarget::SessionCursor(buf.len()),
+                cell,
+            ));
+        }
+        Container::new(row.finish())
+            .with_horizontal_padding(2.)
+            .with_background_color(theme::INVERT_BG)
+            .with_corner_radius(theme::PILL_RADIUS)
+            .finish()
+    }
+
+    /// 입력칸 한 글자. 커서 자리는 **한 번 더 뒤집는다**(반전 칩 위의 반전).
+    fn session_edit_cell(&self, ch: &str, at_cursor: bool, probe: bool) -> Box<dyn Element> {
+        let fg = if at_cursor { theme::INVERT_BG } else { theme::INVERT_FG };
+        let text = self.status_text(ch, fg, probe);
+        if at_cursor {
+            Container::new(text)
+                .with_background_color(theme::INVERT_FG)
+                .finish()
+        } else {
+            text
+        }
+    }
+
+    /// 자리 번호 하나를 뗀다(`PanelIds` 와 같은 규칙 — 그리는 차례가 곧 번호다).
+    fn take_id(ids: &mut usize) -> usize {
+        let id = *ids;
+        *ids += 1;
+        id
+    }
+
+    /// 상태줄 자리 `i` 에 마우스가 올라와 있나.
+    fn status_hovered(&self, i: usize) -> bool {
+        Self::hover_shown(self.config.mouse, self.mouse_over(&self.status_click_states, i))
+    }
+
+    /// 상태줄 한 자리를 클릭 대상으로 감싼다 — 크롬과 **같은 구조**이고 풀만 다르다
+    /// (`status_click_states` 필드 문서의 사정).
+    fn clickable_status(
+        &self,
+        i: usize,
+        target: base::chrome::ClickTarget,
+        child: Box<dyn Element>,
+    ) -> Box<dyn Element> {
+        let state = {
+            let mut states = self.status_click_states.borrow_mut();
+            while states.len() <= i {
+                states.push(Default::default());
+            }
+            states[i].clone()
+        };
+        Hoverable::new(state, |_| child)
+            .on_click(move |evt, _, _| {
+                evt.dispatch_typed_action(ViewAction::ChromeClick(target));
+            })
+            .finish()
+    }
+
     fn render_status(&self) -> Box<dyn Element> {
         let tabs = self.chrome_tabs();
         let badges = self.state.badges();
@@ -3570,16 +4188,14 @@ impl SessionView {
         //
         // 상태줄은 **늘 그려지므로** 자리표의 주인으로 더 낫다. 종전 주인은 블록도
         // Claude 도 없으면 안 그려져서, 그때는 같은 넘침이 이미 조용히 있었다.
-        left = left.with_child(
-            Text::new_inline(
-                status::expand(&self.config.status_left, &sctx),
-                self.ui_font,
-                self.scaled(12.),
-            )
-            .with_color(fg)
-            .with_saved_char_position(0, Self::FOOTER_PROBE.to_owned())
-            .finish(),
-        );
+        //
+        // ⛔ **쪼갤 때 프로브를 첫 조각에 남긴다**(pytmux-3). 왼쪽을 런으로 펴면서
+        //    이 `Text` 가 여럿이 됐는데, 자리표가 사라지면 위의 넘침이 그대로 돌아온다.
+        //    조각이 하나도 없는 경우(형식이 빈 문자열)에도 빈 `Text` 를 남기는 이유가
+        //    그것이다 — 종전에도 그 경우엔 빈 `Text` 하나였다(같은 그림·같은 측정).
+        let mut status_ids = 0usize;
+        let (left_fmt, left_has_session) = self.render_status_left(&sctx, fg, &mut status_ids);
+        left = left.with_child(left_fmt);
         // ★ `esc` 모드 표식은 **여기**다(§10-21ⓖ) — 탭바에서 내려왔다. 정본이 시스템
         //   배지를 두는 자리이고, 감시류([벨감시]·[활동감시])가 2026-07-30 에 같은
         //   이유로 먼저 내려온 곳이다. 반전 칩이라 종전(노란 글자)보다 눈에 띈다.
@@ -3702,6 +4318,17 @@ impl SessionView {
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(0.);
         for (kind, text) in parts {
+            // `#S` 를 `status-right` 에 둔 설정에서도 같은 자리를 누를 수 있다. 양쪽에
+            // 다 뒀으면 **왼쪽이 편집 자리**이고 여기는 글자로만 남는다(파이썬과 같다) —
+            // 편집칸이 한 화면에 둘이면 어느 쪽에 치고 있는지 알 수 없다.
+            if kind == status::StatusRun::Session {
+                right = right.with_child(if left_has_session {
+                    self.ui_text(text, 12., fg)
+                } else {
+                    self.render_session_run(&text, fg, &mut status_ids, false)
+                });
+                continue;
+            }
             match status::run_badge(kind) {
                 Some(badge) => {
                     // 클릭되는 구간은 hover 로 그 사실을 보인다(N4).
@@ -3760,6 +4387,9 @@ impl SessionView {
             Tone::Unknown => palette::YELLOW,
             Tone::Running => palette::CYAN,
             Tone::Idle => palette::DIM,
+            // 턴은 성패 축 밖이다 — 초록/빨강/노랑 어디에도 안 붙는 색이라야 목록을
+            // 훑을 때 "이건 다른 부류"가 한눈에 온다.
+            Tone::Turn => palette::MAGENTA,
         }
     }
 
@@ -4707,6 +5337,25 @@ impl SessionView {
         }
         ctx.windows().set_window_title(ctx.window_id(), &title);
         self.last_title = Some(title);
+    }
+
+    /// **끌 수 있는 띠**의 높이를 창에게 다시 말한다(`pytmux-1`).
+    ///
+    /// 머리줄 높이는 글자 배율을 타는데(§10-21ⓐ), 창은 그 배율을 모른다 — 처음 한 번은
+    /// `main` 이 말해 주고(`tell_window_the_band`), 그 뒤에 배율이 바뀌면 여기가 말한다.
+    /// ⛔ 안 말하면 **보이는 줄과 잡히는 띠가 어긋난다**: 배율을 키우면 줄만 두꺼워지고
+    /// 아래쪽 절반은 안 끌리며, 배율을 줄이면 탭바 위쪽이 끌린다(탭이 안 눌린다).
+    ///
+    /// `refresh_title` 과 같은 모양이다 — **값이 실제로 바뀐 때만** 창을 두드린다.
+    fn refresh_titlebar_band(&mut self, ctx: &mut ViewContext<Self>) {
+        let band = titlebar::band_height(self.config.font_scale);
+        if self.titlebar_band == Some(band) {
+            return;
+        }
+        if let Some(window) = ctx.windows().platform_window(ctx.window_id()) {
+            window.set_titlebar_height(band as f64);
+        }
+        self.titlebar_band = Some(band);
     }
 
     /// 활성 패널 입력칸에 **지금 들어 있는 글**(패리티 G9c). 못 긁으면 빈 문자열.
@@ -6990,23 +7639,15 @@ impl View for SessionView {
 
     fn render(&self, _: &AppContext) -> Box<dyn Element> {
         let mut column = Flex::column().with_main_axis_size(MainAxisSize::Max);
-        // 머리줄 — TUI 와 같은 배치(맨 위 한 줄): 어느 서버에 붙어 있는지 + 복사 결과
-        // 한 마디. 복사 결과를 아래 요약 구역에 두면 블록·Claude 가 없을 때 통째로 안
-        // 보인다 — TUI 가 같은 이유로 여기 끝에 붙인다(TUI render 머리줄 주석).
-        // 머리줄 — 앱 이름과 어느 서버에 붙어 있는지. **가운데**다(§10-21ⓗ2).
+        // ★ 머리줄은 **여기 없다**(`pytmux-1`) — 이 열의 첫 줄이 아니라 창의 맨 위
+        //   한 줄로 나갔다(아래 `render` 꼬리의 `titlebar::row`). 종전에는 앱 이름과
+        //   엔드포인트를 가운데 정렬로 띄우는 평범한 한 줄이었고, 그 위에 OS 타이틀바가
+        //   따로 있었다. 제보가 그 둘을 **한 줄로 합쳤다**: OS 띠를 없애고 이 줄이
+        //   제목·창 버튼·창 끌기를 겸한다.
         //
-        // 복사 결과는 여기 없다(ⓝ 로 하단 한 줄에 합류했다) — 그래서 이 줄에는 이제
-        // 이름과 주소만 남고, 가운데가 자연스러운 자리가 됐다. ⓔ(OS 타이틀바를 앱 안으로)
-        // 를 하면 이 줄이 "왼쪽 여백 · 가운데 제목 · 오른쪽 창 버튼" 셋으로 갈리는데,
-        // 가운데 정렬은 그 배치의 일부다.
-        let head = format!("pytmux-gui · {}", self.link.socket());
-        column = column.with_child(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_main_axis_alignment(warpui::elements::MainAxisAlignment::Center)
-                .with_child(self.text(head, 12., palette::DIM))
-                .finish(),
-        );
+        //   ⛔ 다시 여기로 들여놓지 말 것 — 바깥 여백(8px) 안에 들어가는 순간 창 버튼이
+        //   모서리에서 떨어지고, 창에게 말해 둔 띠(`refresh_titlebar_band`)와 자리가
+        //   어긋나 "머리줄 아래 8px 이 안 끌린다"가 된다.
         if self.status_on_top() {
             column = column.with_child(self.render_status());
         }
@@ -7083,6 +7724,7 @@ impl View for SessionView {
                         Self::frame_segments(&canvas, self.state.layout(), tint),
                         blocks,
                         self.cursor_cell(),
+                        self.block_mark(),
                         self.scroll_hints(),
                         self.span_marks(),
                         self.rule_marks(),
@@ -7112,9 +7754,25 @@ impl View for SessionView {
         // ★ 메시지는 **모든 것의 아래**다 — 상태줄보다도 뒤에 붙는다(TUI 와 같은 순서).
         column = self.render_message(column);
 
+        // ★ 머리줄(= 이 창의 타이틀바)은 **바깥 여백 밖**이다(`pytmux-1`): 창 버튼이
+        //   모서리에 닿아야 하고, 끌 수 있는 띠라고 창에게 말해 둔 높이와 자리가 같아야
+        //   한다. 나머지는 종전대로 8px 안에 들어간다.
+        let inside = Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_child(self.render_titlebar())
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Container::new(column.finish())
+                        .with_uniform_padding(8.)
+                        .finish(),
+                )
+                .finish(),
+            )
+            .finish();
         let mut body = Stack::new()
             .with_child(Rect::new().with_background_color(palette::BG).finish())
-            .with_child(Container::new(column.finish()).with_uniform_padding(8.).finish());
+            .with_child(inside);
         // 떠 있는 화면(팝업 계층) — 스크림이 아래를 가라앉히고 판이 가운데 뜬다(N2).
         // 캔버스 마우스는 화면이 떠 있는 동안 core 판정 전에 뷰가 끊는다(`handle_mouse_*`).
         if let Some(screen) = self.screens.top() {
@@ -7134,6 +7792,9 @@ impl View for SessionView {
             .map(|d| (d.orient == "lr", d.x, d.y, d.w, d.h))
             .collect();
         let canvas_mouse_alive = self.config.mouse && self.screens.top().is_none();
+        // 머리줄(= 타이틀바)의 아래 경계. 창에게 말해 둔 값과 **같은 함수**에서 나온다 —
+        // 두 자리에서 각자 계산하면 배율을 바꿀 때 한쪽만 따라간다.
+        let band = titlebar::band_height(self.config.font_scale);
         // 커서 모양은 이벤트 안에서 세워야 해서 값 하나로 실어 보낸다(위 `None if`).
         let span_hovered = self.span_hover.is_some();
 
@@ -7222,9 +7883,25 @@ impl View for SessionView {
             // ★ Shift 는 "패널 안 앱에게 넘김"이다(평드래그는 이미 복사다). 그래서
             // 누름에는 수정키가 필요하고, `on_left_mouse_down` 이 그것을 주도록
             // 고쳤다(PROVENANCE §1).
-            .on_left_mouse_down_with_modifiers(|evt, _app, position, mods| {
+            .on_left_mouse_down_with_modifiers(move |evt, _app, position, mods| {
                 if let Some(at) = Self::cell_from_event(evt, position) {
                     evt.dispatch_typed_action(ViewAction::MouseDown(at, mods.shift));
+                    return DispatchEventResult::StopPropagation;
+                }
+                // ★ **머리줄에서 온 누름은 안 먹었다고 돌려준다**(`pytmux-1`).
+                //
+                //   창 끌기와 더블클릭 최대화는 상류가 이미 갖고 있는데(winit 은
+                //   `event_loop`, 맥은 `host_view.m` 의 `mouseInTitleBar`), 그 갈래는
+                //   **앱이 안 먹은 누름에만** 온다. 이 `EventHandler` 는 창 전체를
+                //   덮고 모든 왼쪽 누름을 삼키고 있었으므로, 그대로 두면 우리가 머리줄을
+                //   아무리 그려도 창은 한 픽셀도 안 움직인다.
+                //
+                //   창 버튼은 여기까지 안 온다 — 각 버튼의 `Hoverable` 이 자식으로서
+                //   먼저 "먹었다"를 돌려주고, `EventHandler` 는 자식이 먹은 이벤트를
+                //   자기 콜백에 안 넘긴다. 제보가 걱정한 "드래그 영역과 클릭존이
+                //   겹친다"가 그 구조로 풀린다.
+                if position.y() < band {
+                    return DispatchEventResult::PropagateToParent;
                 }
                 DispatchEventResult::StopPropagation
             })
@@ -7243,9 +7920,18 @@ impl View for SessionView {
                 evt.dispatch_typed_action(ViewAction::MouseDrag(at));
                 DispatchEventResult::StopPropagation
             })
-            .on_left_mouse_up(|evt, _app, position| {
+            .on_left_mouse_up(move |evt, _app, position| {
                 let at = Self::cell_from_event(evt, position);
+                // 뗌은 **머리줄에서도 알린다** — 탭을 잡고 머리줄까지 끌어올린 채 놓는
+                // 사람이 있고, 그 뗌을 안 받으면 드래그가 다음 클릭까지 살아 있는다.
                 evt.dispatch_typed_action(ViewAction::MouseUp(at));
+                // 그러고도 안 먹었다고 돌려준다 — 맥의 **더블클릭 최대화**가 뗌에서
+                // 판정되기 때문이다(`host_view.m` 의 `mouseUp` → `handleTitleBarDoubleClick`,
+                // 그것도 "warp 이 안 먹었을 때만"). winit 쪽은 누름에서 판정하므로 이
+                // 줄이 없어도 되지만, 두 OS 를 다르게 적으면 한쪽이 조용히 썩는다.
+                if at.is_none() && position.y() < band {
+                    return DispatchEventResult::PropagateToParent;
+                }
                 DispatchEventResult::StopPropagation
             })
             // 버튼 없는 이동(N3) — `on_mouse_in` 은 원소 안에서의 **모든** MouseMoved 에
@@ -7298,6 +7984,8 @@ enum TypedTo {
     Pane,
     /// 지금 열려 있는 판의 입력처(팔레트 필터·프롬프트·작성창).
     Screen,
+    /// 상태줄 세션 이름의 **제자리 입력칸**(pytmux-3). 판이 아니라 크롬이라 위와 갈린다.
+    SessionEdit,
     /// 아무 데도 — 모드 키를 쓰는 중이다.
     Drop,
 }
@@ -7351,6 +8039,14 @@ pub enum ViewAction {
     AltTab(bool),
     /// `Ctrl` 을 뗐다 — 쥔 채 돌던 스위처의 **확정**(§10-21ⓕ2).
     CtrlReleased,
+    /// 창 버튼(최소화·최대화·닫기)을 눌렀다(`pytmux-1`).
+    ///
+    /// `Act(Action)` 으로 안 보내는 이유: 이건 **pytmux 의 의도가 아니다**. `base::Action`
+    /// 은 도움말·바인딩 표·팔레트가 함께 쓰는 목록인데, 터미널 안에서 도는 정본 클라에는
+    /// 창이 없어 최소화라는 명령 자체가 성립하지 않는다. 넣으면 그 표에 **한 클라에서만
+    /// 뜻이 있는 항목**이 생기고, 팔레트에서 고르면 아무 일도 안 일어난다(이 저장소가
+    /// 되풀이해 온 "못 하는 것을 목록에 두지 않는다").
+    WindowButton(titlebar::Button),
     /// 이벤트 콜백이 **키보다 먼저** 판정한 액션(지금은 글자 배율 셋 — §10-21ⓐ).
     ///
     /// `RawKey` 로 안 보내는 이유: 그 길은 core 의 모드·바인딩 표를 지나는데, 이 조합은
@@ -7371,6 +8067,7 @@ impl TypedActionView for SessionView {
             ViewAction::AltTab(forward) => self.alt_tab_step(*forward),
             ViewAction::CtrlReleased => self.release_ctrl(),
             ViewAction::ChromeClick(target) => self.chrome_click(*target),
+            ViewAction::WindowButton(button) => self.press_window_button(*button),
             ViewAction::PanelClick(target) => self.panel_click(*target),
             ViewAction::Wheel { up, at } => self.handle_wheel(*up, *at),
             ViewAction::MouseMove(at) => self.handle_mouse_move(*at),
@@ -7417,6 +8114,17 @@ impl TypedActionView for SessionView {
                 window.toggle_fullscreen();
             }
             ctx.notify();
+        }
+        // ★ 창 버튼(`pytmux-1`) — 전체 화면과 **같은 자리**다(창을 쥔 곳이 여기뿐이다).
+        //
+        //   ⛔ 뜻을 우리가 다시 적지 않는다: 상류 `ViewContext` 가 셋을 그대로 준다.
+        //   "최대화 중인가"의 상태도 안 든다 — 사본을 들면 OS 가 바꾼 상태(맥 초록 버튼·
+        //   창 스냅·`F11`)와 갈려 토글이 한 번 헛돈다(전체 화면에서 배운 것).
+        match self.window_op.take() {
+            Some(titlebar::Button::Minimize) => ctx.minimize_window(),
+            Some(titlebar::Button::Maximize) => ctx.toggle_maximized_window(),
+            // 닫기는 여기 안 온다(`press_window_button` 이 `quit_requested` 로 접는다).
+            Some(titlebar::Button::Close) | None => {}
         }
         // 큐에 쌓인 것은 다음 펌프가 보낸다. 여기서 바로 보내지 않는 이유는 실패 처리와
         // 순서가 핸들러마다 흩어지지 않게 하려는 것이다(`flush_outgoing`).

@@ -59,6 +59,11 @@ pub enum Command {
     /// 지금 탭을 **그 자리로** 옮긴다(`move_window` — `prefix .` 의 숫자 대답).
     MoveWindow { index: usize },
     RenameWindow { name: String },
+    /// 세션 이름 바꾸기 — 상태줄 `#S` 자리의 **제자리 편집**이 커밋할 때 보낸다(pytmux-3).
+    ///
+    /// 서버에 이미 있던 명령이다(`servercmd._cmd_rename_session` · disposition `FULL`) —
+    /// 새 표면을 붙이면서 서버를 건드릴 일이 없었다.
+    RenameSession { name: String },
     /// 패널 분할. `horizontal` 은 **pytmux 기준**이다(§5 — tmux 와 반대).
     Split { horizontal: bool, path: String },
     SelectPaneId { id: i64 },
@@ -438,6 +443,7 @@ impl Command {
             Command::MoveCurrentTab { .. } => "move_current_tab",
             Command::MoveWindow { .. } => "move_window",
             Command::RenameWindow { .. } => "rename_window",
+            Command::RenameSession { .. } => "rename_session",
             Command::Split { .. } => "split",
             Command::SelectPaneId { .. } => "select_pane_id",
             Command::KillPane => "kill_pane",
@@ -522,6 +528,7 @@ impl Command {
             Command::MoveCurrentTab { direction } => json!({ "where": direction }),
             Command::MoveWindow { index } => json!({ "index": index }),
             Command::RenameWindow { name } => json!({ "name": name }),
+            Command::RenameSession { name } => json!({ "name": name }),
             // ★ 서버가 읽는 이름은 `orient` 다(`servercmd._cmd_split` → `msg.get("orient",
             // "lr")`). 여기서 `horizontal` 을 보내던 동안 서버는 그 칸을 못 찾아
             // **늘 기본값 `lr` 로 떨어졌고**, 그래서 상하 분할이 한 번도 안 됐다
@@ -715,6 +722,7 @@ impl Command {
             Command::MoveCurrentTab { direction: "left" },
             Command::MoveWindow { index: 1 },
             Command::RenameWindow { name: "x".into() },
+            Command::RenameSession { name: "x".into() },
             Command::Split {
                 horizontal: true,
                 path: "current".into(),
@@ -1150,7 +1158,11 @@ mod tests {
             Command::RequestTree => 27,
             Command::RequestBuffers => 28,
             Command::PluginOpen { .. } => 65,
-            Command::PluginCmd { .. } => 70,
+            // `plugin_cmd` 도 아래 두 줄과 같은 부류다(이름이 곧 명령 · `all()` 에 없다) —
+            // 종전에는 홀로 70 을 쥐고 있었는데 그 자리는 `all()` 이 안 훑는 칸이라
+            // **`VARIANT_COUNT` 밖으로 새는 값**이었다. 같은 자리에 접었다(pytmux-3 에서
+            // 70 이 진짜 변형의 자리가 되면서 드러났다).
+            Command::PluginCmd { .. } => 65,
             Command::PluginAction { .. } => 66,
             Command::PluginOverlay { .. } => 67,
             Command::PluginOverlayAction { .. } => 68,
@@ -1194,11 +1206,12 @@ mod tests {
             // 자리는 하나면 충분하다(이 표는 "변형을 빠짐없이 훑었나"를 재는 것이다).
             Command::PluginToggle { .. } => 65,
             Command::PluginDo { .. } => 66,
+            Command::RenameSession { .. } => 70,
         }
     }
 
     /// `variant_index` 가 돌려주는 값의 가짓수. 변형을 늘리면 여기도 늘려야 한다.
-    const VARIANT_COUNT: usize = 70;
+    const VARIANT_COUNT: usize = 71;
 
     #[test]
     fn all_covers_every_variant() {
@@ -1656,6 +1669,9 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         Action::FontScale { .. } | Action::FontScaleReset => None,
         // 요약 판은 **클라 안의 것**이다 — 재료(블록·Claude 항목)를 이미 들고 있다.
         Action::ShowSummary => None,
+        // 블록 고르기도 같다 — 모드 전이라 서버에 보낼 것이 없다(복사할 때에야
+        // `CopyRange` 가 나간다. 그 명령은 마우스 드래그 복사와 **같은 하나**다).
+        Action::SelectBlocks => None,
         // 패널로 **바이트를 보내는** 것이라 명령이 아니다 — 뷰가 `Outgoing::Input` 으로
         // 흘린다(키 입력과 같은 길).
         Action::SendEscape | Action::SendBacktick => None,

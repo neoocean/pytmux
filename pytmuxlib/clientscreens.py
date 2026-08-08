@@ -2975,6 +2975,141 @@ class ChooseBufferScreen(ModalScreen):
             event.stop()
             self.dismiss(None)
 
+
+class SearchResultsScreen(ModalScreen):
+    """전역 검색 결과(pytmux-27 ①·②) — 열린 **모든 탭·패널**에서 찾은 줄의 목록.
+
+    스크롤백 검색(`/`·n/N)과 갈리는 지점: 그쪽은 **이 패널 안에서 다음 히트로**
+    옮겨 다니는 것이라 화면이 필요 없고, 이쪽은 어느 탭 어느 패널의 몇째 줄인지를
+    **골라야** 하므로 목록이 있어야 한다.
+
+    ⛔ **상한을 조용히 숨기지 않는다.** 서버는 결과 수(전체·패널당)에 상한을 두고,
+    걸리면 그 사실을 결과에 실어 보낸다 — 그 문장이 제목 줄에 그대로 뜬다. 스무 줄만
+    보고 "이게 전부"로 읽히면 그 상한은 거짓말이 된다(루트 CLAUDE.md 의 no silent caps).
+
+    ②(원격 중계)가 그 규율을 한 겹 늘렸다: 목록은 이제 **상류들의 결과까지 합친**
+    한 벌이라, 회신이 안 온 상류가 있으면 "저 서버엔 없구나"라는 거짓을 읽게 된다.
+    그래서 `hosts` 를 받아 **몇 곳 중 몇 곳이 답했고 어디가 왜 빠졌는지**를 제목 줄에
+    적는다 — 빠진 곳이 없으면 그 문장도 없다.
+
+    Enter/클릭 = 그 자리로, Esc = 닫기. dismiss 값은 고른 항목 dict(취소면 None) —
+    **어디로 어떻게 가는지는 이 화면이 모른다**(호출부 `_open_search_results` 가 안다).
+    """
+    CSS = """
+    SearchResultsScreen { align: center middle; }
+    /* 폭을 넓게 잡는다 — 좁으면 탭·패널 이름만 남고 정작 고르는 근거인 본문
+       미리보기가 통째로 잘린다. */
+    #sres { width: 90%; height: auto; max-height: 80%;
+            border: round $accent; background: $panel; }
+    """
+
+    def __init__(self, msg):
+        super().__init__()
+        self._items = list(msg.get("items") or [])
+        self._query = str(msg.get("query") or "")
+        self._truncated = bool(msg.get("truncated"))
+        self._capped = int(msg.get("capped_panes") or 0)
+        self._panes = int(msg.get("panes") or 0)
+        self._cap = int(msg.get("cap") or 0)
+        self._per_pane = int(msg.get("per_pane") or 0)
+        self._hosts = [h for h in (msg.get("hosts") or []) if isinstance(h, dict)]
+
+    # 상류가 결과에 못 낀 사유(serverremote 의 `state`) → 사람이 읽는 말. 모르는
+    # 값이 오면(구/신 서버 조합) 그 값 그대로 보인다 — 조용히 "정상"으로 접지 않는다.
+    _HOST_STATE_KEYS = {"timeout": "screen.search_all_st_timeout",
+                        "down": "screen.search_all_st_down",
+                        "skipped": "screen.search_all_st_skipped",
+                        "hops": "screen.search_all_st_hops"}
+
+    def hosts_text(self) -> str:
+        """원격 팬아웃 요약(pytmux-27 ②) — 몇 곳이 답했나, **어디가 왜 빠졌나**.
+
+        원격이 하나도 없으면 빈 문자열이다(로컬만 쓰는 사람의 제목 줄을 안 늘린다).
+        빠진 곳에는 사유를 붙인다: 무응답(옛 버전 상류거나 느린 링크)·끊김·상한·
+        홉 상한, 이 뷰에서 **숨긴 탭**의 히트 수(remote-detach 단일 탭 — 탭바에 없는
+        자리라 목록에 실을 수 없다), 그리고 전체 상한이 먼저 차서 **못 실은** 줄 수.
+        한 상류에 사유가 둘 이상일 수 있어(답했는데 일부만 실렸다) 모아서 적는다."""
+        if not self._hosts:
+            return ""
+        ok = sum(1 for h in self._hosts if h.get("state") == "ok")
+        out = i18n.t("screen.search_all_remote", ok=ok, total=len(self._hosts))
+        miss = []
+        for h in self._hosts:
+            name, st = str(h.get("host", "?")), h.get("state")
+            why = []
+            if st != "ok":
+                key = self._HOST_STATE_KEYS.get(st)
+                why.append(i18n.t(key) if key else str(st))
+            if h.get("hidden"):
+                why.append(i18n.t("screen.search_all_st_hidden", n=h["hidden"]))
+            if h.get("dropped"):
+                why.append(i18n.t("screen.search_all_st_dropped", n=h["dropped"]))
+            if why:
+                miss.append(f"{name}({', '.join(why)})")
+        if miss:
+            out += " · " + i18n.t("screen.search_all_remote_miss",
+                                  names=", ".join(miss))
+        return out
+
+    def title_text(self) -> str:
+        """제목 줄 — 무엇을 몇 개 훑어 몇 건을 찾았나, 그리고 **잘렸나·빠졌나**."""
+        head = i18n.t("screen.search_all_title", q=self._query,
+                      n=len(self._items), panes=self._panes)
+        if self._truncated:
+            head += " · " + i18n.t("screen.search_all_cut", cap=self._cap)
+        if self._capped:
+            head += " · " + i18n.t("screen.search_all_pane_cut",
+                                   n=self._capped, per=self._per_pane)
+        hosts = self.hosts_text()
+        if hosts:
+            head += " · " + hosts
+        return head
+
+    def _row_text(self, it) -> Text:
+        """`탭번호:탭이름 · 패널제목 │ 본문` — 자리는 흐리게, 본문은 그대로.
+
+        Rich Text 로 짓는다(마크업 문자열이 아니라) — 스크롤백 본문에는 `[`
+        가 흔하고, 마크업으로 해석되면 그 줄이 통째로 사라지거나 색이 샌다.
+
+        번호는 `gwin`(있으면) 우선이다 — 원격 히트에서 `win` 은 **그 상류의** 로컬
+        탭 번호(점프 좌표)이고, 사람이 보는 번호는 **우리 병합 탭바**의 것이어야
+        한다. 자리 표시는 탭바 규약을 따라 원격이면 분홍(§1.7-a REMOTE_PINK)이다."""
+        num = int(it.get("gwin", it.get("win", 0))) + 1
+        loc = f"{num}:{it.get('tab', '')}"
+        color = REMOTE_PINK if it.get("remote") else "#8a8a8a"
+        txt = Text(f"{loc} · {it.get('title', '')} │ ", style=Style(color=color))
+        txt.append(str(it.get("text", "")))
+        return txt
+
+    def compose(self) -> ComposeResult:
+        rows = [ListItem(Label(self._row_text(it)), id=f"S{i}")
+                for i, it in enumerate(self._items)]
+        if not rows:
+            rows = [ListItem(Label(i18n.t("screen.no_search_results")),
+                             id="Snone")]
+        lv = _CycleListView(*rows, id="sres")
+        lv.border_title = self.title_text()
+        lv.border_subtitle = i18n.t("screen.search_all_sub")
+        yield lv
+
+    def on_mount(self):
+        self.query_one(ListView).focus()
+
+    def _pick(self, item_id):
+        if not item_id or item_id == "Snone":
+            self.dismiss(None)
+            return
+        self.dismiss(self._items[int(item_id[1:])])
+
+    def on_list_view_selected(self, event):
+        self._pick(event.item.id)
+
+    def on_key(self, event: events.Key):
+        if event.key == "escape":
+            event.stop()
+            self.dismiss(None)
+
+
 class _NoticeList(ListView):
     """이력 목록 위젯. `ListView` 는 `VerticalScroll` 을 물려받아 `home`/`end`/
     `pageup`/`pagedown` 이 **스크롤 전용 바인딩**으로 잡혀 있다 — 화면만 굴러가고

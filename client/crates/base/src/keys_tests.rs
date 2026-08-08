@@ -924,3 +924,109 @@ fn opening_the_command_table_to_modifiers_did_not_bind_anything_else() {
         assert_eq!(command_action(key, Mods::ALT), None, "{key:?}");
     }
 }
+
+// ── 블록 선택 모드(pytmux-18) ────────────────────────────────────────────────
+//
+// 제보의 요구 셋을 그대로 잰다: ⑴ 고른 상태가 있고 ⑵ `↑`/`↓` 로 한 블록씩 옮기고
+// ⑶ `Ctrl`+`C` 로 그 블록을 복사한다. 여기서 재는 것은 **키의 뜻**이고, 무엇이 골라져
+// 있나·무엇이 복사되나는 뷰가 잰다(`gui/src/session_view_tests.rs`).
+//
+// ★ 이 절에서 가장 중요한 것은 **부정 오라클**이다. 셋 다 평소 모드에서는 패널 안
+//   프로그램의 키이고(인터럽트·커서 이동), 가로채는 범위가 한 칸이라도 넓어지면 그
+//   프로그램의 기능이 **조용히** 사라진다.
+
+#[test]
+fn arrows_step_one_block_at_a_time_inside_the_mode() {
+    let mut mode = ModeState::default();
+    mode.enter_block();
+    assert_eq!(mode.mode().badge(), Some("[block]"), "모드가 화면에 안 보인다");
+    assert_eq!(
+        mode.press(Key::Down, Mods::NONE),
+        KeyOutcome::Block(BlockKey::Next)
+    );
+    assert_eq!(
+        mode.press(Key::Up, Mods::NONE),
+        KeyOutcome::Block(BlockKey::Prev)
+    );
+    assert_eq!(mode.mode(), InputMode::Block, "한 번 옮기고 모드에서 나갔다");
+}
+
+#[test]
+fn ctrl_c_copies_the_block_inside_the_mode() {
+    let mut mode = ModeState::default();
+    mode.enter_block();
+    assert_eq!(
+        mode.press(Key::Char('c'), Mods::CTRL),
+        KeyOutcome::Block(BlockKey::Copy)
+    );
+    // 복사하고도 머문다 — 옆 블록을 이어 고르는 것이 이 모드의 쓰임이다.
+    assert_eq!(mode.mode(), InputMode::Block);
+}
+
+#[test]
+fn ctrl_c_outside_the_mode_is_still_an_interrupt() {
+    // ⛔ 이 줄이 무너지면 **패널 안 프로그램을 끊을 길이 사라진다.** 제보가 그 위험을
+    //   먼저 적었고("Ctrl+C 는 이미 뜻이 있다"), 여기가 그 자리다.
+    for mode in [InputMode::Normal, InputMode::Scroll, InputMode::Command] {
+        let outcome = interpret(mode, Key::Char('c'), Mods::CTRL);
+        assert_ne!(
+            outcome,
+            KeyOutcome::Block(BlockKey::Copy),
+            "{mode:?} 에서 Ctrl+C 를 가로챘다"
+        );
+    }
+    assert_eq!(
+        interpret(InputMode::Normal, Key::Char('c'), Mods::CTRL),
+        KeyOutcome::ToPane(vec![0x03]),
+        "평소 모드의 Ctrl+C 가 인터럽트가 아니다"
+    );
+}
+
+#[test]
+fn plain_arrows_outside_the_mode_are_not_block_moves() {
+    // 같은 이유의 짝 — `↑`/`↓` 는 평소 모드에서 커서 이동·히스토리다.
+    assert_eq!(
+        interpret(InputMode::Normal, Key::Up, Mods::NONE),
+        KeyOutcome::ToPane(b"\x1b[A".to_vec())
+    );
+    assert_eq!(
+        interpret(InputMode::Normal, Key::Down, Mods::NONE),
+        KeyOutcome::ToPane(b"\x1b[B".to_vec())
+    );
+}
+
+#[test]
+fn three_keys_leave_the_block_mode() {
+    // 스크롤 모드의 나가는 키와 같은 셋이다 — 두 모드가 다른 글자로 나가면 손이 어긋난다.
+    for key in [Key::Escape, Key::Enter, Key::Char('q')] {
+        let mut mode = ModeState::default();
+        mode.enter_block();
+        assert_eq!(
+            mode.press(key, Mods::NONE),
+            KeyOutcome::ModeChanged(InputMode::Normal),
+            "{key:?}"
+        );
+        assert_eq!(mode.mode(), InputMode::Normal, "{key:?}");
+    }
+}
+
+#[test]
+fn typing_in_block_mode_does_not_leak_to_the_pane() {
+    // 고르는 동안 친 글자가 셸에 찍히면 안 된다(esc·스크롤 모드와 같은 규율).
+    let mut mode = ModeState::default();
+    mode.enter_block();
+    for key in [Key::Char('a'), Key::Char('Z'), Key::Left, Key::Tab] {
+        assert_eq!(mode.press(key, Mods::NONE), KeyOutcome::Ignored, "{key:?}");
+        assert_eq!(mode.mode(), InputMode::Block, "{key:?} 에 모드가 풀렸다");
+    }
+}
+
+#[test]
+fn the_esc_table_can_reach_the_block_mode() {
+    // 팔레트만이 입구면 키를 아는 사람이 손을 두 번 더 움직인다. 정본에 없는 글자라
+    // 안전하다(`client_surface.json` 의 `esc_keys` 에 `b` 가 없다).
+    assert_eq!(
+        command_action(Key::Char('b'), Mods::NONE),
+        Some(crate::Action::SelectBlocks)
+    );
+}

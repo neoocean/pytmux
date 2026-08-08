@@ -150,6 +150,17 @@ pub enum StatusRun {
     Time,
     /// 날짜 계열 strftime(`%Y-%m-%d` 등) — 클릭은 달력 토글.
     Date,
+    /// `#S` — 세션 이름. 클릭은 **그 자리 편집**이다(pytmux-3 제보).
+    ///
+    /// ⚠ **배지가 아니다.** [`run_badge`] 가 `None` 을 돌려주는 것이 `Plain` 과 같아
+    /// 보이지만 뜻이 다르다 — `Plain` 은 누를 자리가 아니고, 이것은 누르면 **화면이
+    /// 아니라 입력칸**이 열린다(팝업을 여는 다른 런들과 갈리는 지점이라 배지 표에
+    /// 억지로 끼우지 않는다). 뷰가 이 런을 따로 알아보고 자기 편집 상태를 연다.
+    ///
+    /// 고유 종류인 이유는 파이썬과 같다: `_merge_runs`(여기서는 아래 ②)가 인접 동종만
+    /// 합치므로, 종류를 나누는 것만으로 세션 이름 구간이 그대로 남아 **그 폭이 곧
+    /// 누를 자리**가 된다.
+    Session,
 }
 
 /// 시각/날짜로 분류하는 strftime 코드(파이썬 `_TIME_STRFTIME`/`_DATE_STRFTIME` 동형).
@@ -189,7 +200,7 @@ pub fn expand_parts_at(fmt: &str, ctx: &StatusCtx, now: &str) -> Vec<(StatusRun,
                 let (kind, text) = match code {
                     'h' => (StatusRun::Host, host.split('.').next().unwrap_or("").to_owned()),
                     'H' => (StatusRun::Host, host.clone()),
-                    'S' => (StatusRun::Plain, ctx.session.clone()),
+                    'S' => (StatusRun::Session, ctx.session.clone()),
                     'I' => (
                         StatusRun::Plain,
                         ctx.tab_number.map(|n| n.to_string()).unwrap_or_default(),
@@ -264,6 +275,10 @@ pub fn run_badge(run: StatusRun) -> Option<base::Badge> {
         StatusRun::Host => Some(base::Badge::Host),
         StatusRun::Time => Some(base::Badge::Clock),
         StatusRun::Date => Some(base::Badge::Calendar),
+        // ⚠ 세션 이름은 배지를 안 연다 — 누르면 **그 자리가 입력칸**이 된다(pytmux-3).
+        // 배지 하나를 억지로 붙이면 클릭이 팝업을 여는 다른 런들과 같은 뜻이 되고,
+        // 그건 제보가 *"판을 띄우지 말라"* 고 한 바로 그 동작이다.
+        StatusRun::Session => None,
     }
 }
 

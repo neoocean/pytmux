@@ -124,6 +124,37 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("입출력 오류: {err}", "I/O error: {err}"),
     ("프레임을 해석할 수 없다: {err}", "Could not decode the frame: {err}"),
+    // ── boot.rs — 서버를 못 띄웠을 때(§10-24 · pytmux-36) ──
+    // 어디를 찾아봤는지 나열하는 두 마디. `$PYTMUX_BIN` 같은 환경변수 이름은 번역
+    // 대상이 아니라(모듈 머리말의 "서버 어휘" 규약) 이 둘만 옮긴다.
+    ("PATH 의 pytmux", "pytmux on PATH"),
+    ("트리의 pytmux.py", "pytmux.py in the tree"),
+    (
+        "서버를 띄울 pytmux 를 찾지 못했습니다 (찾아본 곳: {tried}). {hint}",
+        "Could not find a pytmux to start the server (looked in: {tried}). {hint}",
+    ),
+    (
+        "서버는 파이썬으로 돕니다 — 그 파이썬을 찾지 못했습니다 ({script}). 파이썬을 설치하거나 $PYTMUX_PYTHON 으로 지목하세요. {hint}",
+        "The server runs on Python — and that Python was not found ({script}). Install Python, or point at it with $PYTMUX_PYTHON. {hint}",
+    ),
+    // 위 둘의 꼬리에 붙는 한 마디(`{hint}`) — **이미 떠 있는 서버에 붙는 길**을 말한다.
+    (
+        "이미 떠 있는 서버가 있으면 `pytmux-gui --socket <엔드포인트>` 로 지목하고, 그리기만 보려면 `pytmux-gui demo`",
+        "If a server is already up, point at it with `pytmux-gui --socket <endpoint>`; to see only the drawing, run `pytmux-gui demo`",
+    ),
+    (
+        "서버 기동을 실행하지 못했다: {source} ({argv})",
+        "Could not execute the server launch: {source} ({argv})",
+    ),
+    ("서버 기동 실패", "Server launch failed"),
+    ("서버 기동 실패: {detail}", "Server launch failed: {detail}"),
+    (
+        "서버 기동이 시한 안에 끝나지 않았다",
+        "The server launch did not finish in time",
+    ),
+    // ── status.rs — 붙어 있지 않을 때의 그 한 줄(message_line) ──
+    ("연결 종료: {reason}", "Disconnected: {reason}"),
+    ("서버 오류: {err}", "Server error: {err}"),
     // ── command.rs — command_help (팔레트 설명 · 정본 clientutil i18n en 블록) ──
     //
     // **손으로 다듬지 말 것** — 문구의 주인은 파이썬 정본이다. 픽스처

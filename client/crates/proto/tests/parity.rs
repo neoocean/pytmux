@@ -207,7 +207,7 @@ static PREFIX_KEYS: &[Item] = &[
     i("p_d", Done, "detach = 이 클라 창을 닫는다"),
     i("p_dot", Done, "prefix . — 옮길 자리(번호) 입력"),
     i("p_dq", Done, "상하 분할"),
-    i("p_enter", Done, "prefix Enter - 메뉴(30줄 · 파이썬 31줄 — 격차는 MenuScreen 이 센다)"),
+    i("p_enter", Done, "prefix Enter - 메뉴(30줄 · 파이썬 32줄 — 격차는 MenuScreen 이 센다)"),
     i("p_eq", Done, "prefix = — 버퍼 목록에서 골라 붙여넣기"),
     i("p_hjkl", Done, "H J K L 로 경계 밀기(3칸)"),
     i("p_l", Done, "직전 탭"),
@@ -237,6 +237,11 @@ static ESC_KEYS: &[Item] = &[
     i("e_down", Done, "↓ 최하단 → 하단 배지 포커스 · ←→ 순환 · Enter 실행"),
     i("e_e", Done, "esc e — 패널에 ESC"),
     i("e_esc", Done, "명령 모드에서 두 번째 ESC 가 패널로 간다"),
+    // esc f — 열린 **모든 탭·패널**의 스크롤백을 한 번에 훑어 결과 목록을 띄우고 그
+    // 자리로 점프한다(pytmux-27 ①, 2026-08-05 에 정본에만 들어갔다). GUI 는 서버
+    // 명령(`search_all`/`search_goto`)도 결과 화면도 아직 없다 — `SearchResultsScreen`
+    // 줄과 짝이다.
+    i("e_f", Missing, ""),
     i("e_help", Done, "esc ? — 키 도움말 화면"),
     i(
         "e_ins",
@@ -349,7 +354,11 @@ static SCREENS: &[Item] = &[
         Done,
         "REC(플러그인 있을 때·[c]/[o])·서버(RTT 60분 그래프 — ping/pong 실측)·세션 — 정본의 토큰 탭은 2026-06-12 에 제거돼 없다",
     ),
-    i("MenuScreen", Done, "31줄 전부(파이썬 순서) — search 는 G9t 에서 서버 `search` 로 배선"),
+    i(
+        "MenuScreen",
+        Done,
+        "정본 줄 전부(파이썬 순서) — search 는 G9t 에서 서버 `search` 로 배선. 2026-08-05 에 정본이 더한 search_all 만 빠져 있다(SearchResultsScreen 줄과 짝)",
+    ),
     i("MergeRemoteTabScreen", Done, "같은 호스트의 다른 원격 탭 · h/v 로 방향"),
     i("NoticeHistoryScreen", Done, "등급 기호·색 · 새것이 위 · 상한 200"),
     i("PluginManagerScreen", Done, "[x]/[ ] 목록 · Enter/Space 토글"),
@@ -358,6 +367,9 @@ static SCREENS: &[Item] = &[
         Done,
         "한 줄 입력·확정·취소 + 인자 이력 후보(파이썬 arghist 와 같은 파일·같은 버킷 — ↑↓ 고르고 Tab 채움). 명령 이름 완성은 팔레트가 그 자리다",
     ),
+    // 전역 검색 결과 판(pytmux-27 ①) — 탭·패널·줄 미리보기 목록에서 Enter 로 그
+    // 자리(탭+패널+스크롤)로 뛴다. 여는 길은 `esc f` 와 컨텍스트 메뉴 `search_all`.
+    i("SearchResultsScreen", Missing, ""),
     i("SettingsScreen", Done, "범주별 목록 — 파이썬 34줄 전부 대응(마지막 남았던 language 까지)"),
     i(
         "TabSwitcherScreen",

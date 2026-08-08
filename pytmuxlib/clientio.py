@@ -62,6 +62,16 @@ class _InputMixin:
         # (이미지 붙여넣기는 내부 Claude Code 가 공유 OS 클립보드에서 읽음)
         if len(self.screen_stack) > 1:
             return  # 프롬프트/모달 입력은 그 스크린이 처리
+        # 세션 이름 제자리 편집 중이면 붙여넣기·IME 확정분은 그 입력칸으로 간다.
+        # Textual 은 **한글 IME 확정 입력을 Paste 로** 준다(개별 Key 가 아니다 —
+        # 아래 _compose_track_input 주석의 그 사정) — 이 분기가 없으면 편집 중에
+        # 한글을 치는 순간 글자가 패널(셸)로 샌다.
+        if self.status.session_editing():
+            if event.text:
+                self.status.session_edit_insert(
+                    "".join(c for c in event.text if c.isprintable()))
+            event.stop()
+            return
         if self.writer and event.text:
             self.send_cmd("paste", text=event.text)
             # IME 한글 확정 입력은 Textual 이 Paste 이벤트로 전달한다(개별 Key 가
@@ -88,6 +98,16 @@ class _InputMixin:
         self._log_key(event.key)
         # 메뉴/프롬프트 등 모달이 떠 있으면 그 스크린이 처리
         if len(self.screen_stack) > 1:
+            return
+        # §10-21ⓛ 세션 이름 제자리 편집: 상태줄 `#S` 를 클릭해 그 자리가 입력칸이 된
+        # 동안에는 **모든 키를 여기서 먹는다**(패널로 새면 편집 중에 셸이 글자를
+        # 받는다). 자리는 모달 검사 **직후**다 — 아래 ESC 디바운스보다 뒤에 두면
+        # 취소(ESC)가 오토리핏 창에 씹혀 먹통이 된다. 판을 안 띄우므로 screen_stack
+        # 은 그대로고, 그래서 이 분기가 없으면 키가 전부 패널로 흐른다.
+        if self.status.session_editing():
+            self._handle_session_edit_key(event)
+            event.prevent_default()
+            event.stop()
             return
         # 클립보드 붙여넣기 진행 중엔 ESC 외 키를 무시한다(요청): 외부 도구로
         # 붙여넣는 동안 친 키가 완료 후 패널로 새는 것을 막는다. ESC/Shift+ESC 는
@@ -432,6 +452,55 @@ class _InputMixin:
             "msg.bad_tab_index", default="탭 번호 범위 초과: {v}", v=val))
         return None
 
+    # ---- 세션 이름 제자리 편집(§10-21ⓛ) ----
+    def begin_session_rename(self):
+        """상태줄 `#S` 클릭 → 그 자리를 입력칸으로 연다(판을 안 띄운다).
+
+        `#S` 가 status-left/right 에 없으면 클릭할 자리 자체가 없어 아무 일도 일어나지
+        않는다(기본 status-left 는 `" "` 라 그것이 기본 상태다). 다른 모드(prefix·
+        scroll·display·esc)에 있었다면 normal 로 되돌린다 — 그 모드들의 키 해석이
+        편집을 가로채지는 않지만(위 on_key 분기가 앞선다), 편집을 끝낸 뒤 사용자가
+        엉뚱한 모드에 남아 있으면 안 된다."""
+        if not self.status.begin_session_edit():
+            return False
+        if self.mode == "esc":
+            self._exit_esc()
+        else:
+            self.mode = "normal"
+        self.status.refresh()
+        return True
+
+    def _handle_session_edit_key(self, event: events.Key):
+        """제자리 편집의 키 처리 — 글자/Backspace/Delete/←→/Home/End 로 고치고
+        Enter 커밋 · Esc 취소. 그 밖의 키는 **삼킨다**(패널 유출 금지).
+
+        커밋은 `rename_session`(서버에 이미 있다 · disposition FULL)이라 새 명령이
+        필요 없다. 이름이 비었거나 그대로면 보내지 않는다(서버도 같은 판정을 하지만,
+        의미 없는 왕복을 만들지 않는다)."""
+        sb = self.status
+        k = event.key
+        if k in ("escape", "shift+escape"):
+            sb.end_session_edit()
+            return
+        if k == "enter":
+            name = (sb.end_session_edit() or "").strip()
+            if name and name != sb.session:
+                self.send_cmd("rename_session", name=name)
+            return
+        if k == "backspace":
+            sb.session_edit_erase()
+            return
+        if k == "delete":
+            sb.session_edit_erase(forward=True)
+            return
+        if k in ("left", "right", "home", "end"):
+            sb.session_edit_move(k)
+            return
+        ch = event.character
+        # 제어문자(탭·개행 등)는 이름에 넣지 않는다 — isprintable 이 걸러 준다.
+        if ch and ch.isprintable():
+            sb.session_edit_insert(ch)
+
     # ---- ESC(명령) 모드 ----
     def _exit_esc(self):
         self.mode = "normal"
@@ -556,6 +625,16 @@ class _InputMixin:
             # 이제 esc e)에서만 — 단독 ESC 두 번은 여전히 전달 없음(56632 불변).
             self.send_input(b"\x1b")
             self._exit_esc()
+            return
+        if ch == "f":
+            # esc f: 열린 **모든 탭·패널**을 가로지르는 검색(pytmux-27 ①). 스크롤
+            # 모드의 `/`(이 패널 안에서 다음 히트로)와는 다른 일이라 키도 다르다.
+            # ⛔ 제보가 말한 Ctrl+F 는 **정본에서 못 쓴다** — 패널 안 앱이 쓰는 키라
+            # 가로채면 그 앱의 검색이 죽는다(GUI 는 독립 앱이라 가로챌 수 있어 두
+            # 클라에서 키가 갈릴 수 있다. 그 갈림은 패리티 표가 들고 있다 —
+            # client/crates/proto/tests/parity.rs 의 `e_f`).
+            self._exit_esc()
+            self.search_all()
             return
         if k in ("ctrl+up", "ctrl+down"):
             # esc ctrl+↑/↓: 활성 Claude 패널에서 **이전/다음에 입력한 프롬프트**

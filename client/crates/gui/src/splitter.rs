@@ -133,6 +133,17 @@ pub struct Block {
     pub color: ColorU,
 }
 
+/// 블록 선택 모드에서 **고른 블록**의 칸 범위(pytmux-18) — 캔버스 셀 좌표.
+///
+/// 뷰가 이미 뷰포트에 맞춰 잘라서 준다([`SessionView::block_mark`](crate::session_view)) —
+/// 여기서 자르면 자르는 규칙이 두 벌이 된다.
+pub struct BlockPick {
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+}
+
 /// 활성 패널의 **커서 칸**(§10-21ⓒ) — 캔버스 셀 좌표.
 ///
 /// 서버는 `screen` 프레임마다 커서 위치를 통째로 준다(`SessionState::pane_cursor`).
@@ -228,6 +239,14 @@ const HINT_PX: f32 = 3.;
 /// 커서 테두리의 두께.
 const CURSOR_PX: f32 = 2.;
 
+/// 고른 블록 테두리의 두께(pytmux-18). 커서(2px)보다 얇다 — 커서는 **한 칸**이라
+/// 굵어야 보이고, 이건 여러 줄짜리 상자라 같은 굵기면 화면을 지배한다.
+const PICK_PX: f32 = 1.;
+
+/// 고른 블록의 **왼쪽 띠** 두께. 테두리보다 굵어야 "여기서부터 여기까지가 한 덩어리"로
+/// 읽힌다(warp 의 블록 강조도 왼쪽 띠가 주다).
+const PICK_BAR_PX: f32 = 3.;
+
 /// 얇은 바의 픽셀 두께. 칸 폭보다 얇아야 "선"으로 읽힌다.
 const BAR_PX: f32 = 4.;
 
@@ -244,6 +263,8 @@ pub struct SplitterOverlay {
     blocks: Vec<Block>,
     /// 활성 패널의 커서 칸(없으면 안 그린다 — 커서를 감춘 패널·화면이 뜬 동안).
     cursor: Option<Cursor>,
+    /// 블록 선택 모드에서 고른 블록(없으면 안 그린다 — 모드 밖이거나 화면 밖이다).
+    pick: Option<BlockPick>,
     /// 스크롤한 패널의 표시용 막대(없으면 안 그린다).
     hints: Vec<ScrollHint>,
     /// 마우스가 올라온 범위의 밑줄(없으면 안 그린다).
@@ -262,12 +283,25 @@ impl SplitterOverlay {
         segs: Vec<Seg>,
         blocks: Vec<Block>,
         cursor: Option<Cursor>,
+        pick: Option<BlockPick>,
         hints: Vec<ScrollHint>,
         marks: Vec<SpanMark>,
         rules: Vec<TextRule>,
         probe_id: &'static str,
     ) -> Self {
-        Self { child, bars, segs, blocks, cursor, hints, marks, rules, probe_id, origin: None }
+        Self {
+            child,
+            bars,
+            segs,
+            blocks,
+            cursor,
+            pick,
+            hints,
+            marks,
+            rules,
+            probe_id,
+            origin: None,
+        }
     }
 
     /// 블록 문자 칸들을 사각형으로. 비율(`BlockFill`)을 칸 크기에 곱할 뿐이다 —
@@ -384,6 +418,35 @@ impl SplitterOverlay {
         line(RectF::new(vec2f(x0 + cw - CURSOR_PX, y0), vec2f(CURSOR_PX, ch)));
     }
 
+    /// 고른 블록을 **왼쪽 띠 + 얇은 테두리**로 감싼다(pytmux-18).
+    ///
+    /// # 왜 꽉 채우지 않나
+    ///
+    /// [`paint_cursor`](Self::paint_cursor) 가 적어 둔 것과 같은 사정이다 — 이 오버레이는
+    /// 캔버스를 **다 그린 뒤에** 얹히므로 칠하면 그 아래 글자가 덮인다. 커서는 한 칸이라
+    /// 그래도 아쉬운 정도지만, 블록은 수십 줄일 수 있어 **고른 순간 그 글이 통째로 안
+    /// 보이게 된다** — 복사하려고 고른 글이 사라지는 셈이다.
+    ///
+    /// 반투명으로 덮는 길도 있는데 안 골랐다: 알파는 그 아래 색과 섞여, 밝은 배경을 칠한
+    /// 출력(`ls` 의 색·`git diff`)에서 결과 색을 예측할 수 없다. 테두리는 **어디까지가 한
+    /// 블록인가**를 그 자체로 말하고 글자를 하나도 안 건드린다.
+    fn paint_pick(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        let Some(pick) = &self.pick else { return };
+        let x0 = origin.x() + pick.x as f32 * cw;
+        let y0 = origin.y() + pick.y as f32 * ch;
+        let (w, h) = (pick.w as f32 * cw, pick.h as f32 * ch);
+        let mut fill = |rect: RectF| {
+            ctx.scene
+                .draw_rect_without_hit_recording(rect)
+                .with_background(Fill::Solid(theme::FOCUS));
+        };
+        // 왼쪽 띠가 주다 — 위아래 테두리가 화면 밖으로 잘려도(긴 블록) 이것은 남는다.
+        fill(RectF::new(vec2f(x0, y0), vec2f(PICK_BAR_PX, h)));
+        fill(RectF::new(vec2f(x0, y0), vec2f(w, PICK_PX)));
+        fill(RectF::new(vec2f(x0, y0 + h - PICK_PX), vec2f(w, PICK_PX)));
+        fill(RectF::new(vec2f(x0 + w - PICK_PX, y0), vec2f(PICK_PX, h)));
+    }
+
     pub fn finish(self) -> Box<dyn Element> {
         Box::new(self)
     }
@@ -439,6 +502,7 @@ impl Element for SplitterOverlay {
             && self.segs.is_empty()
             && self.blocks.is_empty()
             && self.cursor.is_none()
+            && self.pick.is_none()
         {
             return;
         }
@@ -517,6 +581,9 @@ impl Element for SplitterOverlay {
         self.paint_rules(origin, cw, ch, ctx);
         // 범위 밑줄(§10-21ⓥ2·ⓧ2) — 글자 **아래**에 긋는다(글자를 안 건드린다).
         self.paint_marks(origin, cw, ch, ctx);
+        // 고른 블록의 상자(pytmux-18)는 커서 **바로 아래**다 — 커서와 겹치는 칸이
+        // 있어도(고른 블록 안에 커서가 있는 흔한 경우) 커서가 이긴다.
+        self.paint_pick(origin, cw, ch, ctx);
         // 커서는 **맨 위**다 — 경계·바에 가리면 그 칸에 커서가 있는지 알 수 없다.
         self.paint_cursor(origin, cw, ch, ctx);
     }

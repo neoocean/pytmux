@@ -67,6 +67,8 @@ pub static EN: &[(&str, &str)] = &[
     ("블록 · Claude 요약", "Blocks · Claude summary"),
     ("블록·Claude 요약", "Blocks · Claude summary"),
     ("블록도 Claude 항목도 없다", "No blocks and no Claude items"),
+    // `Action::SelectBlocks` 의 라벨(pytmux-18) — 팔레트·메뉴·키 도움말이 같이 쓴다.
+    ("블록 고르기", "Select blocks"),
     ("패널에 ESC", "ESC to pane"),
     ("패널에 `", "` to pane"),
     ("패널 동기화", "Sync panes"),
@@ -190,6 +192,11 @@ pub static EN: &[(&str, &str)] = &[
     ("── 스크롤 모드 ──", "── scroll mode ──"),
     ("스크롤백 이동", "Move through scrollback"),
     ("라이브로 복귀", "Back to live"),
+    // 블록 선택 모드(pytmux-18).
+    ("── 블록 선택 모드 ──", "── block select mode ──"),
+    ("한 블록씩 이동", "Move one block at a time"),
+    ("고른 블록 전체 복사", "Copy the whole selected block"),
+    ("고르기 끝", "Done selecting"),
     ("── 마우스 ──", "── mouse ──"),
     ("드래그", "Drag"),
     ("휠", "Wheel"),

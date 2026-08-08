@@ -6,6 +6,14 @@
 //! 판정한 것을 그대로 받는다 — 두 클라(파이썬·네이티브)가 각자 추정하면 서로 다른
 //! 블록을 보게 된다.
 //!
+//! # 경계의 출처는 둘, 소비자는 하나 (pytmux-21)
+//!
+//! Claude 패널에는 OSC 133 이 안 온다(Claude 는 OSC 를 안 보낸다). 대신 서버가 화면
+//! 글의 프롬프트 마커로 **턴** 경계를 잡아 같은 메시지로 보낸다
+//! (`plugins/claude-code/promptblocks.py`). ★ **클라는 그 차이를 모른다** — 고르기·
+//! 강조·복사가 한 벌로 남는 것이 이 설계의 값이다. 여기서 갈리는 것은 `state` 하나뿐이고
+//! (`turn`), 그건 "성패를 가질 수 없는 블록"이라는 뜻이다.
+//!
 //! # 능력 광고가 필요하다
 //!
 //! 서버는 `hello` 에 `caps: ["blocks"]` 를 실은 클라에게만 이 메시지를 보낸다. 광고하지
@@ -27,6 +35,9 @@ pub enum BlockState {
     Prompt,
     Running,
     Done,
+    /// Claude 패널의 **한 턴**(프롬프트 하나 + 그 답). 종료코드가 **없는 부류**다 —
+    /// 셸 명령처럼 성패로 끝나지 않는다(모듈 머리말 「경계의 출처는 둘」).
+    Turn,
 }
 
 impl BlockState {
@@ -34,6 +45,7 @@ impl BlockState {
         match value {
             "running" => BlockState::Running,
             "done" => BlockState::Done,
+            "turn" => BlockState::Turn,
             // 모르는 값은 "아직 진행 중"으로 본다 — 끝났다고 넘겨짚는 쪽이 더 나쁘다
             // (종료코드 없는 블록이 성공처럼 보인다).
             _ => BlockState::Prompt,
@@ -82,6 +94,10 @@ pub enum Tone {
     Running,
     /// 프롬프트만 떴다(아직 명령이 없다).
     Idle,
+    /// Claude 한 턴. **성패를 묻지 않는다** — `Unknown`(=끝났는데 코드를 모른다)과
+    /// 갈라 두는 이유가 그것이다. 뭉치면 요약 판에 `??` 가 줄줄이 떠서, 아무 문제도
+    /// 없는 대화가 "뭔가 잘못됐다"로 읽힌다.
+    Turn,
 }
 
 impl Block {
@@ -103,6 +119,9 @@ impl Block {
             (BlockState::Done, None) => Tone::Unknown,
             (BlockState::Running, _) => Tone::Running,
             (BlockState::Prompt, _) => Tone::Idle,
+            // 턴은 종료코드를 **가질 수 없다**. 혹시 서버가 실어 보내도 무시한다 —
+            // 그 값의 뜻을 우리가 모르므로 성패로 칠하는 것이 곧 거짓말이다.
+            (BlockState::Turn, _) => Tone::Turn,
         }
     }
 
@@ -114,6 +133,9 @@ impl Block {
             Tone::Unknown => "??",
             Tone::Running => "···",
             Tone::Idle => "…",
+            // 화면에서 그 턴이 시작되는 자리에 실제로 찍혀 있는 글자다 — 표식과 패널을
+            // 눈으로 잇는 데 이보다 나은 것이 없다.
+            Tone::Turn => "❯",
         }
     }
 
@@ -128,6 +150,32 @@ impl Block {
             &self.command
         }
     }
+}
+
+/// 블록 하나가 차지하는 **절대 행 범위**(양끝 포함). 목록 밖이면 `None`.
+///
+/// # `end_row` 를 그대로 못 쓰는 이유 (서버 `segment.py` 실측)
+///
+/// 서버는 `end_row` 를 **다음 프롬프트가 뜰 때** 채운다(`_on_prompt_start`: 직전 블록의
+/// `end_row = row` 를 적고 **같은 `row` 로** 새 블록을 시작한다). 즉 그 값은 이 블록의
+/// 마지막 줄이 아니라 **다음 블록의 첫 줄**이다 — 그대로 쓰면 복사한 글 끝에 다음
+/// 프롬프트 한 줄이 딸려 온다. 그리고 명령이 끝났을 때(`OSC 133;D`)는 아직 안 채워지므로
+/// **끝난 블록에도 `None` 이 정상**이다.
+///
+/// 그래서 끝을 셋에서 고른다: ⑴ `end_row` ⑵ 다음 블록의 시작 ⑶ 그것도 없으면
+/// `live_bottom`(= 지금 살아 있는 마지막 줄 — 마지막 블록은 아직 자라는 중이다).
+/// ⑴·⑵ 는 **한 줄 앞**이 이 블록의 끝이고, 프롬프트에서 그냥 Enter 를 친 경우처럼
+/// 시작과 끝이 같은 줄이면 그 한 줄이 곧 블록이다.
+pub fn row_span(blocks: &[Block], index: usize, live_bottom: usize) -> Option<(usize, usize)> {
+    let start = blocks.get(index)?.start_row;
+    let next = blocks[index]
+        .end_row
+        .or_else(|| blocks.get(index + 1).map(|b| b.start_row));
+    let end = match next {
+        Some(row) => row.saturating_sub(1).max(start),
+        None => live_bottom.max(start),
+    };
+    Some((start, end))
 }
 
 /// 와이어 형태. 값이 없는 필드는 서버가 보내지 않는다.
@@ -256,6 +304,30 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_turn_is_neither_success_nor_failure() {
+        // Claude 패널의 블록은 프롬프트 마커로 잘린 **턴**이라 종료코드가 없다.
+        // `done`+코드없음(= `??` 노랑)으로 뭉치면 아무 문제 없는 대화가 줄줄이
+        // "뭔가 잘못됐다"로 보인다(`promptblocks.py` 의 같은 근거).
+        let (_, blocks) = parse(
+            r#"{"t":"blocks","pane":1,"blocks":[{"cmd":"테스트 돌려줘","state":"turn","start":7}]}"#,
+        );
+        assert_eq!(blocks[0].state, BlockState::Turn);
+        assert_eq!(blocks[0].tone(), Tone::Turn);
+        assert_eq!(blocks[0].succeeded(), None);
+        assert_eq!(blocks[0].badge(), "❯");
+        assert_eq!(blocks[0].command_text(), "테스트 돌려줘");
+    }
+
+    #[test]
+    fn a_turn_never_borrows_an_exit_code() {
+        // 턴에 종료코드가 실려 와도 성패로 칠하지 않는다 — 그 값의 뜻을 모른다.
+        let (_, blocks) =
+            parse(r#"{"t":"blocks","pane":1,"blocks":[{"state":"turn","exit":0}]}"#);
+        assert_eq!(blocks[0].tone(), Tone::Turn);
+        assert_eq!(blocks[0].succeeded(), None);
+    }
+
+    #[test]
     fn unknown_state_is_treated_as_in_progress() {
         // 서버가 상태 이름을 늘려도 "끝났다"로 넘겨짚지 않는다.
         let (_, blocks) = parse(r#"{"t":"blocks","pane":1,"blocks":[{"state":"미래상태"}]}"#);
@@ -332,5 +404,60 @@ mod boundary_tests {
             "{\"t\":\"blocks\",\"pane\":1,\"blocks\":[{\"cmd\":\"echo a\\necho b\",\"state\":\"done\"}]}",
         );
         assert_eq!(b[0].command, "echo a echo b");
+    }
+
+    // ── 행 범위(pytmux-18) ───────────────────────────────────────────────────
+    //
+    // 이 산수가 틀리면 **강조된 것과 복사되는 것이 어긋난다** — 화면은 맞고 클립보드만
+    // 틀리는 부류라 눈으로는 못 잡는다.
+
+    /// 시작·끝만 든 블록(나머지는 이 계산과 무관하다).
+    fn at(start: usize, end: Option<usize>) -> Block {
+        Block {
+            command: String::new(),
+            state: BlockState::Done,
+            exit: None,
+            cwd: None,
+            start_row: start,
+            end_row: end,
+        }
+    }
+
+    #[test]
+    fn the_end_row_is_the_next_prompt_so_the_block_stops_one_line_earlier() {
+        // 서버는 다음 프롬프트가 뜬 **그 행**을 `end` 로 적는다(`segment.py`
+        // `_on_prompt_start`). 그대로 쓰면 복사한 글 끝에 다음 프롬프트가 딸려 온다.
+        let blocks = [at(10, Some(15))];
+        assert_eq!(row_span(&blocks, 0, 999), Some((10, 14)));
+    }
+
+    #[test]
+    fn a_finished_block_without_an_end_borrows_the_next_blocks_start() {
+        // `OSC 133;D`(끝) 만 온 블록은 `end` 가 비어 있다 — 다음 프롬프트가 떠야 채워진다.
+        // 그때도 뒤 블록이 있으면 경계를 안다.
+        let blocks = [at(0, None), at(7, None)];
+        assert_eq!(row_span(&blocks, 0, 999), Some((0, 6)));
+    }
+
+    #[test]
+    fn the_last_block_grows_to_the_live_bottom() {
+        // 마지막 블록은 아직 자라는 중이라 끝을 물어볼 데가 없다 — 지금까지 찬 데까지다.
+        let blocks = [at(0, None), at(7, None)];
+        assert_eq!(row_span(&blocks, 1, 20), Some((7, 20)));
+    }
+
+    #[test]
+    fn a_one_line_block_never_inverts() {
+        // 프롬프트에서 그냥 Enter 를 치면 시작과 끝이 같은 행이다. 한 줄 빼기가
+        // 시작보다 앞서면 범위가 뒤집혀 **엉뚱한 데가 복사된다**.
+        assert_eq!(row_span(&[at(5, Some(5))], 0, 999), Some((5, 5)));
+        // 라이브 하단이 시작보다 위인 순간(창이 막 줄었다)도 같은 보호를 받는다.
+        assert_eq!(row_span(&[at(5, None)], 0, 2), Some((5, 5)));
+    }
+
+    #[test]
+    fn asking_past_the_end_of_the_list_is_not_a_panic() {
+        assert_eq!(row_span(&[], 0, 9), None);
+        assert_eq!(row_span(&[at(0, None)], 3, 9), None);
     }
 }

@@ -125,6 +125,20 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     테스트**를 이름으로 알려준다). 끄기 = `PYTMUX_TEST_REPORT=off`.
     배치가 도는 중에는 **그 배치가 import 할 파일을 편집하지 말 것**(다음 모듈 프로세스가
     반쯤 고친 코드를 읽는다). 상세 = `docs/internal/LESSONS_2026-07-25.md`·`-25b.md`.
+  - ★ **완주했으면 트래커로 흘린다 — `python3 scripts/tracker_tests.py --ingest`**
+    (2026-08-05 · `pytmux/pytmux-132`). 이 저장소는 **M2** 라 러너는 저장소에 쓰지 않고
+    트래커의 `sync` 도 저장소를 안 읽는다 — 그 사이를 잇는 것은 이 명령뿐이고,
+    ⛔ **안 부르면 스위트가 무엇을 잡든 리포트 파일에만 남는다**(실측 2026-08-04: 유입
+    **0회**. 그동안 트래커의 `doctor` 는 이 프로젝트를 「건강」이라고 답한다).
+    - `reports/testrun.jsonl` 을 트래커 모양으로 바꿔 `issue ingest-tests` 에 넘긴다.
+      **멱등**이라 같은 리포트를 두 번 흘려도 런 한 줄이다(런 id 는 시작 시각에서 짓는다).
+      먼저 볼 때는 `--ingest --dry-run`, 변환만 볼 때는 인자 없이.
+    - 트래커에서 일어나는 일: 실행 기록이 `run`(kind=test)으로 남고, **실패는 이슈가 된다** —
+      케이스 이름이 곧 지문이라 같은 시험이 다시 깨지면 새 이슈가 아니라 **같은 이슈**가
+      다시 열리고(재발) 런과 서로 링크된다.
+    - ⛔ **절단된 run 은 안 흘린다**(요약줄 없음 · 회계 불일치 · 빈 결과 = 전부 거절, 종료코드 2).
+      그 셋 중 하나면 담기는 것이 「통과했다」라는 거짓말이 된다.
+    - 트래커 저장소가 형제 경로가 아니면 `ISSUE_REPO=<경로>`.
   - **"출력·트레이스백 없이 러너가 사라진다" 는 부하가 아니었다**(2026-07-26, p4 67413):
     `pty_backend._UnixPty._signal_group` 이 **자기 프로세스 그룹**에 SIGHUP/SIGKILL 을
     쏴 러너와 **부모 셸**까지 죽였다(`pty.fork()` 자식이 setsid 를 끝내기 전 창에는
@@ -136,6 +150,29 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     자초했다). 상세 = `docs/internal/LESSONS_2026-07-26.md`.
   - macOS 헤드리스 러너는 일부 PTY 스위트를 인프라 레벨로 wedge → CI 매트릭스에서
     제외(로컬이 권위). 실 PTY·실 ConPTY(Windows)·실 Claude 패널은 driver 검증 불가.
+    ★ **그 사각지대를 겨눈 층이 `qa/` 다**(아래).
+
+## QA 층 — `qa/` (실 PTY·실 클라를 운전한다)
+
+위 스위트는 위젯 상태와 합성 셀을 보지만 **사용자가 실제로 보는 화면**은 안 본다. `qa/` 는
+격리 슬롯 위에 진짜 데몬을 띄우고 진짜 Textual 클라를 가짜 터미널 아래 붙여 그 프레임을
+잰다. 쓰는 법은 `qa/README.md`, **설계 SSOT 는 트래커**다(이 저장소는 M2):
+
+```sh
+node ../issue/bin/issue.mjs doc-get pytmux/qa-system   # 노선·결정·티어·후속
+python3 qa/run.py                                      # 한 바퀴 (실측 약 15초)
+python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르면 결함이 어디에도 안 들어간다
+```
+
+- ⛔ **초록은 비싸다** — 종료코드 0 은 「결함 0 **이고** 건너뜀 0」일 때뿐이다. 환경 구성
+  실패도 결함이고(rc 2), 미검증이 남으면 rc 3 이다. 그 표를 0 으로 접지 말 것.
+- ⛔ **라이브 데몬에는 안 붙는다.** 런은 `PYTMUX_HOME=/tmp/pytmux-qa-<uid>/qa-…` 슬롯
+  안에서만 돌고, 정리는 **pid 로만** 한다 — 위 「프로세스 이름으로 일괄 kill 금지」를
+  코드로 못 박은 자리다(`tests/test_qa_layer.py` 가 AST 로 지킨다).
+- 결함의 정본은 리포트가 아니라 **트래커의 이슈**다. `qa/out/` 은 p4·git 양쪽 제외.
+- 이 층을 고쳤으면 `python3 tests/run.py test_qa_layer`(메타 QA — 오라클이 무는지)와
+  실제 한 바퀴를 **둘 다** 돌린다. 메타 QA 는 전체 스위트에 들어 있어 `check_all.py` 가
+  같이 돌지만, `qa/run.py` 자체는 커밋 게이트에 **안 넣었다**(설계 SSOT §6).
 
 ## 아키텍처 한눈에
 - 코어: `pytmuxlib/*.py`. 서버측 = `server.py`(합성 진입)·`serverio.py`(연결/라우팅/플러시/
@@ -175,14 +212,31 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
   `//woojinkim/scripts/issue` 가 권위이고 `docs/internal/qa/issues/pytmux-<번호>.md` 는
   **자동 생성 미러**다 — ⛔ **그 파일을 손으로 고치지 말 것**(다음 `sync` 가 드리프트로
   신고하고 반영하지 않는다). 고치는 길은 MCP `issue_update`·`issue_create` → `mirror --write`
-  → 사람이 P4 제출. 규약은 그 디렉터리 README. HANDOFF §10-21·ARCHIVE §13-4 는 **색인 표**만
+  → 사람이 P4 제출. 규약은 그 디렉터리 README.
+  ★ **기계가 잡은 결함의 유입구는 `python3 scripts/tracker_tests.py --ingest` 다**(위 테스트 절)
+  — M2 에서는 그 명령이 **유일한 길**이고, 안 부르면 스위트 실패가 어디에도 안 들어간다.
+  HANDOFF §10-21·ARCHIVE §13-4 는 **색인 표**만
   두고 본문을 갖지 않는다 — ⛔ **핸드오프에 항목을 다시 적지 말 것**(사본이 둘이면 SSOT 가
   아니다).
-- ⛔ ★ **내부 문서 350편은 이제 저장소에 없다 — 링크 스텁만 있다**(2026-08-03 · 사용자 지시).
-  `docs/internal/**/*.md` 를 열면 **제목 + 트래커 링크**뿐이다. 전문을 읽는 곳:
+- ⛔ ★ **내부 문서 361편은 이제 저장소에 없다 — 링크 스텁만 있다**(2026-08-03 · 사용자 지시 ·
+  실측 2026-08-06 · 2.70M자). `docs/internal/**/*.md` 를 열면 **제목 + 트래커 링크**뿐이다.
+  전문을 읽는 곳:
   - 웹 — <http://100.79.188.26:8086/d/pytmux/<slug>>(각 스텁이 자기 링크를 갖고 있다)
-  - 오프라인 — `//woojinkim/scripts/issue/data/journal/*.jsonl`(P4 추적 · 350건 2.5M자) ·
-    `issue rebuild` 가 그것으로 복원한다.
+  - 셸 — `node ../issue/bin/issue.mjs doc-get pytmux/<slug>`(전문 · **자르지 않는다**) ·
+    판 이력·비교는 `doc-history`·`doc-diff`. **웹이 안 떠도 이쪽은 뜬다** — 웹을 거치지 않고
+    같은 DB 를 직접 읽는다(읽기는 MCP 로 안 나간다).
+  ⛔ **예전에 여기 「오프라인 — 저널 JSONL 을 P4 로 받아 `issue rebuild` 가 복원한다」고 적혀
+  있던 것은 틀렸다**(2026-08-05 · 트래커 `issue/issue-75` · p4 70444 · 70536). 그 파일들은
+  **depot 에서 지워졌고**(delete change 70446) `.p4ignore` 가 `data/` 를 예외 없이 전부
+  제외하므로 그 경로를 `p4 sync` 해도 **아무것도 안 온다**. 저널 쓰기는 은퇴했고
+  (`ISSUE_JOURNAL_ON=1` 로만 되살아난다) `rebuild` 는 이제 **옆에 있는 옛 DB 를 이월**한다 —
+  ⛔ **저널은 복구원이 아니다.**
+  ⚠ `scripts/issue/data/issues.db` 가 **없는 머신**이면(그 파일도 `.p4ignore` 다) 위 셸 명령도
+  못 뜬다. 그때 세우는 길은 depot 에 4시간마다 저절로 남는 스냅샷이다 —
+  `p4 sync //woojinkim/scripts/issue/snapshots/issues.sql` 뒤
+  `node bin/issue.mjs restore snapshots/issues.sql`(옆에 `data/restored-*.db` 가 생기고,
+  제자리를 갈아 끼우는 것은 사람이 한다). 파일 타입이 `text+S64` 라 **되돌릴 수 있는 범위는
+  약 10.7일**이다.
   **새 글·수정은 트래커에서** 하고 `issue mirror --project pytmux --write` 로 스텁을 갱신한다 —
   스텁 파일을 손으로 고치면 다음 미러가 되돌린다. `benchmark/` 2451편은 데이터라 대상 밖이다.
   ⚠ 루트 `CLAUDE.md`·`client/CLAUDE.md` 는 **스텁이 아니다**(문서 루트 밖) — 여기 ⛔ 안전

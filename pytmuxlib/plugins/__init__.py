@@ -206,12 +206,30 @@ class Registry:
             if fn is not None:
                 fn(pane, code, param)
 
+    def _blocks_sources(self):
+        """블록 경계를 기여하는 플러그인을 **구체적인 것부터**.
+
+        # 왜 순서를 못 박나 (pytmux-21)
+
+        한 패널에 출처가 둘일 수 있다: 셸 통합(OSC 133 · `plugins/blocks`)과 Claude 의
+        프롬프트 마커(`plugins/claude-code`). Claude 패널에서 사용자가 고르려는 것은
+        **턴**이지 그 패널을 띄운 `claude` 명령 하나가 아니다.
+
+        ⛔ **디렉터리 이름의 사전순은 결정이 아니다.** 종전 이 자리는 발견 순서대로
+        첫 비-None 을 채택했는데, 그 순서는 `pkgutil` 이 정하는 것이라 `blocks` 가
+        `claude-code` 를 이겨 Claude 패널에는 셸 블록(대개 `claude` 한 덩이)만 갔다.
+        그래서 `blocks_rank`(클수록 먼저 · 기본 0)를 선언하게 했다 — 값이 코드에 있으면
+        읽는 사람이 왜 그런지 물어볼 수 있다.
+        """
+        return sorted(self.plugins,
+                      key=lambda p: -int(getattr(p, "blocks_rank", 0) or 0))
+
     def pane_blocks(self, pane):
         """패널의 **현재** 블록 목록(와이어 형태). 없으면 None.
 
         dirty 와 무관하다 — 새로 붙는 클라는 바뀐 적이 없어도 현재 목록을 받아야 한다
         (화면을 `_send_full` 로 받는 것과 같은 이유)."""
-        for p in self.plugins:
+        for p in self._blocks_sources():
             fn = getattr(p, "blocks_wire", None)
             if fn is None:
                 continue

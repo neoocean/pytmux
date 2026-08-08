@@ -195,6 +195,13 @@ class _CommandMixin:
         elif purpose == "search":
             if val:
                 self.send_cmd("search", query=val, direction="up")
+        elif purpose == "search_all":
+            # 전역 검색(pytmux-27 ①): 회신(`search_results`)이 와야 판이 열린다.
+            # 대기 플래그를 세우는 이유는 choose-buffer 와 같다 — 안 세우면 남이
+            # 띄운(또는 뒤늦게 도착한) 회신에도 판이 열린다.
+            if val:
+                self._want_search_all = True
+                self.send_cmd("search_all", query=val)
         elif purpose == "confirm":
             if val.lower().startswith("y") and action:
                 action()

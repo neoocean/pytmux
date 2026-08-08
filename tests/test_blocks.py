@@ -288,6 +288,44 @@ async def test_real_shell_integration_emits_the_command_it_was_given():
         "BEL 이 OSC 를 끊어 명령이 잘렸다(셸 escape 누락)"
 
 
+async def test_real_shell_integration_escapes_control_chars_in_the_cwd():
+    """cwd 도 **같은 규율**을 탄다(검수 2026-08-05).
+
+    명령줄만 escape 하고 cwd 를 날것으로 실으면, BEL 이 든 디렉터리 이름 하나가 OSC 7 을
+    끊어 ⑴ cwd 를 자르고 ⑵ 남은 바이트를 화면 스트림으로 흘린다. 제어문자가 든
+    디렉터리는 POSIX 에서 만들 수 있고(압축 파일 하나면 된다), 잘린 cwd 는 그대로
+    §10-21ⓧ2 의 상대경로 해석 기준이 되므로 조용한 오답까지 된다.
+
+    실측(수정 전): `/tmp/loot\\x07;echo PWNED` 로 `cd` → 파서가 본 cwd `…/loot` ·
+    화면에 `;echo PWNED`.
+    """
+    shell = _posix_shell()
+    if shell is None:
+        skip("동작하는 zsh·bash 없음(셸 통합 스크립트를 실행할 수 없다)")
+    script = os.path.join(os.path.dirname(blocks_pkg.__file__),
+                          "shell-integration.sh")
+    base = tempfile.mkdtemp()
+    evil = os.path.join(base, "loot\x07;echo PWNED")
+    os.mkdir(evil)
+    out = subprocess.run(
+        [shell, "-c", "source %s; cd %s; HOSTNAME=h __pytmux_report_cwd"
+                      % (shlex.quote(script), shlex.quote(evil))],
+        capture_output=True, timeout=20,
+    )
+    pane = _pane()
+    pane.feed(_osc("133", "A"))
+    pane.feed(out.stdout)
+    # 서버는 표시 전에 제어문자를 공백으로 접는다 — 기대값도 그 규칙을 따른다.
+    assert blocks_wire(pane)[0]["cwd"] == evil.replace("\x07", " "), \
+        f"BEL 이 OSC 7 을 끊어 cwd 가 잘렸다: {blocks_wire(pane)[0].get('cwd')!r}"
+    # ② 프레임이 안 끊겼으니 화면으로 새어 나온 글자도 없어야 한다.
+    screen = "".join(
+        pane.screen.buffer[r][c].data
+        for r in range(pane.screen.lines) for c in range(pane.screen.columns)
+    ).strip()
+    assert "echo PWNED" not in screen, f"OSC 잔해가 화면에 찍혔다: {screen!r}"
+
+
 def _ps1_path():
     return os.path.join(os.path.dirname(blocks_pkg.__file__),
                         "shell-integration.ps1")
@@ -661,15 +699,25 @@ async def test_osc_hot_path_never_scans_the_plugin_directory():
 
 # ── 셸이 늘 때마다 갈릴 자리 — escape 표를 기계로 대조한다 ──────────────────────
 
-def _escape_table(path, pattern):
-    """셸 통합 스크립트에서 `<원문자> → <escape>` 쌍을 뽑는다.
+def _fn_body(src, header):
+    """스크립트에서 함수 하나의 몸통만 잘라 낸다.
+
+    표가 **둘**이 됐기 때문이다(검수 2026-08-05): 명령줄은 `\\xHH`(서버 `_unescape` 가
+    되돌린다), cwd 는 `%HH`(URL 필드라 서버 `unquote` 가 되돌린다). 파일 전체를 훑으면
+    두 표가 한 사전으로 섞여 "sh 와 ps 가 다르다"는 거짓 적색이 난다."""
+    i = src.index(header)
+    return src[i:src.index("\n}", i)]
+
+
+def _escape_table(path, pattern, header):
+    """셸 통합 스크립트의 함수 하나에서 `<원문자> → <escape>` 쌍을 뽑는다.
 
     소스를 읽는 이유: 이 표는 **셸마다 다시 적힌다**(sh 는 `${s//…}`, PowerShell 은
     `.Replace(…)`). 실제로 돌려 보는 오라클은 그 셸이 깔린 상자에서만 도는데
     (`powershell 없음` skip 이 이 스위트에 상시 둘 있다), 표가 어긋나는 것은
     **어디서나** 잴 수 있다."""
     import re
-    src = open(path, encoding="utf-8").read()
+    src = _fn_body(open(path, encoding="utf-8").read(), header)
     named = {'"`n"': "\n", '"`r"': "\r",
              "$__pytmux_nl": "\n", "$__pytmux_cr": "\r",
              "$__pytmux_esc": "\x1b", "$__pytmux_bel": "\x07",
@@ -693,9 +741,11 @@ async def test_every_shell_escapes_the_same_set_and_the_server_can_undo_it():
     from pytmuxlib.plugins.blocks.segment import _unescape
     d = os.path.dirname(blocks_pkg.__file__)
     sh = _escape_table(os.path.join(d, "shell-integration.sh"),
-                       r's=\$\{s//"([^"]+)"/"([^"]+)"\}')
+                       r's=\$\{s//"([^"]+)"/"([^"]+)"\}',
+                       "__pytmux_report_cmd() {")
     ps = _escape_table(os.path.join(d, "shell-integration.ps1"),
-                       r"\$s = \$s\.Replace\((.+?),\s*'([^']+)'\)")
+                       r"\$s = \$s\.Replace\((.+?),\s*'([^']+)'\)",
+                       "function global:__pytmux_escape(")
     assert sh, "sh 표를 못 읽었다(정규식이 낡았다 — 잴 것이 없으면 고장이다)"
     assert ps, "PowerShell 표를 못 읽었다(정규식이 낡았다)"
     assert set(sh) == set(ps), (
@@ -713,3 +763,34 @@ async def test_every_shell_escapes_the_same_set_and_the_server_can_undo_it():
         if raw != "\\":
             s = s.replace(raw, esc)
     assert _unescape(s) == typed, f"왕복이 항등이 아니다: {_unescape(s)!r}"
+
+
+async def test_every_shell_percent_encodes_the_same_set_in_the_cwd_url():
+    """cwd 표(**URL 필드**)도 같은 대조를 받는다(검수 2026-08-05).
+
+    명령줄 표와 갈라 두는 이유: 되돌리는 사람이 다르다. 명령줄은 서버 `_unescape` 가
+    `\\xHH` 를 풀고, cwd 는 `_parse_file_url` 의 `unquote` 가 `%HH` 를 푼다. 그래서 같은
+    글자를 서로 다른 모양으로 적는 것이 **맞고**, 어긋나면 안 되는 것은 *어떤 글자를*
+    적느냐다 — OSC 종결자(ESC·BEL)와 줄바꿈이 한 셸에서만 빠지면 그 셸에서만 프레임이
+    끊긴다(BEL 이 명령줄에서 정확히 그랬다 — 검수 2026-07-30).
+    """
+    from urllib.parse import unquote
+    d = os.path.dirname(blocks_pkg.__file__)
+    sh = _escape_table(os.path.join(d, "shell-integration.sh"),
+                       r's=\$\{s//"([^"]+)"/([^}]+)\}',
+                       "__pytmux_report_cwd() {")
+    ps = _escape_table(os.path.join(d, "shell-integration.ps1"),
+                       r"\$s = \$s\.Replace\((.+?),\s*'([^']+)'\)",
+                       "function global:__pytmux_urlsafe(")
+    assert sh, "sh 의 cwd 표를 못 읽었다(정규식이 낡았다 — 잴 것이 없으면 고장이다)"
+    assert ps, "PowerShell 의 cwd 표를 못 읽었다(정규식이 낡았다)"
+    assert set(sh) == set(ps), (
+        "두 셸이 cwd 에서 다른 글자를 인코딩한다: sh=%r ps=%r"
+        % (sorted(map(ord, sh)), sorted(map(ord, ps))))
+    # OSC 를 끊는 글자가 **빠짐없이** 들어 있는가. 이 셋 중 하나만 빠져도 그 글자가 든
+    # 디렉터리 이름 하나가 프레임을 끊는다.
+    for ch in ("\x1b", "\x07", "\n", "\r"):
+        assert ch in sh, f"{ch!r} 를 cwd 에서 인코딩하지 않는다"
+    for raw, esc in sh.items():
+        assert ps[raw] == esc, f"{raw!r} 를 sh 는 {esc!r}, ps 는 {ps[raw]!r} 로 쓴다"
+        assert unquote(esc) == raw, f"서버 unquote 가 {esc!r} 를 {raw!r} 로 못 되돌린다"

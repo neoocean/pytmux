@@ -60,6 +60,8 @@
     "save_layout": "handled",
     "save_tab_layout": "handled",
     "search": "full",
+    "search_all": "handled",
+    "search_goto": "full",
     "select_layout": "full",
     "select_pane": "full",
     "select_pane_id": "full",
@@ -261,6 +263,20 @@
     "search": [
       "direction",
       "query"
+    ],
+    "search_all": [
+      "_req_token",
+      "hops",
+      "limit",
+      "query"
+    ],
+    "search_goto": [
+      "line",
+      "pane",
+      "query",
+      "route",
+      "wid",
+      "win"
     ],
     "select_layout": [
       "preset"

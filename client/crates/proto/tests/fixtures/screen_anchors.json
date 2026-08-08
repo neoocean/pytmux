@@ -15,6 +15,7 @@
   "NoticeHistoryScreen": "middle",
   "PluginManagerScreen": "middle",
   "PromptScreen": "bottom",
+  "SearchResultsScreen": "middle",
   "SettingsScreen": "middle",
   "TabSwitcherScreen": "middle",
   "_SettingInputScreen": "middle"

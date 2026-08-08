@@ -35,6 +35,7 @@ pub mod keys;
 pub mod restart;
 pub mod screens;
 pub mod scrollbar;
+pub mod session_edit;
 pub mod spans;
 pub mod tint;
 
@@ -57,6 +58,7 @@ pub use keymap::{
     palette_tab_with_results,
 };
 pub use screens::{PanelTarget, Prompt, Screen, ScreenKey, Screens, TabFacts};
+pub use session_edit::{SessionEdit, SessionEditKey};
 pub use keys::{
     InputMode, Key, KeyOutcome, Mods, SCROLL_BINDINGS, ScrollAmount, ScrollBinding, encode,
     interpret,

@@ -99,13 +99,24 @@ fn bright_variants_differ_from_their_base() {
 
 /// 부류 전수. `block_color` 의 match 가 컴파일로 누락을 막지만, 아래 테스트가 실제로
 /// 전부를 훑으려면 목록이 필요하다.
-const ALL_TONES: [Tone; 5] = [
+const ALL_TONES: [Tone; 6] = [
     Tone::Ok,
     Tone::Failed,
     Tone::Unknown,
     Tone::Running,
     Tone::Idle,
+    Tone::Turn,
 ];
+
+#[test]
+fn a_claude_turn_is_not_painted_like_a_verdict() {
+    // 턴은 성패 축 밖이다(pytmux-21). 성공·실패·"코드 모름" 중 어느 것과도 같은 색이면
+    // 요약 판에서 대화가 판정처럼 읽힌다 — 특히 노랑(`??`)과 겹치면 "뭔가 잘못됐다"다.
+    let turn = SessionView::block_color(Tone::Turn);
+    for verdict in [Tone::Ok, Tone::Failed, Tone::Unknown] {
+        assert_ne!(turn, SessionView::block_color(verdict), "{verdict:?} 와 같은 색이다");
+    }
+}
 
 #[test]
 fn an_unknown_exit_code_is_not_painted_like_success() {
@@ -303,7 +314,7 @@ fn probe_at(x: f32, y: f32, w: f32, h: f32) -> RectF {
 #[test]
 fn a_committed_string_reaches_the_pane() {
     // 한글은 자판 한 번이 글자 하나가 아니다. 조합 결과는 키가 아니라 문자열로 온다.
-    assert_eq!(SessionView::typed_target(InputMode::Normal, false, "한글"), TypedTo::Pane);
+    assert_eq!(SessionView::typed_target(InputMode::Normal, false, false, "한글"), TypedTo::Pane);
 }
 
 #[test]
@@ -311,7 +322,7 @@ fn nothing_is_typed_while_the_user_is_talking_to_pytmux() {
     // 명령 모드에서 확정된 글자는 명령이 아니다. 패널로 흘리면 사용자가 pytmux 에게
     // 말하는 중에 셸에 글자가 찍힌다. **판이 없을 때** 이야기다(아래 ⓜ2 참조).
     for mode in [InputMode::Command, InputMode::Scroll] {
-        assert_eq!(SessionView::typed_target(mode, false, "한글"), TypedTo::Drop, "{mode:?}");
+        assert_eq!(SessionView::typed_target(mode, false, false, "한글"), TypedTo::Drop, "{mode:?}");
     }
 }
 
@@ -319,17 +330,17 @@ fn nothing_is_typed_while_the_user_is_talking_to_pytmux() {
 fn an_empty_commit_sends_nothing() {
     // 입력기는 조합을 취소할 때 빈 확정을 보낸다. 그걸 그대로 보내면 빈 입력 프레임이
     // 매번 서버로 나간다.
-    assert_eq!(SessionView::typed_target(InputMode::Normal, false, ""), TypedTo::Drop);
-    assert_eq!(SessionView::typed_target(InputMode::Command, true, ""), TypedTo::Drop);
+    assert_eq!(SessionView::typed_target(InputMode::Normal, false, false, ""), TypedTo::Drop);
+    assert_eq!(SessionView::typed_target(InputMode::Command, true, false, ""), TypedTo::Drop);
 }
 
 #[test]
 fn a_committed_string_reaches_the_open_panel() {
     // ★ **제보 그대로**(§10-21ⓜ2): `esc` `:` 에서 한글을 못 쳤다. 판이 열려 있으면
     //   확정된 글자는 **그 판의 것**이다 — 종전에는 모드만 보고 버렸다.
-    assert_eq!(SessionView::typed_target(InputMode::Command, true, "한글"), TypedTo::Screen);
+    assert_eq!(SessionView::typed_target(InputMode::Command, true, false, "한글"), TypedTo::Screen);
     // 평소 모드에서 판이 열려 있는 경우(작성창 등)도 판이 먼저다.
-    assert_eq!(SessionView::typed_target(InputMode::Normal, true, "한글"), TypedTo::Screen);
+    assert_eq!(SessionView::typed_target(InputMode::Normal, true, false, "한글"), TypedTo::Screen);
 }
 
 #[test]
@@ -2666,10 +2677,144 @@ fn clicking_the_disconnect_message_opens_the_notice_history() {
 fn the_head_line_names_the_socket_like_the_tui() {
     // 머리줄은 TUI 와 같은 배치(맨 위 한 줄) — 어느 서버에 붙었는지가 화면에 있어야
     // 하고, 복사 결과가 붙는 자리이기도 하다(아래 요약 구역은 비면 안 그려진다).
+    // ★ `pytmux-1` 이후 이 줄은 **이 창의 타이틀바**이기도 하다 — 그래도 적히는 글자는
+    //   그대로다(제보가 자리를 옮겼지 이름을 바꾸지 않았다).
     let painted = painted_after(vec![], &[]);
     assert!(
         painted_contains(&painted, "pytmux-gui · "),
         "머리줄(소켓)이 프레임에 없다: {painted:?}"
+    );
+}
+
+#[test]
+fn the_head_line_carries_the_window_buttons_now() {
+    // ★ `pytmux-1` — OS 타이틀바를 없앴으므로 창 버튼은 **이 줄에** 있어야 한다.
+    //   ⛔ 없으면 사용자는 마우스로 창을 닫을 자리를 잃는다(장식이 없는 창이다).
+    //   맥만 예외이고 그 이유는 `titlebar` 모듈 머리말의 표에 있다 — 신호등이 OS 것이다.
+    let painted = painted_after(vec![], &[]);
+    if crate::titlebar::BUTTONS.is_empty() {
+        // 맥 — 우리가 그리면 신호등과 합쳐 여섯 개가 된다. 대신 **그 자리를 비웠나**를
+        // 양성으로 잰다(부정 단언만 두면 머리줄이 통째로 안 그려져도 통과한다).
+        assert!(
+            crate::titlebar::reserved_width_for(0) >= crate::titlebar::MAC_LIGHTS_W,
+            "신호등 자리를 안 비우면 제목과 겹친다"
+        );
+        assert!(painted_contains(&painted, "pytmux-gui · "));
+    } else {
+        for button in crate::titlebar::BUTTONS {
+            assert!(
+                painted_contains(&painted, button.glyph()),
+                "창 버튼 {}이 머리줄에 없다: {painted:?}",
+                button.glyph()
+            );
+        }
+    }
+}
+
+#[test]
+fn the_title_row_sits_above_everything_else() {
+    // 타이틀바는 **창 맨 위 한 줄**이다 — 그 자리라야 상류가 "위에서 띠 높이 안"으로
+    // 판정하는 창 끌기·더블클릭 최대화가 이 줄에 걸린다(`titlebar` 모듈 머리말).
+    // ⚠ 시험 글꼴은 글자 폭이 0이라 가로는 못 잰다 — 세로만 잰다.
+    let boxes = painted_boxes(three_tabs(), &[]);
+    let head = painted_y(&boxes, "pytmux-gui · ").expect("머리줄이 안 그려졌다");
+    let tab = painted_y(&boxes, "하나").expect("탭바가 안 그려졌다");
+    assert!(
+        head < tab,
+        "머리줄이 탭바보다 아래에 있다 — 타이틀바가 아니다: {boxes:?}"
+    );
+    // 그리고 창 꼭대기에 붙어 있다: 이 줄 위에는 아무 글자도 없다.
+    let above = boxes.iter().filter(|(_, y)| *y < head).count();
+    assert_eq!(above, 0, "머리줄 위에 그려진 글자가 있다: {boxes:?}");
+}
+
+/// 그 자리의 왼쪽 누름을 이 뷰가 **먹었다고 하나**.
+///
+/// ★ 이 한 값이 곧 "창이 끌리나"다. 상류(winit `event_loop` · 맥 `host_view.m`)는
+/// **앱이 안 먹은** 누름만 창 끌기·더블클릭 최대화로 돌리기 때문이다. 그래서 자리를
+/// 재는 것이 아니라 **`handled` 를 잰다** — 화면에는 아무 차이가 없는 축이라, 이 오라클이
+/// 없으면 `PropagateToParent` 한 줄을 지워도 프레임은 그대로고 아무도 안 운다
+/// (이 크레이트가 이미 두 번 밟은 "배선이 통째로 빠짐"의 자리다).
+fn mouse_down_handled_at(y: f32, messages: Vec<ServerMessage>) -> bool {
+    use warpui::platform::WindowStyle;
+    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
+    use warpui_core::event::{Event, ModifiersState};
+    warpui::App::test((), move |mut app| async move {
+        let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+        let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+        for msg in messages {
+            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+        }
+        view.pump_headless();
+        let (window_id, _handle) = app.add_window(WindowStyle::NotStealFocus, move |_| view);
+        let mut presenter = Presenter::new(window_id);
+        let mut updated = EntityIdSet::default();
+        updated.insert(app.root_view_id(window_id).unwrap());
+        let invalidation = WindowInvalidation {
+            updated,
+            ..Default::default()
+        };
+        app.update(move |ctx| {
+            presenter.invalidate(invalidation, ctx);
+            let _ = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            presenter
+                .dispatch_event(
+                    Event::LeftMouseDown {
+                        position: vec2f(400., y),
+                        modifiers: ModifiersState::default(),
+                        click_count: 1,
+                        is_first_mouse: false,
+                    },
+                    ctx,
+                )
+                .handled
+        })
+    })
+}
+
+#[test]
+fn a_press_on_the_title_row_is_left_for_the_window_to_drag() {
+    // ⛔ 이 크레이트의 루트 `EventHandler` 는 **모든** 왼쪽 누름을 삼키고 있었다. 그대로
+    //    두면 머리줄을 아무리 그려도 창은 한 픽셀도 안 움직인다 — 상류의 창 끌기 갈래에
+    //    영영 안 닿기 때문이다(`titlebar` 모듈 머리말).
+    let band = crate::titlebar::band_height(1.);
+    assert!(
+        !mouse_down_handled_at(band / 2., vec![]),
+        "머리줄 누름을 뷰가 먹었다 — 창이 안 끌린다"
+    );
+    // 그 아래는 종전대로 우리 것이다. 양성 짝이 없으면 "전부 안 먹는다"로 고쳐도 통과한다
+    // (그러면 판 클릭·선택이 통째로 죽는다).
+    assert!(
+        mouse_down_handled_at(band + 40., vec![layout_one_pane()]),
+        "캔버스 누름까지 창에게 넘겼다 — 판 클릭·드래그 선택이 죽는다"
+    );
+}
+
+#[test]
+fn each_window_button_does_its_own_thing() {
+    // ★ 셋이 같은 일을 하거나 하나가 아무 일도 안 하는 회귀는 **화면으로 안 보인다** —
+    //   눌러 봐야 알고, 그건 라이브뿐이다. 그래서 뜻을 창 없는 판에서 잰다.
+    use crate::titlebar::Button;
+
+    let (mut view, _tx, _sent) = harness();
+    assert!(!view.press_window_button(Button::Minimize));
+    assert_eq!(view.window_op_for_test(), Some(Button::Minimize));
+    assert!(!view.quit_requested(), "최소화가 종료로 샜다");
+
+    let (mut view, _tx, _sent) = harness();
+    view.press_window_button(Button::Maximize);
+    assert_eq!(view.window_op_for_test(), Some(Button::Maximize));
+    assert!(!view.quit_requested(), "최대화가 종료로 샜다");
+
+    // 닫기만 `quit_requested` 로 접힌다 — 상류 `close_window` 가 이 백엔드에서 창을
+    // 안 닫는다는 실측(2026-07-30)의 뒤처리가 그 길에 있다.
+    let (mut view, _tx, _sent) = harness();
+    view.press_window_button(Button::Close);
+    assert!(view.quit_requested(), "닫기가 종료 경로를 안 탔다");
+    assert_eq!(
+        view.window_op_for_test(),
+        None,
+        "닫기는 창 조작 표식에 남지 않는다(두 길을 다 타면 두 번 처리된다)"
     );
 }
 
@@ -5651,11 +5796,25 @@ fn source_after(head: &str, len: usize) -> String {
     src[at..].chars().take(len).collect()
 }
 
+/// 오버레이 호출부 한 덩어리. 인자가 늘면 길어지므로 **넉넉히** 뜬다 —
+/// 좁게 잡으면 인자 하나를 더할 때마다 관계없는 가드가 붉어진다(pytmux-18 에서 겪었다).
+fn overlay_call() -> String {
+    source_after("SplitterOverlay::new(", 600)
+}
+
 #[test]
 fn the_overlay_is_still_handed_the_text_rules() {
     assert!(
-        source_after("SplitterOverlay::new(", 400).contains("self.rule_marks()"),
+        overlay_call().contains("self.rule_marks()"),
         "오버레이에 글자 선을 안 넘긴다 — 밑줄·취소선이 화면에서 통째로 사라진다"
+    );
+}
+
+#[test]
+fn the_overlay_is_still_handed_the_picked_block() {
+    assert!(
+        overlay_call().contains("self.block_mark()"),
+        "오버레이에 고른 블록을 안 넘긴다 — 무엇이 골라졌는지 화면에 안 보인다(pytmux-18)"
     );
 }
 
@@ -5696,4 +5855,538 @@ fn italic_is_dropped_where_the_fallback_font_would_have_no_face() {
         Weight::Bold,
         "굵게까지 뺐다 — 보조 글꼴에는 굵은 얼굴이 있다(실측)"
     );
+}
+
+// ── 캔버스 위 블록 선택(pytmux-18) ───────────────────────────────────────────
+//
+// 제보: *"warp 처럼 「명령 하나 + 그 출력」을 블록으로 고를 수 있어야 한다"* — ⑴ 고르기
+// ⑵ `↑`/`↓` 로 한 블록씩 ⑶ `Ctrl`+`C` 로 그 블록 전체 복사.
+//
+// 키의 뜻은 core 가 잰다(`base/src/keys_tests.rs`). 여기서 재는 것은 **무엇이 골라져
+// 있나 · 어디가 밝아지나 · 무엇이 서버로 나가나** 셋이다.
+
+/// 블록 목록 한 벌. `(시작 행, 끝 행)` — 서버 와이어 이름(`start`/`end`)을 그대로 쓴다.
+fn blocks_at(spans: &[(usize, Option<usize>)]) -> ServerMessage {
+    let items: Vec<serde_json::Value> = spans
+        .iter()
+        .map(|(start, end)| match end {
+            Some(end) => serde_json::json!({"cmd": "ls", "state": "done", "exit": 0,
+                                            "start": start, "end": end}),
+            None => serde_json::json!({"cmd": "ls", "state": "running", "start": start}),
+        })
+        .collect();
+    serde_json::from_value(serde_json::json!({"t": "blocks", "pane": 1, "blocks": items})).unwrap()
+}
+
+/// 뷰포트가 절대 행 `top` 에서 시작하는 화면(패널 1 · `layout_one_pane` 의 4행).
+fn screen_from(top: usize) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["a", {}]], [["b", {}]], [["c", {}]], [["d", {}]]],
+        "cursor": null, "wrap": [], "top": top
+    }))
+    .unwrap()
+}
+
+/// 배치 + 화면 + 블록을 먹인 뷰.
+fn view_with_blocks(spans: &[(usize, Option<usize>)], top: usize) -> (SessionView, Sent) {
+    let (view, _tx, sent) = view_with_blocks_tx(spans, top);
+    (view, sent)
+}
+
+/// 같은 것 + **보내는 쪽**까지 — 뒤늦은 서버 메시지를 더 먹여야 하는 시험용.
+fn view_with_blocks_tx(
+    spans: &[(usize, Option<usize>)],
+    top: usize,
+) -> (SessionView, std::sync::mpsc::Sender<LinkEvent>, Sent) {
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), screen_from(top), blocks_at(spans)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    (view, tx, sent)
+}
+
+#[test]
+fn entering_the_mode_picks_the_newest_block() {
+    // 방금 친 명령의 출력을 집으려는 것이 첫 쓰임이다 — 목록의 끝에서 시작한다.
+    let (mut view, _sent) = view_with_blocks(&[(0, Some(2)), (2, None)], 0);
+    assert!(view.apply_action_for_test(base::Action::SelectBlocks));
+    assert_eq!(view.mode.mode(), InputMode::Block);
+    assert_eq!(view.block_pick, Some((1, 1)));
+}
+
+#[test]
+fn a_pane_without_shell_integration_says_so_instead_of_entering() {
+    // ⚠ 제보가 먼저 물은 것이다: 셸 통합이 없는 패널(`cmd.exe`)에는 블록이 하나도 없다.
+    //   그때 모드에 들어가면 배지만 켜진 채 키가 통째로 죽어 "고장"으로 보인다.
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_from(0)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert_eq!(view.mode.mode(), InputMode::Normal, "빈 목록으로 모드에 들어갔다");
+    assert_eq!(view.block_pick, None);
+    let flash = view.flash.as_ref().expect("아무 말도 안 했다 — 조용한 무반응이 제일 나쁘다");
+    assert!(
+        flash.text.contains("OSC 133"),
+        "이유(셸 통합)를 안 말한다: {}",
+        flash.text
+    );
+}
+
+// ── 블록 선택 ② Claude 패널의 턴(pytmux-21) ─────────────────────────────────
+//
+// 제보 그대로다: *"프롬프트 하나와 그 프롬프트가 낸 출력을 한 블록으로"*. ★ 클라에는
+// **새 상호작용이 없다** — 서버가 프롬프트 마커로 잡은 경계를 같은 `blocks` 메시지로
+// 보내므로, 위의 고르기·강조·복사가 그대로 돈다. 여기서 재는 것은 그 사실 자체와,
+// **비었을 때 뭐라고 말하는가** 다(그 한 줄만 패널 종류를 알아야 한다).
+
+/// Claude 패널이라고 서버가 알려 온 상태 메시지(`panes_claude`).
+fn claude_status() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "claude", "active": true}],
+        "active_pane": 1,
+        "panes_claude": [{"id": 1, "claude": true}],
+    }))
+    .unwrap()
+}
+
+/// 서버가 보낸 **턴** 목록(`state: "turn"` · `end` 없음 — 다음 턴의 시작이 곧 끝이다).
+fn turns_at(starts: &[usize]) -> ServerMessage {
+    let items: Vec<serde_json::Value> = starts
+        .iter()
+        .map(|start| serde_json::json!({"cmd": "테스트 돌려줘", "state": "turn", "start": start}))
+        .collect();
+    serde_json::from_value(serde_json::json!({"t": "blocks", "pane": 1, "blocks": items})).unwrap()
+}
+
+#[test]
+fn a_claude_pane_picks_and_copies_a_whole_turn() {
+    // ★ **양성 오라클**이다 — 턴이 들어왔다가 아니라 그 범위가 서버로 나갔나를 잰다.
+    //   턴 ⓪은 절대 행 0 에서 시작하고 다음 턴이 2 에서 시작하므로 마지막 줄은 1 이다.
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), claude_status(), screen_from(0), turns_at(&[0, 2])] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert!(view.apply_action_for_test(base::Action::SelectBlocks));
+    assert_eq!(view.block_pick, Some((1, 1)), "가장 최근 턴에서 시작한다");
+    view.handle_key(Key::Up, Mods::NONE);
+    view.handle_key(Key::Char('c'), Mods::CTRL);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    let copy = out
+        .iter()
+        .find_map(|o| match o {
+            Outgoing::Command(Command::CopyRange { pane, y0, x0, y1, x1 }) => {
+                Some((*pane, *y0, *x0, *y1, *x1))
+            }
+            _ => None,
+        })
+        .expect("턴 복사 요청이 안 나갔다");
+    assert_eq!(copy, (1, 0, 0, 1, 79), "턴 하나의 줄 전체가 아니다");
+}
+
+#[test]
+fn an_empty_claude_pane_does_not_blame_shell_integration() {
+    // ⛔ 여기서 "셸 통합(OSC 133)을 켜라"고 말하면 **고칠 수 없는 것을 고치라는 안내**다 —
+    //   Claude 는 OSC 를 안 보내므로 통합을 아무리 깔아도 턴이 안 생긴다. 이 패널에서
+    //   비어 있다는 것은 아직 프롬프트를 한 번도 안 보냈다는 뜻이다.
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), claude_status(), screen_from(0)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert_eq!(view.mode.mode(), InputMode::Normal, "빈 목록으로 모드에 들어갔다");
+    let flash = view.flash.as_ref().expect("아무 말도 안 했다");
+    assert!(!flash.text.contains("OSC 133"), "셸 통합 탓을 했다: {}", flash.text);
+    assert!(flash.text.contains("턴"), "무엇이 없는지를 안 말한다: {}", flash.text);
+}
+
+#[test]
+fn the_arrows_step_one_block_and_stop_at_the_ends() {
+    let (mut view, _sent) = view_with_blocks(&[(0, Some(2)), (2, Some(4)), (4, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert_eq!(view.block_pick, Some((1, 2)), "끝에서 시작한다");
+    view.handle_key(Key::Up, Mods::NONE);
+    view.handle_key(Key::Up, Mods::NONE);
+    assert_eq!(view.block_pick, Some((1, 0)));
+    // 목록 끝에서 더 눌러도 자리는 그대로다(그리고 다시 그리지 않는다).
+    assert!(!view.handle_key(Key::Up, Mods::NONE), "무효 입력에 repaint 를 걸었다");
+    assert_eq!(view.block_pick, Some((1, 0)));
+    view.handle_key(Key::Down, Mods::NONE);
+    assert_eq!(view.block_pick, Some((1, 1)));
+}
+
+#[test]
+fn leaving_the_mode_drops_the_pick() {
+    // 강조가 남아 있으면 "아직 고르는 중"이라고 말하는데 키는 이미 패널로 간다.
+    let (mut view, _sent) = view_with_blocks(&[(0, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert!(view.block_pick.is_some());
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.mode.mode(), InputMode::Normal);
+    assert_eq!(view.block_pick, None);
+    assert!(view.block_mark().is_none(), "강조가 화면에 남았다");
+}
+
+#[test]
+fn ctrl_c_asks_the_server_for_the_whole_block() {
+    // ★ **양성 오라클**이다 — 무엇이 안 나갔나가 아니라 무슨 범위가 나갔나를 잰다.
+    //   블록 ⓪은 절대 행 0..2 이고 `end` 는 다음 프롬프트 행이라 마지막 줄은 1 이다.
+    let (mut view, sent) = view_with_blocks(&[(0, Some(2)), (2, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    view.handle_key(Key::Up, Mods::NONE);
+    view.handle_key(Key::Char('c'), Mods::CTRL);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    let copy = out
+        .iter()
+        .find_map(|o| match o {
+            Outgoing::Command(Command::CopyRange { pane, y0, x0, y1, x1 }) => {
+                Some((*pane, *y0, *x0, *y1, *x1))
+            }
+            _ => None,
+        })
+        .expect("복사 요청이 안 나갔다");
+    assert_eq!(copy, (1, 0, 0, 1, 79), "줄 전체(0열~폭 끝)가 아니거나 행이 어긋난다");
+}
+
+#[test]
+fn ctrl_c_outside_the_mode_still_interrupts_the_pane() {
+    // ⛔ 이 줄이 무너지면 패널 안 프로그램을 끊을 길이 사라진다(제보의 ⚠ 그대로).
+    //   **양성 오라클**이다 — "블록 복사가 안 나갔다"가 아니라 0x03 이 실제로 나갔나를 잰다.
+    let (mut view, sent) = view_with_blocks(&[(0, None)], 0);
+    assert_eq!(view.mode.mode(), InputMode::Normal);
+    view.handle_key(Key::Char('c'), Mods::CTRL);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Input(b) if b == &vec![0x03])),
+        "평소 모드의 Ctrl+C 가 인터럽트로 안 갔다: {out:?}"
+    );
+}
+
+#[test]
+fn the_highlight_covers_the_block_rows_inside_the_viewport() {
+    // 블록 ①은 절대 행 2..3, 뷰포트는 0 에서 시작하는 4행이라 캔버스 행 2~3 이다.
+    let (mut view, _sent) = view_with_blocks(&[(0, Some(2)), (2, Some(4))], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    let mark = view.block_mark().expect("강조가 없다");
+    assert_eq!((mark.x, mark.y, mark.w, mark.h), (0, 2, 80, 2));
+}
+
+#[test]
+fn a_block_taller_than_the_screen_is_clipped_not_spilled() {
+    // 수백 줄짜리 빌드 로그가 흔하다. 안 자르면 강조가 패널 밖·크롬 위에 그려진다.
+    let (mut view, _sent) = view_with_blocks(&[(0, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    let mark = view.block_mark().expect("강조가 없다");
+    assert_eq!(mark.y, 0);
+    assert_eq!(mark.h, 4, "패널 높이(4행)를 넘겼다");
+}
+
+#[test]
+fn a_block_scrolled_off_the_screen_draws_nothing() {
+    // 화면 밖이면 그릴 것이 없다 — 그렇다고 선택이 풀린 것은 아니다.
+    let (mut view, _sent) = view_with_blocks(&[(0, Some(2)), (100, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert_eq!(view.block_pick, Some((1, 1)), "선택 자체는 살아 있어야 한다");
+    assert!(view.block_mark().is_none(), "화면 밖 블록을 그렸다");
+}
+
+#[test]
+fn an_open_panel_hides_the_highlight() {
+    // 판이 떠 있는 동안 키는 그 판의 것이다 — 강조가 남으면 거짓말이 된다
+    // (`cursor_cell` 과 같은 규칙).
+    let (mut view, _sent) = view_with_blocks(&[(0, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert!(view.block_mark().is_some());
+    view.screens.open(Screen::Keys);
+    assert!(view.block_mark().is_none());
+}
+
+#[test]
+fn moving_the_focus_to_another_pane_ends_the_selection() {
+    // 블록 목록은 패널마다 따로다 — 모드를 붙잡고 있으면 `↑`/`↓` 가 안 보이는 패널의
+    // 블록을 옮기고 `Ctrl+C` 만 엉뚱한 글을 담는다(화면에는 아무 반응이 없다).
+    let (mut view, tx, _sent) = view_with_blocks_tx(&[(0, Some(2)), (2, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert_eq!(view.block_pick, Some((1, 1)));
+    // 서버가 다른 패널을 활성으로 알려 온다(분할 뒤 포커스 이동).
+    tx.send(LinkEvent::Message(Box::new(
+        serde_json::from_value(serde_json::json!({
+            "t": "layout", "cols": 80, "rows": 4, "active": 2,
+            "panes": [
+                {"id": 1, "x": 0, "y": 0, "w": 40, "h": 4, "title": "sh", "active": false},
+                {"id": 2, "x": 40, "y": 0, "w": 40, "h": 4, "title": "sh", "active": true}
+            ]
+        }))
+        .unwrap(),
+    )))
+    .unwrap();
+    view.pump_headless();
+    assert!(view.block_mark().is_none(), "안 보는 패널의 강조가 남았다");
+    // 다음 키에서 모드가 풀린다(그림은 이미 사실과 맞다).
+    view.handle_key(Key::Up, Mods::NONE);
+    assert_eq!(view.mode.mode(), InputMode::Normal);
+    assert_eq!(view.block_pick, None);
+}
+
+// ── 세션 이름 제자리 편집(pytmux-3) ──────────────────────────────────────────
+//
+// 제보: *"세션 이름을 클릭하면 그 자리에서 바로 글자를 고쳐 리네임할 수 있어야 한다"* —
+// **인라인 편집**이지 이름 묻는 판을 띄우라는 것이 아니다.
+//
+// ⚠ 값을 만드는 헬퍼(`base::SessionEdit`)만 재면 **그 값을 쓰는 배선을 지워도 통과한다**
+// (루트 CLAUDE.md 의 «공허 통과»). 그래서 여기서는 넷을 잰다: 자리가 **실제로 그려지는가**
+// · 클릭이 **편집을 여는가** · 편집 중 키가 **패널로 안 새는가** · Enter 가
+// **`rename_session` 을 큐에 넣는가**.
+
+/// `#S` 가 화면에 있는 뷰 — 기본 `status-left` 는 `" "` 라 그 글자가 **없는 것이 기본**이다.
+fn view_with_session_name(name: &str) -> (SessionView, Sent) {
+    let (mut view, tx, sent) = harness();
+    view.config.status_left = " #S ".to_owned();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(
+        serde_json::from_value(serde_json::json!({
+            "t": "status", "session": name,
+            "windows": [{"index": 0, "name": "하나", "active": true}]
+        }))
+        .unwrap(),
+    )))
+    .unwrap();
+    view.pump_headless();
+    (view, sent)
+}
+
+fn click_session_name(view: &mut SessionView) -> bool {
+    view.chrome_click(base::chrome::ClickTarget::SessionName)
+}
+
+/// 상태줄이 그린 글자 — **여백을 턴다.** 편집칸은 글자마다 자기 엘리먼트를 갖고(누른
+/// 자리로 커서를 옮기려고), `debug_text_content` 는 엘리먼트 사이에 칸을 끼운다.
+fn status_letters(view: &SessionView) -> String {
+    view.render_status()
+        .debug_text_content()
+        .expect("상태줄이 글자를 안 담았다")
+        .split_whitespace()
+        .collect()
+}
+
+#[test]
+fn the_status_bar_actually_draws_the_session_name_it_can_edit() {
+    // ★ **그려지는지**부터 잰다. 아래 오라클들은 클릭 대상을 이름으로 부르는데, 그
+    //   자리가 화면에 없으면 사람은 누를 수 없다 — 그때도 전부 초록이 된다.
+    let (view, _sent) = view_with_session_name("놀이터");
+    let drawn = status_letters(&view);
+    assert!(drawn.contains("놀이터"), "상태줄에 세션 이름이 없다: {drawn:?}");
+}
+
+#[test]
+fn clicking_the_session_name_opens_an_edit_box_in_place_not_a_prompt() {
+    let (mut view, _sent) = view_with_session_name("놀이터");
+    assert!(click_session_name(&mut view), "클릭이 아무 일도 안 했다");
+    assert_eq!(
+        view.session_edit_for_test(),
+        Some(("놀이터".to_owned(), 3)),
+        "지금 이름이 안 실렸거나 커서가 끝이 아니다"
+    );
+    // ⛔ 제보의 핵심 — **판을 안 띄운다.** 이름 묻는 화면이 뜨면 그건 종전의 `RenameTab`
+    //    동선이고, 제보는 그것을 하지 말라고 한 것이다.
+    assert!(view.screens.top().is_none(), "판이 떴다 — 제자리 편집이 아니다");
+    // 편집 중인 글자가 **그 자리에** 그려진다(입력칸이 어디 있는지 보여야 한다).
+    view.handle_key(Key::Char('2'), Mods::NONE);
+    let drawn = status_letters(&view);
+    assert!(drawn.contains("놀이터2"), "편집칸이 친 글자를 안 보인다: {drawn:?}");
+}
+
+#[test]
+fn keys_typed_while_renaming_never_reach_the_pane() {
+    // ⛔ 판을 안 띄우므로 화면 스택이 비어 있다 — 키 라우팅 분기가 빠지면 친 글자가
+    //    그대로 셸에 찍힌다(제보자가 보게 되는 것은 "리네임이 안 되고 셸이 어지럽다").
+    let (mut view, sent) = view_with_session_name("dev");
+    click_session_name(&mut view);
+    for key in [Key::Char('x'), Key::Backspace, Key::Left, Key::Char('y')] {
+        view.handle_key(key, Mods::NONE);
+        view.pump_headless();
+    }
+    // `dev` → x(끝에) → Backspace → ←(커서를 `v` 앞으로) → y = `deyv`.
+    assert_eq!(
+        view.session_edit_for_test(),
+        Some(("deyv".to_owned(), 3)),
+        "편집이 커서를 안 따라갔다"
+    );
+    assert!(
+        sent.lock().unwrap().is_empty(),
+        "편집 중 키가 서버로 샜다: {:?}",
+        sent.lock().unwrap()
+    );
+}
+
+#[test]
+fn enter_queues_the_rename_the_server_already_understands() {
+    // 커밋은 `rename_session` — 서버에 이미 있던 명령이다(disposition FULL).
+    let (mut view, sent) = view_with_session_name("dev");
+    click_session_name(&mut view);
+    for key in [Key::Char('2'), Key::Enter] {
+        view.handle_key(key, Mods::NONE);
+        view.pump_headless();
+    }
+    assert_eq!(
+        *sent.lock().unwrap(),
+        vec![Outgoing::Command(Command::RenameSession {
+            name: "dev2".to_owned()
+        })],
+    );
+    assert!(view.session_edit_for_test().is_none(), "커밋 뒤에도 편집칸이 남았다");
+}
+
+#[test]
+fn escape_leaves_the_name_alone() {
+    let (mut view, sent) = view_with_session_name("dev");
+    click_session_name(&mut view);
+    view.handle_key(Key::Char('2'), Mods::NONE);
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.pump_headless();
+    assert!(view.session_edit_for_test().is_none());
+    assert!(sent.lock().unwrap().is_empty(), "취소했는데 무언가 나갔다");
+    // 취소한 뒤에는 키가 **다시 패널의 것**이다 — 안 그러면 편집칸이 유령으로 남는다.
+    view.handle_key(Key::Char('a'), Mods::NONE);
+    view.pump_headless();
+    assert_eq!(*sent.lock().unwrap(), vec![Outgoing::Input(b"a".to_vec())]);
+}
+
+#[test]
+fn the_same_name_is_not_worth_a_round_trip() {
+    let (mut view, sent) = view_with_session_name("dev");
+    click_session_name(&mut view);
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    assert!(sent.lock().unwrap().is_empty(), "안 바뀐 이름을 보냈다");
+    // 빈 이름도 마찬가지다(다 지우고 Enter).
+    click_session_name(&mut view);
+    for _ in 0..3 {
+        view.handle_key(Key::Backspace, Mods::NONE);
+    }
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    assert!(sent.lock().unwrap().is_empty(), "빈 이름을 보냈다");
+}
+
+#[test]
+fn confirmed_korean_lands_in_the_box_instead_of_the_shell() {
+    // ★ 한글은 **키가 아니라 확정 문자열**로 온다(`on_typed_characters`). 그 갈래가
+    //   빠지면 영문은 되는데 한글만 셸로 새서, 증상이 "한글로는 리네임이 안 된다"가 된다.
+    let (mut view, sent) = view_with_session_name("dev");
+    click_session_name(&mut view);
+    assert!(view.handle_typed("놀이터"), "확정 글자를 아무도 안 받았다");
+    view.pump_headless();
+    assert_eq!(
+        view.session_edit_for_test().map(|(t, _)| t),
+        Some("dev놀이터".to_owned())
+    );
+    assert!(sent.lock().unwrap().is_empty(), "확정 글자가 패널로 샜다");
+}
+
+#[test]
+fn there_is_nothing_to_click_when_the_format_hides_the_session_name() {
+    // ⛔ 기본 `status-left` 는 두 클라 모두 `" "` 다 — `#S` 를 넣지 않은 사람에게는
+    //    **누를 자리 자체가 없고 아무 일도 안 일어나는 것이 정상**이다(제보의 ⛔).
+    let (mut view, _sent) = view_with_session_name("dev");
+    view.config.status_left = " ".to_owned();
+    assert!(!click_session_name(&mut view), "없는 자리가 편집을 열었다");
+    assert!(view.session_edit_for_test().is_none());
+}
+
+#[test]
+fn an_edit_box_that_lost_its_spot_stops_swallowing_keys() {
+    // ⛔ 편집 중에 `#S` 자리가 사라지면(형식이 바뀌었다·세션 이름이 비었다) 보이지도
+    //    않는 입력칸이 키를 계속 삼켜 **패널이 먹통**이 된다.
+    let (mut view, sent) = view_with_session_name("dev");
+    click_session_name(&mut view);
+    view.config.status_left = " ".to_owned();
+    view.handle_key(Key::Char('a'), Mods::NONE);
+    view.pump_headless();
+    assert!(view.session_edit_for_test().is_none(), "유령 입력칸이 남았다");
+    assert_eq!(*sent.lock().unwrap(), vec![Outgoing::Input(b"a".to_vec())]);
+}
+
+#[test]
+fn clicking_a_letter_while_editing_only_moves_the_cursor() {
+    let (mut view, _sent) = view_with_session_name("놀이터");
+    click_session_name(&mut view);
+    assert!(view.chrome_click(base::chrome::ClickTarget::SessionCursor(1)));
+    assert_eq!(view.session_edit_for_test(), Some(("놀이터".to_owned(), 1)));
+    // 그 자리에 글자를 끼운다 — 커서가 안 옮겨졌으면 끝에 붙는다.
+    view.handle_key(Key::Char('x'), Mods::NONE);
+    assert_eq!(
+        view.session_edit_for_test().map(|(t, _)| t),
+        Some("놀x이터".to_owned())
+    );
+}
+
+#[test]
+fn the_session_name_can_be_edited_from_the_right_hand_format_too() {
+    // `#S` 를 `status-right` 에 둔 설정도 같은 자리를 얻는다(파이썬과 같다).
+    let (mut view, _sent) = view_with_session_name("dev");
+    view.config.status_left = " ".to_owned();
+    view.config.status_right = " #S ".to_owned();
+    assert!(click_session_name(&mut view));
+    assert_eq!(view.session_edit_for_test(), Some(("dev".to_owned(), 3)));
+    let drawn = status_letters(&view);
+    assert!(drawn.contains("dev"), "오른쪽 세션 이름이 안 그려졌다: {drawn:?}");
+}
+
+#[test]
+fn the_drawn_session_name_is_actually_wrapped_in_a_click_target() {
+    // ★ 위 오라클들은 `chrome_click` 을 **직접** 부른다 — 그리기가 그 자리를 클릭
+    //   대상으로 안 감싸도 전부 초록이다(마우스 히트테스트는 레이아웃을 요구해 창
+    //   없이 못 세운다). 그래서 이 한 자리는 소스로 잰다 — 위 `on_marked_text` 오라클과
+    //   같은 종류다.
+    let body = SESSION_VIEW_SRC
+        .split_once("    fn render_session_run(")
+        .expect("`render_session_run` 을 못 찾았다 — 옮겼으면 이 오라클도 옮길 것")
+        .1;
+    for needle in [
+        "ClickTarget::SessionName",
+        "ClickTarget::SessionCursor",
+        "clickable_status(",
+    ] {
+        assert!(
+            body.contains(needle),
+            "세션 이름을 그리면서 `{needle}` 를 안 쓴다 — 화면에 글자는 있는데 눌리지 않는다"
+        );
+    }
+    // 그리고 그 함수를 **부르는 자리**가 양쪽 형식에 다 있어야 한다.
+    let left = SESSION_VIEW_SRC
+        .split_once("    fn render_status_left(")
+        .expect("`render_status_left` 를 못 찾았다")
+        .1;
+    assert!(
+        left.contains("self.render_session_run("),
+        "`status-left` 의 `#S` 가 누를 자리로 안 그려진다"
+    );
+    let status = SESSION_VIEW_SRC
+        .split_once("    fn render_status(&self)")
+        .expect("`render_status` 를 못 찾았다")
+        .1;
+    assert!(
+        status.contains("self.render_session_run("),
+        "`status-right` 의 `#S` 가 누를 자리로 안 그려진다"
+    );
+}
+
+#[test]
+fn a_panel_on_screen_keeps_the_edit_box_from_opening_behind_it() {
+    // ⚠ 상태줄은 판 **뒤에서도** 눌린다. 그때 편집칸을 열면 키는 판의 것이라(core 규칙)
+    //    글자를 못 받는 입력칸이 남는다 — 사용자에게는 "리네임이 먹통"으로 보인다.
+    let (mut view, _sent) = view_with_session_name("dev");
+    view.screens.open(base::screens::Screen::Commands);
+    assert!(!click_session_name(&mut view), "판 뒤에서 편집칸이 열렸다");
+    assert!(view.session_edit_for_test().is_none());
 }

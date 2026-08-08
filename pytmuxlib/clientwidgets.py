@@ -1505,6 +1505,13 @@ class StatusBar(Widget):
         self._warn_zone = None   # (x0, x1) Claude 경고 배지 클릭 영역(상황·할일 팝업, 요청)
         self._ar_zone = None     # (x0, x1) AR(자동재개) 배지 클릭 영역(켜고끄기 팝업, 요청)
         self._host_zone = None   # (x0, x1) 서버이름(host) 클릭 영역(서버 탭, §10-A #12)
+        self._session_zone = None  # (x0, x1) 세션 이름(#S) 클릭 영역 → 제자리 리네임
+        # 세션 이름 제자리 편집(§10-21ⓛ 제보): `#S` 가 펼쳐진 자리를 클릭하면 **판을
+        # 띄우지 않고** 그 자리가 입력칸이 된다. 모달이 아니라 값을 맡길 스크린이
+        # 없으므로 버퍼·커서를 이 위젯이 직접 든다(편집 중이면 str, 아니면 None).
+        # 키는 clientio.on_key 가 모달 검사 직후에 여기로 넘긴다(_handle_session_edit_key).
+        self.session_edit = None
+        self.session_edit_cur = 0
         self._notices_zone = None  # (x0, x1) 알림 이력 배지 클릭 영역(§10-8)
         self._touch_zone = None  # (x0, x1) ⇕ 터치 스크롤 배지 클릭 영역(touch-scroll)
         self.focus_btn = None    # ESC 모드 하단 포커스 키 강조(model/usage/rec/host/clock/date)
@@ -1530,10 +1537,10 @@ class StatusBar(Widget):
                  .replace("#{pane_title}", tpane))
 
     def _expand_parts(self, fmt):
-        """오른쪽 포맷을 (kind, text) 런 목록으로 펼친다.
-        kind ∈ {'host','time','date','plain'}. 호스트(원격 강조)·시각(시계
-        클릭)·날짜(달력 클릭) 구간을 분리하기 위해 토큰/‌strftime 코드 단위로
-        쪼갠 뒤 인접 동종을 병합한다. right_fmt 가 커스텀돼도 동작한다."""
+        """포맷을 (kind, text) 런 목록으로 펼친다.
+        kind ∈ {'host','time','date','session','plain'}. 호스트(원격 강조)·시각(시계
+        클릭)·날짜(달력 클릭)·세션 이름(제자리 리네임) 구간을 분리하기 위해 토큰/‌strftime
+        코드 단위로 쪼갠 뒤 인접 동종을 병합한다. 좌/우 포맷이 커스텀돼도 동작한다."""
         host = socket.gethostname()
         aw = next((w for w in self.windows if w.get("active")), None)
         tpane = (self.pane_title + " · ") if (self.pane_title
@@ -1551,7 +1558,9 @@ class StatusBar(Widget):
                 if two == "#H":
                     runs.append(("host", host)); i += 2; continue
                 if two == "#S":
-                    runs.append(("plain", self.session)); i += 2; continue
+                    # 고유 kind — _merge_runs 가 인접 plain 과 안 합치므로 세션 이름
+                    # 구간이 그대로 남고, 그 폭이 곧 클릭존(=편집칸)이 된다.
+                    runs.append(("session", self.session)); i += 2; continue
                 if two == "#I":
                     runs.append(("plain", str(aw["index"] + 1) if aw else "")); i += 2; continue
                 if two == "#W":
@@ -1591,6 +1600,108 @@ class StatusBar(Widget):
             else:
                 merged.append([kind, text])
         return [(k, t) for k, t in merged if t]
+
+    # ---- 세션 이름 제자리 편집(§10-21ⓛ) ----
+    # 상태줄의 `#S` 자리에서 바로 글자를 고친다. 이 클라에 **선례가 없다** —
+    # cmd_mode 는 배지일 뿐이고 PromptScreen 은 판을 띄운다(제보가 하지 말라는 것).
+    # 그래서 값(버퍼·커서)은 이 위젯이 들고, 키 라우팅은 clientio.on_key 가,
+    # 커밋(rename_session 전송)은 앱이 한다 — 위젯은 소켓을 모른다.
+
+    def session_editing(self) -> bool:
+        return self.session_edit is not None
+
+    def begin_session_edit(self) -> bool:
+        """편집 시작. 현재 이름을 버퍼에 싣고 커서를 끝에 둔다.
+        `#S` 가 안 펼쳐졌거나(=클릭할 자리가 없다) 이름이 비었으면 False."""
+        if self._session_zone is None or not self.session:
+            return False
+        self.session_edit = self.session
+        self.session_edit_cur = len(self.session_edit)
+        self.refresh()
+        return True
+
+    def end_session_edit(self):
+        """편집 종료(커밋·취소 공통). 편집 중이던 버퍼를 돌려준다(아니면 None)."""
+        buf = self.session_edit
+        self.session_edit = None
+        self.session_edit_cur = 0
+        self.refresh()
+        return buf
+
+    def session_edit_insert(self, text):
+        if self.session_edit is None or not text:
+            return
+        c = self.session_edit_cur
+        self.session_edit = self.session_edit[:c] + text + self.session_edit[c:]
+        self.session_edit_cur = c + len(text)
+        self.refresh()
+
+    def session_edit_erase(self, forward=False):
+        if self.session_edit is None:
+            return
+        c, buf = self.session_edit_cur, self.session_edit
+        if forward:
+            if c >= len(buf):
+                return
+            self.session_edit = buf[:c] + buf[c + 1:]
+        else:
+            if c <= 0:
+                return
+            self.session_edit = buf[:c - 1] + buf[c:]
+            self.session_edit_cur = c - 1
+        self.refresh()
+
+    def session_edit_move(self, key):
+        if self.session_edit is None:
+            return
+        n = len(self.session_edit)
+        self.session_edit_cur = {
+            "left": max(0, self.session_edit_cur - 1),
+            "right": min(n, self.session_edit_cur + 1),
+            "home": 0, "end": n,
+        }.get(key, self.session_edit_cur)
+        self.refresh()
+
+    def session_edit_cursor_at(self, x):
+        """편집칸 안의 절대 x 를 커서 위치(문자 index)로 옮긴다 — 이미 편집 중일 때
+        같은 자리를 다시 클릭하면 커서만 그리로 간다. 폭은 셀 기준으로 재므로
+        와이드 문자(한글 등)에서도 어긋나지 않는다."""
+        z = self._session_zone
+        if self.session_edit is None or z is None:
+            return
+        off = max(0, x - z[0])
+        acc = 0
+        for i, ch in enumerate(self.session_edit):
+            w = _char_cells(ch)
+            if off < acc + w:
+                self.session_edit_cur = i
+                self.refresh()
+                return
+            acc += w
+        self.session_edit_cur = len(self.session_edit)
+        self.refresh()
+
+    def _session_segs(self, base, tc):
+        """세션 이름 런의 (세그먼트 목록, 셀폭).
+
+        편집 중이면 강조 배경의 **입력칸**으로 그리고 커서 자리를 반전시킨다 —
+        판을 안 띄우므로 "지금 여기를 고치는 중"을 보여 줄 곳이 이 자리뿐이다.
+        커서가 끝에 있으면 한 칸을 덧대 커서를 보이게 한다(그만큼 칸이 넓어진다)."""
+        if self.session_edit is None:
+            text = self.session
+            return ([Segment(text, base)] if text else []), sum(
+                _char_cells(c) for c in text)
+        buf = self.session_edit
+        cur = max(0, min(self.session_edit_cur, len(buf)))
+        est = Style(color="black", bgcolor=tc("accent"), bold=True)
+        cst = Style(color="black", bgcolor=tc("accent"), bold=True, reverse=True)
+        segs, cells = [], 0
+        for text, st in ((buf[:cur], est), (buf[cur:cur + 1] or " ", cst),
+                         (buf[cur + 1:], est)):
+            if text:
+                segs.append(Segment(text, st))
+                cells += sum(_char_cells(c) for c in text)
+        return segs, cells
 
     def update_status(self, msg):
         self.session = msg.get("session", "")
@@ -1652,7 +1763,11 @@ class StatusBar(Widget):
         if self.message is not None:
             # 메시지가 줄을 덮는 동안엔 ⇕ 배지를 안 그리므로 클릭존도 무효화한다
             # (안 그러면 직전 프레임의 좌표가 남아 메시지 위 탭이 모드를 토글한다).
+            # 세션 이름 클릭존도 같은 이유로 무효화한다 — 메시지가 덮은 자리를 눌러
+            # 리네임 편집이 열리면 안 된다. 편집 **중**이던 상태는 건드리지 않는다
+            # (메시지는 잠깐 떴다 사라지고, 그때 편집칸이 그대로 돌아온다).
             self._touch_zone = None
+            self._session_zone = None
             # §10-8: 등급이 배경색과 기호를 정한다(멀리서 색만 보고 성공/실패 판단 +
             # 색맹·모노크롬 대비 기호). ESC 모드 하단 포커스가 메시지에 와 있으면
             # (focus_btn=='msg') 강조 + ⏎ 닫기 힌트를 붙인다(요청).
@@ -1682,9 +1797,23 @@ class StatusBar(Widget):
         def _cw(t):
             return sum(_char_cells(c) for c in t)
         acc = 0
-        left_txt = self._expand(self.left_fmt)
-        segs = [Segment(left_txt, base)]
-        acc += _cw(left_txt)
+        # 왼쪽도 오른쪽처럼 (kind, text) 런으로 펼친다 — 통짜 문자열이면 `#S` 가
+        # 어디부터 어디까지인지 몰라 클릭존을 못 만든다. 렌더 결과 문자열은 종전
+        # (_expand)과 같고, 세션 런만 자기 폭을 _session_zone 에 남긴다. host/시각/
+        # 날짜는 왼쪽에서 **강조하지 않는다**(종전 그대로 base) — 이 CL 의 관심사는
+        # 세션 이름 한 자리다.
+        segs = []
+        self._session_zone = None
+        for kind, text in self._expand_parts(self.left_fmt):
+            if kind == "session":
+                ssegs, scells = self._session_segs(base, tc)
+                if scells:
+                    self._session_zone = (acc, acc + scells)
+                segs.extend(ssegs)
+                acc += scells
+                continue
+            segs.append(Segment(text, base))
+            acc += _cw(text)
         if self.cmd_mode:
             # i18n 키 경유(과거 하드코딩 한글 리터럴이라 en 로케일에서도 한글 누출 —
             # 카탈로그값만 검사하는 test_en_catalog_has_no_hangul_leak 가 못 잡았다).
@@ -1769,16 +1898,25 @@ class StatusBar(Widget):
         # 키 clock 은 strftime run kind 'time' 에 대응한다.
         _fk = {"host": "host", "clock": "time", "date": "date"}.get(self.focus_btn)
         focus_hi = Style(color="black", bgcolor=tc("warning"), bold=True)
-        built = []   # (kind, text, style, cells)
+        # (kind, [Segment…], cells) — 한 런이 여러 세그먼트일 수 있다(편집 중인
+        # 세션 이름은 커서 반전 때문에 앞/커서/뒤 셋으로 쪼개진다). 폭은 여기서 잰
+        # 값을 그대로 패딩과 클릭존에 쓴다.
+        built = []
         right_w = 0
         # §10-8 알림 이력 배지는 우측 배지열의 **맨 왼쪽**에 붙인다(host/시각/날짜
         # 앞). 아래 런 루프가 같은 방식으로 x 를 누적해 클릭존을 계산한다.
         _nb_txt, _nb_style = self._notices_badge(tc)
         if _nb_txt:
             _nb_cells = sum(_char_cells(c) for c in _nb_txt)
-            built.append(("notices", _nb_txt, _nb_style, _nb_cells))
+            built.append(("notices", [Segment(_nb_txt, _nb_style)], _nb_cells))
             right_w += _nb_cells
         for kind, text in right_parts:
+            if kind == "session":
+                # `#S` 를 status-right 에 둔 설정에서도 같은 자리를 누를 수 있다.
+                ssegs, scells = self._session_segs(base, tc)
+                built.append((kind, ssegs, scells))
+                right_w += scells
+                continue
             st = base
             if kind == "host" and self._is_remote:
                 text = "ssh:" + text
@@ -1786,7 +1924,7 @@ class StatusBar(Widget):
             if kind == _fk:
                 st = focus_hi
             cells = sum(_char_cells(c) for c in text)
-            built.append((kind, text, st, cells))
+            built.append((kind, [Segment(text, st)], cells))
             right_w += cells
         used = acc   # P6: 증분 누적값(전수 재합산 제거)
         pad = max(0, w - used - right_w)
@@ -1798,9 +1936,13 @@ class StatusBar(Widget):
         self._host_zone = None
         self._notices_zone = None
         x = used + pad
-        for kind, text, st, cells in built:
-            segs.append(Segment(text, st))
-            if cells and kind == "notices":
+        for kind, bsegs, cells in built:
+            segs.extend(bsegs)
+            if cells and kind == "session":
+                # 왼쪽에 이미 `#S` 가 있으면 그쪽이 편집 자리다(먼저 그린 쪽 우선).
+                if self._session_zone is None:
+                    self._session_zone = (x, x + cells)
+            elif cells and kind == "notices":
                 self._notices_zone = (x, x + cells)   # §10-8 이력 팝업 클릭존
             elif cells and kind == "time":
                 self._clock_zone = (x, x + cells)
@@ -1809,6 +1951,12 @@ class StatusBar(Widget):
             elif cells and kind == "host":
                 self._host_zone = (x, x + cells)   # 서버이름 클릭 → 서버 탭(#12)
             x += cells
+        # 편집 중인데 `#S` 자리가 사라졌으면(포맷이 바뀌었다·세션이 없어졌다) 편집을
+        # 끝낸다 — 안 그러면 보이지도 않는 입력칸이 키를 계속 삼킨다(패널에 아무것도
+        # 안 찍히는 먹통이 된다).
+        if self.session_edit is not None and self._session_zone is None:
+            self.session_edit = None
+            self.session_edit_cur = 0
         # 폭 맞추기(자르기)
         return Strip(segs).adjust_cell_length(w, base)
 
@@ -1846,6 +1994,17 @@ class StatusBar(Widget):
             if fn:
                 fn(getattr(self, "capture_path", None),
                    getattr(self, "capture_size", 0))
+            event.stop()
+            return
+        sz = self._session_zone
+        if sz and sz[0] <= event.x < sz[1]:
+            # 세션 이름 클릭 → **그 자리**가 입력칸이 된다(§10-21ⓛ 제보: 판을 띄우지
+            # 않는다). 이미 편집 중이면 커서만 누른 자리로 옮긴다.
+            if self.session_editing():
+                self.session_edit_cursor_at(event.x)
+            else:
+                fn = getattr(self.app, "begin_session_rename", None)
+                fn and fn()
             event.stop()
             return
         z = self._clock_zone

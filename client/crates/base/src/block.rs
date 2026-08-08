@@ -222,6 +222,7 @@ impl BlockList {
             | Action::ShowPlugins
             | Action::ToggleClock
             | Action::ShowSummary
+            | Action::SelectBlocks
             | Action::FontScale { .. }
             | Action::FontScaleReset
             | Action::RenamePane

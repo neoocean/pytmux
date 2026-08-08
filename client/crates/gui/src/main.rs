@@ -37,6 +37,7 @@ mod session_view;
 mod ime;
 mod splitter;
 mod theme;
+mod titlebar;
 
 /// 서버 메시지를 퍼올리는 간격.
 ///
@@ -106,24 +107,46 @@ enum Plan {
 
 /// 창을 만들 때 쓰는 선택지 한 벌.
 ///
-/// # 왜 OS 에게 맡기나 (§10-20ⓐ)
+/// # 왜 OS 에게 **안** 맡기나 (`pytmux/pytmux-1` — §10-20ⓐ 를 뒤집었다)
 ///
-/// 종전에는 최소화·최대화·닫기 버튼이 **아예 없었다**. 상류가 창을 만들 때
-/// `hide_title_bar` 를 `true` 로 박아 두고(`warpui_core` 의 `insert_window_internal`)
-/// 그 칸을 밖에서 건드릴 길이 없었기 때문이다 — 자기 크롬을 다 그리는 앱(warp)의
-/// 기본값이고, 우리는 그것을 물려받았다.
+/// ⛔ **종전에 이 자리에 적혀 있던 근거는 기각됐다.** §10-20ⓐ(CL 69235)는
+/// `TitleBar::Native` 를 골랐고 그 이유가 *"창 버튼 관습이 OS 마다 다르다 — 자리를 한
+/// 벌로 박으면 한쪽이 늘 어색하다"* 였다. 제보(2026-08-02 · 자리 확정 2026-08-04 ·
+/// 스크린샷)가 그것을 **사용자 판단으로 기각했다**: 맨 위 OS 띠를 없애고 그 역할을 앱 안
+/// 머리줄(`pytmux-gui · <엔드포인트>` 를 띄우던 그 줄)이 받는다. **맥도 마찬가지**로
+/// 띠가 사라진다.
 ///
-/// 우리가 그리는 길도 있었지만 **관습이 OS 마다 다르다**: 맥은 왼쪽 신호등 셋, Windows 는
-/// 오른쪽 최소화·최대화·닫기. 자리를 한 벌로 박으면 한쪽 OS 사용자에게는 늘 어색하고,
-/// 그 어색함을 고치는 값은 우리에게 없다. 그래서 `TitleBar::Native` 로 **OS 에게 맡긴다**.
+/// 그래서 `TitleBar::Hidden` 이다 — 상류의 기본값이자 "앱이 자기 크롬을 다 그린다"(warp
+/// 의 모양)라는 뜻이다. 그 줄을 그리는 곳과 OS 별 갈림(맥은 신호등이 왼쪽에 남는다)은
+/// [`titlebar`] 모듈에 있다.
 ///
-/// 제목도 여기서 준다 — 안 주면 winit 기본값이 그대로 뜬다(실측: 제목줄이 `winit window`
-/// 였다. 장식이 없던 동안에는 아무도 그 이름을 못 봤다).
+/// ⚠ **되돌아간 것이 아니다.** 이 값이 `Hidden` 이던 시절(§10-20ⓐ 이전)에는 창 버튼이
+/// **아예 없었다** — 상류가 `hide_title_bar` 를 `true` 로 박아 뒀고 밖에서 건드릴 칸이
+/// 없었기 때문이다. 지금은 그 칸이 있고(`AddWindowOptions::title_bar`), 우리가 버튼을
+/// **그린다**. 그 차이를 오라클 `the_window_draws_its_own_chrome_now` 가 지킨다.
+///
+/// 제목은 계속 여기서 준다 — 창 자체에는 안 뜨지만 작업 표시줄·`Alt+Tab`·창 목록이
+/// 그 이름을 쓴다(안 주면 winit 기본값 `winit window` 가 거기 뜬다. 실측 §10-20ⓐ).
 fn window_options() -> warpui::AddWindowOptions {
     warpui::AddWindowOptions {
-        title_bar: warpui::TitleBar::Native,
+        title_bar: warpui::TitleBar::Hidden,
         title: Some("pytmux".to_owned()),
         ..Default::default()
+    }
+}
+
+/// 갓 만든 창에게 **끌 수 있는 띠의 높이**를 알린다.
+///
+/// 상류는 "앱이 안 먹은 왼쪽 누름이 위에서 이 높이 안이면 창을 끈다(두 번 누르면
+/// 최대화)"를 이 값으로 판정한다 — winit 은 `titlebar_height`, 맥은 네이티브 타이틀바
+/// 컨테이너의 높이(신호등이 그 안에서 세로 가운데로 온다)다. ⛔ **안 부르면 상류 기본값
+/// 35px 이 그대로 남아** 우리 줄(30px)보다 아래까지 끌리고, 맥에서는 신호등이 우리 줄
+/// 밖에 앉는다.
+///
+/// 배율이 바뀌면 줄 높이도 바뀌므로 세션 뷰가 **다시 말한다**(`SessionView::pump`).
+fn tell_window_the_band(ctx: &warpui::AppContext, window_id: warpui::WindowId, font_scale: f32) {
+    if let Some(window) = ctx.windows().platform_window(window_id) {
+        window.set_titlebar_height(titlebar::band_height(font_scale) as f64);
     }
 }
 
@@ -295,6 +318,9 @@ fn main() -> Result<()> {
         .as_ref()
         .map(|l| proto::endpoint::parse(l.socket()).lang_file());
     let config_lang = base::Config::load().lang;
+    // 머리줄 높이는 글자 배율을 탄다(§10-21ⓐ) — 창에게 알릴 띠 높이도 그렇다.
+    // 세션 뷰는 배율이 바뀔 때마다 다시 말한다(`SessionView::pump`); 여기는 첫 값이다.
+    let font_scale = base::Config::load().font_scale;
     base::i18n::init(
         lang_path,
         (!config_lang.is_empty()).then_some(config_lang.as_str()),
@@ -309,7 +335,7 @@ fn main() -> Result<()> {
         match link {
             Some(link) => {
                 let frame_dump = frame_dump.clone();
-                ctx.add_window(window_options(), move |ctx| {
+                let (window_id, _) = ctx.add_window(window_options(), move |ctx| {
                     // 서버 메시지를 주기적으로 퍼올린다. GUI 에는 TUI 의 `run_until` 에
                     // 해당하는 자리가 없어, 대신 주기 작업이 뷰로 돌아온다.
                     let spawner = ctx.spawner();
@@ -379,10 +405,12 @@ fn main() -> Result<()> {
                     }
                     session_view::SessionView::new(link, ctx)
                 });
+                // 창이 생긴 **뒤에** 말한다 — 이 값이 없으면 상류 기본값 35px 이 남는다.
+                tell_window_the_band(ctx, window_id, font_scale);
             }
             None => {
                 let frame_dump = frame_dump.clone();
-                ctx.add_window(window_options(), move |ctx| {
+                let (window_id, _) = ctx.add_window(window_options(), move |ctx| {
                     // 데모 창도 같은 하네스를 받는다 — 서버 없이 순수 그리기를 확인하는 판.
                     if let Some(path) = frame_dump.clone() {
                         let spawner = ctx.spawner();
@@ -405,6 +433,7 @@ fn main() -> Result<()> {
                     }
                     root_view::RootView::new(ctx)
                 });
+                tell_window_the_band(ctx, window_id, font_scale);
             }
         }
     });
@@ -447,13 +476,22 @@ mod tests {
     }
 
     #[test]
-    fn the_window_asks_the_os_to_draw_its_buttons() {
-        // §10-20ⓐ: 종전에는 최소화·최대화·닫기가 없었다(상류가 `hide_title_bar` 를
-        // 박아 뒀고 밖에서 건드릴 칸이 없었다). 기본값으로 되돌아가면 그 상태다.
+    fn the_window_draws_its_own_chrome_now() {
+        // ★ `pytmux/pytmux-1` 이 §10-20ⓐ 를 뒤집었다(사용자 판단). OS 띠가 남아 있으면
+        //   제보가 요구한 그림 자체가 성립하지 않는다 — 머리줄이 타이틀바가 됐는데 그
+        //   위에 진짜 타이틀바가 하나 더 있는 꼴이다.
         let options = window_options();
-        assert_eq!(options.title_bar, warpui::TitleBar::Native);
-        // 제목을 안 주면 winit 기본값(`winit window`)이 제목줄에 뜬다 — 장식이 없던
-        // 동안에는 아무도 못 보던 이름이다.
+        assert_eq!(options.title_bar, warpui::TitleBar::Hidden);
+        // ⛔ **`Hidden` 하나로는 부족하다.** §10-20ⓐ 이전에도 이 값은 `Hidden` 이었고
+        //    그때는 창 버튼이 **아예 없었다**. 지금은 우리가 그린다(맥은 OS 신호등이
+        //    그 자리를 지킨다 — `titlebar` 모듈 머리말의 표).
+        if cfg!(target_os = "macos") {
+            assert!(titlebar::BUTTONS.is_empty());
+        } else {
+            assert_eq!(titlebar::BUTTONS.len(), 3, "창 버튼 셋을 우리가 그려야 한다");
+        }
+        // 제목은 계속 준다 — 창에는 안 뜨지만 작업 표시줄·`Alt+Tab` 이 그 이름을 쓴다
+        // (안 주면 winit 기본값 `winit window` 가 거기 뜬다 — §10-20ⓐ 실측).
         assert_eq!(options.title.as_deref(), Some("pytmux"));
     }
 

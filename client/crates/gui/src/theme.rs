@@ -28,6 +28,12 @@ pub const ELEV: ColorU = c(0x1f, 0x23, 0x35);
 pub const BORDER: ColorU = c(0x3b, 0x42, 0x61);
 /// 마우스가 올라간 자리의 배경.
 pub const HOVER: ColorU = c(0x29, 0x2e, 0x42);
+/// 창 **닫기** 버튼에 마우스가 올라간 자리의 배경(`pytmux-1`).
+///
+/// 다른 창 버튼과 다른 색인 이유: 되돌릴 수 없는 것은 하나뿐이고, 두 OS 가 공통으로
+/// 그것만 빨갛게 칠한다(Windows 캡션 버튼 · 맥 신호등의 빨간 점). 손이 눈보다 먼저
+/// 안다 — [`HOVER`] 로 통일하면 최소화와 닫기가 같은 그림이 된다.
+pub const CLOSE_HOVER: ColorU = c(0xc4, 0x2b, 0x1c);
 /// 활성 탭·선택 줄 배경(캔버스 팔레트의 `SELECTED_BG` 와 같은 값).
 pub const ACTIVE: ColorU = c(0x28, 0x34, 0x57);
 /// 키보드 크롬 포커스 강조(테두리) — 노랑은 이 앱에서 "지금 조작 대상"의 색이다.

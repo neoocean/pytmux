@@ -121,6 +121,24 @@ pub enum InputMode {
     /// 서로 다른 어휘이기 때문이다 — prefix 는 tmux 관습(`%`·`c`·`&`), esc 는 이 클라의
     /// 것(방향키·번호). 파이썬 클라도 둘을 함께 갖는다.
     Prefix,
+    /// 캔버스 위에서 **블록 하나**(명령 + 그 출력)를 고르고 있다(pytmux-18).
+    ///
+    /// # 왜 스크롤 모드의 하위 상태가 아니라 모드인가
+    ///
+    /// 제보가 정하라고 한 것이 이 갈림이다. 스크롤 모드 안에 두면 같은 키가 두 뜻을
+    /// 갖는다 — `↑`/`↓` 는 스크롤 모드에서 이미 **한 줄 스크롤**이고
+    /// ([`SCROLL_BINDINGS`]), 블록 이동을 그 위에 얹으면 어느 쪽이 이기는지를 상태
+    /// 하나가 더 정해야 한다. 그 상태는 화면에 안 보이므로 **같은 키가 왜 다르게
+    /// 도는지** 사용자가 알 길이 없다. 모드가 따로면 배지(`[block]`)가 그 사실을 늘
+    /// 말한다.
+    ///
+    /// # 이 모드에서만 가로챈다
+    ///
+    /// `Ctrl+C` 는 패널 안 프로그램에게 **인터럽트(0x03)** 이고 `↑`/`↓` 는 커서
+    /// 이동·히스토리다. 셋 다 평소 모드에서는 그대로 패널로 간다 — 이 모드에 들어와
+    /// 있는 동안만 클라가 먹는다(GUI 가 `Ctrl+Shift+V` 로 붙여넣기를 옮겨 둔 것과 같은
+    /// 판단).
+    Block,
 }
 
 impl InputMode {
@@ -134,8 +152,28 @@ impl InputMode {
             InputMode::Command => Some("[esc]"),
             InputMode::Scroll => Some("[scroll]"),
             InputMode::Prefix => Some("[prefix]"),
+            InputMode::Block => Some("[block]"),
         }
     }
+}
+
+/// 블록 선택 모드에서 키 하나가 하는 일(pytmux-18).
+///
+/// # 왜 [`crate::Action`] 이 아닌가
+///
+/// 액션은 **어느 모드에서 불러도 같은 뜻**이라야 하는 어휘다(팔레트·메뉴가 같은 표를
+/// 읽는다). 이 셋은 그렇지 않다 — `↑`/`↓`/`Ctrl+C` 는 이 모드 **안에서만** 이 뜻이고,
+/// 밖에서는 패널 안 프로그램의 것이다. 액션으로 올리면 팔레트에 "블록 복사" 같은 줄이
+/// 생기는데, 고를 블록이 없는 상태에서 그 줄이 무엇을 해야 하는지 답이 없다.
+/// [`KeyOutcome::Scroll`] 이 같은 이유로 액션이 아니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockKey {
+    /// 다음(더 최근) 블록.
+    Next,
+    /// 이전(더 오래된) 블록.
+    Prev,
+    /// 고른 블록 전체(명령 + 출력)를 복사한다.
+    Copy,
 }
 
 /// 스크롤백을 얼마나 움직일 것인가.
@@ -169,6 +207,9 @@ pub enum KeyOutcome {
     /// **라이브 하단 복귀와 모드 탈출이 같은 동작**이다. 둘을 따로 두면 "모드는 나갔는데
     /// 화면은 과거에 멈춰 있는" 상태가 만들어진다.
     Scroll { amount: ScrollAmount, leave: bool },
+    /// 블록 선택 모드의 조작(pytmux-18). 모드는 **그대로 머문다** — 한 블록을 고르고
+    /// 복사한 뒤 옆 블록을 다시 고르는 것이 이 모드의 쓰임이라, 한 번에 나가면 반쪽이다.
+    Block(BlockKey),
     /// 아무 뜻도 없는 키 — 조용히 버린다(자식에게 쓰레기를 보내지 않는다).
     Ignored,
 }
@@ -301,6 +342,29 @@ pub fn interpret_full(
                 Some((amount, leave)) => KeyOutcome::Scroll { amount, leave },
                 None => KeyOutcome::Ignored,
             }
+        }
+        InputMode::Block => {
+            // ★ 나가는 키는 **셋 다 같은 뜻**이다(스크롤 모드의 `q`·`Esc`·`Enter` 와
+            //   같은 배정) — 고르기를 끝냈다는 말을 세 손버릇 어느 쪽으로도 할 수 있다.
+            if mods == Mods::NONE
+                && matches!(key, Key::Escape | Key::Enter | Key::Char('q'))
+            {
+                return KeyOutcome::ModeChanged(InputMode::Normal);
+            }
+            // 제보의 요구 셋 중 둘 — `↑`/`↓` 로 한 블록씩, `Ctrl+C` 로 전체 복사.
+            if mods == Mods::NONE {
+                match key {
+                    Key::Down => return KeyOutcome::Block(BlockKey::Next),
+                    Key::Up => return KeyOutcome::Block(BlockKey::Prev),
+                    _ => {}
+                }
+            }
+            if (key, mods) == (Key::Char('c'), Mods::CTRL) {
+                return KeyOutcome::Block(BlockKey::Copy);
+            }
+            // ⛔ 나머지는 **버린다 — 패널로 흘리지 않는다.** 흘리면 블록을 고르는
+            //    동안 친 글자가 셸에 찍힌다(esc·스크롤 모드와 같은 규율).
+            KeyOutcome::Ignored
         }
         InputMode::Prefix => {
             // prefix 를 두 번 누르면 **그 바이트가 패널로 간다**(tmux 와 같다). 이게
@@ -439,6 +503,20 @@ impl ModeState {
         self.mode = InputMode::Scroll;
     }
 
+    /// 블록 선택 모드로 들어간다(pytmux-18).
+    ///
+    /// # 왜 [`interpret_full`] 이 아니라 뷰가 부르나
+    ///
+    /// [`crate::Action::EnterScroll`] 은 표에서 바로 `ModeChanged` 로 접히는데
+    /// ([`interpret_full`]), 이쪽은 그럴 수 없다: **고를 블록이 있어야** 이 모드가 뜻을
+    /// 갖는다. 셸 통합(OSC 133)이 없는 패널(예: `cmd.exe`)에는 블록이 하나도 없고,
+    /// 그때 모드에 들여보내면 배지만 켜진 채 `↑`/`↓`·`Ctrl+C` 가 통째로 죽는다 —
+    /// 사용자에게는 "키가 안 먹는다"로 보인다. 그 판정에 필요한 것(그 패널의 블록
+    /// 목록)은 core 가 모르므로, 표는 액션만 내고 **들어갈지는 뷰가** 정한다.
+    pub fn enter_block(&mut self) {
+        self.mode = InputMode::Block;
+    }
+
     pub fn reset(&mut self) {
         self.mode = InputMode::Normal;
     }
@@ -474,6 +552,9 @@ impl ModeState {
                     self.mode = InputMode::Normal;
                 }
             }
+            // 블록 조작은 **모드를 안 푼다**(`KeyOutcome::Block` 문서). 나가는 것은
+            // `q`·`Esc`·`Enter` 뿐이고 그건 이미 `ModeChanged` 로 온다.
+            KeyOutcome::Block(_) => {}
             // prefix 모드에서 모르는 키는 **모드를 푼다**(tmux 와 같다). 안 풀면 잘못
             // 누른 prefix 뒤의 타이핑이 통째로 표에 부딪혀 사라지고, 사용자에게는
             // "키가 안 먹는다"로만 보인다.

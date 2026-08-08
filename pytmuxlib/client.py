@@ -44,7 +44,8 @@ from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 
     CommandListScreen, CommandOptionsScreen, ComposePromptScreen, ConfirmScreen,
     InfoScreen, InfoTabsScreen, MenuScreen, MergeRemoteTabScreen,
     NoticeHistoryScreen,
-    PluginManagerScreen, PromptScreen, SettingsScreen, TabSwitcherScreen)
+    PluginManagerScreen, PromptScreen, SearchResultsScreen, SettingsScreen,
+    TabSwitcherScreen)
 from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
     MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar,
     _visual_tab_order)
@@ -392,6 +393,37 @@ class _ChooseScreensMixin:
                                      action=lambda: self.send_cmd("kill_pane"))
         self.push_screen(ChooseTreeScreen(tree), handle)
 
+    # ---- 전역 검색(esc f · 메뉴 search_all — pytmux-27 ①) ----
+    def search_all(self):
+        """열린 **모든 탭·패널**을 가로지르는 검색 — 먼저 검색어를 묻는다.
+
+        스크롤백 검색(`/`)과 입구를 나눠 둔 이유: 그쪽은 "이 패널 안에서 다음 히트로"
+        라 결과 화면이 없고, 이쪽은 "어느 탭 어느 패널이었더라"를 **고르는** 일이다.
+        같은 프롬프트에 얹으면 Enter 한 번의 뜻이 두 개가 된다."""
+        self.open_prompt("search_all", i18n.t("search.all_prompt"))
+
+    def _open_search_results(self, msg):
+        """결과 판을 열고, 고른 줄의 자리로 서버에 점프를 시킨다.
+
+        점프하면 뷰가 라이브 하단을 벗어나므로 **스크롤 모드로 들어간다** — 거기서
+        n/N 으로 그 패널 안을 계속 훑고 ↑↓/PgUp 로 주변을 읽다가 Esc/q/Enter 로
+        하단에 복귀한다(esc ctrl+↑/↓ 프롬프트 점프와 같은 규약).
+
+        `route`(pytmux-27 ②)는 그 줄이 사는 **원격 홉 사슬**이다 — 로컬 히트면 빈
+        리스트이고, 원격이면 서버가 그 첫 홉으로 보기를 돌려 나머지를 릴레이한다.
+        클라는 사슬을 해석하지 않고 **받은 것을 그대로 되돌려준다**: 좌표계를 아는
+        것은 그것을 만든 서버들이지 화면이 아니다."""
+        def handle(it):
+            if not it:
+                return
+            self.send_cmd("search_goto", wid=it.get("wid"), win=it.get("win"),
+                          pane=it.get("pane"), line=it.get("line"),
+                          route=it.get("route") or [],
+                          query=msg.get("query", ""))
+            self.mode = "scroll"
+            self.status.refresh()   # ⇕ 배지 강조(모드 표시 동기화)
+        self.push_screen(SearchResultsScreen(msg), handle)
+
     # ---- 탭 스위처(esc → Tab) ----
     def open_tab_switcher(self):
         """열려 있는 탭 목록을 띄워 Tab/Shift+Tab 으로 고르고 Enter 로 전환한다
@@ -612,6 +644,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._want_tree = False  # choose-tree 응답 대기
             self._tree_purpose = "choose"  # tree 응답 용도(choose|usage)
             self._want_buffers = False  # choose-buffer 응답 대기
+            self._want_search_all = False  # 전역 검색 결과 응답 대기(pytmux-27 ①)
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
             self._want_token_log = False  # 토큰 로그 집계 팝업 응답 대기(#7)
             # 시계/달력 오버레이 상태(clock_panes/calendar_panes)와 토글
@@ -1359,6 +1392,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self._want_buffers:
                     self._want_buffers = False
                     self._open_choose_buffer(msg.get("items", []))
+            elif t == "search_results":
+                if self._want_search_all:
+                    self._want_search_all = False
+                    self._open_search_results(msg)
             elif t == "pong":
                 self._on_pong()   # 네트워크 RTT 표본(§10)
             elif t == "notice":
@@ -1674,6 +1711,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         _run)
             elif key == "search":
                 self.open_prompt("search", i18n.t("search.scrollback"))
+            elif key == "search_all":
+                self.search_all()
             elif key == "sync":
                 self.send_cmd("set_sync")
             elif key == "autoresume":

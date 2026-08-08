@@ -6,10 +6,10 @@
 use base::i18n::t;
 use base::{Action, BINDINGS, Block, BlockList, BlockState, keymap};
 
-use crate::mono_font;
+use crate::{mono_font, titlebar};
 use warpui::color::ColorU;
 use warpui::elements::{
-    Container, Flex, MainAxisSize, ParentElement, Rect, Stack, Text,
+    Container, Expanded, Flex, Hoverable, MainAxisSize, ParentElement, Rect, Stack, Text,
 };
 use warpui::fonts::FamilyId;
 use warpui::keymap::FixedBinding;
@@ -40,13 +40,30 @@ pub fn init(ctx: &mut AppContext) {
     ctx.register_fixed_bindings(
         BINDINGS
             .iter()
-            .map(|binding| FixedBinding::new(binding.key, binding.action, id!("RootView"))),
+            .map(|binding| FixedBinding::new(binding.key, DemoAction::Key(binding.action), id!("RootView"))),
     );
+}
+
+/// 이 뷰가 받는 것 — core 의 액션과 **창 버튼**.
+///
+/// 창 버튼을 [`Action`] 에 넣지 않는 이유는 세션 뷰의 `ViewAction::WindowButton` 과
+/// 같다: `Action` 은 정본 클라와 나눠 쓰는 **의도**의 목록인데 터미널 안 클라에는 창이
+/// 없다. 그래서 뷰 계층에서만 감싼다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoAction {
+    Key(Action),
+    Window(titlebar::Button),
 }
 
 pub struct RootView {
     blocks: BlockList,
     font: FamilyId,
+    /// 창 버튼의 마우스 상태(`pytmux-1`) — 세션 뷰의 `titlebar_click_states` 와 같은
+    /// 자리다. 프레임을 넘어 살아야 hover 가 추적된다.
+    titlebar_click_states: std::cell::RefCell<Vec<warpui::elements::MouseStateHandle>>,
+    /// 창에게 말해 둔 띠 높이와 **같은 배율**을 쓴다(`main::tell_window_the_band` 가
+    /// 기동 때 같은 값을 읽는다). 데모 창에는 설정을 다시 읽을 펌프가 없다.
+    font_scale: f32,
 }
 
 impl RootView {
@@ -60,7 +77,51 @@ impl RootView {
         Self {
             blocks: BlockList::sample(),
             font,
+            titlebar_click_states: Default::default(),
+            font_scale: base::Config::load().font_scale,
         }
+    }
+
+    /// 창 버튼 `i` 번째의 마우스 상태.
+    fn titlebar_mouse_state(&self, i: usize) -> warpui::elements::MouseStateHandle {
+        let mut states = self.titlebar_click_states.borrow_mut();
+        while states.len() <= i {
+            states.push(Default::default());
+        }
+        states[i].clone()
+    }
+
+    /// 머리줄 — 세션 뷰와 **같은 줄**이다(`titlebar` 모듈). 데모 창도 OS 장식이 없으므로
+    /// ⛔ 이 줄이 없으면 **마우스로 창을 닫을 자리가 사라진다**(Windows·Linux 기준. 맥은
+    /// 신호등이 남는다). 데모는 `pytmux-gui demo` 로 문서에 있는 실행 갈래다.
+    fn render_titlebar(&self) -> Box<dyn Element> {
+        let title = self.text(t("pytmux-gui · 블록 데모"), 12., palette::DIM);
+        let buttons = titlebar::BUTTONS
+            .iter()
+            .enumerate()
+            .map(|(i, button)| {
+                let hovered = self
+                    .titlebar_click_states
+                    .borrow()
+                    .get(i)
+                    .is_some_and(|s: &warpui::elements::MouseStateHandle| {
+                        s.lock().is_ok_and(|s| s.is_mouse_over_element())
+                    });
+                let fg = if hovered { palette::FG } else { palette::DIM };
+                let slot = titlebar::slot(
+                    self.font_scale,
+                    self.text(button.glyph(), 12., fg),
+                    hovered.then(|| button.hover_bg()),
+                );
+                let button = *button;
+                Hoverable::new(self.titlebar_mouse_state(i), |_| slot)
+                    .on_click(move |evt, _, _| {
+                        evt.dispatch_typed_action(DemoAction::Window(button));
+                    })
+                    .finish()
+            })
+            .collect();
+        titlebar::row(self.font_scale, title, buttons)
     }
 
     fn text(&self, s: impl Into<String>, size: f32, color: ColorU) -> Box<dyn Element> {
@@ -128,31 +189,61 @@ impl View for RootView {
         let expanded = self.blocks.is_expanded();
 
         let mut column = Flex::column().with_main_axis_size(MainAxisSize::Max);
-        column = column.with_child(self.text(t("pytmux-gui · 블록 데모"), 15., palette::FG));
+        // ★ 앱 이름은 **머리줄로 옮겼다**(`pytmux-1`) — 그 줄이 이 창의 타이틀바다.
+        //   여기 한 번 더 적으면 같은 이름이 두 줄에 뜬다.
         column = column.with_child(self.text(keymap::help_line(), 12., palette::DIM));
 
         for (index, block) in self.blocks.blocks().iter().enumerate() {
             column = column.with_child(self.render_block(block, index == selected, expanded));
         }
 
+        // 머리줄은 바깥 여백 **밖**이다(세션 뷰와 같은 이유 — 창 버튼이 모서리에 닿아야
+        // 하고, 창에게 말해 둔 띠와 자리가 같아야 한다).
+        let inside = Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_child(self.render_titlebar())
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Container::new(column.finish())
+                        .with_uniform_padding(12.)
+                        .finish(),
+                )
+                .finish(),
+            )
+            .finish();
         Stack::new()
             .with_child(Rect::new().with_background_color(palette::BG).finish())
-            .with_child(Container::new(column.finish()).with_uniform_padding(12.).finish())
+            .with_child(inside)
             .finish()
     }
 }
 
 impl TypedActionView for RootView {
-    type Action = Action;
+    type Action = DemoAction;
 
-    fn handle_action(&mut self, action: &Action, ctx: &mut ViewContext<Self>) {
-        if *action == Action::Quit {
+    fn handle_action(&mut self, action: &DemoAction, ctx: &mut ViewContext<Self>) {
+        let action = match action {
+            DemoAction::Key(action) => *action,
+            // 창 버튼 — 뜻은 상류 `ViewContext` 가 그대로 준다(세션 뷰와 같은 셋).
+            DemoAction::Window(titlebar::Button::Minimize) => {
+                ctx.minimize_window();
+                return;
+            }
+            DemoAction::Window(titlebar::Button::Maximize) => {
+                ctx.toggle_maximized_window();
+                return;
+            }
+            // 닫기는 `Quit` 와 **같은 길**이다 — 데모 창에서는 그 둘이 같은 뜻이다.
+            DemoAction::Window(titlebar::Button::Close) => Action::Quit,
+        };
+        if action == Action::Quit {
             // GUI 에서는 창을 닫는 것이 종료다.
             ctx.close_window();
             return;
         }
         // 상태가 실제로 바뀐 경우에만 다시 그린다.
-        if self.blocks.apply(*action) {
+        if self.blocks.apply(action) {
             ctx.notify();
         }
     }

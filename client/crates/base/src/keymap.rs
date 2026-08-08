@@ -304,6 +304,20 @@ pub enum Action {
     /// 그 키를 쓴다). 파이썬 클라도 같은 이유로 스크롤을 모드 안에 두고 `esc` `[` 로
     /// 들어간다 — tmux 의 copy-mode 관습이다.
     EnterScroll,
+    /// 캔버스 위에서 블록을 고르는 모드로 들어간다
+    /// ([`InputMode::Block`](crate::InputMode) · pytmux-18 · `esc b`).
+    ///
+    /// # 왜 액션은 하나뿐인가
+    ///
+    /// 들어간 뒤의 조작(`↑`/`↓`/`Ctrl+C`)은 액션이 아니라 **모드 안의 키**다
+    /// ([`crate::keys::BlockKey`] 문서) — 그 셋은 모드 밖에서는 패널 안 프로그램의
+    /// 것이라 팔레트 줄로 올릴 뜻이 없다.
+    ///
+    /// # 왜 [`EnterScroll`](Self::EnterScroll) 처럼 표에서 바로 모드로 안 접히나
+    ///
+    /// **고를 블록이 있어야** 이 모드가 뜻을 갖기 때문이다
+    /// ([`ModeState::enter_block`](crate::keys::ModeState::enter_block)).
+    SelectBlocks,
     /// 스크롤 모드를 **뒤집는다** — 들어가 있으면 라이브로 돌아온다.
     ///
     /// [`EnterScroll`](Self::EnterScroll) 과 갈라 두는 이유: 이 액션의 주인은 상태줄의
@@ -433,6 +447,7 @@ impl Action {
             Action::ShowMenu => "메뉴",
             Action::ShowNotices => "알림 이력",
             Action::ShowSummary => "블록·Claude 요약",
+            Action::SelectBlocks => "블록 고르기",
             Action::SendEscape => "패널에 ESC",
             Action::SendBacktick => "패널에 `",
             Action::ToggleClock => "시계",
@@ -596,6 +611,10 @@ pub static BINDINGS: &[Binding] = &[
     b("`", Action::SendBacktick, false),
     // tmux 의 copy-mode 관습(prefix `[`)을 그대로 쓴다 — 파이썬 클라도 `esc` `[` 다.
     b("[", Action::EnterScroll, true),
+    // 블록 고르기(pytmux-18). **정본에 없는 글자**라 안전하다 — 정본의 esc 모드 키
+    // 열일곱에 `b` 는 없다(`client_surface.json` 의 `esc_keys`). 정본이 나중에 같은
+    // 글자를 쓰게 되면 그때는 정본을 따른다(손버릇이 갈리는 쪽이 더 나쁘다).
+    b("b", Action::SelectBlocks, false),
     b("q", Action::Quit, true),
     b("escape", Action::Quit, false),
     // 파이썬 클라의 `esc ?`(e_help)와 같은 글자다. 도움말은 **키를 외우지 않아도 되게**
@@ -1248,6 +1267,10 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("notice-history", "설정/기타", Action::ShowNotices),
     // GUI 만의 판(§10-21ⓓ) — 화면에서 뺀 요약 구역의 새 입구다.
     pe("summary", "설정/기타", Action::ShowSummary),
+    // GUI 만의 모드(pytmux-18). 키(`esc b`)가 주 입구이고 팔레트는 그 키를 모르는
+    // 사람의 입구다 — 요약 판(위)이 목록을 **보여 주는** 자리라면 이쪽은 캔버스 위에서
+    // 그 블록을 **집는** 자리다.
+    pe("select-blocks", "복사/버퍼", Action::SelectBlocks),
     // GUI 만의 줄(§10-21ⓐ) — 키(`Ctrl+=`/`Ctrl+-`/`Ctrl+0`)가 주 입구이고 팔레트는
     // 그 키를 모르는 사람의 입구다. 이름은 설정 키(`font-scale`)와 같은 낱말을 쓴다.
     pe("font-scale-up", "설정/기타", Action::FontScale { up: true }),
@@ -1544,6 +1567,13 @@ pub fn key_help_lines(binds: &[crate::config::Bind]) -> Vec<(String, String)> {
     out.push((t("── 스크롤 모드 ──").to_owned(), String::new()));
     out.push(("↑ ↓ PgUp PgDn".to_owned(), t("스크롤백 이동").to_owned()));
     out.push(("q · Esc · Enter".to_owned(), t("라이브로 복귀").to_owned()));
+    // ★ 블록 선택 모드(pytmux-18). 이 절이 **없으면 안 되는** 이유는 스크롤 모드와
+    //   같다: 모드 안의 키는 표(`BINDINGS`)에 없어서, 여기 안 적으면 화면 어디에도
+    //   안 나온다. 그리고 `Ctrl+C` 가 평소와 다른 일을 하는 유일한 자리라 더 그렇다.
+    out.push((t("── 블록 선택 모드 ──").to_owned(), String::new()));
+    out.push(("↑ ↓".to_owned(), t("한 블록씩 이동").to_owned()));
+    out.push(("Ctrl+C".to_owned(), t("고른 블록 전체 복사").to_owned()));
+    out.push(("q · Esc · Enter".to_owned(), t("고르기 끝").to_owned()));
     // ── 마우스 제스처 ─────────────────────────────────────────────────────────
     //
     // ★ 정본 `list-keys`(= `mouse-help`)의 절이다. 저쪽 주석이 이 절을 만든 이유를 적어
@@ -1700,6 +1730,7 @@ fn variant_index(action: Action) -> usize {
         Action::ShowMenu => 53,
         Action::ShowNotices => 56,
         Action::ShowSummary => 108,
+        Action::SelectBlocks => 113,
         Action::SendEscape => 49,
         Action::SendBacktick => 50,
         Action::ToggleClock => 47,
@@ -1724,7 +1755,7 @@ fn variant_index(action: Action) -> usize {
     }
 }
 
-const ACTION_COUNT: usize = 113;
+const ACTION_COUNT: usize = 114;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1782,6 +1813,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::ShowMenu,
         Action::ShowNotices,
         Action::ShowSummary,
+        Action::SelectBlocks,
         Action::SendEscape,
         Action::SendBacktick,
         Action::ToggleClock,

@@ -150,6 +150,18 @@ pub enum ClickTarget {
     /// 자리로 가리키는 이유: 이름은 `String` 이라 이 열거형의 `Copy` 를 깬다. 자리는
     /// 그린 프레임 안의 것이고, 뷰가 누른 즉시 그 프레임의 목록에서 되찾는다.
     PluginBadge(usize),
+    /// 상태줄의 세션 이름(`#S`) 자리 — 누르면 **거기가 입력칸이 된다**(pytmux-3).
+    ///
+    /// 액션 표를 안 지난다. 여는 것이 화면이 아니라 **이 클라의 편집 상태**라 서버에
+    /// 보낼 명령이 없다(보낼 것은 다 쓰고 `Enter` 를 눌렀을 때의 `rename_session`
+    /// 하나뿐이다) — `DismissMessage` 와 같은 부류다.
+    SessionName,
+    /// 편집 **중**인 세션 이름의 `i` 번째 글자 — 누르면 커서만 그리로 간다.
+    ///
+    /// 파이썬은 이 자리를 절대 x 로 받아 셀 폭으로 되짚지만(`session_edit_cursor_at`),
+    /// GUI 에는 셀 격자가 없다 — 글자마다 자기 자리를 갖는 편이 같은 일을 **자릿수
+    /// 계산 없이** 한다(한글에서 폭으로 되짚다 어긋나는 부류가 아예 없어진다).
+    SessionCursor(usize),
 }
 
 /// 클릭 하나를 액션으로 — **Enter 와 같은 길**이다(파이썬 `on_mouse_down`/`_hit` 도
@@ -166,7 +178,9 @@ pub fn click(target: ClickTarget, ctx: &ChromeCtx) -> Option<Action> {
         ClickTarget::Badge(badge) => badge.action(),
         ClickTarget::TabScroll { .. }
         | ClickTarget::DismissMessage
-        | ClickTarget::PluginBadge(_) => return None,
+        | ClickTarget::PluginBadge(_)
+        | ClickTarget::SessionName
+        | ClickTarget::SessionCursor(_) => return None,
     })
 }
 

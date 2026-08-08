@@ -239,4 +239,59 @@ fn each_run_kind_opens_the_python_equivalent() {
     assert_eq!(run_badge(StatusRun::Host), Some(Badge::Host));
     assert_eq!(run_badge(StatusRun::Time), Some(Badge::Clock));
     assert_eq!(run_badge(StatusRun::Date), Some(Badge::Calendar));
+    // 세션 이름은 배지가 **없다** — 누르면 팝업이 아니라 입력칸이 열린다(pytmux-3).
+    assert_eq!(run_badge(StatusRun::Session), None);
+}
+
+// ── 세션 이름 런(pytmux-3 — 파이썬 `_expand_parts` 의 `session` 종류) ──────────
+
+#[test]
+fn the_session_token_becomes_its_own_run_so_the_name_can_be_clicked() {
+    // 파이썬이 `#S` 를 `plain` 에서 고유 종류로 뗀 이유 그대로다: 인접 병합에 안
+    // 먹혀야 **그 폭이 곧 누를 자리**가 된다. `plain` 이면 양옆 공백과 한 덩이가 돼
+    // 이름이 어디부터 어디까지인지 알 수 없다.
+    let ctx = StatusCtx {
+        session: "playground".into(),
+        ..ctx()
+    };
+    let parts = expand_parts_at(" #S ", &ctx, NOW);
+    let kinds: Vec<(StatusRun, &str)> = parts.iter().map(|(k, t)| (*k, t.as_str())).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (StatusRun::Plain, " "),
+            (StatusRun::Session, "playground"),
+            (StatusRun::Plain, " "),
+        ]
+    );
+}
+
+#[test]
+fn the_session_run_carries_the_same_letters_as_the_whole_string_expansion() {
+    // 두 펼치기가 다른 글자를 내면 누를 자리가 그림과 어긋난다(호스트 런과 같은 규율).
+    let ctx = StatusCtx {
+        session: "100%".into(),
+        ..ctx()
+    };
+    let fmt = " #S · #{pane_title}%H:%M ";
+    let parts = expand_parts_at(fmt, &ctx, NOW);
+    let joined: String = parts.iter().map(|(_, t)| t.as_str()).collect();
+    assert_eq!(joined, expand_at(fmt, &ctx, NOW), "구간 합이 통짜 펼치기와 다르다");
+    // 이름 안의 `%` 가 시각 코드로 읽히지 않는다 — 통짜 판이 지키는 것과 같은 규칙이다.
+    assert!(
+        parts.contains(&(StatusRun::Session, "100%".to_owned())),
+        "{parts:?}"
+    );
+}
+
+#[test]
+fn an_empty_session_name_leaves_no_run_to_click() {
+    // 이름이 없으면 **누를 자리 자체가 없다**(빈 런은 ②가 버린다). 파이썬
+    // `begin_session_edit` 이 `not self.session` 에서 False 를 돌려주는 것과 같은 자리다.
+    let ctx = StatusCtx {
+        session: String::new(),
+        ..ctx()
+    };
+    let parts = expand_parts_at("#S", &ctx, NOW);
+    assert!(parts.is_empty(), "빈 이름이 런을 남겼다: {parts:?}");
 }
