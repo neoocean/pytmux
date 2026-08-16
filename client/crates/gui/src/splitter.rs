@@ -254,6 +254,41 @@ const BAR_PX: f32 = 4.;
 /// 같은 굵기면 어느 것이 잡히는지 손이 헷갈린다.
 const FRAME_PX: f32 = 1.5;
 
+/// 경계 칸 하나가 그리는 선분들 — **순수 산수**라 시험이 직접 부른다.
+///
+/// `drop` 은 이 칸의 선을 아래로 미는 픽셀이다(0 이면 종전 그대로). 아랫변에만 걸리며,
+/// 그 값이 왜 필요한지는 [`SplitterOverlay::slack`] 이 쥔다(`pytmux-162`).
+///
+/// ⛔ **세로 성분의 길이가 `drop` 을 함께 타야 한다.** 가로선만 내리면 아랫변이 옆
+/// 세로변에서 떨어져 **테두리가 끊긴 상자**가 된다 — 고치려던 것보다 나쁜 그림이다.
+fn seg_rects(bits: u8, x0: f32, y0: f32, cw: f32, ch: f32, drop: f32) -> Vec<RectF> {
+    let half = FRAME_PX / 2.;
+    // 가로선의 자리 = 이 칸의 세로 가운데 + 내린 만큼.
+    let (cx, cy) = (x0 + cw / 2., y0 + ch / 2. + drop);
+    let mut out = Vec::new();
+    if bits & Seg::LEFT != 0 {
+        out.push(RectF::new(vec2f(x0, cy - half), vec2f(cx - x0 + half, FRAME_PX)));
+    }
+    if bits & Seg::RIGHT != 0 {
+        out.push(RectF::new(
+            vec2f(cx - half, cy - half),
+            vec2f(x0 + cw - cx + half, FRAME_PX),
+        ));
+    }
+    // 위로 뻗는 성분은 **칸 꼭대기에서** 가로선까지다 — 가로선이 내려간 만큼 길어진다.
+    if bits & Seg::UP != 0 {
+        out.push(RectF::new(vec2f(cx - half, y0), vec2f(FRAME_PX, cy - y0 + half)));
+    }
+    // 아래로 뻗는 성분은 가로선에서 **칸 바닥 + 내린 만큼**까지다.
+    if bits & Seg::DOWN != 0 {
+        out.push(RectF::new(
+            vec2f(cx - half, cy - half),
+            vec2f(FRAME_PX, y0 + ch + drop - cy + half),
+        ));
+    }
+    out
+}
+
 pub struct SplitterOverlay {
     child: Box<dyn Element>,
     bars: Vec<Bar>,
@@ -273,6 +308,25 @@ pub struct SplitterOverlay {
     rules: Vec<TextRule>,
     /// 셀 자리표 id(`SessionView::CELL_PROBE`) — 셀 기하의 원천.
     probe_id: &'static str,
+    /// 캔버스 격자의 행 수. **아랫변이 어느 줄인가**를 아는 데만 쓴다(0 이면 안 내린다).
+    rows: u16,
+    /// 이 프레임에서 격자가 **못 채운 아래 빈 높이**(px) — `layout` 이 잰다.
+    ///
+    /// # 왜 생기나 (`pytmux-162`)
+    ///
+    /// 격자는 정수 행만 그리는데(`grid_for` 는 **모자라게** 잡는다) 아래 구역은 예산을
+    /// **고정**으로 받는다(`footer_lines` — 안 그러면 알림 한 줄이 뜰 때마다 캔버스가
+    /// 한 줄씩 줄었다 늘었다 한다). 그래서 ⑴ 절사 나머지(< 한 칸)와 ⑵ 예산은 잡았지만
+    /// 이 프레임에 안 그린 줄(대개 알림 한 줄)이 캔버스 **밑에** 남는다.
+    ///
+    /// 종전에는 그 자리를 빈 위젯이 먹었고(상태줄이 창 바닥에 붙는 것은 그때도 옳았다),
+    /// 그 결과 **테두리 상자만 그 위에서 끝나** 아랫변과 상태줄 사이가 벌어져 보였다.
+    /// 지금은 이 값을 캔버스가 받아 **아랫변을 여기까지 내려 긋는다** — 상자가 남는
+    /// 자리를 채우고, 위아래 여백이 다시 반 칸씩으로 같아진다.
+    slack: f32,
+    /// 이번 레이아웃에서 **받은** 크기. ⛔ 자식 것을 그대로 돌려주면 안 된다 — 부모
+    /// `Flex` 는 이 값으로 다음 형제의 자리를 잡아, 빈 높이만큼 상태줄이 겹쳐 앉는다.
+    size: Option<Vector2F>,
     origin: Option<Point>,
 }
 
@@ -288,6 +342,7 @@ impl SplitterOverlay {
         marks: Vec<SpanMark>,
         rules: Vec<TextRule>,
         probe_id: &'static str,
+        rows: u16,
     ) -> Self {
         Self {
             child,
@@ -300,7 +355,23 @@ impl SplitterOverlay {
             marks,
             rules,
             probe_id,
+            rows,
+            slack: 0.,
+            size: None,
             origin: None,
+        }
+    }
+
+    /// 이 칸의 선을 아래로 미는 픽셀. **맨 아랫줄에만** 걸린다.
+    ///
+    /// ⛔ 「가장 아래에 있는 선분」으로 고르지 않는다 — 마지막 행이 테두리가 아닌 프레임
+    /// (배치를 아직 못 받았거나 패널이 바닥까지 안 닿는 프레임)에서 **패널 안의 선**을
+    /// 끌어내리게 된다. 기준은 격자의 행 수 하나다.
+    fn seg_drop(&self, y: u16) -> f32 {
+        if self.rows > 0 && y + 1 == self.rows {
+            self.slack
+        } else {
+            0.
         }
     }
 
@@ -454,27 +525,13 @@ impl SplitterOverlay {
     /// 경계 문자 칸들을 실제 선으로. 칸 **가운데**를 지나게 그려서 이웃 칸의 선과
     /// 이어진다(끝을 칸 경계까지 늘리는 이유 — 반 칸만 그리면 칸마다 틈이 생긴다).
     fn paint_frames(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
-        let half = FRAME_PX / 2.;
         for seg in &self.segs {
             let x0 = origin.x() + seg.x as f32 * cw;
             let y0 = origin.y() + seg.y as f32 * ch;
-            let (cx, cy) = (x0 + cw / 2., y0 + ch / 2.);
-            let mut line = |rect: RectF| {
+            for rect in seg_rects(seg.bits, x0, y0, cw, ch, self.seg_drop(seg.y)) {
                 ctx.scene
                     .draw_rect_without_hit_recording(rect)
                     .with_background(Fill::Solid(seg.color));
-            };
-            if seg.bits & Seg::LEFT != 0 {
-                line(RectF::new(vec2f(x0, cy - half), vec2f(cx - x0 + half, FRAME_PX)));
-            }
-            if seg.bits & Seg::RIGHT != 0 {
-                line(RectF::new(vec2f(cx - half, cy - half), vec2f(x0 + cw - cx + half, FRAME_PX)));
-            }
-            if seg.bits & Seg::UP != 0 {
-                line(RectF::new(vec2f(cx - half, y0), vec2f(FRAME_PX, cy - y0 + half)));
-            }
-            if seg.bits & Seg::DOWN != 0 {
-                line(RectF::new(vec2f(cx - half, cy - half), vec2f(FRAME_PX, y0 + ch - cy + half)));
             }
         }
     }
@@ -487,7 +544,21 @@ impl Element for SplitterOverlay {
         ctx: &mut LayoutContext,
         app: &AppContext,
     ) -> Vector2F {
-        self.child.layout(constraint, ctx, app)
+        // ★ 자식은 **자기 키대로** 잰다(`pytmux-162`). 부모가 준 tight 를 그대로 내리면
+        //   줄들의 `Flex` 가 `min` 까지 자라 자기 크기라고 답하고, 그러면 남는 높이가
+        //   0 으로 보여 아랫변을 어디까지 내려야 하는지 알 길이 없어진다.
+        let loose = SizeConstraint::new(vec2f(constraint.min.x(), 0.), constraint.max);
+        let child = self.child.layout(loose, ctx, app);
+        // 받은 자리를 **다 쓴다**. 무한 제약(= 유연한 자식이 아닐 때)이면 종전 그대로다.
+        let height = if constraint.max.y().is_finite() {
+            constraint.max.y().max(child.y())
+        } else {
+            child.y()
+        };
+        self.slack = (height - child.y()).max(0.);
+        let size = vec2f(child.x(), height);
+        self.size = Some(size);
+        size
     }
 
     fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &AppContext) {
@@ -598,7 +669,9 @@ impl Element for SplitterOverlay {
     }
 
     fn size(&self) -> Option<Vector2F> {
-        self.child.size()
+        // ⛔ 자식 것이 아니라 **받은 것**이다 — 부모 `Flex` 가 이 값으로 다음 형제를
+        //   앉히므로, 자식 것을 주면 상태줄이 빈 높이만큼 위로 올라와 겹친다.
+        self.size.or_else(|| self.child.size())
     }
 
     fn origin(&self) -> Option<Point> {
@@ -609,3 +682,7 @@ impl Element for SplitterOverlay {
         self.child.parent_data()
     }
 }
+
+#[cfg(test)]
+#[path = "splitter_tests.rs"]
+mod tests;

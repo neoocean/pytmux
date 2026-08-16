@@ -6,6 +6,7 @@
 import asyncio
 import contextlib
 import inspect
+import itertools
 import os
 import signal
 import sys
@@ -13,10 +14,83 @@ import tempfile
 
 # 상위 디렉토리(pytmux 패키지/진입점)를 import 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 이 디렉토리(tests/)도 넣는다 — `run.py` 로 돌 때는 이미 sys.path[0] 이지만,
+# 하니스를 **직접 import 하는 경로**(임시 진단 스크립트)에서는 없을 수 있다.
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
+import hermetic  # noqa: E402
 import pytmux  # noqa: E402
 from pytmuxlib import ipc  # noqa: E402
 
+# ⛔ **설정 파일 격리는 pytmux 를 물기 전에 세운다**(pytmux/pytmux-135). `server_only()`
+# 는 아래에서 `PYTMUX_HOME` 을 거두는데, 그러면 설정 탐색이 **사용자의 진짜
+# `~/.config/pytmux/config`** 로 떨어진다(읽기만이 아니라 `:settings` 경로의 쓰기까지).
+# `run.py` 도 같은 격리를 하지만, 여기 두는 이유는 그 §PYTMUX_HOME pop 주석과 같다 —
+# **하니스를 직접 import 하는 경로**(임시 진단 스크립트·에디터 러너)까지 덮기 위해서다.
+# 이미 세워져 있으면(러너가 먼저 돌았으면) 그 파일을 그대로 쓴다.
+HERMETIC_CONFIG = hermetic.isolate_config()
+
 IS_WINDOWS = os.name == "nt"
+
+# ── TCP 전송(=Windows 경로) 격리 ────────────────────────────────────────────────
+# TCP 엔드포인트의 상태파일은 **상태 디렉터리 + 이름**으로 정해진다(ipc.state_base).
+# 격리축이 둘이라는 뜻이고, 둘을 나눠 쓴다:
+#   · 디렉터리 = **프로세스당 한 벌**. 실사용 상태 디렉터리(`%LOCALAPPDATA%\pytmux` ·
+#     `$XDG_RUNTIME_DIR`)를 안 밟기 위한 것이라 테스트마다 갈 이유가 없다.
+#     ⛔ 종전에는 `server_only()` 가 **호출마다** 새 디렉터리로 갈아 끼웠다. 경로 해석이
+#     호출 시점의 env 를 보므로, 한 테스트가 서버를 둘 띄우면 **먼저 뜬 서버의**
+#     토큰·포트파일이 나중 서버의 디렉터리에서 조회돼 클라 attach 가 `auth_failed` 로
+#     끊겼다(pytmux/pytmux-152 · 실측 2026-08-08 alienware). Windows 는 그 시나리오를
+#     통째로 못 쟀다.
+#   · 이름 = **서버당 하나**. Unix 가 `tempfile.mktemp(".sock")` 로 하는 것과 같은 규율
+#     (공유 디렉터리 + 유니크 이름)을 TCP 에 그대로 옮긴 것이다.
+_TCP_STATE_DIR_ENV = "LOCALAPPDATA" if IS_WINDOWS else "XDG_RUNTIME_DIR"
+_tcp_state_dir = None
+_endpoint_seq = itertools.count(1)
+
+
+def _isolated_tcp_state_dir():
+    """이 프로세스의 TCP 상태 디렉터리(처음 필요할 때 한 번 만든다)."""
+    global _tcp_state_dir
+    if _tcp_state_dir is None:
+        _tcp_state_dir = tempfile.mkdtemp(prefix="pytmux-test-state-")
+    return _tcp_state_dir
+
+
+def _next_endpoint_name():
+    """서버마다 다른 상태파일 이름. pid 를 섞어 다른 러너 프로세스와도 안 겹친다."""
+    return f"t{os.getpid()}x{next(_endpoint_seq)}"
+
+
+def tcp_forced() -> bool:
+    """`server_only()` 가 TCP 전송을 쓰는가(Windows 기본 · 그 밖은 opt-in).
+
+    `PYTMUX_TEST_TCP=1` 은 **Windows 전송을 다른 상자에서 리허설하는** 스위치다 —
+    ipc 의 TCP 경로는 플랫폼 독립이라 macOS/Linux 에서 그대로 돌아간다(test_ipc 가
+    이미 같은 전제를 쓴다). 「저쪽 상자에서 초록이면 끝」이 이 부류의 구멍을 3주간
+    안 보이게 했다(pytmux/pytmux-152 ⑵)."""
+    return IS_WINDOWS or os.environ.get("PYTMUX_TEST_TCP") == "1"
+
+
+@contextlib.contextmanager
+def tcp_state_dir():
+    """`server_only(tcp=True)` 를 쓰는 블록 동안 상태 디렉터리를 임시로 돌린다.
+
+    Windows·`PYTMUX_TEST_TCP=1` 에서는 `server_only` 가 알아서 돌리므로 필요 없고,
+    **평상시 POSIX 스위트에서 TCP 를 강제로 쓰는 테스트**가 실사용
+    `$XDG_RUNTIME_DIR`(= 사용자의 라이브 데몬이 사는 곳)를 안 밟게 하는 자리다.
+    블록을 벗어나면 원래 값으로 되돌린다 — 같은 프로세스의 뒤 모듈에 안 샌다."""
+    d = tempfile.mkdtemp(prefix="pytmux-test-tcp-")
+    old = os.environ.get(_TCP_STATE_DIR_ENV)
+    os.environ[_TCP_STATE_DIR_ENV] = d
+    try:
+        yield d
+    finally:
+        if old is None:
+            os.environ.pop(_TCP_STATE_DIR_ENV, None)
+        else:
+            os.environ[_TCP_STATE_DIR_ENV] = old
 
 # ── 셸 히스토리 격리(테스트 잔재가 사용자 히스토리를 오염시키지 않게) ──────────────
 # 테스트/벤치는 진짜 자식 셸을 띄워 `echo PY=$$`(test_restart)·`echo PYTMUX_B8_DELTA_OK`
@@ -34,15 +108,18 @@ os.environ["HISTFILE"] = os.devnull
 os.environ["SAVEHIST"] = "0"
 
 
-async def server_only():
+async def server_only(*, tcp=None):
     """서버를 기동하고 listen 이 뜰 때까지 대기. (srv, task, endpoint) 반환.
 
     Unix: 임시 `.sock`(AF_UNIX). Windows: asyncio 의 AF_UNIX 지원이 불완전해
     `ipc` 가 TCP 루프백으로 분기하므로 여기서도 TCP 에페메럴(포트 0)을 쓴다.
-    TCP 는 상태파일 prefix(`ipc.state_base`)·포트파일이 고정 경로
-    (`default_state_dir/default`)라 테스트 간 충돌하므로, 매 테스트마다 유니크한
-    상태 디렉터리를 `LOCALAPPDATA` 로 주입해 격리한다.
-    반환값은 **확정 엔드포인트**(TCP 면 실제 포트)라 클라이언트가 그대로 접속한다.
+    TCP 상태파일은 `<상태 디렉터리>/<이름>` 이라(ipc.state_base) **디렉터리는 프로세스
+    당 한 벌, 이름은 서버당 하나**로 격리한다 — 위 `_TCP_STATE_DIR_ENV` 주석 참조.
+    반환값은 **확정 엔드포인트**(TCP 면 실제 포트 · 이름 포함)라 클라이언트가 그대로
+    접속하고, 같은 문자열로 토큰·포트파일을 찾는다.
+
+    `tcp=True` 면 플랫폼과 무관하게 TCP 전송을 쓴다(Windows 경로 리허설). 그때
+    상태 디렉터리는 호출부가 `tcp_state_dir()` 로 감싸 격리한다.
     """
     # ⚠ **PYTMUX_HOME 을 먼저 무력화한다**(2026-07-31 실측 사고). 아래 LOCALAPPDATA
     # 격리만으로는 부족하다 — `ipc.default_state_dir()` 는 **PYTMUX_HOME 을 우선**하므로,
@@ -60,22 +137,29 @@ async def server_only():
     # 경로**(임시 진단 스크립트·에디터 러너)까지 덮기 위해서다 — 실제로 이 세션의
     # 진단 스크립트가 그 구멍으로 라이브 상태를 덮어썼다.
     os.environ.pop("PYTMUX_HOME", None)
-    if IS_WINDOWS:
-        os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="pytmux-test-")
-        endpoint = "tcp:127.0.0.1:0"
+    if tcp is None:
+        tcp = tcp_forced()
+    if tcp:
+        if tcp_forced():
+            # 실사용 상태 디렉터리를 안 밟기 위한 리다이렉트(프로세스당 한 벌).
+            # tcp=True 를 명시한 호출은 `tcp_state_dir()` 이 이미 돌려놨다.
+            os.environ[_TCP_STATE_DIR_ENV] = _isolated_tcp_state_dir()
+        endpoint = ipc.tcp_endpoint(_next_endpoint_name())
     else:
         endpoint = tempfile.mktemp(suffix=".sock")
     # 상태 디렉터리를 **서버 기동 전에** 미리 만들고 조인다(warm-up, 2026-07-31 진단).
-    # 격리마다 새 디렉터리라 Windows 는 첫 호출이 `ipc._harden_win_acl` 의 icacls
+    # 첫 호출에서 Windows 는 `ipc._harden_win_acl` 의 icacls
     # 서브프로세스로 **0.4~0.6초**를 태운다(실측). 그게 `serve()` 도중에 터지면 이벤트
     # 루프가 그만큼 멎고, 테스트는 서버와 **같은 루프**를 쓰므로 곧이어 하는
     # `ipc.open_connection` 이 커널 handshake(<1ms)와 무관하게
     # `ipc._LOOPBACK_CONNECT_TIMEOUT`(0.5s)에 걸려 **거짓 TimeoutError** 를 냈다 —
     # 원인이 안 보이는 hang 으로 나타나 test_server 연결 테스트 10건이 TIMEOUT 이었다
     # (실측: 같은 조건에서 첫 connect 0.608s, 두 번째부터 0.001s). 연결 창에서 치운다.
+    # ⚠ 디렉터리가 프로세스당 한 벌이 되면서 이 비용도 **런당 한 번**으로 줄었다.
     ipc.default_state_dir()
-    # 캡처(REC) 출력 격리: 테스트 엔드포인트 "tcp:127.0.0.1:0" 는 default_endpoint()
-    # 와 같아 server.capture_dir 가 **공유 프로젝트 captures/default** 를 가리킨다.
+    # 캡처(REC) 출력 격리: 종전 테스트 엔드포인트 "tcp:127.0.0.1:0" 는 default_endpoint()
+    # 와 같아 server.capture_dir 가 **공유 프로젝트 captures/default** 를 가리켰다
+    # (지금은 이름이 붙어 그 자리는 아니지만, 격리는 전송과 무관하게 유지한다).
     # 그러면 실사용 pytmux 데몬이 같은 파일을 캡처 중일 때 test_capture_output 이 그
     # 17MB 짜리 실제 세션 로그를 읽어 깨진다(테스트 격리 결함). PYTMUX_CAPTURE_DIR 를
     # 매 서버마다 유니크 임시 디렉터리로 주입해 캡처를 격리한다(capture_dir 가 이
@@ -158,6 +242,13 @@ def cleanup(srv, endpoint):
                 os.unlink(endpoint)
         except OSError:
             pass
+        return
+    # TCP: 소켓 파일 대신 포트파일·토큰이 그 자리다. 이름이 서버마다 달라 충돌은
+    # 없지만, 한 러너가 수백 대를 띄우므로 안 치우면 상태 디렉터리에 그만큼 쌓인다.
+    # ⛔ error.log 는 **안 지운다** — teardown 이 정리 뒤에 그걸 읽어 단언한다.
+    for path in (ipc.portfile_for(endpoint), ipc.token_path(endpoint)):
+        with contextlib.suppress(OSError, ValueError):
+            os.unlink(path)
 
 
 # ── 서버 예외 로그 가드(§10-3⑤) ────────────────────────────────────────────

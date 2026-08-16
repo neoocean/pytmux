@@ -22,7 +22,7 @@ pub static EN: &[(&str, &str)] = &[
     (" ⏎", " ⏎"),
     (" ⏳ {label} {eta}s(입력=취소) ", " ⏳ {label} {eta}s (input=cancel) "),
     (" ⏳ 자동재개 {eta}s(입력=취소) ", " ⏳ auto-resume {eta}s (input=cancel) "),
-    ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · Esc 닫기)", "(Enter open · . up · t tag · u tag all · c copy · m move · d delete · r rename · k new directory · v view · h hidden · p cd panel · Esc close)"),
+    ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · F10 트리 · Esc 닫기)", "(Enter open · . up · t tag · u tag all · c copy · m move · d delete · r rename · k new directory · v view · h hidden · p cd panel · F10 tree · Esc close)"),
     ("(↑↓ 스크롤 · Esc 닫기)", "(↑↓ scroll · Esc close)"),
     ("(규칙이 없습니다 — a 로 지금 패널의 디렉토리를 추가합니다)", "(no rules — press a to add this pane's directory)"),
     ("(내용 없음)", "(empty)"),
@@ -54,6 +54,10 @@ pub static EN: &[(&str, &str)] = &[
     ("remote-attach {target}: 원격 탭 병합됨", "remote-attach {target}: remote tab merged"),
     ("remote-new-tab {target} 실패 — {why}", "remote-new-tab {target} failed — {why}"),
     ("submitted changelists", "submitted changelists"),
+    // mdir 집계줄(pytmux-126) — `{counts}` 는 원조 Mdir III 의 서식이라
+    // 번역 대상이 아니다(색과 같은 부류). 로케일을 타는 것은 그 앞뒤의 말뿐이다.
+    ("{counts}", "{counts}"),
+    ("{counts}  (항목 일부만 표시)", "{counts}  (list truncated)"),
     ("{names} 외 {n}개", "{names} and {n} more"),
     ("{n}개를 지웁니다 — 되돌릴 수 없습니다", "Deleting {n} — this cannot be undone"),
     ("{pct}%/5h 사용", "{pct}%/5h used"),
@@ -99,7 +103,7 @@ pub static EN: &[(&str, &str)] = &[
     ("복사 {n}건 · 실패 {f}건", "Copied {n} · {f} failed"),
     ("복사 — 대상 디렉터리 ({n}개)", "Copy — destination directory ({n})"),
     ("불러오는 중…", "Loading…"),
-    ("빈 디렉터리입니다", "Empty directory"),
+    ("빈 디렉터리입니다 · {counts}", "Empty directory · {counts}"),
     ("사용량 갱신 중… (숨은 /usage, ~수초)", "Refreshing usage… (hidden /usage, ~a few s)"),
     ("사용량 조회 중… (숨은 /usage, ~수초)", "Querying usage… (hidden /usage, ~a few sec)"),
     ("삭제 {n}건", "Deleted {n}"),
@@ -151,6 +155,7 @@ pub static EN: &[(&str, &str)] = &[
     ("토큰 사용량(추정) · 일별", "Token usage (estimated) · by day"),
     ("토큰 사용량(추정) · 일별 · Σ{tok}", "Token usage (estimated) · by day · Σ{tok}"),
     ("파일 관리자 — {path}", "File manager — {path}"),
+    ("파일 관리자 — {path}  [{mask}]", "File manager — {path}  [{mask}]"),
     // mdir 파일 마스크(pytmux-12 C) — 빈 값이 곧 끄기다(거는 것과 푸는 것이 한 키).
     ("파일 마스크 (예: *.txt *.md · 빈 값이면 해제)", "File mask (e.g. *.txt *.md · empty clears)"),
     ("표시할 Claude 경고가 없습니다(이미 해소됨).", "No Claude warning to show (already cleared)."),
@@ -159,5 +164,4 @@ pub static EN: &[(&str, &str)] = &[
     ("프롬프트 히스토리", "Prompt history"),
     ("한도 데이터 없음 — Claude 패널에서 /usage 실행 후 [u]로 갱신", "No limit data — run /usage in a Claude pane, then [u] to refresh"),
     ("한도 데이터 없음 — Claude 패널에서 /usage 실행 후 갱신", "No limit data — run /usage in a Claude pane to refresh"),
-    ("항목이 너무 많아 일부만 보입니다", "Too many entries — showing only some"),
 ];

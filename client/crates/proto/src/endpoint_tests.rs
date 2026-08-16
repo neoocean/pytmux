@@ -185,6 +185,65 @@ fn explicit_specs_parse_both_shapes() {
 }
 
 #[test]
+fn a_named_tcp_spec_moves_the_portfile_and_the_token_but_not_the_address() {
+    // `tcp:[NAME@]HOST:PORT` — 이름은 **상태파일**만 가른다(서버 ipc.py 와 같은 규칙).
+    // 한 상태 디렉터리에 서버가 둘 이상일 때 포트파일·토큰이 서로를 밟지 않는 자리다
+    // (pytmux/pytmux-152). 규칙이 여기서 갈리면 클라가 남의 토큰을 내밀어 끊긴다.
+    let dir = Rules::from_env().state_dir();
+    match parse("tcp:srvA@127.0.0.1:5555") {
+        Endpoint::Tcp {
+            host,
+            port,
+            portfile,
+            token,
+        } => {
+            assert_eq!(host, "127.0.0.1", "이름은 호스트에 안 섞인다");
+            assert_eq!(port, 5555);
+            assert_eq!(portfile, dir.join("srvA.port"));
+            assert_eq!(token, dir.join("srvA.token"));
+        }
+        other => panic!("tcp: 는 TCP 다: {other:?}"),
+    }
+    // 이름을 안 쓰면 종전 그대로 — 발견 규약(`default`)은 안 움직인다.
+    match parse("tcp:127.0.0.1:5555") {
+        Endpoint::Tcp {
+            portfile, token, ..
+        } => {
+            assert_eq!(portfile, dir.join("default.port"));
+            assert_eq!(token, dir.join("default.token"));
+        }
+        other => panic!("tcp: 는 TCP 다: {other:?}"),
+    }
+    // 이름 규칙에 안 맞는 `@` 는 이름이 아니다 — 파일명으로 새면 상태 디렉터리 밖을
+    // 읽는다. 그때는 `default` 자리를 쓰고 주소 해석은 connect 에 맡긴다.
+    for spec in ["tcp:../../etc@127.0.0.1:5555", "tcp:a/b@127.0.0.1:5555"] {
+        match parse(spec) {
+            Endpoint::Tcp {
+                portfile, token, ..
+            } => {
+                assert_eq!(portfile, dir.join("default.port"), "{spec}");
+                assert_eq!(token, dir.join("default.token"), "{spec}");
+            }
+            other => panic!("tcp: 는 TCP 다: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn what_display_prints_is_what_parse_takes_back() {
+    // 오류 메시지에 뜬 문자열을 사람이 그대로 `--socket` 에 다시 칠 수 있어야 한다.
+    for spec in ["tcp:127.0.0.1:5555", "tcp:srvA@127.0.0.1:5555"] {
+        assert_eq!(parse(spec).display(), spec);
+    }
+    // 이름은 `.lang` 형제 파일까지 따라간다(파이썬 `state_base + ".lang"` 과 같은 자리).
+    let dir = Rules::from_env().state_dir();
+    assert_eq!(
+        parse("tcp:srvA@127.0.0.1:5555").lang_file(),
+        dir.join("srvA.lang")
+    );
+}
+
+#[test]
 fn missing_token_file_is_not_an_error() {
     assert_eq!(read_token_at(Path::new("/nonexistent/default.token")), None);
 }

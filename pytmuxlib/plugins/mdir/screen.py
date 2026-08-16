@@ -429,27 +429,17 @@ class _MdirView(Widget):
                                   _ERR if is_err else _TAG)])
         if self._err:
             return Strip([Segment(set_cell_size(f" {self._err}", w), _ERR)])
-        nf = nd = 0
-        total = sel_total = 0
-        for it in self._items:
-            if it["k"] == "file":
-                nf += 1
-                total += it["e"]["s"]
-                if it["e"]["n"] in self._tags:
-                    sel_total += it["e"]["s"]
-            elif it["k"] == "dir":
-                nd += 1
-        pct = round(self._free * 100 / self._total) if self._total else 0
-        text = (f" {nf} File  {nd} Dir  {total:,} Byte  "
-                f"{self._free:,}({pct}%)byte free")
-        if self._tags:
-            text += f"  Sel {len(self._tags)} ({sel_total:,})"
-        # 정렬 표시(원조 상태줄의 N/E/S/T 문자 — 내림차순은 ↓, O=무정렬).
-        text += f"  {self._sort.upper()}{'↓' if self._rev else ''}"
-        if self._show_hidden:
-            text += " H"
-        if self._over:
-            text += f"  {i18n.t(_TRUNC)}"
+        # 세는 규칙은 **한 벌**(`listing.counts` — pytmux-126). 종전에는 이 자리가
+        # 그것을 혼자 갖고 있어서 서버가 못 불렀고, 네이티브 클라의 mdir 에는 집계·
+        # 정렬 표시가 통째로 없었다(정렬은 pytmux-12 에서 생겼는데 무엇이 걸렸는지
+        # 볼 자리가 없었다).
+        from .listing import counts
+        text = " " + counts(
+            [it["e"] for it in self._items if it["k"] == "dir"],
+            [it["e"] for it in self._items if it["k"] == "file"],
+            self._tags, self._free, self._total,
+            self._sort, self._rev, self._show_hidden,
+            i18n.t(_TRUNC) if self._over else "")
         return Strip([Segment(set_cell_size(text, w), _TXT)])
 
     def _line_info(self, w: int) -> Strip:

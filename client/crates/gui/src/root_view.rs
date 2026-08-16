@@ -238,7 +238,10 @@ impl TypedActionView for RootView {
             DemoAction::Window(titlebar::Button::Close) => Action::Quit,
         };
         if action == Action::Quit {
-            // GUI 에서는 창을 닫는 것이 종료다.
+            // GUI 에서는 창을 닫는 것이 종료다. 이 요청은 상류의 `should_close_window`
+            // 로 돌아오고, 거기서 `crate::quit_now` 가 프로세스를 끝낸다
+            // (`main::app_callbacks` · `pytmux/pytmux-163`) — 종전에는 그 물음에 답할
+            // 콜백이 없어 **데모 창도 닫히지 않고 남았다**.
             ctx.close_window();
             return;
         }

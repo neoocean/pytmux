@@ -164,6 +164,7 @@
       "name"
     ],
     "new_window": [
+      "cmd",
       "path"
     ],
     "next_window": [],

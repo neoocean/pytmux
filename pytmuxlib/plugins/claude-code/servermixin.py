@@ -1476,6 +1476,14 @@ class ServerClaudeMixin:
         _managed_ok_active 로 화면 인스턴스당 1회만 주입한다(재주입 금지 — 승인 뒤
         컴포저에 빈 Enter 를 흘리게 된다). 화면이 사라지면 다음 인스턴스에 재무장.
         상태(changed)는 안 바꾼다 — 패널 내부 플래그라 클라 표시와 무관하다.
+
+        ⛔ **재무장은 판정 하나에 매달려 있다** — 그래서 판정이 "화면 어딘가에 그
+        문구가 있나"이면 이 래치가 영영 안 풀린다. Claude 는 승인 뒤 화면을 지우지
+        않아 통과된 승인 화면이 그대로 남으므로, 같은 패널에서 claude 를 두 번째로
+        띄우면 진짜 승인 화면이 떠도 여기 `if not p._managed_ok_active` 가 막았다
+        (pytmux/pytmux-151 · 제보 2026-08-06). 지금은
+        claude_managed_settings_yes 가 **마지막 인스턴스 구간의 미해결 화면**만 True
+        로 세므로, 잔상만 남은 프레임에서 자연히 False → 재무장된다.
         """
         if claude_managed_settings_yes(txt):
             if not p._managed_ok_active:

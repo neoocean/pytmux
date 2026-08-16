@@ -469,6 +469,50 @@ fn the_toggle_still_toggles_after_being_rebuilt_on_set() {
 }
 
 #[test]
+fn a_click_can_close_the_overlay_of_the_pane_it_landed_on() {
+    // pytmux-156 · 정본 `clientwidgets.py:544`. 판을 누르면 닫는 길에는 **누른 패널**을
+    // 지목해 끄는 판정이 있어야 한다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    state.set_overlay("clock", true).expect("패널이 있는데 못 켰다");
+    assert_eq!(state.overlay_on_pane(1), Some("clock"));
+    let (name, t) = state.close_overlay_on_pane(1).expect("켜져 있는데 못 껐다");
+    assert_eq!(name, "clock");
+    assert_eq!((t.pane, t.on, t.closed), (1, false, None));
+    // 실제로 꺼졌나 — 반환값만 보면 공허하다(`opening_an_overlay_twice` 가 가르친 것).
+    assert_eq!(state.overlay_on_pane(1), None, "껐다고 답하고 안 껐다");
+    assert!(state.toggle_overlay("clock").unwrap().on, "꺼져 있으니 토글은 켜야 한다");
+}
+
+#[test]
+fn a_pane_with_no_overlay_is_not_a_close() {
+    // ⛔ 끄기의 멱등(`set_overlay`)을 여기서 흉내 내면 **오버레이가 없는 패널을 누른
+    //   것까지** "닫았다"가 되어, 뷰가 그 클릭을 삼킨다(선택·포커스가 통째로 죽는다).
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    assert_eq!(state.overlay_on_pane(1), None);
+    assert!(state.close_overlay_on_pane(1).is_none(), "안 켜진 패널을 껐다고 답했다");
+    // 남의 패널 것도 안 집는다.
+    state.set_overlay("clock", true).unwrap();
+    assert!(state.close_overlay_on_pane(99).is_none(), "없는 패널의 것을 껐다");
+    assert_eq!(state.overlay_on_pane(1), Some("clock"), "남의 클릭이 이걸 껐다");
+}
+
+#[test]
+fn closing_by_pane_reaches_the_pane_that_is_not_active() {
+    // ☠ 여기가 `set_overlay` 로 못 가는 이유다 — 저것은 **활성 패널** 전용이라,
+    //   비활성 패널에 뜬 시계를 누르면 **엉뚱한 패널의 오버레이**가 사라진다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)])); // active = 1
+    state.set_overlay("clock", true).unwrap();
+    state.apply(layout_msg(&[(1, 6), (2, 6)])); // active = 2 로 옮겨 간다
+    state.set_overlay("calendar", true).unwrap(); // 활성(2)에 달력
+    let (name, t) = state.close_overlay_on_pane(1).expect("비활성 패널 것을 못 껐다");
+    assert_eq!((name.as_str(), t.pane), ("clock", 1));
+    assert_eq!(state.overlay_on_pane(2), Some("calendar"), "활성 패널 것이 대신 꺼졌다");
+}
+
+#[test]
 fn a_dimmed_pane_keeps_its_text_but_loses_its_brightness() {
     // 시계는 패널을 **덮되 뒤가 비쳐 보인다**. 딤은 새 글자가 아니라 있는 셀을 바꾸는
     // 일이라 런으로 못 나른다 — 서버는 "어느 패널"만 말하고 계산은 우리가 한다.
@@ -1358,6 +1402,41 @@ fn the_zone_the_server_lists_first_wins_when_they_overlap() {
         state.open_zone_at(2, 3),
         Some(("claude-perm-mode".to_owned(), 7))
     );
+}
+
+// ── 스펙이 가져가는 **F-키**(pytmux-125) ──────────────────────────────────────
+
+#[test]
+fn a_function_key_the_spec_declares_is_found_in_its_table() {
+    // ★ 정본 mdir 을 쓰던 손은 글자가 아니라 `F5`·`F10` 을 먼저 친다. 종전에는 그
+    //   키가 **스펙 어휘에 없어** 표에서 영영 안 찾아졌고, 목록 화면에서 표에 없는
+    //   키는 판을 닫는 규약이라 증상은 "F10 을 눌렀더니 파일 관리자가 닫힌다"였다.
+    //   키 자체(`Key::Function`)와 패널로 보낼 바이트는 이미 있었다 — 없던 것은
+    //   **되돌아가는 이름**뿐이다.
+    let spec = crate::session::PluginScreen {
+        kind: "table".into(),
+        keys: [
+            ("f5".to_owned(), "copy".to_owned()),
+            ("f10".to_owned(), "tree".to_owned()),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    assert_eq!(spec.key_action(base::Key::Function(5), base::Mods::NONE), Some("copy"));
+    assert_eq!(spec.key_action(base::Key::Function(10), base::Mods::NONE), Some("tree"));
+    // 표에 없는 F-키는 우리 것이 아니다 — 먹으면 판을 닫을 길이 없어진다.
+    assert_eq!(spec.key_action(base::Key::Function(9), base::Mods::NONE), None);
+    // 수정키가 붙은 것도 **표에 적힌 대로만** 먹는다(`alt-` 문법은 글자 키와 같다).
+    assert_eq!(spec.key_action(base::Key::Function(5), base::Mods::CTRL), None);
+    assert_eq!(spec.key_action(base::Key::Function(5), base::Mods::ALT), None);
+    let alt = crate::session::PluginScreen {
+        keys: [("alt-f5".to_owned(), "x".to_owned())].into_iter().collect(),
+        ..Default::default()
+    };
+    // ⚠ `alt-<글자>` 는 글자 키의 문법이라 `Alt+F5` 는 여기 안 걸린다 — 정본 mdir 도
+    //    `Alt+F5` 를 안 쓴다. 이 단언은 그 선을 못박는다(넓히려면 두 표를 같이 고친다).
+    assert_eq!(alt.key_action(base::Key::Function(5), base::Mods::ALT), None);
 }
 
 // ── 글 판의 **구역**(§10-21ⓛ2) ────────────────────────────────────────────────

@@ -87,6 +87,17 @@ Test-Path "$env:PYTMUX_HOME\state\default.ptyhost.pid"   # False
     멀쩡한데 **환경이 실패를 만든** 부류라, 원인을 코드에서 찾으면 한참 헤맨다.
   - 처방: 위 레시피처럼 `$PYTMUX_HOME\config` 를 **빈 파일로 먼저 만들거나**
     `$env:PYTMUX_CONFIG` 를 스크래치 파일로 세운다. 빈 파일이면 기본값으로 뜬다.
+  - ★ **합본 게이트는 이제 그것을 저절로 한다**(2026-08-16 · pytmux/pytmux-202).
+    `scripts/check_all.py` 가 자식 env 를 만드는 자리(§`child_env`)에서 `PYTMUX_CONFIG`
+    를 빈 임시 파일로 세우므로, **패리티 래칫·Rust 스위트·크로스OS 스텝이 한꺼번에**
+    덮인다. 종전에는 이 항목의 처방이 「사람이 손으로 스크래치를 세운다」뿐이라, 게이트가
+    자동으로 도는 자리에는 아무것도 안 걸려 있었다.
+    ⚠ **`cargo test` 를 직접 치는 사람은 여전히 보호 밖이다** — 그때는 위 두 줄이 그대로
+    답이다. 읽기 사물함을 `Config::path()` 에 두는 길은 「테스트가 기대하는 기본값」을
+    프로덕션 경로에 심는 모양이 되기 쉬워 안 했다(pytmux-202 본문).
+    ⛔ **그 프로세스 안에서 `set_var` 로 세우지 마라** — `config_tests.rs`·
+    `session_view_tests.rs` 가 금지하는 그것이다(형제 테스트와 경합한다). 게이트가 하는
+    것은 **부모가 자식에게 물려주는 것**이라 그 경합을 안 만든다.
   - 이미 밟았으면 **되돌린다**: 라이브 확인 전에 `~/.config/pytmux/config` 를 복사해
     두고 끝나면 되돌릴 것(무엇을 눌렀는지 기억으로 복원하려 들지 말 것 — 값이 기본값과
     같으면 파일에 줄이 아예 없어서, 지운 줄인지 원래 없던 줄인지 사후에 못 가른다).
@@ -275,20 +286,45 @@ cargo test                              # 워크스페이스 전체
   죽어 "찍혔다"로 오독된다. 정본을 찍는 도구는 자기 프로세스에서 이 변수를 지운다.
 - `PYTMUX_HOME` 을 세우고 띄울 것 — 안 세우면 **사용자의 라이브 서버에 붙는다**(위 ⛔).
 
-### macOS 에서 GUI 그림 확인 (⚠ Background 세션 함정)
+### macOS 에서 GUI 그림 확인 (⚠ 화면 기록 권한 함정)
 
-에이전트 셸은 **Background launchd 세션**이라, 여기서 띄운 GUI 창은 사용자의 Aqua 화면에
-컴포지트되지 않고 `screencapture` 도 그 별세계를 찍는다 — **창이 멀쩡히 그려져도 "안
-그려진다"로 오판하게 된다**(2026-07-30 G9j 리포트가 정확히 그 오진을 정정한 기록이다).
-그래서 맥의 그림 확인은 화면이 아니라 **드로어블에서 뜬다**:
+에이전트 셸에서 띄운 GUI 창은 **화면 캡처에 안 나온다.** 그래서 맥의 그림 확인은 화면이
+아니라 **드로어블에서 뜬다**:
 
 ```sh
 PYTMUX_HOME=$스크래치홈 target/debug/pytmux-gui --frame-dump=/tmp/out.png   # rc 0 + PNG
 ```
 
+⛔ **까닭이 「Background launchd 세션이라 컴포지트가 안 된다」는 아니다**(2026-08-09 실측 ·
+`pytmux-150`). 종전에 여기 그렇게 적혀 있었는데 지금 재면 그 전제부터 틀렸다:
+`launchctl managername` = **Aqua** · `CGSessionCopyCurrentDictionary` 가
+`kCGSSessionOnConsoleKey=1` · 앱을 띄우면 **메뉴바 이름이 실제로 바뀐다**(화면 픽셀로 확인) ·
+`CGWindowListCopyWindowInfo` 도 그 창을 `onscreen=1 · 1280x800` 로 안다. 즉 창은 사용자의
+Aqua 화면에 **정상으로 있다.**
+
+진짜 까닭은 **화면 기록(Screen Recording) 권한**이다. 권한 없이 화면을 찍으면 실패하지 않고
+**벽지 + 메뉴바만** 담긴 그림이 rc 0 으로 나온다 — 그래서 「창이 안 그려진다」로 읽힌다.
+셋으로 갈라 쟀다:
+
+| 무엇 | 이 상자(Darwin 24.6 · 권한 없음) |
+| --- | --- |
+| 화면 전체 `screencapture -x` | rc 0 · **남의 창이 하나도 안 담긴다**(대조: TextEdit 을 띄우고 찍어도 창을 띄우기 전 그림과 메뉴바 글자 말고는 픽셀이 같다 — 2560x1440 중 다른 픽셀 1,663개가 전부 메뉴바 줄) |
+| 창 하나 `screencapture -l <id>` | rc 1 「could not create image from window」 — **macOS 15 에서 죽은 길이다**(`CGWindowListCreateImage` 가 15.0 에서 obsoleted) |
+| ScreenCaptureKit | `-3801 "The user declined TCCs…"` — **유일하게 참말을 하는 길** |
+
+그래서 `scripts/capture_window_mac.sh` 는 SCK 를 **맨 앞에** 두고(창 이미지라 전경·가림과
+무관하고 **OS 크롬 = 맥 신호등이 담긴다**), `-3801` 을 보면 남은 길을 시도하지 않고
+**진단을 찍고 rc 4** 로 떨어진다 — 계속 가면 벽지 그림이 성공으로 돌아온다.
+⛔ 그 스크립트는 종전에 **PATH 때문에 먼저 죽었다**(`screencapture: command not found` —
+launchd 가 띄운 셸에 `/usr/sbin` 이 없다). 이제 절대경로로 잡는다.
+
+★ **권한이 있는 셸에서는 그 스크립트가 맥에서 OS 크롬을 담는 유일한 길이다.**
+`--frame-dump` 은 앱이 자기 드로어블을 뜨는 것이라 **정의상 신호등을 못 담는다**(그 한계가
+`pytmux-150` §① 을 두 번 반려시킨 자리다). 권한은 사람만 줄 수 있다: 시스템 설정 → 개인정보
+보호 및 보안 → 화면 기록.
+
 TUI 는 pty 로 몬다(**키는 낱개 write** — ESC 와 다음 글자가 한 write 면 crossterm 이
-Alt+글자로 읽는다). `scripts/capture_window_mac.sh`·`send_keys_mac.sh` 도 있지만 앞의 것은
-같은 세션 함정에, 뒤의 것은 손쉬운 사용 권한에 걸린다 — frame-dump 가 먼저다.
+Alt+글자로 읽는다). `send_keys_mac.sh` 는 손쉬운 사용 권한에 걸린다.
 
 ## 게시(이 저장소 관례)
 

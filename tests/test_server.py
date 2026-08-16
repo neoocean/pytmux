@@ -36,6 +36,119 @@ async def test_pane_tree_ops():
         await teardown(srv, task, sock)
 
 
+async def test_new_window_runs_a_command_and_leaves_a_shell():
+    """`new_window(cmd=…)` — 그 탭에서 명령이 돌고, **끝나도 탭이 안 사라진다**.
+
+    pytmux-137(`esc c` = Claude Code 탭)이 이 배선 위에 선다. 종전에는 `new_window`
+    가 `cmd` 를 받지도, 흘리지도 않았다(`spawn_pane` 은 받을 준비가 돼 있었다).
+
+    ⛔ **감싸지 않으면 실패가 조용하다.** `셸 -c <없는 명령>` 은 `command not found`
+    를 찍자마자 끝나고 PTY EOF 로 탭이 사라져, 사용자에게는 "키가 안 먹었다"로만
+    보인다. 그래서 없는 명령으로 재고, ⑴ 그 줄이 화면에 남아 있고 ⑵ 패널이 살아
+    있는지를 둘 다 본다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        before = len(sess.tabs)
+        srv.new_window(sess, cmd="nosuchcommand-pytmux137")
+        assert len(sess.tabs) == before + 1
+        pane = sess.active_window.active_pane
+        await wait_for(lambda: "nosuchcommand-pytmux137" in pane_text(pane))
+        text = pane_text(pane)
+        assert "nosuchcommand-pytmux137" in text, text
+        # 셸이 남아 그 줄을 붙들고 있다 — 명령이 죽어도 패널은 살고 **입력을 받는다**.
+        # 친 글자와 결과를 가르려고 따옴표를 끼워 넣는다(에코에는 `ali""ve137` 이,
+        # 결과에는 `alive137` 이 뜬다).
+        pane.pty.write(b'echo ali""ve137\n')
+        await wait_for(lambda: "alive137" in pane_text(pane))
+        assert "alive137" in pane_text(pane), pane_text(pane)
+        assert len(sess.tabs) == before + 1, "명령이 끝나며 탭이 사라졌다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_new_window_without_a_command_is_unchanged():
+    """빈 `cmd` 는 없는 것과 같다 — `셸 -c ''` 로 **즉시 죽는 탭**이 뜨면 안 된다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        seen = []
+        real = srv.spawn_pane
+        srv.spawn_pane = lambda *a, **k: (seen.append(k.get("cmd")), real(*a, **k))[1]
+        srv.new_window(sess)
+        srv.new_window(sess, cmd="   ")
+        assert seen == [None, None], seen
+    finally:
+        srv.spawn_pane = real
+        await teardown(srv, task, sock)
+
+
+async def test_new_window_wire_carries_the_command():
+    """와이어의 `cmd` 칸이 실제로 `spawn_pane` 까지 간다(pytmux-137).
+
+    ⛔ 이름이 맞아도 **칸이 틀리면 아무 소리가 안 난다** — 서버는 모르는 칸을 그냥
+    안 읽고, 증상은 "빈 셸 탭이 열린다"뿐이다(`split` 의 `orient` 가 이미 그렇게
+    G1 이래 전건 좌우로 갈렸던 자리다)."""
+    from pytmuxlib.model import ClientConn
+
+    class _FakeWriter:
+        def write(self, *_a):
+            pass
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+    srv, task, sock = await server_only()
+    real = srv.spawn_pane
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        client = ClientConn(_FakeWriter())
+        client.session = sess
+        client.cols, client.rows = 80, 24
+        seen = []
+        srv.spawn_pane = lambda *a, **k: (seen.append(k.get("cmd")), real(*a, **k))[1]
+        await srv._handle_cmd(client, {"t": "cmd", "action": "new_window"})
+        await srv._handle_cmd(client, {"t": "cmd", "action": "new_window",
+                                       "path": "current", "cmd": "claude"})
+        assert seen[0] is None, seen
+        assert seen[1] is not None and seen[1].startswith("claude"), seen
+    finally:
+        srv.spawn_pane = real
+        await teardown(srv, task, sock)
+
+
+async def test_cmd_then_shell_branches_per_os():
+    """명령 뒤에 셸을 남기는 한 줄의 OS 분기(pytmux-137).
+
+    POSIX 는 `<명령>; exec <셸>`, Windows(cmd.exe `/c`)는 `<명령> & "<셸>"`.
+    `_shell_argv_env` 와 **같은 전제**라 여기서만 갈리면 안 된다."""
+    from unittest import mock
+
+    from pytmuxlib import pty_backend
+
+    srv, task, sock = await server_only()
+    try:
+        with mock.patch.object(pty_backend, "IS_WINDOWS", False), \
+                mock.patch.dict("os.environ", {"SHELL": "/bin/zsh"}):
+            assert srv._cmd_then_shell("claude") == "claude; exec /bin/zsh"
+        # 셸 경로에 공백이 있어도 한 낱말로 남는다(`exec` 가 인자를 가른다).
+        with mock.patch.object(pty_backend, "IS_WINDOWS", False), \
+                mock.patch.dict("os.environ", {"SHELL": "/opt/my shell/sh"}):
+            assert srv._cmd_then_shell("claude") == "claude; exec '/opt/my shell/sh'"
+        with mock.patch.object(pty_backend, "IS_WINDOWS", True), \
+                mock.patch.dict("os.environ",
+                                {"COMSPEC": r"C:\Windows\System32\cmd.exe"},
+                                clear=True):
+            assert srv._cmd_then_shell("claude") == \
+                r'claude & "C:\Windows\System32\cmd.exe"'
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_zoom_resizes_hidden_panes():
     # §2.6: 줌 중에는 활성 패널만 표시되지만, 숨은 패널도 정상 분할 크기로 미리
     # 리사이즈돼야 한다 — 안 그러면 (줌 중 창 축소 + 숨은 패널 출력) 뒤 줌 해제
@@ -1334,6 +1447,63 @@ async def test_auto_confirm_managed_settings_screen():
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
         assert p._managed_ok_active is False, "사라지면 재무장"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_confirm_managed_settings_second_instance_without_clear():
+    """pytmux-151(제보 2026-08-06): 같은 패널에서 claude 를 **두 번째로** 띄워도 승인
+    화면이 자동 통과돼야 한다.
+
+    위 테스트의 픽스처는 매 프레임을 `\\x1b[2J\\x1b[H`(화면 지우기)로 시작해 실제
+    터미널을 재현하지 못했다 — Claude 는 승인 뒤 화면을 **안 지우고** 아래로 이어
+    그리므로, 통과된 승인 화면의 머리글과 `❯ 1. Yes…` 줄이 화면에 그대로 남는다.
+    그 잔상을 승인 화면으로 세면 재주입 방지 래치(`_managed_ok_active`)가 안 풀려
+    두 번째 인스턴스가 Enter 를 못 받는다. 여기서는 화면을 한 번만 지우고, 실측
+    첨부(db01bdc1…)와 같은 순서로 프레임을 이어 붙여 **Enter 가 두 번** 나가는지 본다.
+    """
+    _HDR = (b"Managed settings require approval\r\n"
+            b"\r\n"
+            b"Your organization has configured managed settings.\r\n"
+            b"\r\n")
+    # 살아 있는 승인 화면(응답 대기) — 8줄.
+    _LIVE = (_HDR +
+             b"\xe2\x9d\xaf 1. Yes, I trust these settings\r\n"
+             b"  2. No, exit Claude Code\r\n"
+             b"\r\n"
+             b"Enter to confirm \xc2\xb7 Esc to exit\r\n")
+    # 승인 직후 다음 프레임: 옵션 줄(6행) 자리를 resume 안내가 덮는다. 머리글과
+    # `❯ 1. Yes…`(5행)·`Enter to confirm`(8행)은 그대로 남는다 — 실측 잔상 모양.
+    _RESOLVED = (b"\x1b[6;1H\x1b[KResume this session with:\r\n"
+                 b"\x1b[Kclaude --resume \"rx\"\r\n"
+                 b"\x1b[9;1HD:\\p4\\office\\rx>")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+
+        p.feed(b"\x1b[2J\x1b[H" + _LIVE)          # ① 첫 인스턴스의 승인 화면
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r"], (writes, "첫 인스턴스 → Enter 1회")
+
+        p.feed(_RESOLVED)                          # ② 승인됨 — 화면은 안 지워진다
+        srv._scan_claude(sess, win)
+        assert p._managed_ok_active is False, \
+            "통과된 잔상이 화면에 남아도 래치는 풀려야 한다(안 풀리면 두 번째가 막힌다)"
+        assert writes == [b"\r"], (writes, "잔상에 Enter 를 또 쏘지 않는다")
+
+        # ③ 같은 패널에서 claude 재실행 — 새 승인 화면이 잔상 **아래에** 이어 붙는다.
+        p.feed(b"claude\r\n" + _LIVE)
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r", b"\r"], (writes, "두 번째 인스턴스도 자동 통과")
+        assert p._managed_ok_active is True
+        # 그 화면이 머무는 동안 세 번째 Enter 는 없다.
+        for _ in range(5):
+            srv._scan_claude(sess, win)
+        assert writes == [b"\r", b"\r"], (writes, "인스턴스당 Enter 는 딱 한 번")
     finally:
         await teardown(srv, task, sock)
 

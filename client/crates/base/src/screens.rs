@@ -522,6 +522,9 @@ pub enum Prompt {
     DisplayMessage,
     /// 새 탭·분할이 시작할 자리(설정 `default-path`).
     DefaultPath,
+    /// `esc c` 가 새 탭에서 실행할 명령(설정 `claude-command`). **빈 대답도 값이다** —
+    /// 그때는 그냥 셸 탭이 열린다(`default-path` 와 달리 되돌리기가 아니다).
+    ClaudeCommand,
     /// 상태줄 왼쪽/오른쪽 **형식 문자열**(`#S`·`%H:%M` — `proto::status`).
     StatusLeft,
     StatusRight,
@@ -689,6 +692,7 @@ impl Prompt {
             Prompt::JoinPane => "합칠 패널이 있는 탭 번호:",
             Prompt::DisplayMessage => "띄울 메시지:",
             Prompt::DefaultPath => "새 탭이 시작할 자리 (current · home · 절대경로):",
+            Prompt::ClaudeCommand => "esc c 가 실행할 명령 (비우면 셸만):",
             // 토큰을 물음에 적는다 — 문법을 모르면 무엇을 칠지 알 수 없고, 이 자리에
             // 도움말 화면을 하나 더 세울 만큼의 문법도 아니다.
             Prompt::StatusLeft => "상태줄 왼쪽 (#S 세션 · #I 탭 · #W 이름 · #h 호스트 · %H:%M):",

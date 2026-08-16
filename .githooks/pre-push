@@ -1,0 +1,10 @@
+#!/bin/bash
+# git push 직전에 publish_check.py 를 실행한다 — 미러 드리프트를 방지한다(pytmux-153).
+# git 설정에서 hooksPath = .githooks 로 지정되면 자동 실행된다.
+# 실패하면 push 가 중단된다.
+
+set -e
+
+echo "⏳ 미러 드리프트 검사 중..."
+python3 scripts/publish_check.py
+echo "✓ 미러 드리프트 검사 통과"

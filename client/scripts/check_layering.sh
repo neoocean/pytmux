@@ -12,8 +12,18 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+# ★ rustup 은 이진을 `~/.cargo/bin` 에 두고 PATH 는 셸 프로필(`~/.cargo/env`)에서
+#   세우는데, **비대화형 셸은 그 프로필을 안 읽는다**(에이전트 툴 환경·launchd·CI).
+#   깔려 있는 것을 "없다"고 말하면 게이트가 조용히 SKIP 되고, 그 SKIP 이 *"이 상자에서는
+#   Rust 를 못 잰다"* 로 굳는다 — pytmux-33 이 그 값을 나흘 치렀다. 그러니 안내만 하지
+#   말고 **여기서 찾아 세운다**(합본 게이트 `check_all.py` 의 `find_cargo` 와 같은 규칙).
+if ! command -v cargo >/dev/null 2>&1 && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    PATH="$HOME/.cargo/bin:$PATH"
+    export PATH
+fi
+
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "check_layering: cargo 를 찾을 수 없다 (PATH 에 ~/.cargo/bin 이 있는지 확인)" >&2
+    echo "check_layering: cargo 를 찾을 수 없다 (PATH 에도 ~/.cargo/bin 에도 없다)" >&2
     exit 2
 fi
 

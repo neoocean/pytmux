@@ -922,7 +922,18 @@ class ServerIOMixin:
         ★ **두 갈래가 한 프레임에 실린다**(pytmux-2): 런·딤은 오버레이에서 나와 1초
         주기로 만들고, 클릭존은 패널 내용에서 나와 매 틱 다시 잰다. 그래서 런은
         만든 것을 들고 있다가(`_cells_runs`) 클릭존만 움직인 프레임에도 함께 싣는다 —
-        안 그러면 자리만 바뀐 프레임이 그림을 지운다."""
+        안 그러면 자리만 바뀐 프레임이 그림을 지운다.
+
+        ⛔ **그 주기는 시각에만 걸린다 — 재료가 바뀌면 안 기다린다**(pytmux-164).
+        런의 자리는 **기하**에서 나온다(입력기 배지의 x = 활성 패널 오른쪽 끝 - 글자
+        폭). 그래서 창을 키우면 캔버스는 그 프레임에 넓어지는데 배지만 **옛 폭으로 잰
+        자리**에 최대 1초를 더 앉아 있었다 — 화면 나머지가 이미 새 크기라, 배지 하나가
+        엉뚱한 데 떠 있다가 뛰는 것으로 보인다(Windows 이진을 띄운 직후의 제보 · GUI 는
+        80x24 로 붙고 창 크기를 알게 되는 즉시 리사이즈를 보낸다).
+        ⛔ **리사이즈 자리마다 `_cells_at = 0.0` 을 한 줄씩 더 적지 않는다** — 분할·
+        닫기·줌·탭 전환·원격 크기까지 자리가 여럿이고 하나만 빠져도 같은 증상이 조용히
+        돌아온다. 대신 그 재료를 캐시 키(`_cells_shape_key`)에 넣어 **빠질 자리 자체를
+        없앤다**."""
         if pane_rects is None:
             pane_rects = [{"id": p.id, "x": x, "y": y, "w": w, "h": h}
                           for p, (x, y, w, h)
@@ -963,8 +974,15 @@ class ServerIOMixin:
             return None                      # 켠 적도 없다 — 아무것도 안 만든다
         # 런·딤은 종전 주기 그대로 만든다(시계는 초 단위라 그 이상 자주 만들면 같은
         # 그림을 다시 계산할 뿐이다). 만들지 않는 틱에는 직전 것을 그대로 쓴다.
-        if now - c._cells_at >= self._CELLS_PERIOD or not c._cells_last:
+        # ★ 단, **자리를 정하는 재료가 바뀌었으면 주기를 안 기다린다**(pytmux-164 ·
+        #   위 머리말). 값이 같으면 이 비교는 아무 일도 안 한다 — 시계의 1초 절약은
+        #   그대로다. 가짜 클라(테스트)가 이 칸을 안 들고 있어도 되게 getattr 로 읽는다
+        #   (같은 함수의 `remote_view` 와 같은 손버릇).
+        shape = self._cells_shape_key(req)
+        if (now - c._cells_at >= self._CELLS_PERIOD or not c._cells_last
+                or shape != getattr(c, "_cells_shape", None)):
             c._cells_at = now
+            c._cells_shape = shape
             try:
                 c._cells_runs = self.plugins.plugin_cells(self, sess, req)
                 c._cells_dim = self.plugins.plugin_dim_panes(self, sess, req)
@@ -986,6 +1004,20 @@ class ServerIOMixin:
         return frame_msg({"t": "plugin_cells", "layer": "overlay",
                           "dim": dim, "runs": runs,
                           "zones": zones, "keys": keys})
+
+    @staticmethod
+    def _cells_shape_key(req):
+        """런의 **자리**가 딸린 재료(pytmux-164). 이 값이 바뀌면 1초 주기를 안 기다린다.
+
+        `req` 에서 자리를 정하는 것만 고른다 — 패널 사각형·활성 패널·격자 크기다.
+        ⛔ 오버레이·사실은 **안 넣는다**: 그 둘은 바뀌는 자리에서 이미 캐시를 무르고
+        (`_cmd_plugin_overlay`·`_cmd_client_fact` 가 `_cells_at = 0.0`), 여기 또 넣으면
+        같은 판정이 두 벌이 된다.
+        ⚠ 반대로 **시각에서 나오는 것은 여기 없어야 한다** — 시계의 `%M` 을 이 키에
+        넣으면 초마다 값이 달라져 1초 주기가 통째로 무의미해진다."""
+        return (tuple((p["id"], p["x"], p["y"], p["w"], p["h"])
+                      for p in (req.get("panes") or [])),
+                req.get("active"), req.get("cols"), req.get("rows"))
 
     def _client_pane_rects(self, sess, win):
         """`(pane, (x, y, w, h))` — **내용 영역**(테두리 안). 레이아웃 메시지가 클라에

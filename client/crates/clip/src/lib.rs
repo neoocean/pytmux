@@ -38,6 +38,74 @@ const TOOL_TIMEOUT: Duration = Duration::from_secs(2);
 /// 자식이 끝났는지 다시 보는 간격. 사람이 기다리는 동작이라 촘촘할 필요가 없다.
 const POLL: Duration = Duration::from_millis(25);
 
+/// Windows 시스템 도구를 **절대경로**로 준다. 그 밖의 OS 에서는 이름 그대로다.
+///
+/// # 왜 필요한가 (검수 2026-08-09 B-3 · 2026-08-05 §4.3 의 미검증 항목)
+///
+/// Rust `std::process::Command` 는 Windows 에서 `CreateProcessW` 에 이름을 넘기지 않고
+/// **자기가 찾는다**(`library/std/src/sys/process/windows.rs::search_paths`, 1.92.0 원문
+/// 확인). 그 차례가 이렇다:
+///
+/// > 1. child paths → 2. **application path**(`current_exe()` 의 디렉터리) →
+/// > 3·4. system/windows 디렉터리 → 5. parent paths(=PATH)
+///
+/// ★ **현재 작업 디렉터리는 안 낀다** — 2026-08-05 검수가 유보한 그 걱정은 사실이 아니었다.
+/// ⛔ **그런데 ②가 있다.** 이 제품은 `client/build/` 의 **단일 실행 파일**로 배포되고
+/// (`pytmux-gui-windows-x64.exe`) 사람들은 그것을 `Downloads` 같은 **자기가 쓸 수 있는
+/// 폴더**에서 그대로 띄운다. 그 폴더에 `powershell.exe`·`clip.exe`·`explorer.exe` 를
+/// 놓아 두면 시스템 것보다 **먼저** 잡힌다 — 복사 한 번·링크 한 번이 남의 코드를 돌린다.
+/// (같은 폴더에 파일 하나를 더 놓는 일은 브라우저 다운로드 하나로 끝난다.)
+///
+/// # 무엇을 하나
+///
+/// 이름을 `%SystemRoot%` 아래의 **정해진 자리**로 바꾸고, 그 자리에 파일이 실제로 있을
+/// 때만 쓴다. 없으면(이상한 설치·32비트 리다이렉션·미래의 이름) **이름 그대로** 돌려준다 —
+/// 보안을 위해 기능을 죽이지 않는다. 판정 규칙 자체는 [`system_tool_at`] 이라는 순수
+/// 함수라 **Windows 가 아닌 상자에서도 잰다**(이 저장소의 상습 실패 모드 = 「그 OS 에서만
+/// 재는 규칙」).
+///
+/// ⚠ `%SystemRoot%` 를 공격자가 쥐고 있다면 이 방어는 무의미하다 — 그러나 그 정도면
+/// 이미 우리 프로세스의 환경을 쥔 것이라 위협 모형 밖이다(그때는 PATH 도 그의 것이다).
+pub fn system_tool(name: &str) -> String {
+    if !cfg!(windows) {
+        return name.to_owned();
+    }
+    let root = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .ok();
+    match system_tool_at(root.as_deref(), name) {
+        Some(path) if std::path::Path::new(&path).exists() => path,
+        _ => name.to_owned(),
+    }
+}
+
+/// [`system_tool`] 의 **순수한 절반** — 이름과 `%SystemRoot%` 로 절대경로를 짓는다.
+///
+/// 모르는 이름·루트 없음이면 `None`(= 부르는 쪽이 이름 그대로 쓴다). 표를 여기 두는
+/// 이유는 그것이 **재고 싶은 것**이기 때문이다 — 파일 존재 여부와 OS 는 이 함수 밖이다.
+pub fn system_tool_at(system_root: Option<&str>, name: &str) -> Option<String> {
+    // 공백만 든 값도 「없다」로 본다 — 안 그러면 `  \System32\cmd.exe` 라는 상대경로가
+    // 나오고, 그것은 우리가 막으려던 그 탐색으로 되돌아간다(이 시험이 잡았다).
+    let root = system_root?.trim().trim_end_matches(['\\', '/']);
+    if root.is_empty() {
+        return None;
+    }
+    // ⛔ 확장자까지 적는다 — 안 적으면 그 자리에서 다시 `.exe` 를 붙이는 규칙이 하나
+    //    더 생긴다(std 가 하는 그 일을 우리가 또 하게 된다).
+    let tail = match name.trim_end_matches(".exe").to_ascii_lowercase().as_str() {
+        // 탐색기는 System32 가 아니라 Windows 디렉터리에 산다.
+        "explorer" => "explorer.exe".to_owned(),
+        "clip" => "System32\\clip.exe".to_owned(),
+        "cmd" => "System32\\cmd.exe".to_owned(),
+        "rundll32" => "System32\\rundll32.exe".to_owned(),
+        // Windows PowerShell 5.x. `pwsh`(7.x)는 시스템 자리에 없으므로 표에 안 넣는다 —
+        // 이 크레이트가 부르는 것도 5.x 쪽이다(`win_copy`).
+        "powershell" => "System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_owned(),
+        _ => return None,
+    };
+    Some(format!("{root}\\{tail}"))
+}
+
 /// 텍스트를 OS 클립보드에 넣는다. 성공하면 `true`.
 ///
 /// 도구가 하나도 없으면 `false` 다 — 그때 사용자에게 "복사됨"이라고 말하면 거짓말이 되고,
@@ -104,7 +172,10 @@ fn win_copy(text: &str) -> bool {
 /// 따라 안 끝난다. 무한정 기다리면 이 스레드가 영영 안 돌아오고, 그런 스레드가 드래그
 /// 한 번마다 하나씩 쌓인다.
 fn feed(argv: &[&str], input: &[u8], limit: Duration) -> Option<bool> {
-    let mut cmd = Command::new(argv[0]);
+    // ⛔ 이름을 그대로 넘기지 않는다 — Windows 에서 **이진 옆 폴더**가 시스템 디렉터리보다
+    //    먼저 잡힌다([`system_tool`]). 후보 목록은 이름으로 두고(파이썬 클라와 같은
+    //    순서를 읽히게) 바꾸는 자리는 **띄우는 여기 한 곳**이다.
+    let mut cmd = Command::new(system_tool(argv[0]));
     cmd.args(&argv[1..])
         .stdin(Stdio::piped())
         // 도구가 뱉는 오류 문구가 **대체 화면에 그대로 찍히면** TUI 가 깨진다.
@@ -288,7 +359,10 @@ const SHELL_TIMEOUT: Duration = Duration::from_secs(15);
 /// OS 별 셸 argv(파이썬 `proc.shell_argv` 와 같다).
 fn shell_argv(cmd: &str) -> Vec<String> {
     if cfg!(windows) {
-        let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd".to_owned());
+        // `COMSPEC` 이 있으면 그것(사용자가 고른 셸이고 보통 절대경로다). 없을 때의
+        // 폴백은 **이름 `cmd` 가 아니라 절대경로**여야 한다 — 이름이면 이진 옆 폴더의
+        // `cmd.exe` 가 먼저 잡힌다([`system_tool`] · 검수 2026-08-09 B-3).
+        let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| system_tool("cmd"));
         vec![comspec, "/c".to_owned(), cmd.to_owned()]
     } else {
         vec!["/bin/sh".to_owned(), "-c".to_owned(), cmd.to_owned()]

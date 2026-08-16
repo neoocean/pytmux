@@ -472,6 +472,24 @@ class _MdirPlugin:
             if path:
                 self._send_to_pane(server, sess, _cd_command(path))
             return {"t": "plugin_screen_close", "id": "mdir"}
+        if do == "f10":
+            # 디렉터리 트리(ncd) 팝업을 띄운다. 트리에서 선택하면 mdir 이 그 디렉터리를
+            # 보인다(패널은 cd 명령으로 이동 — pytmux-207).
+            ncd_state = req.get("state", {}).setdefault("ncd", {})
+            ncd_state["path"] = mine.get("path", "")
+            ncd_state["cwd"] = mine.get("path", "")
+            # ncd 플러그인의 트리 스펙을 만든다
+            ncd_plugin = next(
+                (p for p in server.plugins.plugins if getattr(p, "name", "") == "ncd"),
+                None
+            )
+            if ncd_plugin is None:
+                return None
+            # ncd 의 _open_tree 메서드로 스펙을 받는다 — 조회 전용이라 async 아님
+            ncd_spec = ncd_plugin._open_tree(ncd_state)
+            # 응답 둘: ncd 를 띄우고, ncd 응답이 오면 mdir 을 갱신하는 메시지 받기
+            # (실제 갱신은 ncd 응답 처리 시 _on_ncd_into 로 진행)
+            return ncd_spec
         if do in ("copy", "move", "delete", "rename", "mkdir"):
             return self._begin(mine, do, picked, row)
         if do == "apply":

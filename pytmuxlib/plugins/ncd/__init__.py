@@ -231,12 +231,13 @@ class _NcdPlugin:
         if do == "into":
             # 트리에서 `Enter` 는 **그 자리로 cd** 다(정본과 같다) — 평면 목록 시절의
             # "들어가기"가 아니다. 이름은 계약이라 그대로 두고 뜻만 정본에 맞춘다.
+            # ★ 네이티브 클라에서는 이 경로가 mdir 갱신에 필요하므로 응답에 실어 보낸다.
             target = str(req.get("input") or "")
             if target:
                 mine["cwd"] = target
                 cmd = ("cd /d " if os.name == "nt" else "cd ") + _quote(target)
                 self._send_to_pane(server, sess, cmd + "\r")
-            return {"t": "plugin_screen_close", "id": "ncd"}
+            return {"t": "plugin_screen_close", "id": "ncd", "input": target}
         if do == "expand":
             return _offload(self._expand, mine, str(req.get("input") or ""))
         if do == "collapse":

@@ -374,8 +374,8 @@ class ServerCmdMixin:
         resp = self.plugins.plugin_screen(self, sess, req)
         if inspect.isawaitable(resp):
             resp = await resp
-        if not isinstance(resp, dict):
-            # 아무도 안 집었다 — 사용자에겐 "눌렀는데 아무 일도 안 남"으로 보인다.
+        if not isinstance(resp, (dict, list)):
+            # 아무도 안 집었다 — 사용자에게 "눌렀는데 아무 일도 안 남"으로 보인다.
             name = req.get("name") or req.get("id") or ""
             await self._send_to(client, {
                 "t": "notice", "sev": "warn",
@@ -383,7 +383,40 @@ class ServerCmdMixin:
                 "text": f"{name}: 이 플러그인은 화면 스펙을 제공하지 않습니다",
             })
             return
-        await self._send_to(client, resp)
+
+        # ncd 트리에서 디렉터리를 선택했으면(응답에 "input"이 있으면) mdir 도 갱신한다
+        # (pytmux-207: mdir 의 F10 → ncd 트리 → Enter → mdir 이동)
+        responses = resp if isinstance(resp, list) else [resp]
+        ncd_path = None
+        for r in responses:
+            if (isinstance(r, dict) and r.get("id") == "ncd" and
+                r.get("t") == "plugin_screen_close" and r.get("input")):
+                ncd_path = r.get("input")
+                break
+
+        if ncd_path and getattr(client, "plugin_state", {}).get("mdir"):
+            # ncd 닫기 + mdir 갱신 응답 둘을 차례로 보낸다
+            mdir_plugin = next(
+                (p for p in self.plugins.plugins if getattr(p, "name", "") == "mdir"),
+                None
+            )
+            if mdir_plugin is not None:
+                # mdir 상태를 갱신한다
+                mdir_state = client.plugin_state.get("mdir", {})
+                mdir_state["path"] = ncd_path
+                # mdir 스펙을 만든다 (F10 후 ncd 선택 → 원래 위치로 돌아왔을 때의 스펙)
+                # _spec은 fs 작업을 하므로 executor로 넘긴다
+                import asyncio
+                try:
+                    mdir_spec = await asyncio.get_event_loop().run_in_executor(
+                        None, mdir_plugin._spec, mdir_state, 0, "")
+                    responses.append(mdir_spec)
+                except Exception:
+                    pass  # mdir 스펙 생성 실패해도 ncd 응답은 보낸다
+
+        # 응답을 각각 보낸다
+        for r in responses:
+            await self._send_to(client, r)
 
     @_cmd("clear_history", HANDLED)
     async def _cmd_clear_history(self, client, sess, msg):
@@ -508,7 +541,16 @@ class ServerCmdMixin:
 
     @_cmd("new_window", FULL)
     async def _cmd_new_window(self, client, sess, msg):
-        self.new_window(sess, path=msg.get("path"))
+        # cmd 는 **그 탭에서 바로 실행할 명령**이다(없으면 종전대로 셸만 — pytmux-137).
+        # 클라가 `esc c`(Claude Code 탭)로 보내는 칸이고, 값은 그쪽 설정
+        # (`claude-command`)이 정한다. 서버가 실행 파일 이름을 아는 척하지 않는다.
+        #
+        # ⛔ **이 한 줄을 지우면 아무 소리가 안 난다.** 서버는 모르는 칸을 그냥 안
+        # 읽으므로 `esc c` 는 그대로 「셸 탭이 열린다」로 보이고, 클라·와이어·
+        # `servertree.new_window` 는 전부 멀쩡한 채다. 실제로 CL 71673 이 이 줄을
+        # 곁다리로 되돌려(그 CL 의 관심사는 mdir·ncd 였다) 2026-08-11부터 기능이
+        # 죽어 있었다 — 잡은 것은 `test_new_window_wire_carries_the_command` 다.
+        self.new_window(sess, path=msg.get("path"), cmd=msg.get("cmd"))
 
     @_cmd("next_window", FULL)
     async def _cmd_next_window(self, client, sess, msg):

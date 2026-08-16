@@ -55,10 +55,21 @@ impl Endpoint {
     }
 
     /// 사람에게 보일 이름(오류 메시지·상태줄).
+    ///
+    /// TCP 는 상태파일 이름이 `default` 가 아닐 때만 `name@` 를 싣는다 — 실는 형태가
+    /// `parse()` 가 받는 형태와 같아야 오류 메시지를 그대로 다시 칠 수 있다.
     pub fn display(&self) -> String {
         match self {
             Endpoint::Unix { path, .. } => path.display().to_string(),
-            Endpoint::Tcp { host, port, .. } => format!("tcp:{host}:{port}"),
+            Endpoint::Tcp {
+                host,
+                port,
+                portfile,
+                ..
+            } => match state_name(portfile) {
+                DEFAULT_ENDPOINT_NAME => format!("tcp:{host}:{port}"),
+                name => format!("tcp:{name}@{host}:{port}"),
+            },
         }
     }
 
@@ -102,6 +113,14 @@ impl Endpoint {
             }
         }
     }
+}
+
+/// 포트파일 경로에서 상태파일 이름을 되뽑는다(`…/A.port` → `A`). 못 뽑으면 `default`.
+fn state_name(portfile: &Path) -> &str {
+    portfile
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(DEFAULT_ENDPOINT_NAME)
 }
 
 /// 포트파일 한 줄을 읽는다. 없거나 숫자가 아니면 `None`.
@@ -216,24 +235,51 @@ pub fn resolve() -> Option<Endpoint> {
     candidates().into_iter().find(Endpoint::looks_live)
 }
 
-/// 명시된 위치 하나를 엔드포인트로. `tcp:host:port` 형식도 받는다(서버 CLI 와 같은 문법).
+/// TCP 엔드포인트의 상태파일 이름(`ipc.DEFAULT_ENDPOINT_NAME` 과 같은 값).
+pub const DEFAULT_ENDPOINT_NAME: &str = "default";
+
+/// `tcp:[NAME@]HOST:PORT` 에서 이름을 떼어 `(name, "HOST:PORT")` 로.
+///
+/// 이름은 그대로 **파일명**이 되므로 서버(`ipc._ENDPOINT_NAME_RE`)와 같은 규칙으로
+/// 좁힌다 — 첫 글자는 영숫자, 나머지는 `[A-Za-z0-9._-]`, 64자 이내. 안 맞으면 `@` 를
+/// 이름 구분자로 안 읽고 **호스트의 일부로 그냥 둔다**(거부는 connect 가 한다).
+fn split_name(rest: &str) -> (&str, &str) {
+    let Some((name, addr)) = rest.split_once('@') else {
+        return (DEFAULT_ENDPOINT_NAME, rest);
+    };
+    let ok = !name.is_empty()
+        && name.len() <= 64
+        && name.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if ok { (name, addr) } else { (DEFAULT_ENDPOINT_NAME, rest) }
+}
+
+/// 명시된 위치 하나를 엔드포인트로. `tcp:[name@]host:port` 형식도 받는다(서버 CLI 와
+/// 같은 문법).
 ///
 /// 포트를 명시하지 않은 `tcp:` 형식은 포트파일이 필요하므로 지금 환경의 규칙에서 가져온다.
+///
+/// 이름(`name@`)은 **상태파일 이름**을 가른다 — 한 상태 디렉터리에 서버가 둘 이상 있을 때
+/// 포트파일·토큰이 서로를 밟지 않게 하는 자리다(`pytmuxlib/ipc.py` §DEFAULT_ENDPOINT_NAME ·
+/// `pytmux/pytmux-152`). 이름을 안 쓰면 `default` 라 종전 경로 그대로다.
 pub fn parse(spec: &str) -> Endpoint {
     if let Some(rest) = spec.strip_prefix("tcp:") {
-        let (host, port) = match rest.rsplit_once(':') {
+        let (name, addr) = split_name(rest);
+        let (host, port) = match addr.rsplit_once(':') {
             Some((h, p)) => (
                 if h.is_empty() { "127.0.0.1" } else { h },
                 p.parse().unwrap_or(0),
             ),
-            None => ("127.0.0.1", rest.parse().unwrap_or(0)),
+            None => ("127.0.0.1", addr.parse().unwrap_or(0)),
         };
         let dir = Rules::from_env().state_dir();
         return Endpoint::Tcp {
             host: host.to_owned(),
             port,
-            portfile: dir.join("default.port"),
-            token: dir.join("default.token"),
+            portfile: dir.join(format!("{name}.port")),
+            token: dir.join(format!("{name}.token")),
         };
     }
     unix_endpoint(PathBuf::from(spec))

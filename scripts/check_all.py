@@ -40,6 +40,16 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
+# 스위트 위생 헬퍼를 **한 곳에서** 빌린다(`tests/hermetic.py` · pytmux/pytmux-202).
+# 레시피를 여기에 두 번째로 적으면 「빈 설정 파일을 어디에 세우나」를 두 술어가 각자
+# 답하게 되고, 갈리는 날 조용한 쪽이 믿긴다 — 이 저장소의 상습 결함이다.
+# ⚠ 그 모듈은 `os`·`tempfile` 밖의 것을 안 문다(그 파일 머리말) — 게이트가 재는 대상을
+#   import 로 물어 버리는 일이 없다.
+# ⛔ **맨 앞이 아니라 맨 뒤에 붙인다** — `tests/` 에는 `run.py`·`harness.py` 처럼 흔한
+#   이름이 있어서, 앞에 세우면 이 파일이 나중에 무엇을 import 하든 그 이름부터 집는다.
+sys.path.append(os.path.join(ROOT, "tests"))
+import hermetic  # noqa: E402
+
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="backslashreplace")
@@ -159,8 +169,39 @@ def find_bash():
     return None
 
 
+def find_cargo():
+    """cargo 가 있는 **디렉터리**. 못 찾으면 None.
+
+    `find_bash()` 와 같은 부류의 자리다 — `shutil.which` 하나로는 **깔려 있는데 없다고**
+    말하는 상자가 있다. rustup 은 이진을 `~/.cargo/bin` 에 두고 PATH 는 셸 프로필
+    (`~/.cargo/env`)에서 세우는데, **비대화형 셸은 그 프로필을 안 읽는다** — 에이전트
+    툴 환경·launchd·CI 러너가 전부 그 갈래다.
+
+    그 한 줄이 무엇을 태웠는지가 이 함수의 존재 이유다: 이 상자(playground · macOS)에서
+    `cargo 1.92.0` 이 `~/.cargo/bin` 에 멀쩡히 있는데도 세 스텝(패리티 래칫 · Rust
+    스위트 · 크로스OS 컴파일)이 *"cargo 가 없다"* 로 SKIP 됐고, 그 SKIP 한 줄이
+    pytmux-33(ⓖ3 전면 대조)의 착수 관문에 **"이 상자에서는 Rust 자를 못 세운다"** 로
+    적혀 축 둘의 자 세우기가 통째로 미뤄졌다(2026-08-05 기록 → 2026-08-09 실측으로
+    뒤집힘). 셸 게이트 셋은 같은 자리에서 *"PATH 에 ~/.cargo/bin 이 있는지 확인"* 이라고
+    맞게 안내하고 있었다 — **한 질문에 두 술어가 서로 다른 답을 하고 있었고, 조용한
+    쪽이 믿겼다.**
+
+    ⛔ 찾은 자리를 **PATH 앞에 세우는 것**까지가 이 함수의 값이다(`main`). 셸 게이트는
+    자기가 `command -v cargo` 로 다시 찾으므로, 이름만 풀고 PATH 를 안 고치면 그
+    스텝만 또 죽는다.
+    """
+    found = shutil.which("cargo")
+    if found:
+        return os.path.dirname(found)
+    exe = "cargo.exe" if os.name == "nt" else "cargo"
+    home = os.path.join(os.path.expanduser("~"), ".cargo", "bin")
+    if os.path.isfile(os.path.join(home, exe)):
+        return home
+    return None
+
+
 def steps():
-    have_cargo = shutil.which("cargo") is not None
+    have_cargo = find_cargo() is not None
     bash = find_bash()
     no_bash = None if bash else "쓸 만한 bash 가 없다(Git Bash 설치 또는 PYTMUX_BASH 로 지정)"
     return [
@@ -186,19 +227,19 @@ def steps():
             ["cargo", "test", "-p", "proto", "--test", "parity"], CLIENT,
             "정본 표면을 덮은 수가 **의도 없이** 움직이지 않았나",
             check=cargo_verdict,
-            needs=lambda: None if have_cargo else "cargo 가 없다",
+            needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
         ),
         Step(
             "Rust 스위트", ["cargo", "test", "--workspace", "--no-fail-fast"], CLIENT,
             "클라 둘 + core/proto 전부",
             check=cargo_verdict, slow=True,
-            needs=lambda: None if have_cargo else "cargo 가 없다",
+            needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
         ),
         Step(
             "크로스OS 컴파일", [bash or "bash", os.path.join("scripts", "check_windows.sh")], CLIENT,
             "두 번째 OS 가 조용히 썩지 않았나(링크는 안 하고 cfg·타입만)",
             check=rc_verdict, slow=True,
-            needs=lambda: no_bash or (None if have_cargo else "cargo 가 없다"),
+            needs=lambda: no_bash or (None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)"),
         ),
         Step(
             "파이썬 스위트", [sys.executable, os.path.join("tests", "run.py")], ROOT,
@@ -259,6 +300,57 @@ def run(step, env):
     return out, verdict, time.monotonic() - started
 
 
+def child_env():
+    """모든 스텝이 물려받을 env. **여기가 게이트의 유일한 자식 환경**이다.
+
+    세 가지를 한다. 셋 다 "게이트가 재는 대상을 게이트가 바꾸지 않는다"의 반대편 —
+    **상자가 재는 대상을 바꾸고 있는 것**을 걷어내는 자리다.
+
+    ⑴ `NO_COLOR` 를 지운다. Claude Code 툴 환경이 `NO_COLOR=1` 을 심는데, 그러면
+       Textual 이 모노크롬 필터를 물려 **내 변경과 무관하게** test_client 가 통째로
+       떨어진다(CLAUDE.md 실측). 게이트가 그 환경 실패를 제 실패로 보고하면 사람이
+       헛수고를 한다.
+    ⑵ 찾은 cargo 를 **PATH 앞에** 세운다(`find_cargo` 의 마지막 ⛔). 셸 게이트
+       (`check_windows.sh`)는 자기가 `command -v cargo` 로 다시 찾으므로, 여기서
+       PATH 를 안 고치면 그 스텝만 또 "cargo 를 찾을 수 없다"로 죽는다.
+    ⑶ ★ `PYTMUX_CONFIG` 를 **빈 임시 파일로 세운다**(pytmux/pytmux-202).
+       설정 파일 탐색 차례가 `$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` →
+       `$XDG_CONFIG_HOME/pytmux/config` → `~/.config/pytmux/config` → `~/.pytmux.conf`
+       라(`client/crates/base/src/config.rs` · `pytmuxlib/keymap.py` 가 같은 차례),
+       아무것도 안 세우면 **이 상자의 진짜 설정 파일**로 떨어진다. 파이썬 쪽은
+       `tests/run.py` 가 스스로 막지만 **`cargo test` 는 그 프로세스를 안 지난다** —
+       Rust 스위트·패리티 래칫·크로스OS 스텝이 통째로 그 보호 밖이었다.
+       - 값은 실측이다(2026-08-16 · playground): 스크래치 홈에
+         `set status-position top` 한 줄을 두고 `cargo test -p gui` 를 돌리자
+         `monitor_badges_sit_in_the_bottom_status_bar_not_the_tab_bar` 가 떨어졌다.
+         **제품도 테스트도 멀쩡한데 상자가 실패를 만든** 부류라(사고 2026-08-04 ·
+         `client/CLAUDE.md`) 원인을 코드에서 찾으면 한참 헤맨다.
+       - ★ **프로세스 밖에서 세우는 것**이라 Rust 저장소의 규약과 안 부딪친다.
+         `config_tests.rs`·`session_view_tests.rs` 가 금지하는 것은 테스트가
+         `set_var` 로 **프로세스 전역**을 건드리는 것이고(형제 테스트와 경합한다),
+         부모가 자식에게 물려주는 값은 그 경합을 안 만든다.
+       - ⚠ `cargo test` 를 **직접** 치는 사람은 여전히 보호 밖이다. 읽기 사물함을
+         `Config::path()` 에 두는 것은 「테스트가 기대하는 기본값」을 프로덕션 경로에
+         심는 모양이 되기 쉬워, 그 판단은 따로 남겼다(pytmux-202 본문).
+
+    ⛔ **`main()` 안에 인라인으로 두지 않는다** — 그러면 이 셋이 실제로 자식에게 가는지를
+    재려면 전체 게이트를 돌려야 하고, 그건 스위트 안에서 못 한다(`test_check_all.py`
+    머리말). 함수 하나면 `test_config_hygiene` 이 **대조군까지 두고** 잰다.
+    """
+    # ⚠ `isolate_config()` 는 이 프로세스의 `os.environ` 도 함께 세운다(멱등). 그래야
+    #   자식이 물려받고, `tests/run.py` 는 표식을 보고 **같은 파일을 재사용**한다 —
+    #   스텝마다 다른 빈 파일이 서면 "게이트가 무엇을 읽고 돌았나"가 스텝마다 달라진다.
+    hermetic.isolate_config()
+
+    env = dict(os.environ)
+    env.pop("NO_COLOR", None)
+
+    cargo_dir = find_cargo()
+    if cargo_dir and cargo_dir not in env.get("PATH", "").split(os.pathsep):
+        env["PATH"] = cargo_dir + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fast", action="store_true", help="느린 스텝(크로스컴파일·전체 스위트·드리프트)을 건너뛴다")
@@ -272,11 +364,7 @@ def main():
             print(f"                 └ {s.why}")
         return 0
 
-    # ⚠ Claude Code 툴 환경은 `NO_COLOR=1` 을 심는데, 그러면 Textual 이 모노크롬 필터를
-    # 물려 **내 변경과 무관하게** test_client 가 통째로 떨어진다(CLAUDE.md 실측).
-    # 게이트가 그 환경 실패를 제 실패로 보고하면 사람이 헛수고를 한다 — 여기서 지운다.
-    env = dict(os.environ)
-    env.pop("NO_COLOR", None)
+    env = child_env()   # 자식이 물려받을 것은 전부 저기 한 곳에서 온다(위 함수 머리말).
 
     print(f"합본 게이트 — {len(todo)}단계" + (" (--fast)" if args.fast else ""))
     failures, skipped = [], []

@@ -12,6 +12,11 @@ description = "pytmux 서버 프로토콜(프레이밍·메시지·행 합성). 
 # (`command::action_to_command`). 두 뷰가 각자 그 표를 들면 GUI·TUI 가 서로 다른
 # 서버 명령을 부르기 시작한다. core 는 의존이 0개라 이 방향에 순환은 없다.
 base.workspace = true
+# 외부 프로그램을 **띄우는 규칙**이 사는 크레이트다(`system_tool` — Windows 에서
+# 이름 대신 절대경로). `open_link`·`open_capture_dir` 이 그 규칙을 따라야 하는데, 규칙을
+# 여기 한 벌 더 적으면 두 벌이 되고 두 벌은 갈린다(검수 2026-08-09 B-3).
+# clip 은 의존이 0개라 이 방향에 순환은 없다.
+clip.workspace = true
 # 시계 오버레이의 **지역 시간** 하나 때문에 있는 의존이다(`clock::now_text`). std 만으로는
 # UTC 오프셋을 알 수 없고, 이 워크스페이스는 이미 chrono 를 쓴다(warpui).
 chrono.workspace = true

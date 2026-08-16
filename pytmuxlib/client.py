@@ -814,6 +814,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.hooks = config.get("hooks", {})
             # 새 탭/패널 시작 디렉토리(current/home/<경로>). :settings 에서 변경 가능.
             self.default_path = config.get("default_path", "current")
+            # `esc c`(Claude Code 탭)가 새 탭에서 실행할 명령(pytmux-137). 경로·플래그가
+            # 사람마다 다르므로 하드코딩하지 않는다 — 비우면 그냥 셸 탭이 열린다.
+            self.claude_command = config.get("claude_command", "claude")
             # :settings 가 config-scoped 설정을 되쓸 대상 파일(load_config 와 같은
             # 탐색 순서; 없으면 ~/.config/pytmux/config 를 생성 경로로).
             self._config_path = config_path_for_write()
@@ -1723,6 +1726,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.request_tree()
             elif key == "new_window":
                 self.send_cmd("new_window")
+            elif key == "new_claude_window":
+                self._run_command("new-claude-tab")
             elif key == "rename_window":
                 cur = self._active_window_name()
                 self.open_prompt("rename_window", cur or "rename-tab",
@@ -1972,6 +1977,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 새 탭/패널 시작 디렉토리(current/home/<경로>). 기존엔 config 로딩
                 # 전용이라 런타임 set 이 무시됐다 — :settings 에서 바꿀 수 있게 보강.
                 self.default_path = val.strip()
+            elif name in ("claude-command", "claude_command"):
+                # `esc c` 가 새 탭에서 실행할 명령(pytmux-137).
+                self.claude_command = val.strip()
 
         def apply_setting(self, desc, value):
             """:settings 화면의 한 설정을 런타임 적용 + 영속한다(흩어진 적용 로직을
@@ -2036,6 +2044,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return textual_key_to_tmux(self.prefix_key) or self.prefix_key
             if key == "default-path":
                 return getattr(self, "default_path", "current")
+            if key in ("claude-command", "claude_command"):
+                return getattr(self, "claude_command", "claude")
             if key == "set-titles":
                 return "on" if self.set_titles else "off"
             if key == "status-interval":
@@ -2105,6 +2115,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.status.right_fmt = cfg["status_right"]
             self.set_tab_bar_always(cfg.get("tab_bar_always", True))
             self.default_path = cfg.get("default_path", "current")
+            self.claude_command = cfg.get("claude_command", "claude")
             self.status.refresh()
 
         def _active_window_name(self):

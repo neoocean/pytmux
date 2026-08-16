@@ -45,7 +45,14 @@ pub enum Command {
     /// 직전 탭으로 되돌아간다.
     LastWindow,
     /// 새 탭. `path` 는 서버가 해석한다(`current`/`home`/절대경로).
-    NewWindow { path: String },
+    ///
+    /// `cmd` 가 있으면 그 탭에서 **그 명령을 먼저 실행**한다(`esc c` = Claude Code 탭 ·
+    /// pytmux-137). 없으면 종전대로 셸만 뜬다 — 서버는 `cmd` 를 모르는 구판에서도
+    /// 이 칸을 그냥 무시하므로 프레임 모양은 앞뒤로 호환된다.
+    ///
+    /// ⛔ 여기에 실을 값을 `action_to_command` 가 **정하지 못한다**(그 함수는 설정을
+    /// 모른다 — `path` 와 같은 사정이다). 기본값을 싣고 뷰가 설정값으로 갈아 끼운다.
+    NewWindow { path: String, cmd: Option<String> },
     /// 현재 탭을 닫는다.
     KillWindow,
     /// 현재 탭을 index 위치로 옮긴다.
@@ -523,7 +530,13 @@ impl Command {
             Command::NextWindow => json!({}),
             Command::PrevWindow => json!({}),
             Command::LastWindow => json!({}),
-            Command::NewWindow { path } => json!({ "path": path }),
+            // `cmd` 는 **있을 때만** 싣는다 — 늘 실으면 셸 탭 프레임에 `"cmd":null`
+            // 이 붙어 서버 로그·픽스처가 지저분해지고, 구판 서버가 그 칸을 어떻게
+            // 읽는지에 기대게 된다.
+            Command::NewWindow { path, cmd } => match cmd {
+                Some(cmd) => json!({ "path": path, "cmd": cmd }),
+                None => json!({ "path": path }),
+            },
             Command::KillWindow => json!({}),
             Command::MoveCurrentTab { direction } => json!({ "where": direction }),
             Command::MoveWindow { index } => json!({ "index": index }),
@@ -717,6 +730,7 @@ impl Command {
             Command::LastWindow,
             Command::NewWindow {
                 path: "current".into(),
+                cmd: None,
             },
             Command::KillWindow,
             Command::MoveCurrentTab { direction: "left" },
@@ -1243,9 +1257,78 @@ mod tests {
         // 기본값을 쓰긴 하지만, 설정된 시작 디렉토리가 무시된다.
         let frame = Command::NewWindow {
             path: "current".into(),
+            cmd: None,
         }
         .to_frame();
         assert_eq!(frame["path"], "current");
+        // 셸 탭에는 `cmd` 칸이 **아예 없다**(위 `to_frame` 의 이유).
+        assert!(frame.get("cmd").is_none());
+    }
+
+    #[test]
+    fn a_claude_tab_keeps_its_own_directory_and_takes_the_configured_command() {
+        // ★ **이 오라클이 pytmux-137 의 요구 그 자체다.**
+        //
+        // `default-path home` 이 걸려 있어도 Claude 탭은 **지금 패널의 디렉토리**에서
+        // 뜬다. 그 예외를 안 두면 설정이 요구를 조용히 덮는데, 증상은 "열리긴 하는데
+        // 엉뚱한 디렉토리"라 키가 안 먹은 것처럼 보이지도 않는다.
+        let claude = action_to_command(base::Action::NewClaudeTab).unwrap();
+        assert_eq!(
+            with_config_paths(claude, "home", "my-claude --resume"),
+            Command::NewWindow {
+                path: "current".into(),
+                cmd: Some("my-claude --resume".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_plain_new_tab_and_split_still_obey_default_path() {
+        // ⛔ 위 예외가 **옆자리까지 먹지 않았는지** 같이 잰다 — 한 줄로 둘을 고치면
+        // 설정을 켜 둔 사람의 새 탭·분할이 조용히 자리를 옮긴다.
+        let tab = action_to_command(base::Action::NewTab).unwrap();
+        assert_eq!(
+            with_config_paths(tab, "home", "claude"),
+            Command::NewWindow {
+                path: "home".into(),
+                cmd: None,
+            }
+        );
+        let split = action_to_command(base::Action::SplitTopBottom).unwrap();
+        assert_eq!(
+            with_config_paths(split, "home", "claude"),
+            Command::Split {
+                horizontal: false,
+                path: "home".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_empty_claude_command_is_a_plain_shell_tab() {
+        // 설정을 비워 둔 사람에게는 그냥 새 탭이다 — 서버가 빈 `cmd` 를 없는 것으로
+        // 본다(`servertree.new_window`). 여기서 `None` 으로 접지 않는 이유는, 접으면
+        // 「설정이 비었다」와 「이 명령은 셸 탭이다」가 구별되지 않기 때문이다.
+        let claude = action_to_command(base::Action::NewClaudeTab).unwrap();
+        assert_eq!(
+            with_config_paths(claude, "home", ""),
+            Command::NewWindow {
+                path: "current".into(),
+                cmd: Some(String::new()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_claude_tab_carries_the_command() {
+        // `esc c` — 지금 디렉토리(`current`)에서 그 명령이 도는 새 탭(pytmux-137).
+        let frame = Command::NewWindow {
+            path: "current".into(),
+            cmd: Some("claude".into()),
+        }
+        .to_frame();
+        assert_eq!(frame["path"], "current");
+        assert_eq!(frame["cmd"], "claude");
     }
 
     #[test]
@@ -1553,6 +1636,46 @@ pub fn action_to_command_with_tabs(
     }
 }
 
+/// 새 탭·분할이 **설정값**으로 시작하게 자리와 명령을 갈아 끼운다.
+///
+/// [`action_to_command`] 는 설정을 모른다(proto 는 `Config` 를 안 읽는다) — `current` ·
+/// `claude` 같은 **기본값**을 박아 돌려주고, 그것을 여기서 한 번에 갈아 끼운다.
+///
+/// # 왜 뷰가 아니라 여기인가
+///
+/// 종전에는 이 규칙이 뷰 안에 있었다. 규칙이 뷰 안에 있으면 **뷰가 늘 때마다 각자 적고**,
+/// 한쪽만 고치면 같은 키가 클라마다 다른 디렉토리에서 뜬다. 규칙을 여기 두면 기계가 잰다.
+///
+/// # 갈래 셋
+///
+/// - **Claude 탭**(`cmd` 가 실린 새 탭 · `esc c` · pytmux-137): 자리는 **안 갈고**
+///   (`current` 를 지킨다) 명령만 `claude_command` 로 갈아 끼운다. 이 키의 값은
+///   「지금 디렉토리에서 바로 붙는다」에 있어서, `default-path home` 이 그것을 조용히
+///   덮으면 요구가 안 지켜진다.
+/// - **평범한 새 탭·분할**: 자리를 `default_path` 로 간다(종전 그대로).
+/// - **나머지**: 그대로 돌려준다.
+pub fn with_config_paths(
+    command: Command,
+    default_path: &str,
+    claude_command: &str,
+) -> Command {
+    match command {
+        Command::NewWindow { path, cmd: Some(_) } => Command::NewWindow {
+            path,
+            cmd: Some(claude_command.to_owned()),
+        },
+        Command::NewWindow { .. } => Command::NewWindow {
+            path: default_path.to_owned(),
+            cmd: None,
+        },
+        Command::Split { horizontal, .. } => Command::Split {
+            horizontal,
+            path: default_path.to_owned(),
+        },
+        other => other,
+    }
+}
+
 /// 상태를 안 보는 액션→명령. 탭을 고르는 셋은 여기서 `None` 이다 —
 /// [`action_to_command_with_tabs`] 를 쓸 것.
 pub fn action_to_command(action: base::Action) -> Option<Command> {
@@ -1611,6 +1734,16 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         // 새 탭은 **지금 패널의 디렉토리**에서 연다(파이썬 클라 `prefix c` 와 같다).
         Action::NewTab => Some(Command::NewWindow {
             path: "current".into(),
+            cmd: None,
+        }),
+        // `esc c` — 그 탭에서 Claude Code CLI 가 돈다(pytmux-137). 두 칸 다 **기본값**
+        // 이다: `path` 는 뷰가 `default-path` 로 갈아 끼우지 **않고**(이 키의 값이
+        // 「지금 디렉토리」에 있다), `cmd` 는 뷰가 `claude-command` 설정으로 갈아
+        // 끼운다. 자리를 비워 두지 않는 이유는 `path` 와 같다 — 뷰를 안 지나는
+        // 경로(테스트·다른 호출부)에서도 뜻이 통하는 명령이라야 한다.
+        Action::NewClaudeTab => Some(Command::NewWindow {
+            path: "current".into(),
+            cmd: Some("claude".into()),
         }),
         Action::KillTab => Some(Command::KillWindow),
         Action::NextTab => Some(Command::NextWindow),

@@ -167,3 +167,18 @@ async def test_scan_paths_reports_and_fails():
     assert clean_rc == 0, out
     assert dirty_rc == 1, out
     assert "bad.bin" in out, out
+
+
+async def test_scan_with_nothing_to_scan_is_a_breakage_not_a_pass():
+    """인자 0개면 **rc 1**. 「0개 파일을 쟀고 유출이 0이다」는 통과가 아니다.
+
+    부르는 자리가 `build_release.*` 라 값이 크다 — 빌드가 산출물을 못 냈거나 경로
+    확장이 비면, 종전에는 그 빌드가 **아무 검사도 없이** 초록으로 `build/` 에 들어갔다.
+    같은 저장소의 `check_licenses.sh` 는 같은 상황(한 줄도 못 잡음)을 이미 「고장」으로
+    본다 — 한 질문을 두 술어로 묻던 자리다(검수 2026-08-09 B-5).
+    """
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+        rc = cm.scan_paths([])
+    assert rc == 1, err.getvalue()
+    assert "고장" in err.getvalue(), err.getvalue()

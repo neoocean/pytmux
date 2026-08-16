@@ -2333,6 +2333,32 @@ impl SessionView {
         // ★ 오버레이가 광고한 자리(달력의 `‹`/`›`)가 먼저다 — 화살표를 그려 놓고
         // 클릭이 안 먹으면 그 화살표가 거짓말이 된다. **뜻은 우리가 모른다**: 서버가
         // 준 이름을 그대로 되돌려 보내고, 다음 셀 프레임이 답이다.
+        // ⛔ **바로 아래 「판을 누르면 닫는다」보다 앞이라야 한다** — 뒤에 두면 달력
+        //    패널의 클릭이 곧 닫기라 화살표를 누를 길이 아예 없다(정본 `clientwidgets.py`
+        //    가 화살표 갈래에 적어 둔 그 이유 그대로다).
+        if let Some((name, pane, act)) = self.state.overlay_zone_at(x, y) {
+            self.pending.push(Outgoing::Command(Command::PluginOverlayAction {
+                name,
+                pane,
+                act,
+            }));
+            return true;
+        }
+        // ★ 오버레이가 덮은 패널은 **아무 데나 눌러도 닫힌다**(pytmux-156 · 정본
+        //   `clientwidgets.py:544` 의 "[x] 버튼 폐지"). 종전에는 닫는 길이 상태줄의 작은
+        //   시각/날짜 표식을 **다시 정확히 찾아 누르는 것** 하나뿐이었다.
+        //   ⛔ Claude 클릭존(`open_zone_at`·`send_zone_at`)보다 **앞**인 것도 정본 순서
+        //      그대로다: 그 자리는 오버레이 **밑**이라 사람 눈에 안 보이는데, 뒤에 두면
+        //      시계를 닫으려던 클릭이 권한모드 판을 연다.
+        //   ⚠ 안 켜진 패널이면 `None` 이라 아래 갈래가 그대로 산다(경계선 드래그 포함).
+        if let Some(pane) = self.state.pane_at(x, y)
+            && let Some((name, t)) = self.state.close_overlay_on_pane(pane)
+        {
+            // 서버에도 끔을 올린다(Tier B — 그림은 서버 것이다). 안 올리면 우리만
+            // 껐다고 믿고 화면에는 그대로 남는다.
+            self.push_overlay(&name, Some(t));
+            return true;
+        }
         // ★ 패널 **안**의 자리가 화면을 여는 것이면 그 길로 보낸다(pytmux-2 · 23 —
         // Claude 의 권한모드 footer 와 토큰 수치). 여는 화면 이름도, 그 화면이 있는지도
         // 서버가 정한다 — 우리는 누른 패널을 함께 실어 보낼 뿐이다. 그 패널을 안 실으면
@@ -2351,14 +2377,6 @@ impl SessionView {
         //   보는 패널로 가면 안 된다(정본이 `send_input_pane` 을 쓰는 이유).
         if let Some((pane, data)) = self.state.send_zone_at(x, y) {
             self.pending.push(Outgoing::InputToPane { pane, data });
-            return true;
-        }
-        if let Some((name, pane, act)) = self.state.overlay_zone_at(x, y) {
-            self.pending.push(Outgoing::Command(Command::PluginOverlayAction {
-                name,
-                pane,
-                act,
-            }));
             return true;
         }
         if let Some(divider) = self.state.divider_at(x, y) {
@@ -5099,10 +5117,21 @@ impl SessionView {
         Container::new(row.finish()).with_padding_bottom(4.).finish()
     }
 
-    /// 팔레트 한 줄을 **세 칸**으로(§10-21ⓞ) 그리고, 설명이 길면 접는다(ⓗ⑶).
+    /// 팔레트 **한 항목**을 세 칸으로(§10-21ⓞ) 그리고, 설명이 길면 접는다(ⓗ⑶).
     ///
-    /// 돌려주는 것은 **그려진 줄들**이다 — 접히면 둘 이상이고, 부르는 쪽이 그 수를
-    /// 예산에서 뺀다(판 높이는 고정이므로 접힌 만큼 뒤가 밀려서는 안 된다).
+    /// 돌려주는 것은 **한 덩이와 그것이 먹는 줄 수**다 — 접히면 둘 이상이고, 부르는
+    /// 쪽이 그 수를 예산에서 뺀다(판 높이는 고정이므로 접힌 만큼 뒤가 밀려서는 안 된다).
+    ///
+    /// # 왜 줄마다가 아니라 한 덩이인가 (pytmux-157)
+    ///
+    /// 종전에는 접힌 줄마다 `Container` 를 따로 만들어 각각 배경을 깔았다. 그 줄들은
+    /// 판의 열(`with_spacing(PANEL_ROW_SPACING)`)에 **형제로** 붙으므로 사이에 그
+    /// 간격만큼 판 배경이 드러난다 — 실측(1920×1200 · 배율 1.5)으로 3px 짬이 났고,
+    /// 하이라이트가 줄마다 끊겨 **한 항목이 선택 가능한 두 행처럼** 읽혔다(`ncd`).
+    ///
+    /// 그래서 배경은 **바깥 한 겹**에만 있고, 접힌 줄은 그 안의 열에 든다. 안쪽 열도
+    /// 같은 `PANEL_ROW_SPACING` 을 쓰므로 **판 높이는 종전과 같다** — 달라지는 것은
+    /// 그 짬을 무엇이 칠하느냐뿐이다(판 배경 → 항목 배경).
     ///
     /// # 칸 폭은 왜 상수인가
     ///
@@ -5113,13 +5142,13 @@ impl SessionView {
     ///
     /// 이름은 밝게, 옵션은 노랑, 설명은 흐리게. 고른 줄 배경(`SELECTED_BG`) 위에서도
     /// 셋이 다 읽혀야 한다 — 제보가 "색으로 구분"을 요구한 자리다.
-    fn palette_lines(
+    fn palette_item(
         &self,
         name: &str,
         desc: &str,
         selected: bool,
         left: usize,
-    ) -> Vec<Box<dyn Element>> {
+    ) -> (Box<dyn Element>, usize) {
         let (cmd, opts) = proto::palette::split_name(name);
         let desc_cols = Self::PANEL_COLS
             .saturating_sub(Self::PAL_NAME_COLS + Self::PAL_OPTS_COLS + 2);
@@ -5138,7 +5167,13 @@ impl SessionView {
                 None => t,
             }
         };
-        let mut out: Vec<Box<dyn Element>> = Vec::new();
+        // 안쪽 열의 행간은 판의 것과 **같은 상수**다 — 다르면 접힌 항목의 높이가 판의
+        // 다른 줄과 어긋나 예산 셈(줄 수)과 실제 픽셀이 갈린다.
+        let mut rows = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_spacing(Self::PANEL_ROW_SPACING);
+        // 먹는 줄 수는 **접힌 조각 수**다(자식 수가 아니다 — 자식은 이제 하나다).
+        let count = wrapped.len();
         for (i, chunk) in wrapped.into_iter().enumerate() {
             // 접힌 줄은 **설명 칸 아래**에 이어 붙는다(이름·옵션 칸은 비운다).
             let (n, o) = if i == 0 { (cmd.to_owned(), opts.to_owned()) } else { (String::new(), String::new()) };
@@ -5148,16 +5183,17 @@ impl SessionView {
                 .with_child(col(self, o, Self::PAL_OPTS_COLS, palette::YELLOW))
                 .with_child(col(self, chunk, desc_cols, palette::DIM))
                 .finish();
-            out.push(if selected {
-                Container::new(line)
-                    .with_background_color(palette::SELECTED_BG)
-                    .with_uniform_padding(1.)
-                    .finish()
-            } else {
-                Container::new(line).with_uniform_padding(1.).finish()
-            });
+            // 패딩은 줄마다다(종전과 같은 높이) · 배경은 아래 한 겹뿐이다.
+            rows = rows.with_child(Container::new(line).with_uniform_padding(1.).finish());
         }
-        out
+        let item = if selected {
+            Container::new(rows.finish())
+                .with_background_color(palette::SELECTED_BG)
+                .finish()
+        } else {
+            rows.finish()
+        };
+        (item, count)
     }
 
     fn render_palette(&self, column: Flex) -> Flex {
@@ -5222,10 +5258,11 @@ impl SessionView {
                     (c.name.clone(), c.desc.clone())
                 }
             };
-            for line in self.palette_lines(&name, &desc, row == selected, budget - drawn) {
-                column = column.with_child(line);
-                drawn += 1;
-            }
+            // 한 항목 = 한 자식(접혀도 그렇다 · pytmux-157) — 그러니 늘어난 줄 수는
+            // 자식 수가 아니라 **그 항목이 말해 주는 값**으로 센다.
+            let (item, rows) = self.palette_item(&name, &desc, row == selected, budget - drawn);
+            column = column.with_child(item);
+            drawn += rows;
         }
         // 목록 **뒤**에 입력 — 화면에서는 목록 아래, 곧 판의 맨 밑이다.
         self.pad_rows(column, drawn, budget).with_child(input(self))
@@ -5529,6 +5566,7 @@ impl SessionView {
             mouse_drag_copy: self.config.mouse_drag_copy,
             tab_bar_always: self.config.tab_bar_always,
             default_path: self.config.default_path.clone(),
+            claude_command: self.config.claude_command.clone(),
             strip_box_drawing: self.config.strip_box_drawing,
             copy_unwrap: self.config.copy_unwrap,
             touch_scroll: self.config.touch_scroll,
@@ -5596,17 +5634,17 @@ impl SessionView {
     }
 
 
-    /// 새 탭·분할이 시작할 자리를 **설정값으로** 바꿔 준다(`default-path`).
+    /// 새 탭·분할이 시작할 자리(와 Claude 탭이 실행할 명령)를 **설정값으로** 바꾼다.
     ///
-    /// `action_to_command` 는 `current` 를 박아 돌려준다 — 그 함수는 설정을 모른다
-    /// (proto 는 core 의 `Config` 를 안 읽는다). 여기서 한 번에 갈아 끼운다.
+    /// 규칙 자체는 `proto` 가 든다([`proto::command::with_config_paths`]) — 뷰에 두면
+    /// 뷰가 늘 때마다 각자 적게 되고, 갈리면 같은 키가 클라마다 다른 디렉토리에서 뜬다.
+    /// 여기 남는 것은 **설정을 꺼내 넘기는 한 줄**뿐이다.
     fn with_default_path(&self, command: Command) -> Command {
-        let path = self.config.default_path.clone();
-        match command {
-            Command::NewWindow { .. } => Command::NewWindow { path },
-            Command::Split { horizontal, .. } => Command::Split { horizontal, path },
-            other => other,
-        }
+        proto::command::with_config_paths(
+            command,
+            &self.config.default_path,
+            &self.config.claude_command,
+        )
     }
 
 
@@ -6490,7 +6528,7 @@ impl SessionView {
                 horizontal: false,
             }),
             // 서버에 시킬 일이 아니다 — 우리 상태줄·설정 파일이라 호출부가 처리한다.
-            Prompt::DisplayMessage | Prompt::DefaultPath | Prompt::SetOption
+            Prompt::DisplayMessage | Prompt::DefaultPath | Prompt::ClaudeCommand | Prompt::SetOption
             | Prompt::SendKeys | Prompt::BindKey | Prompt::UnbindKey
             | Prompt::RunShell | Prompt::IfShell | Prompt::DisplayPopup => None,
             // 상태줄 넷은 **설정 파일**이 주인이라 서버에 시킬 일이 없다.
@@ -6905,6 +6943,11 @@ impl SessionView {
     /// 아니다(그건 ⓙ 슬라이스가 셀 격자를 잡을 때 이야기다).
     const PANEL_COLS: usize = 110;
 
+    /// 판 안 두 줄 사이 간격(px). **한 벌**이라야 하는 이유가 있다(pytmux-157):
+    /// 팔레트에서 접힌 설명은 항목 안쪽 열에 들고, 그 열이 이 값과 다른 행간을 쓰면
+    /// 접힌 항목만 높이가 어긋나 「예산 = 줄 수」 셈과 실제 픽셀이 갈린다.
+    const PANEL_ROW_SPACING: f32 = 2.;
+
     /// 팔레트 칸 폭(칸 수) — 이름·옵션(§10-21ⓞ). 설명은 남는 폭을 다 쓴다.
     ///
     /// 상수인 이유: 내용으로 정하면 필터를 칠 때마다 칼럼이 흔들린다(판 기하를 내용에서
@@ -7019,7 +7062,7 @@ impl SessionView {
             .or_else(|| (screen == Screen::Commands).then(|| self.palette_arg_hint()).flatten());
         let mut column = Flex::column()
             .with_main_axis_size(MainAxisSize::Min)
-            .with_spacing(2.)
+            .with_spacing(Self::PANEL_ROW_SPACING)
             .with_child(
                 Container::new(header.finish())
                     .with_padding_bottom(8.)
@@ -7717,34 +7760,45 @@ impl View for SessionView {
                             .collect(),
                     })
                     .collect();
+                // ★ 남는 높이는 **캔버스가 받는다**(`pytmux-162`) — 아래에 빈 위젯을 따로
+                //   두지 않는다. 상태줄이 창 바닥에 붙는 것은 그대로이고(받은 자리를 다
+                //   쓰므로 뒤 형제가 밀리는 자리도 같다), 달라지는 것은 **테두리 상자가
+                //   그 자리까지 내려간다**는 것뿐이다. 아래 `Expanded(Empty)` 갈래를 보라.
                 column = column.with_child(
-                    crate::splitter::SplitterOverlay::new(
-                        rows.finish(),
-                        bars,
-                        Self::frame_segments(&canvas, self.state.layout(), tint),
-                        blocks,
-                        self.cursor_cell(),
-                        self.block_mark(),
-                        self.scroll_hints(),
-                        self.span_marks(),
-                        self.rule_marks(),
-                        Self::CELL_PROBE,
+                    Expanded::new(
+                        1.,
+                        crate::splitter::SplitterOverlay::new(
+                            rows.finish(),
+                            bars,
+                            Self::frame_segments(&canvas, self.state.layout(), tint),
+                            blocks,
+                            self.cursor_cell(),
+                            self.block_mark(),
+                            self.scroll_hints(),
+                            self.span_marks(),
+                            self.rule_marks(),
+                            Self::CELL_PROBE,
+                            height as u16,
+                        )
+                        .finish(),
                     )
                     .finish(),
                 );
             }
             // 배치를 아직 못 받았다. 빈 화면은 "멈춘 것"과 구분되지 않는다.
+            //
+            // 여기서는 남는 공간을 빈 위젯이 접는다 — 요약·상태줄이 **창 바닥에 붙는다**
+            // (TUI 의 마지막 행들과 같은 자리). 이게 없으면 상태줄 아래에 빈 띠가 남아
+            // 두 클라의 배치가 갈린다. ⛔ **캔버스가 있는 갈래에 이 줄을 되살리지 마라**
+            // (`pytmux-162`): 유연한 자식이 둘이 되면 남는 높이가 반씩 갈려, 캔버스는
+            // 아랫변을 절반만 내리고 나머지 절반이 다시 빈 띠로 남는다.
             None => {
                 column = column
-                    .with_child(self.text(t("첫 화면을 기다리는 중…"), 14., palette::DIM))
+                    .with_child(self.text(t("첫 화면을 기다리는 중…"), 14., palette::DIM));
+                column =
+                    column.with_child(Expanded::new(1., Empty::new().finish()).finish());
             }
         }
-
-        // 캔버스와 아래 구역 사이에서 남는 공간을 접는다 — 요약·상태줄이 **창 바닥에
-        // 붙는다**(TUI 의 마지막 행들과 같은 자리). 이게 없으면 상태줄 아래에 빈 띠가
-        // 남아 두 클라의 배치가 갈린다(격자 절사 나머지는 어딘가에 남을 수밖에 없고,
-        // TUI 처럼 캔버스 밑에서 접는 것이 맞다).
-        column = column.with_child(Expanded::new(1., Empty::new().finish()).finish());
         // ★ 요약 구역은 **여기 없다**(§10-21ⓓ) — `summary` 명령이 여는 판으로 옮겼다.
         // 상태줄은 기본이 **맨 아래**다 — `e_down` 이 "아래로 나간다"라야 동선이 말이
         // 된다. `status-position top` 이면 탭바보다 위로 올린다.

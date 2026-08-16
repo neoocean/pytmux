@@ -186,6 +186,10 @@ class CommandListScreen(ModalScreen):
         self._ci = 0          # 현재 카테고리 인덱스(기본='전체' → 바로 전부 탐색)
         self._cur = []        # 현재 카테고리의 (필터된) (이름, 설명) 목록
         self._query = query or ""   # 검색어(초기값=호출부가 넘긴 부분 입력)
+        # 인자 추천 모드: arghist 명령(remote-attach 등) 선택 시 이전 입력 인자를 보여준다
+        self._arg_mode = False
+        self._arg_cmd = None
+        self._arg_hist = []
 
     def compose(self) -> ComposeResult:
         with Vertical(id="cmdbox"):
@@ -249,6 +253,21 @@ class CommandListScreen(ModalScreen):
         return [(n, d) for n, d in items
                 if qs in norm_sep(n.lower()) or q in d.lower()]
 
+    async def _rebuild_arg_hist(self):
+        """인자 모드: 팔레트 목록을 arghist 이력으로 바꾼다."""
+        lv = self.query_one(ListView)
+        # 이력 목록 (이름, 설명) 형식으로 변환 — 최근 입력이 앞에 온다
+        items = [(h, i18n.t("screen.arg_recent")) for h in self._arg_hist]
+        self._cur = items
+        await lv.clear()
+        if items:
+            await lv.extend([ListItem(Label(f"{n:<20} {d}"))
+                             for n, d in items])
+            lv.index = 0
+        box = self.query_one("#cmdbox", Vertical)
+        box.border_title = i18n.t("screen.arg_list", default=f"{self._arg_cmd} 인자")
+        box.border_subtitle = ""
+
     async def _rebuild(self):
         searching = bool(self._query.strip())
         # 검색 중 현재 탭에 결과가 없으면 결과 있는 첫 탭으로 점프(빈 화면 방지).
@@ -284,13 +303,32 @@ class CommandListScreen(ModalScreen):
         box.border_title = i18n.t("screen.command_list")
         box.border_subtitle = i18n.t("screen.cmdlist_sub")
 
-    def _select_current(self):
+    async def _select_current(self):
         idx = self.query_one(ListView).index
         if idx is not None and 0 <= idx < len(self._cur):
-            self.dismiss(self._cur[idx][0])
+            selected = self._cur[idx][0]
+            # 인자 모드: 팔레트 목록을 그 명령의 arghist 이력으로 바꾼다
+            if not self._arg_mode:
+                app = getattr(self, "app", None)
+                canon = app._arghist_canon(selected) if app else None
+                if canon:
+                    self._arg_mode = True
+                    self._arg_cmd = selected
+                    self._arg_hist = app._arghist_list(selected)
+                    if self._arg_hist:
+                        # 이력 목록으로 화면을 다시 만든다
+                        await self._rebuild_arg_hist()
+                        return
+            # 인자 모드면, 선택한 이력값을 인자로 해서 명령과 함께 반환
+            if self._arg_mode:
+                result = f"{self._arg_cmd} {selected}"
+                self.dismiss(result)
+            else:
+                # 일반 명령: 명령 이름만 반환
+                self.dismiss(selected)
 
     def on_list_view_selected(self, event):
-        self._select_current()
+        self.app.call_later(self._select_current)
 
     async def _switch_to(self, i):
         if 0 <= i < len(self._all_cats) and i != self._ci:
@@ -324,7 +362,7 @@ class CommandListScreen(ModalScreen):
             # ListView 기본 Enter 바인딩이 포커스/타이밍 문제로 안 먹는
             # 경우가 있어 직접 현재 항목을 선택해 프롬프트에 채운다.
             event.stop()
-            self._select_current()
+            await self._select_current()
         elif key in ("left", "right") and len(self._all_cats) > 1:
             event.stop()
             step = 1 if key == "right" else -1
@@ -346,9 +384,15 @@ class CommandListScreen(ModalScreen):
                 try: lv.scroll_to_widget(lv.children[last])
                 except Exception: pass
         elif key == "backspace":
-            # 검색창 표시 전용 — 글자 편집을 화면 on_key 에서 처리한다.
             event.stop()
-            if self._query:
+            # 인자 모드: 명령 목록으로 돌아간다
+            if self._arg_mode:
+                self._arg_mode = False
+                self._arg_cmd = None
+                self._arg_hist = []
+                await self._rebuild()
+            # 명령 모드: 검색어에서 한 글자를 뺀다
+            elif self._query:
                 self._query = self._query[:-1]
                 self.query_one("#cmdsearch", Input).value = self._query
                 await self._rebuild()
@@ -1088,6 +1132,8 @@ class MenuScreen(ModalScreen):
 class PluginManagerScreen(ModalScreen):
     """플러그인 관리 팝업(docs/internal/PLUGIN_MANAGER_SCENARIO.md) — 설치된(레지스트리 발견)
     플러그인을 이름·설명·상태([x]켜짐/[ ]꺼짐)로 나열하고, Space/Enter 로 토글한다.
+    글자를 치면 플러그인 이름으로 즉시 필터링된다(명령목록과 동일한 타이핑 찾기).
+
     토글은 set_plugin_enabled cmd 를 서버에 보내 opts.json 에 영속하고, 서버가 전 클라에
     새 disabled 집합을 방송해 명령/훅이 즉시 빠지거나 돌아온다. 발효 안내: 좌하단 정보
     클러스터·서버 믹스인 기여 플러그인은 완전 정리에 서버 재시작이 필요(§5)."""
@@ -1097,22 +1143,26 @@ class PluginManagerScreen(ModalScreen):
               border: round $accent; background: $panel; padding: 0 1; }
     #plgtitle { width: 100%; height: 1; content-align: center middle;
                 text-style: bold; }
+    #plgsearch { width: 1fr; height: 1; border: round $accent;
+                 background: $panel-darken-1; padding: 0 1; }
     #plglist { height: auto; max-height: 20; }
     #plghint { width: 100%; height: auto; padding: 1 0 0 0; color: $text-muted; }
     """
 
     def compose(self) -> ComposeResult:
-        self._rows = {}   # name -> (Label, description)
+        # 전체 플러그인 목록을 보관 — 검색은 런타임 필터
+        plug = getattr(self.app, "plugins", None)
+        self._all_plugins = plug.plugin_overview() if plug else []
+        self._query = ""
+        # name -> (Label, description)
+        self._rows = {}
+        # (name, desc, category, enabled) 의 필터된 목록
+        self._filtered = []
+
         with Vertical(id="plgbox"):
             yield Label(i18n.t("plugins.title"), id="plgtitle")
-            items = []
-            plug = getattr(self.app, "plugins", None)
-            overview = plug.plugin_overview() if plug else []
-            for name, desc, _cat, enabled in overview:
-                lab = Label(self._fmt(name, desc, enabled), markup=False)
-                self._rows[name] = (lab, desc)
-                items.append(ListItem(lab, id=f"plg_{name}"))
-            yield ListView(*items, id="plglist")
+            yield Input(placeholder=i18n.t("ui.search"), id="plgsearch", can_focus=False)
+            yield ListView(id="plglist")
             yield Label(i18n.t("plugins.hint"), id="plghint", markup=False)
 
     def _enabled(self, name):
@@ -1125,9 +1175,44 @@ class PluginManagerScreen(ModalScreen):
         box = "[x]" if enabled else "[ ]"
         return f"{box} {name:<24}{('— ' + desc) if desc else ''}"
 
+    def _matches(self, items):
+        """이름·설명 부분일치(대소문자 무시)."""
+        q = self._query.strip().lower()
+        if not q:
+            return list(items)
+        # 한영 오타 복원: 검색어에 한글이 섞이면 QWERTY 로 되돌려 매칭
+        qn = hangul_to_qwerty(q).lower() if has_hangul(q) else q
+        qs = norm_sep(qn)
+        return [item for item in items
+                if qs in norm_sep(item[0].lower()) or q in (item[1] or "").lower()]
+
+    async def _rebuild(self):
+        """검색 필터 적용 후 ListView 갱신."""
+        self._filtered = self._matches(self._all_plugins)
+        lv = self.query_one(ListView)
+        await lv.clear()
+        self._rows.clear()
+        if self._filtered:
+            for name, desc, _cat, enabled in self._filtered:
+                lab = Label(self._fmt(name, desc, enabled), markup=False)
+                self._rows[name] = (lab, desc)
+                await lv.append(ListItem(lab, id=f"plg_{name}"))
+            lv.index = 0
+        else:
+            await lv.append(ListItem(Label(
+                f"[dim]{i18n.t('screen.no_search_results')}[/]", markup=True)))
+
     def on_mount(self):
-        self.query_one(ListView).focus()
+        self.query_one("#plgsearch", Input).can_focus = False
+        self.query_one("#plgsearch", Input).value = self._query
+        # 비동기이므로 별도 호출
+        import asyncio
+        asyncio.create_task(self._rebuild_and_focus())
         self.app._plugin_screen = self   # status 회신 시 라벨 확정용
+
+    async def _rebuild_and_focus(self):
+        await self._rebuild()
+        self.query_one(ListView).focus()
 
     def on_unmount(self):
         if getattr(self.app, "_plugin_screen", None) is self:
@@ -1166,16 +1251,29 @@ class PluginManagerScreen(ModalScreen):
             event.stop()
             self.dismiss(None)
 
-    def on_key(self, event: events.Key):
-        if event.key == "escape":
+    async def on_key(self, event: events.Key):
+        key = event.key
+        if key == "escape":
             event.stop()
             self.dismiss(None)
-        elif event.key == "space":
+        elif key == "space":
             lv = self.query_one(ListView)
             item = lv.highlighted_child
             if item is not None and item.id:
                 event.stop()
                 self._toggle(item.id[len("plg_"):])
+        elif key == "backspace":
+            event.stop()
+            if self._query:
+                self._query = self._query[:-1]
+                self.query_one("#plgsearch", Input).value = self._query
+                await self._rebuild()
+        elif (event.character and len(event.character) == 1
+              and event.character.isprintable()):
+            event.stop()
+            self._query += event.character
+            self.query_one("#plgsearch", Input).value = self._query
+            await self._rebuild()
 
 
 class ChooseTreeScreen(ModalScreen):

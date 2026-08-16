@@ -28,6 +28,7 @@ pub static EN: &[(&str, &str)] = &[
     ("상하 분할", "Split top/bottom"),
     ("패널 닫기", "Kill pane"),
     ("새 탭", "New tab"),
+    ("새 탭 (Claude Code)", "New tab (Claude Code)"),
     ("탭 닫기", "Kill tab"),
     ("다음 탭", "Next tab"),
     ("이전 탭", "Previous tab"),
@@ -148,6 +149,7 @@ pub static EN: &[(&str, &str)] = &[
     ("패널 회전 ↻", "Rotate panes ↻"),
     ("패널 교환 (다음 패널과)", "Swap pane (with next)"),
     ("패널 → 새 탭으로 분리", "Break pane → new tab"),
+    ("새 탭에서 Claude Code 실행", "New tab running Claude Code"),
     ("패널 → 다른 탭에 합치기 (join-pane <탭>)", "Join pane → another tab (join-pane <tab>)"),
     (
         "원격 탭 → 현재 탭에 pane 으로 머지 (같은 서버)",
@@ -265,6 +267,7 @@ pub static EN: &[(&str, &str)] = &[
     ("setting\u{0004}Windows 마우스 이동 추적", "Windows mouse motion"),
     ("setting\u{0004}세션 0개 시 종료", "Exit on empty"),
     ("setting\u{0004}새 패널 시작 경로", "New-pane start path"),
+    ("setting\u{0004}Claude 탭 실행 명령(esc c)", "Claude tab command (esc c)"),
     ("setting\u{0004}상태줄 갱신 주기(초)", "Status update interval (s)"),
     ("setting\u{0004}VT 파서 백엔드", "VT parser backend"),
     ("setting\u{0004}창 크기 규칙", "Window size rule"),
@@ -378,6 +381,10 @@ pub static EN: &[(&str, &str)] = &[
     (
         "새 탭이 시작할 자리 (current · home · 절대경로):",
         "Where new tabs start (current · home · absolute path):",
+    ),
+    (
+        "esc c 가 실행할 명령 (비우면 셸만):",
+        "Command esc c runs (empty = plain shell):",
     ),
     (
         "상태줄 왼쪽 (#S 세션 · #I 탭 · #W 이름 · #h 호스트 · %H:%M):",

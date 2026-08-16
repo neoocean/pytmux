@@ -502,6 +502,25 @@ async def test_prompt_history_lists_the_same_tail_the_jump_indexes():
         await teardown(srv, task, sock)
 
 
+def test_ncd_into_includes_the_chosen_path_for_mdir_update():
+    """`ncd` 의 "into" 응답에 경로가 실린다 — mdir 갱신용(pytmux-207).
+
+    정본과 달리 콜백이 없으므로, ncd 응답에 경로를 담아 돌려준다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        sub = os.path.join(tmp, "sub")
+        state = {}
+        # ncd 의 "into"(Enter) 응답은 경로를 담아 돌려준다
+        from pytmuxlib.plugins.ncd import PLUGIN as ncd_plugin
+        resp = ncd_plugin.plugin_screen(None, None, {
+            "id": "ncd", "do": "into", "input": sub, "state": state,
+        })
+        assert resp["t"] == "plugin_screen_close" and resp["id"] == "ncd"
+        assert resp.get("input") == sub, f"경로가 없다: {resp}"
+
+
 async def test_prompt_history_says_it_is_empty_instead_of_showing_nothing():
     """빈 목록은 **빈 화면이 아니다** — 왜 비었는지 한 줄이 있어야 한다(설계 §8-5)."""
     srv, task, sock = await server_only()

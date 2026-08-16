@@ -1281,6 +1281,39 @@ fn the_prefix_table_reaches_the_server_from_this_view() {
 }
 
 #[test]
+fn esc_c_opens_a_tab_that_runs_claude_here() {
+    // pytmux-137 — `esc c` 는 **지금 디렉토리에서 Claude Code 가 도는 새 탭**이다.
+    // 재는 것 셋: ⑴ 명령이 실제로 나간다 ⑵ 자리가 `current` 다 ⑶ 실행할 것이 실린다.
+    let out = sent_after(
+        vec![layout_one_pane()],
+        &[(Key::Escape, Mods::NONE), (Key::Char('c'), Mods::NONE)],
+    );
+    let sent = out.iter().find_map(|o| match o {
+        Outgoing::Command(Command::NewWindow { path, cmd }) => Some((path.clone(), cmd.clone())),
+        _ => None,
+    });
+    assert_eq!(
+        sent,
+        Some(("current".to_owned(), Some("claude".to_owned()))),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn esc_n_still_opens_a_plain_shell_tab() {
+    // ⛔ 옆자리를 안 건드렸는지 같이 잰다 — `esc n` 은 명령 없이 그대로다(pytmux-137).
+    let out = sent_after(
+        vec![layout_one_pane()],
+        &[(Key::Escape, Mods::NONE), (Key::Char('n'), Mods::NONE)],
+    );
+    assert!(
+        out.iter()
+            .any(|o| matches!(o, Outgoing::Command(Command::NewWindow { cmd: None, .. }))),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn a_destructive_key_asks_before_it_sends() {
     // prefix x 는 **확인 화면**을 세운다. 바로 나가면 파이썬보다 위험하다.
     let out = sent_after(
@@ -2429,6 +2462,32 @@ fn painted_after_setup(
     keys: &[(Key, Mods)],
     setup: impl FnOnce(&mut SessionView) + 'static,
 ) -> Vec<String> {
+    painted_scene_setup(messages, keys, setup, |scene| {
+        scene.painted_texts().map(|t| t.text.clone()).collect()
+    })
+}
+
+/// 한 프레임을 헤드리스로 그려 **그 `Scene` 에서 재고 싶은 것만** 뽑는다.
+///
+/// 위 함수들과 아래 `painted_fills` 가 재는 것은 다르지만(글자 / 글자+세로 자리 / 면),
+/// **그리는 절차는 하나**다 — 창을 만들고 뷰를 얹고 한 프레임을 세우는 그 스물몇 줄.
+/// 그것을 함수마다 베끼면 파이프라인이 바뀔 때 한쪽만 고쳐지고, 그때 갈리는 것은 코드가
+/// 아니라 **오라클끼리의 판정**이다(이 저장소가 「구현 하나」를 못 박는 그 이유다).
+fn painted_scene<T: 'static>(
+    messages: Vec<ServerMessage>,
+    keys: &[(Key, Mods)],
+    take: impl FnOnce(&warpui_core::Scene) -> T + 'static,
+) -> T {
+    painted_scene_setup(messages, keys, |_| {}, take)
+}
+
+/// 위와 같지만 그리기 **직전에** 뷰를 한 번 더 만진다(`painted_after_setup` 의 그 자리).
+fn painted_scene_setup<T: 'static>(
+    messages: Vec<ServerMessage>,
+    keys: &[(Key, Mods)],
+    setup: impl FnOnce(&mut SessionView) + 'static,
+    take: impl FnOnce(&warpui_core::Scene) -> T + 'static,
+) -> T {
     use warpui::platform::WindowStyle;
     use warpui::{EntityIdSet, Presenter, WindowInvalidation};
     let keys = keys.to_vec();
@@ -2455,7 +2514,7 @@ fn painted_after_setup(
         app.update(move |ctx| {
             presenter.invalidate(invalidation, ctx);
             let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
-            scene.painted_texts().map(|t| t.text.clone()).collect()
+            take(&scene)
         })
     })
 }
@@ -2466,36 +2525,11 @@ fn painted_after_setup(
 /// 살아 있어 잴 수 있다 — 그 사실 자체를 `the_bounds_oracle_sees_vertical_positions`
 /// 가 먼저 확인한다(빈 오라클로 배치를 단언하면 아무것도 안 재고 통과한다).
 fn painted_boxes(messages: Vec<ServerMessage>, keys: &[(Key, Mods)]) -> Vec<(String, f32)> {
-    use warpui::platform::WindowStyle;
-    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
-    let keys = keys.to_vec();
-    warpui::App::test((), |mut app| async move {
-        let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
-        let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
-        for msg in messages {
-            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
-        }
-        view.pump_headless();
-        for (key, mods) in keys {
-            view.handle_key(key, mods);
-            view.pump_headless();
-        }
-        let (window_id, _handle) = app.add_window(WindowStyle::NotStealFocus, move |_| view);
-        let mut presenter = Presenter::new(window_id);
-        let mut updated = EntityIdSet::default();
-        updated.insert(app.root_view_id(window_id).unwrap());
-        let invalidation = WindowInvalidation {
-            updated,
-            ..Default::default()
-        };
-        app.update(move |ctx| {
-            presenter.invalidate(invalidation, ctx);
-            let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
-            scene
-                .painted_texts()
-                .map(|t| (t.text.clone(), t.bounds.origin().y()))
-                .collect()
-        })
+    painted_scene(messages, keys, |scene| {
+        scene
+            .painted_texts()
+            .map(|t| (t.text.clone(), t.bounds.origin().y()))
+            .collect()
     })
 }
 
@@ -3983,6 +4017,129 @@ fn toggling_the_clock_tells_the_server_which_pane() {
     assert_eq!(offs.len(), 1, "끈 사실이 안 올라갔다: {frames:?}");
 }
 
+// ── pytmux-156 — 오버레이가 덮은 판은 아무 데나 눌러도 닫힌다 ──────────────────
+//
+// 정본 `clientwidgets.py:544`("[x] 버튼 폐지")의 그 갈래가 GUI 에는 통째로 없었다.
+// 그래서 닫는 길이 상태줄의 작은 시각/날짜 표식 **하나뿐**이었다.
+
+/// 서버가 이름을 실은 오버레이 프레임만 차례대로 — `(이름, 켬)`.
+fn overlay_frames(sent: &Sent) -> Vec<(String, bool)> {
+    sent.lock()
+        .unwrap()
+        .iter()
+        .map(|o| o.to_frame())
+        .filter(|f| f["action"] == "plugin_overlay")
+        .map(|f| {
+            (f["name"].as_str().unwrap().to_owned(), f["on"].as_bool().unwrap())
+        })
+        .collect()
+}
+
+#[test]
+fn clicking_the_panel_the_overlay_covers_closes_it() {
+    // pytmux-156 그대로 재현한다: 상태줄 시각을 눌러 시계를 띄우고 **판 안**을 누른다.
+    // 종전에는 여기서 아무 일도 안 났고, 사람은 그 작은 표식을 다시 찾아 눌러야 했다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.chrome_click(base::chrome::ClickTarget::Badge(base::Badge::Clock));
+    view.handle_mouse_down((40, 2), false);
+    view.pump_headless();
+    assert_eq!(
+        overlay_frames(&sent),
+        [("clock".to_owned(), true), ("clock".to_owned(), false)],
+        "판을 눌렀는데 끔이 서버로 안 갔다"
+    );
+}
+
+#[test]
+fn a_click_on_a_bare_panel_is_not_a_close() {
+    // ⛔ 끄기를 멱등으로 흉내 내면 **오버레이가 없는 판**을 누른 것까지 닫기가 되어
+    //    그 클릭을 삼킨다 — 선택·포커스가 통째로 죽는다. 양성 오라클과 짝이다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.handle_mouse_down((40, 2), false);
+    view.pump_headless();
+    assert!(overlay_frames(&sent).is_empty(), "안 켜진 판을 눌렀는데 끔이 나갔다");
+}
+
+#[test]
+fn the_calendar_arrow_still_wins_over_the_close() {
+    // ☠ 순서가 뒤집히면 달력 판의 클릭이 곧 닫기라 `‹`/`›` 를 **누를 길이 아예 없다**
+    //   (정본이 화살표 갈래에 그 이유를 적어 둔 자리다). 달력을 실제로 켜 놓고 잰다 —
+    //   안 켜면 닫기 갈래가 애초에 안 지나가 이 오라클이 공허해진다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(calendar_cells()))).unwrap();
+    view.pump_headless();
+    view.chrome_click(base::chrome::ClickTarget::Badge(base::Badge::Calendar));
+    view.handle_mouse_down((19, 1), false);
+    view.pump_headless();
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    let act = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_overlay_action")
+        .unwrap_or_else(|| panic!("화살표가 안 올라갔다 — 닫기가 먹었다: {frames:?}"));
+    assert_eq!((&act["name"], &act["do"]), (&"calendar".into(), &"next".into()));
+    assert_eq!(
+        overlay_frames(&sent),
+        [("calendar".to_owned(), true)],
+        "화살표를 눌렀는데 달력이 닫혔다: {frames:?}"
+    );
+}
+
+#[test]
+fn the_close_beats_the_claude_zone_hiding_under_the_overlay() {
+    // ☠ Claude 클릭존은 **오버레이 밑**이라 사람 눈에 안 보인다. 닫기를 그 뒤에 두면
+    //   시계를 닫으려던 클릭이 권한모드 판을 연다 — 정본은 이 순서를 반대로 적어 뒀다
+    //   (`clientwidgets.py`: 닫기 544 → interrupt/perm 존은 그 아래).
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [], "runs": [],
+        "zones": [{"x": 10, "y": 1, "w": 15, "h": 1, "pane": 1,
+                   "name": "claude-code", "do": "perm",
+                   "opens": "claude-perm-mode"}],
+        "keys": []
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(cells))).unwrap();
+    view.pump_headless();
+    view.chrome_click(base::chrome::ClickTarget::Badge(base::Badge::Clock));
+    view.handle_mouse_down((12, 1), false);
+    view.pump_headless();
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    assert!(
+        !frames.iter().any(|f| f["action"] == "plugin_open"),
+        "시계를 닫으려던 클릭이 권한모드 판을 열었다: {frames:?}"
+    );
+    assert_eq!(
+        overlay_frames(&sent),
+        [("clock".to_owned(), true), ("clock".to_owned(), false)],
+        "Claude 존이 닫기를 먹었다: {frames:?}"
+    );
+}
+
+#[test]
+fn the_status_badge_still_toggles_after_the_panel_can_close_it() {
+    // 회귀: 상태줄 표식은 **패널이 아니라서** `pane_at` 이 `None` 이고, 그래서 새 갈래를
+    // 안 지난다. 그 사실이 깨지면 표식이 열자마자 닫는 판이 된다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.chrome_click(base::chrome::ClickTarget::Badge(base::Badge::Clock));
+    view.chrome_click(base::chrome::ClickTarget::Badge(base::Badge::Clock));
+    view.pump_headless();
+    assert_eq!(
+        overlay_frames(&sent),
+        [("clock".to_owned(), true), ("clock".to_owned(), false)],
+        "표식 두 번이 켜고 끄지 않는다"
+    );
+}
+
 // ── P6 — 스펙이 물음 문구와 커서 자리를 정한다 ──────────────────────────────────
 
 fn mdir_table_screen(selected: usize) -> ServerMessage {
@@ -4422,6 +4579,192 @@ fn a_long_description_wraps_instead_of_pushing_the_panel() {
             "접힌 줄이 안 그려졌다: {chunk:?} / {pieces:?}"
         );
     }
+}
+
+/// 그려진 **면**(배경 사각형)을 색과 세로 구간으로 돌려준다 — `(색, 위, 아래)`.
+///
+/// 왜 글자 오라클로 안 되나: 하이라이트가 한 덩이인지 줄마다 끊겼는지는 **면**의 성질이고,
+/// 글자 기록(`painted_texts`)에는 그 정보가 없다. 끊긴 하이라이트는 글자로 재면 언제나
+/// 초록이다(글자는 어느 쪽이든 다 그려진다 — pytmux-157 이 그렇게 안 잡혔다).
+fn painted_fills(messages: Vec<ServerMessage>, keys: &[(Key, Mods)]) -> Vec<(ColorU, f32, f32)> {
+    painted_scene(messages, keys, |scene| {
+        scene
+            .layers()
+            .flat_map(|layer| layer.rects.iter())
+            .filter_map(|r| match r.background {
+                warpui::elements::Fill::Solid(c) => {
+                    Some((c, r.bounds.origin().y(), r.bounds.lower_left().y()))
+                }
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+/// 고른 줄 배경(`SELECTED_BG`)으로 칠한 면들만.
+///
+/// ⚠ **이 색은 활성 탭도 쓴다**(`theme::ACTIVE` 와 같은 값 — `theme.rs` 머리말). 그래서
+/// 목록의 하이라이트를 재려면 색만으로 좁히면 안 되고 **그 줄을 덮는 면**을 골라야 한다
+/// (`fills_covering`) — 색으로만 세면 탭바까지 세어 단언이 조용히 어긋난다(실측 3조각).
+fn selected_fills(messages: Vec<ServerMessage>, keys: &[(Key, Mods)]) -> Vec<(f32, f32)> {
+    painted_fills(messages, keys)
+        .into_iter()
+        .filter(|(c, _, _)| *c == palette::SELECTED_BG)
+        .map(|(_, top, bottom)| (top, bottom))
+        .collect()
+}
+
+/// 그 세로 자리들 중 하나라도 덮는 면들.
+fn fills_covering(fills: &[(f32, f32)], ys: &[f32]) -> Vec<(f32, f32)> {
+    fills
+        .iter()
+        .copied()
+        .filter(|(top, bottom)| ys.iter().any(|y| *y >= *top && *y < *bottom))
+        .collect()
+}
+
+/// 접히는 설명 표본 — 낱말이 **전부 다르다**.
+///
+/// ⛔ 같은 낱말을 반복해서 만들면 안 된다. 접힌 조각끼리 같은 글이 되거나 한쪽이 다른
+/// 쪽의 부분 문자열이 되어, 조각의 세로 자리를 찾을 때 **전부 첫 줄로 접힌다** — 그러면
+/// "줄마다 배경" 변이를 넣어도 오라클이 통과한다(실측으로 그렇게 통과했다).
+fn wrapping_desc() -> String {
+    (1..=40).map(|i| format!("낱말{i:02}")).collect::<Vec<_>>().join(" ")
+}
+
+/// 그 글자가 **그대로**(부분 일치가 아니라) 그려진 세로 자리. 두 번 그려졌으면 실패다 —
+/// 어느 쪽을 잰 것인지 모르는 값으로 기하를 단언하면 안 된다.
+fn painted_y_exact(boxes: &[(String, f32)], needle: &str) -> f32 {
+    let hits: Vec<f32> = boxes.iter().filter(|(t, _)| t == needle).map(|(_, y)| *y).collect();
+    assert_eq!(hits.len(), 1, "{needle:?} 가 {}번 그려졌다: {boxes:?}", hits.len());
+    hits[0]
+}
+
+#[test]
+fn the_fill_oracle_itself_sees_the_selected_row() {
+    // ★ 이 오라클이 먼저다 — 면 기록이 안 잡히면 아래 "한 덩이" 단언은 0 개를 보고도
+    //   조용히 통과한다(부정 단언만 남는 오라클 금지).
+    let fills = selected_fills(
+        three_tabs(),
+        &[(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)],
+    );
+    assert!(
+        !fills.is_empty(),
+        "고른 줄 배경이 한 면도 안 잡혔다 — 오라클이 죽었다"
+    );
+    assert!(
+        fills.iter().all(|(top, bottom)| bottom > top),
+        "높이가 0 인 면이 있다: {fills:?}"
+    );
+}
+
+#[test]
+fn a_wrapped_palette_row_is_one_unbroken_highlight() {
+    // pytmux-157 — 접힌 설명이 **줄마다 따로** 칠해져 한 항목이 두 항목처럼 읽혔다.
+    // 판의 열은 줄 사이에 `PANEL_ROW_SPACING` 을 두므로, 줄마다 배경을 깔면 그 간격에
+    // 판 배경이 드러나 하이라이트가 끊긴다(실측 3px).
+    let cols = SessionView::PANEL_COLS
+        - (SessionView::PAL_NAME_COLS + SessionView::PAL_OPTS_COLS + 2);
+    let long = wrapping_desc();
+    let lines = proto::palette::wrap(&long, cols);
+    assert!(lines.len() > 1, "이 설명은 접혀야 한다 — 오라클이 뜻을 잃는다");
+
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "하나", "active": true}],
+        "plugin_surface": {
+            "commands": [{"name": "verbose-thing", "desc": long, "cat": "설정/기타"}],
+            "noarg": [], "menu_items": [], "settings": [], "setting_cats": []
+        }
+    }))
+    .unwrap();
+    let mut keys = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+    keys.extend("verbose".chars().map(|c| (Key::Char(c), Mods::NONE)));
+    let msgs = vec![layout_one_pane(), status];
+
+    // 필터가 하나만 남기므로 그 항목이 곧 고른 줄이다(단언의 전제).
+    let pieces = painted_after(msgs.clone(), &keys);
+    assert!(
+        pieces.iter().filter(|p| *p == "verbose-thing").count() == 1,
+        "이 필터가 한 항목만 남기지 않았다 — 단언이 뜻을 잃는다: {pieces:?}"
+    );
+
+    // 접힌 줄들이 실제로 그려진 세로 자리 — 하이라이트는 **이 자리들을** 덮어야 한다.
+    let boxes = painted_boxes(msgs.clone(), &keys);
+    let ys: Vec<f32> = lines.iter().map(|chunk| painted_y_exact(&boxes, chunk)).collect();
+    assert!(
+        ys.windows(2).all(|w| w[0] < w[1]),
+        "접힌 줄들이 다른 자리에 안 그려졌다 — 단언이 뜻을 잃는다: {ys:?}"
+    );
+
+    let fills = selected_fills(msgs, &keys);
+    let covering = fills_covering(&fills, &ys);
+    assert_eq!(
+        covering.len(),
+        1,
+        "접힌 항목의 하이라이트가 {}조각으로 갈렸다(줄마다 배경): {covering:?} / 줄 {ys:?}",
+        covering.len()
+    );
+
+    // 그리고 그 한 면이 접힌 줄 **전부**를 덮어야 한다 — 첫 줄만 덮으면 여전히 두 개로
+    // 읽힌다(조각 수만 세면 그 변이가 살아남는다).
+    let (top, bottom) = covering[0];
+    for (chunk, y) in lines.iter().zip(&ys) {
+        assert!(
+            *y >= top && *y < bottom,
+            "접힌 줄이 하이라이트 밖에 있다: {chunk:?} y={y} / 면=({top}, {bottom})"
+        );
+    }
+}
+
+#[test]
+fn a_wrapped_row_does_not_change_the_row_pitch() {
+    // 한 덩이로 묶으면서 안쪽 행간을 판의 것과 다르게 두면, 접힌 항목만 높이가 어긋나
+    // 「예산 = 줄 수」 셈과 실제 픽셀이 갈린다 — 그래서 상수가 한 벌이어야 한다.
+    let cols = SessionView::PANEL_COLS
+        - (SessionView::PAL_NAME_COLS + SessionView::PAL_OPTS_COLS + 2);
+    let long = wrapping_desc();
+    let lines = proto::palette::wrap(&long, cols);
+    assert!(lines.len() >= 2, "이 표본은 접혀야 한다: {lines:?}");
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "하나", "active": true}],
+        "plugin_surface": {
+            "commands": [
+                {"name": "verbose-thing", "desc": long, "cat": "설정/기타"},
+                {"name": "brief-thing", "desc": "짧다", "cat": "설정/기타"}
+            ],
+            "noarg": [], "menu_items": [], "settings": [], "setting_cats": []
+        }
+    }))
+    .unwrap();
+    let msgs = vec![layout_one_pane(), status];
+    // 그 항목의 하이라이트 높이 — 고른 줄에 실제로 그려진 글자 자리로 면을 고른다
+    // (색만으로 좁히면 활성 탭이 섞인다 · `selected_fills` 머리말).
+    let height = |filter: &str, rows: &[String]| {
+        let mut keys = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+        keys.extend(filter.chars().map(|c| (Key::Char(c), Mods::NONE)));
+        let boxes = painted_boxes(msgs.clone(), &keys);
+        let ys: Vec<f32> = rows.iter().map(|row| painted_y_exact(&boxes, row)).collect();
+        let fills = selected_fills(msgs.clone(), &keys);
+        let covering = fills_covering(&fills, &ys);
+        assert_eq!(
+            covering.len(),
+            1,
+            "{filter}: 하이라이트가 한 면이 아니다: {covering:?} / 줄 {ys:?}"
+        );
+        covering[0].1 - covering[0].0
+    };
+    let one = height("brief", &["짧다".to_owned()]);
+    let many = height("verbose", &lines);
+    // 접힌 항목의 높이 = 한 줄 높이 × 줄 수 + 행간 × (줄 수 − 1). 종전 그림(줄마다 상자)과
+    // 같은 값이라, 이 CL 은 **짬을 무엇이 칠하는가**만 바꿨다는 뜻이다.
+    let rows = lines.len() as f32;
+    let expected = one * rows + SessionView::PANEL_ROW_SPACING * (rows - 1.);
+    assert!(
+        (many - expected).abs() < 0.5,
+        "접힌 항목의 높이가 판의 행간과 어긋난다: 한 줄 {one} · {rows}줄 {many} · 기대 {expected}"
+    );
 }
 
 #[test]
@@ -6389,4 +6732,35 @@ fn a_panel_on_screen_keeps_the_edit_box_from_opening_behind_it() {
     view.screens.open(base::screens::Screen::Commands);
     assert!(!click_session_name(&mut view), "판 뒤에서 편집칸이 열렸다");
     assert!(view.session_edit_for_test().is_none());
+}
+
+#[test]
+fn the_canvas_takes_the_leftover_and_the_status_bar_stays_on_the_floor() {
+    // ★ `pytmux-162`. 캔버스 격자가 못 채운 아래 빈 높이를 **캔버스가** 받도록 바꿨다
+    //   (종전에는 그 자리를 빈 위젯이 먹었고, 그래서 테두리 상자만 그 위에서 끝났다).
+    //   ⛔ 그 바꿈이 **상태줄을 밀면** 고친 것보다 나쁘다 — 창 바닥에 그대로 있어야 한다.
+    //   ⚠ 선 자체는 여기서 못 잰다(시험 글꼴은 칸 폭이 0이라 오버레이가 안 그린다) —
+    //     그 산수는 `splitter_tests.rs` 가, 그림은 라이브 스크린샷이 잡는다.
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["HELLO-ORACLE", {}]]], "cursor": [0, 0], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    let boxes = painted_boxes(vec![layout_one_pane(), screen], &[]);
+    let canvas = painted_y(&boxes, "HELLO-ORACLE").expect("캔버스가 안 그려졌다");
+    // 배지 줄(`⇕`)이 상태줄이다 — 머신 이름·시각과 달리 어디서 돌려도 같다.
+    let status = painted_y(&boxes, "\u{21d5}").expect("상태줄이 안 그려졌다");
+    // 창은 이 하네스에서 600 높이다(`painted_scene_setup`).
+    assert!(
+        status > canvas + 300.,
+        "캔버스와 상태줄 사이에 잴 만한 빈 높이가 없다 — 이 오라클이 공허하다: {boxes:?}"
+    );
+    assert!(
+        (560.0..600.0).contains(&status),
+        "상태줄이 창 바닥을 떠났다(밀렸거나 창 밖으로 나갔다): {status} {boxes:?}"
+    );
+    assert!(
+        canvas < 100.,
+        "캔버스가 위에서 밀려 내려왔다 — 빈 높이가 위로 갔다: {canvas}"
+    );
 }

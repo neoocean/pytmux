@@ -740,20 +740,44 @@ def claude_remote_blocked(text: str) -> bool:
 # 안전(2026-07-16 검수 SEC-1): 헤더 문구만 보고 Enter 를 치면 향후 빌드가 옵션 순서를
 # 바꾸거나 기본을 "No, exit" 로 두었을 때 **미지의 선택**을 확정한다. 그래서 셀렉터
 # (❯ 또는 구 CLI 의 '>')가 실제로 "Yes, I trust these settings" 줄에 있을 때만 True.
+#
+# ⛔ **판정은 "지금 대기 중인 승인 화면이 있나"이지 "화면 어딘가에 그 문구가 있나"가
+# 아니다**(pytmux/pytmux-151 · 제보 2026-08-06). Claude 는 승인이 끝나도 화면을 지우지
+# 않고 아래로 이어 그리므로, 통과된 승인 화면의 **머리글과 `❯ 1. Yes…` 줄이 화면에
+# 그대로 남는다**. 그 잔상까지 True 로 세면 servermixin 의 재주입 방지 래치
+# (`_managed_ok_active`)가 한 번도 안 풀려, **같은 패널에서 claude 를 두 번째로 띄웠을
+# 때 진짜 승인 화면이 자동 통과되지 않는다.** 그래서 둘로 좁힌다:
+#   ① **마지막 머리글 이후 구간만** 본다 — 그 앞의 잔상은 판정에서 빠진다.
+#   ② 그 구간에 **미해결 신호**("No, exit Claude Code")를 요구한다 — 통과된 잔상은
+#      다음 프레임이 그 옵션 줄을 덮어쓰므로(실측 첨부: 그 자리에 "Resume this session
+#      with:") 자연히 False 가 되어 래치가 풀린다.
+# ⚠ ②는 잔상이 옵션 줄까지 통째로 남는 경우까지는 못 가른다(그때는 새 인스턴스가 뜨는
+# 순간 ①이 가른다). 둘 다 **좁히는** 조건이라 SEC-1 을 넓히지 않는다 — 못 가르면
+# 키를 안 보내고 화면을 사람에게 남긴다.
 _MANAGED_SETTINGS_MARK = "Managed settings require approval"
 _MANAGED_SETTINGS_YES = "Yes, I trust these settings"
+_MANAGED_SETTINGS_NO = "No, exit Claude Code"
 
 
 def claude_managed_settings_yes(text: str) -> bool:
-    """조직 관리 설정 승인 화면이 떠 있고 **긍정 기본선택**(❯/> 셀렉터가 'Yes, I trust
-    these settings' 줄)이 실제로 선택돼 있으면 True(= Enter 자동 확정 대상).
+    """조직 관리 설정 승인 화면이 **지금 응답을 기다리며** 떠 있고 **긍정 기본선택**
+    (❯/> 셀렉터가 'Yes, I trust these settings' 줄)이 실제로 선택돼 있으면 True
+    (= Enter 자동 확정 대상).
+
+    판정 구간은 **마지막** 'Managed settings require approval' 이후다 — 앞서 통과된
+    승인 화면의 잔상은 화면에 남아도 보지 않는다. 그 구간에 미결 옵션
+    ('No, exit Claude Code')이 함께 보여야 한다(pytmux-151).
 
     셀렉터가 다른 줄(예: 'No, exit Claude Code')로 옮겨갔거나 문구가 바뀌면 False —
     자동화는 아무 키도 보내지 않고 사람에게 화면을 남긴다(SEC-1)."""
     t = text or ""
-    if _MANAGED_SETTINGS_MARK not in t:
+    i = t.rfind(_MANAGED_SETTINGS_MARK)
+    if i < 0:
         return False
-    for ln in t.splitlines():
+    live = t[i:]                      # ① 마지막 인스턴스 구간만
+    if _MANAGED_SETTINGS_NO not in live:   # ② 미해결(응답 대기) 신호
+        return False
+    for ln in live.splitlines():
         if _MANAGED_SETTINGS_YES in ln and ("❯" in ln or ln.lstrip().startswith(">")):
             return True
     return False

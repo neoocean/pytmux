@@ -99,3 +99,13 @@ crash-*
 # QA 런 산출물(qa/run.py). 실 캡처·호스트 로컬 경로가 찍히는 생성물이고 결함의 정본은
 # 이슈 트래커다 — 공개 미러에 올리지 않는다. `/reports/` 와 같은 이유·같은 앵커 규율.
 /qa/out/
+
+# tools/launchd/ — 이 상자의 **운영 설정**(launchd job). 제품이 아니라 「이 머신에서
+# 무엇을 언제 돌리나」이고, launchd 는 상대경로를 못 쓰므로 파일이 본질적으로
+# **실 홈 절대경로**를 담는다 — `/Users/<계정>/p4/...`(계정 + depot 구조)가 그대로다.
+# 실제로 `org.woojinkim.pytmux.qa.plist`(2026-08-09 · pytmux-148)가 그 상태로 들어와
+# `scripts/check_mirror.py` 가 붉었다(검수 2026-08-09 B-4). 리댁션이 아니라 제외를 고른
+# 이유: 자리표시자로 바꾸면 CLAUDE.md 가 안내하는 `cp ~/Library/LaunchAgents/` 가
+# **그대로는 안 먹는** 파일이 되고, 그때는 「고쳐서 쓰라」는 주석이 또 하나의 SSOT 가
+# 된다. `docs/internal/`·`/qa/out/` 과 같은 부류·같은 앵커 규율이고 depot 은 계속 추적한다.
+/tools/launchd/

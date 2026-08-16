@@ -14,6 +14,7 @@
 //! `scripts/gen_rtt_fixture.py` → `tests/fixtures/rtt_graph.json` 적합성 테스트.
 
 use base::i18n::{t, tf};
+use serde::{Deserialize, Serialize};
 
 /// 이력 보존·그래프 창(초) — 최근 60분.
 pub const WINDOW: f64 = 3600.0;
@@ -23,6 +24,25 @@ pub const GRAPH_W: usize = 48;
 pub const GRAPH_H: usize = 5;
 /// ping 주기(초) — 파이썬 `net_ping_interval` 기본값.
 pub const PING_INTERVAL: f64 = 0.5;
+
+/// RTT 그래프 데이터 — 뷰가 실제 도형으로 그릴 때 필요한 값들.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphData {
+    /// 시간 버킷별 최대 RTT (초 단위, None 은 측정 없음).
+    pub buckets: Vec<Option<f64>>,
+    /// 임계치 (초).
+    pub threshold: f64,
+    /// 최대값 스케일 (세로).
+    pub vmax: f64,
+    /// 피크 (초).
+    pub peak: f64,
+    /// 평균 (초).
+    pub avg: f64,
+    /// 표본 수.
+    pub count: usize,
+    /// 측정 없는 칸이 있는가.
+    pub has_gaps: bool,
+}
 
 /// 세로 막대 블록(아래→위로 차오름). 인덱스 = 1/8 칸 수.
 const VBLOCKS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
@@ -40,6 +60,85 @@ fn pyround(x: f64) -> i64 {
         let f = floor as i64;
         if f % 2 == 0 { f } else { f + 1 }
     }
+}
+
+/// `GraphData` 를 글자 그래프로 렌더링한다. 뷰용.
+fn render_graph_lines(data: &GraphData, width: usize, height: usize) -> Vec<String> {
+    let thr = data.threshold;
+    let vmax = data.vmax;
+    let peak = data.peak;
+    let avg = data.avg;
+    let count = data.count;
+
+    let total8 = (height * 8) as i64;
+    // 칸별 1/8 채움. 측정값은 최소 1 로 띄워 '0 에 가까움'과 '측정 없음'을 가른다.
+    let eighths: Vec<Option<i64>> = data
+        .buckets
+        .iter()
+        .map(|b| b.map(|v| pyround(v / vmax * total8 as f64).clamp(1, total8)))
+        .collect();
+    let thr_e = pyround(thr / vmax * total8 as f64);
+    let thr_row = if 0 < thr_e && thr_e <= total8 {
+        Some(height as i64 - 1 - (thr_e - 1) / 8)
+    } else {
+        None
+    };
+    let mut out = vec![t("RTT 그래프 (최근 60분):").to_owned()];
+    let vmax_ms = pyround(vmax * 1000.0);
+    let thr_ms = pyround(thr * 1000.0);
+    for r in 0..height as i64 {
+        let base = (height as i64 - 1 - r) * 8;
+        let on_thr = thr_row == Some(r);
+        let mut cells = String::new();
+        for e in &eighths {
+            match e {
+                None => cells.push(if on_thr {
+                    '┄'
+                } else if r == height as i64 - 1 {
+                    '·'
+                } else {
+                    ' '
+                }),
+                Some(e) => {
+                    let blk = e - base;
+                    if blk > 0 {
+                        cells.push(VBLOCKS[blk.min(8) as usize]);
+                    } else {
+                        cells.push(if on_thr { '┄' } else { ' ' });
+                    }
+                }
+            }
+        }
+        let axis = if r == 0 {
+            format!("{vmax_ms:>4} ┤")
+        } else if on_thr {
+            format!("{thr_ms:>4} ┄")
+        } else {
+            "     ┤".to_owned()
+        };
+        out.push(format!("{axis}{cells}"));
+    }
+    out.push(format!("   0 ┴{}", "─".repeat(width)));
+    let left = t("-60분");
+    let right = t("지금");
+    let lw = crate::compose::display_width(left);
+    let rw = crate::compose::display_width(right);
+    let pad = (width as i64 - lw as i64 - rw as i64).max(1) as usize;
+    out.push(format!("      {left}{}{right}", " ".repeat(pad)));
+    let peak_ms = pyround(peak * 1000.0);
+    let avg_ms = pyround(avg * 1000.0);
+    out.push(tf(
+        "peak {peak} ms · 평균 {avg} ms · 표본 {n}개",
+        &[
+            ("peak", peak_ms.to_string().as_str()),
+            ("avg", avg_ms.to_string().as_str()),
+            ("n", count.to_string().as_str()),
+        ],
+    ));
+    if data.has_gaps {
+        out.push(t("· 측정 없음(클라 미가동/끊김 구간)").to_owned());
+    }
+    out
 }
 
 /// RTT 표본 이력 + 응답성 히스테리시스(파이썬 `_net_sample` 동형).
@@ -92,9 +191,8 @@ impl RttHist {
         self.samples.is_empty()
     }
 
-    /// 그래프 줄들(제목·막대·축·통계·범례). 창 안 표본이 없으면 `None` — 호출부가
-    /// 그래프를 통째로 생략한다(파이썬과 같은 계약).
-    pub fn graph_lines(&self, now: f64, width: usize, height: usize) -> Option<Vec<String>> {
+    /// 그래프 데이터 (값). 창 안 표본이 없으면 `None` — 호출부가 그래프를 통째로 생략한다.
+    pub fn graph_data(&self, now: f64, width: usize, height: usize) -> Option<GraphData> {
         if self.samples.is_empty() || width == 0 || height == 0 {
             return None;
         }
@@ -124,74 +222,23 @@ impl RttHist {
         } else {
             1e-9
         };
-        let total8 = (height * 8) as i64;
-        // 칸별 1/8 채움. 측정값은 최소 1 로 띄워 '0 에 가까움'과 '측정 없음'을 가른다.
-        let eighths: Vec<Option<i64>> = buckets
-            .iter()
-            .map(|b| b.map(|v| pyround(v / vmax * total8 as f64).clamp(1, total8)))
-            .collect();
-        let thr_e = pyround(thr / vmax * total8 as f64);
-        let thr_row = if 0 < thr_e && thr_e <= total8 {
-            Some(height as i64 - 1 - (thr_e - 1) / 8)
-        } else {
-            None
-        };
-        let mut out = vec![t("RTT 그래프 (최근 60분):").to_owned()];
-        let vmax_ms = pyround(vmax * 1000.0);
-        let thr_ms = pyround(thr * 1000.0);
-        for r in 0..height as i64 {
-            let base = (height as i64 - 1 - r) * 8;
-            let on_thr = thr_row == Some(r);
-            let mut cells = String::new();
-            for e in &eighths {
-                match e {
-                    None => cells.push(if on_thr {
-                        '┄'
-                    } else if r == height as i64 - 1 {
-                        '·'
-                    } else {
-                        ' '
-                    }),
-                    Some(e) => {
-                        let blk = e - base;
-                        if blk > 0 {
-                            cells.push(VBLOCKS[blk.min(8) as usize]);
-                        } else {
-                            cells.push(if on_thr { '┄' } else { ' ' });
-                        }
-                    }
-                }
-            }
-            let axis = if r == 0 {
-                format!("{vmax_ms:>4} ┤")
-            } else if on_thr {
-                format!("{thr_ms:>4} ┄")
-            } else {
-                "     ┤".to_owned()
-            };
-            out.push(format!("{axis}{cells}"));
-        }
-        out.push(format!("   0 ┴{}", "─".repeat(width)));
-        let left = t("-60분");
-        let right = t("지금");
-        let lw = crate::compose::display_width(left);
-        let rw = crate::compose::display_width(right);
-        let pad = (width as i64 - lw as i64 - rw as i64).max(1) as usize;
-        out.push(format!("      {left}{}{right}", " ".repeat(pad)));
-        let peak_ms = pyround(peak * 1000.0);
-        let avg_ms = pyround(raw.iter().sum::<f64>() / raw.len() as f64 * 1000.0);
-        out.push(tf(
-            "peak {peak} ms · 평균 {avg} ms · 표본 {n}개",
-            &[
-                ("peak", peak_ms.to_string().as_str()),
-                ("avg", avg_ms.to_string().as_str()),
-                ("n", raw.len().to_string().as_str()),
-            ],
-        ));
-        if eighths.iter().any(Option::is_none) {
-            out.push(t("· 측정 없음(클라 미가동/끊김 구간)").to_owned());
-        }
-        Some(out)
+        let avg = raw.iter().sum::<f64>() / raw.len() as f64;
+        let has_gaps = buckets.iter().any(Option::is_none);
+        Some(GraphData {
+            buckets,
+            threshold: thr,
+            vmax,
+            peak,
+            avg,
+            count: raw.len(),
+            has_gaps,
+        })
+    }
+
+    /// 그래프 줄들 (글자 그림, 뷰용). 창 안 표본이 없으면 `None`.
+    pub fn graph_lines(&self, now: f64, width: usize, height: usize) -> Option<Vec<String>> {
+        let data = self.graph_data(now, width, height)?;
+        Some(render_graph_lines(&data, width, height))
     }
 }
 

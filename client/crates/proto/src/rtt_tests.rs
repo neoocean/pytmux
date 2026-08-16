@@ -15,6 +15,8 @@ struct Case {
     width: usize,
     height: usize,
     lines: Option<Vec<String>>,
+    #[serde(default)]
+    data: Option<GraphData>,
 }
 
 #[test]
@@ -29,8 +31,28 @@ fn the_graph_matches_the_python_canonical() {
         for (ts, rtt) in case.hist {
             hist.samples.push((ts, rtt));
         }
-        let got = hist.graph_lines(fx.now, case.width, case.height);
-        assert_eq!(got, case.lines, "파이썬과 다른 그림: {name}");
+        let got_lines = hist.graph_lines(fx.now, case.width, case.height);
+        assert_eq!(got_lines, case.lines, "파이썬과 다른 그림: {name}");
+        let got_data = hist.graph_data(fx.now, case.width, case.height);
+        if let Some(expected_data) = &case.data {
+            let actual_data = got_data.expect("그래프 데이터가 없다");
+            assert_eq!(
+                actual_data.buckets, expected_data.buckets,
+                "버킷이 다르다: {name}"
+            );
+            assert_eq!(actual_data.threshold, expected_data.threshold, "임계가 다르다: {name}");
+            assert_eq!(actual_data.vmax, expected_data.vmax, "vmax 가 다르다: {name}");
+            assert_eq!(actual_data.peak, expected_data.peak, "피크가 다르다: {name}");
+            assert!(
+                (actual_data.avg - expected_data.avg).abs() < 1e-9,
+                "평균이 다르다: {name}"
+            );
+            assert_eq!(actual_data.count, expected_data.count, "카운트가 다르다: {name}");
+            assert_eq!(
+                actual_data.has_gaps, expected_data.has_gaps,
+                "갭 플래그가 다르다: {name}"
+            );
+        }
     }
 }
 

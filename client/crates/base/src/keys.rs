@@ -234,7 +234,17 @@ pub fn parse_token(token: &str) -> Option<(Key, Mods)> {
         // 가이드 스크린샷이 이 화면만 못 찍는 구멍이 있었다(2026-07-30).
         "insert" => (Key::Insert, Mods::NONE),
         _ => {
-            if let Some(c) = token.strip_prefix("ctrl-").and_then(|r| r.chars().next()) {
+            // `f1`~`f12`(pytmux-125) — 하네스가 이 키를 못 넣으면 **mdir 의 F-키가 든
+            // 화면은 영영 못 찍는다**(맥에서는 창에 키를 넣을 길이 따로 없다 —
+            // `insert` 가 토큰으로 있는 이유와 같은 자리다). 이름 표는 여기서 다시
+            // 적지 않고 [`from_name`] 이 짓는다. 낱글자 `f` 는 그대로 글자다.
+            if token.len() > 1
+                && let Some(rest) = token.strip_prefix('f')
+                && rest.chars().all(|c| c.is_ascii_digit())
+                && let Some(key) = from_name(token, false, None)
+            {
+                (key, Mods::NONE)
+            } else if let Some(c) = token.strip_prefix("ctrl-").and_then(|r| r.chars().next()) {
                 (Key::Char(c), Mods::CTRL)
             } else if token.chars().count() == 1 {
                 (Key::Char(token.chars().next()?), Mods::NONE)
@@ -687,6 +697,12 @@ fn binding_name(key: Key) -> Option<String> {
         Key::Home => "home".to_owned(),
         Key::Insert => "insert".to_owned(),
         Key::ShiftDelete => "shift-delete".to_owned(),
+        // F1~F12 — Home 과 **같은 이유로** 이름이 있다: 우리 표(`BINDINGS`)에는 한 줄도
+        // 없지만 **플러그인 스펙이 가져간다**(mdir 의 `F10` 트리·`F5` 복사 … =
+        // `pytmux-125`). 이름이 없으면 서버가 `"f10"` 을 광고해도 그 표에서 영영 안
+        // 찾아지고, 증상은 "F-키만 안 먹는다"다 — 인코딩(`encode`)과 이름 읽기
+        // (`from_name`)는 이미 F-키를 아는데 **되돌아가는 이름**만 없던 자리다.
+        Key::Function(n) => format!("f{n}"),
         _ => return None,
     })
 }

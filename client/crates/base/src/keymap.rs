@@ -33,6 +33,14 @@ pub enum Action {
     /// 지금 패널을 닫는다.
     KillPane,
     NewTab,
+    /// 새 탭을 **지금 패널의 디렉토리**에서 열고 거기서 Claude Code CLI 를 띄운다
+    /// (`esc c` · pytmux-137).
+    ///
+    /// [`NewTab`](Action::NewTab) 과 가르는 것 둘: ⑴ 실행할 명령이 붙는다(무엇을
+    /// 실행할지는 `claude-command` 설정이 정한다 — 경로·플래그가 사람마다 다르다)
+    /// ⑵ **`default-path` 를 안 따른다**. 이 키의 값은 「이 디렉토리에서 바로
+    /// 붙는다」에 있어서, 설정이 `home` 이면 요구가 조용히 안 지켜진다.
+    NewClaudeTab,
     /// 지금 탭을 닫는다.
     KillTab,
     NextTab,
@@ -411,6 +419,7 @@ impl Action {
             Action::SplitTopBottom => "상하 분할",
             Action::KillPane => "패널 닫기",
             Action::NewTab => "새 탭",
+            Action::NewClaudeTab => "새 탭 (Claude Code)",
             Action::KillTab => "탭 닫기",
             Action::NextTab => "다음 탭",
             Action::PrevTab => "이전 탭",
@@ -604,6 +613,10 @@ pub static BINDINGS: &[Binding] = &[
     b("up", Action::SelectPane(Dir::Up), false),
     b("down", Action::SelectPane(Dir::Down), false),
     b("n", Action::NewTab, false),
+    // 정본 `esc c` 와 같은 글자다(pytmux-137). **ESC 모드에서 비어 있던 글자**라
+    // 손버릇이 겹치지 않는다 — prefix 의 `c`(새 탭 · tmux 관습)도 `esc n`(새 탭)도
+    // 그대로다.
+    b("c", Action::NewClaudeTab, false),
     b("p", Action::SplitTopBottom, false),
     b("shift-P", Action::TogglePin, false),
     // 명령 모드 안에서 vim·less 에게 ESC 를 주는 길. 그냥 `ESC` 는 모드에서 나가는 키다.
@@ -763,6 +776,7 @@ pub static MENU: &[MenuEntry] = &[
     me("autoresume", "토큰리밋 자동재개 토글", Action::ToggleAutoresume),
     me("prompt_clear", "프롬프트 단위 클리어 토글", Action::TogglePromptClear),
     me("new_window", "새 탭", Action::NewTab),
+    me("new_claude_window", "새 탭에서 Claude Code 실행", Action::NewClaudeTab),
     me("rename_window", "탭 이름 변경", Action::RenameTab),
     me("kill_window", "탭 삭제", Action::KillTab),
     me("toggle_pin", "탭 고정 토글 (오른쪽 구역으로)", Action::TogglePin),
@@ -821,6 +835,7 @@ pub static MENU_GROUPS: &[(&str, &[&str])] = &[
         "tab",
         &[
             "new_window",
+            "new_claude_window",
             "rename_window",
             "kill_window",
             "toggle_pin",
@@ -1171,6 +1186,7 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("break-pane", "패널", Action::BreakPane),
     pe("next-layout", "패널", Action::CycleLayout),
     pe("new-tab", "탭", Action::NewTab),
+    pe("new-claude-tab", "탭", Action::NewClaudeTab),
     pe("kill-tab", "탭", Action::KillTab),
     pe("next-tab", "탭", Action::NextTab),
     pe("previous-tab", "탭", Action::PrevTab),
@@ -1651,6 +1667,7 @@ fn variant_index(action: Action) -> usize {
         Action::SplitTopBottom => 9,
         Action::KillPane => 10,
         Action::NewTab => 11,
+        Action::NewClaudeTab => 114,
         Action::KillTab => 12,
         Action::NextTab => 13,
         Action::PrevTab => 14,
@@ -1755,7 +1772,7 @@ fn variant_index(action: Action) -> usize {
     }
 }
 
-const ACTION_COUNT: usize = 114;
+const ACTION_COUNT: usize = 115;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1777,6 +1794,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::SplitTopBottom,
         Action::KillPane,
         Action::NewTab,
+        Action::NewClaudeTab,
         Action::KillTab,
         Action::NextTab,
         Action::PrevTab,

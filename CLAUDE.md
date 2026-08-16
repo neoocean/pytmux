@@ -32,6 +32,8 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 ## 빌드/실행/테스트
 - 의존성: `pip install -r requirements.txt` (Textual·pyte·wcwidth 등).
 - 실행: `python3 pytmux.py` (또는 설치 후 `pytmux`).
+- **git 훅 설정(처음 클론 후 한 번)**: `bash .git-hooks-install.sh` — `git push` 전에
+  `publish_check.py` 를 자동으로 실행해서 미러 드리프트를 방지한다(pytmux-153).
 - Rust GUI: `cd client && cargo build -p gui`.
   자세한 것(게이트 4종·패리티 래칫·라이브 하네스)은 `client/CLAUDE.md`.
 - ⛔ **프로세스 이름으로 일괄 kill 금지**(사고 2026-07-28, 같은 날 3회 재발):
@@ -72,6 +74,8 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
   스위트 · 미러 위생/드리프트를 순서대로 돌고 요약 한 줄을 낸다. 빠른 되먹임만 원하면
   `--fast`, 무엇을 도는지만 보려면 `--list`. **한 스텝이 넘어져도 나머지를 돈다**(한 번
   돌려 고칠 것을 전부 본다). 개별 게이트는 아래·`client/CLAUDE.md`.
+  ★ **git 훅을 설정했으면 `git push` 직전에 자동으로 실행되므로**(pytmux-153) 수동으로
+  또 돌릴 필요는 없다. 다만 `commit` 하기 전에 미리 실패를 보고 싶으면 이 명령을 직접 치면 된다.
   - **Windows**: 셸 게이트 셋은 **Git Bash** 로 돈다. `bash` 를 PATH 에서 그냥 집으면
     `…\WindowsApps\bash.exe`(Store 앱 별칭 = WSL 런처)가 잡혀 `Class not registered` 로
     죽는데, 그건 게이트가 **아무것도 안 재고 빨간 줄만 남기는** 상태다(2026-08-01 실측:
@@ -80,6 +84,13 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     의심되면 그것부터 볼 것.
   - **SKIP 은 실패가 아니다**: p4 전용 워크스페이스(git 클론이 없는 곳)에서 `미러 드리프트`
     는 잴 것이 없어 건너뛴다. 건너뛴 것은 요약의 `건너뜀 N:` 줄에 **사유와 함께** 남는다.
+  - ★ **게이트는 «이 상자» 를 자식에게서 걷어낸다**(§`child_env` 한 함수 · pytmux/pytmux-202):
+    `NO_COLOR` 를 지우고 · 찾은 cargo 를 PATH 앞에 세우고 · **`PYTMUX_CONFIG` 를 빈 임시
+    파일로 세운다**. 셋째가 없으면 `cargo test` 가 탐색 차례를 끝까지 걸어가 **이 상자의
+    진짜 `~/.config/pytmux/config`** 를 읽는다 — 실측(2026-08-16)으로 `set status-position
+    top` 한 줄에 GUI 배지 자리 오라클이 떨어졌다. 파이썬 스위트는 `tests/run.py` 가 제
+    손으로 막지만 **카고는 그 프로세스를 안 지나서** 보호 밖이었다.
+    ⚠ **`cargo test` 를 직접 치면 여전히 밖이다**(그때는 `PYTMUX_CONFIG` 를 손으로 세운다).
 - **테스트(커밋 전 필수)**: `python3 tests/run.py` — 헤드리스로 전체 스위트를 돌려
   `N passed, 0 failed` 를 확인한다. 특정 모듈만: `python3 tests/run.py test_server`.
   - 주의: `run.py` 는 실패해도 종료코드가 0 일 수 있으니 **요약줄(passed/failed)** 을

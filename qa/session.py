@@ -6,16 +6,17 @@ ConPTY·실 Claude 패널은 driver 검증 불가"* · `client/CLAUDE.md` *"GUI 
 라이브 스크린샷만이 잡는다"*). **이 층의 존재 이유가 그 두 문장이다.**
 
 T0 가 잡는 것은 첫째다 — 진짜 데몬 · 진짜 셸 PTY · **진짜 Textual 클라 프로세스**가
-가짜 터미널 아래서 그리는 ANSI 프레임. 실 GUI 창(Rust `pytmux-gui`)은 T3 몫이고 아직
-없다(`pytmux/qa-system` §5 · 후속 이슈).
+가짜 터미널 아래서 그리는 ANSI 프레임. 둘째(실 GUI 창 · Rust `pytmux-gui`)는 T3 이
+잡는다 — `gui_frame` 이 그 자리다(2026-08-09 · `pytmux/pytmux-147`).
 
 **새 하네스를 처음부터 짜지 않는다** — 재료는 이미 있다:
 
 | 재료 | 여기서 쓰는 자리 |
 | --- | --- |
-| `tests/ptyshot.py` | 실 클라 화면 캡처(`capture_client`) |
+| `tests/ptyshot.py` | 실 클라 화면 캡처(`capture_client`) · **다중 클라**(`clients` → `Multi`) |
 | `pytmuxlib.proc` | 데몬 기동 — **pid 를 우리가 쥔다**(이름 kill 금지의 전제) |
 | `pytmux.py cmd …` | 조작 — 실 CLI 표면을 그대로 지난다(제어 라인 경로) |
+| `pytmux-gui --frame-dump` | **실 GUI 창의 프레임**(`gui_frame`) — 제품이 자기 드로어블에서 뜬다 |
 
 ⛔ **`.claude/skills/run-pytmux/driver.py` 는 안 쓴다.** 그쪽이 더 편한 어휘를 갖고
    있지만 `.claude/` 는 git 미러에서 제외라 공개 클론에 **없다** — QA 층이 거기 기대면
@@ -30,6 +31,7 @@ import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 
 from .env import ROOT, IS_WINDOWS, HomeSlot
 
@@ -40,6 +42,14 @@ from pytmuxlib import ipc, proc                  # noqa: E402
 
 #: `pytmux.py ls` 의 요약줄. 트리 상태를 묻는 가장 싼 길이다.
 _LS = re.compile(r"(\d+)\s+tabs?,\s*(\d+)\s+panes?")
+
+#: `--frame-dump` 이 성공했을 때 stdout 에 내는 한 줄(`gui/src/main.rs` `save_frame`).
+_DUMPED = re.compile(r"frame-dump:\s*(?P<path>.+?)\s*\((?P<w>\d+)x(?P<h>\d+)\)")
+
+#: 실 GUI 이진을 찾는 자리. `PYTMUX_GUI` 로 지목하면 그것이 이긴다.
+#: ⛔ **둘 중 «새것»을 고른다** — 이름 순으로 고르면 몇 주 묵은 `release` 를 잡고도
+#:    QA 는 초록을 판다("고쳤다"와 "돈다"는 다른 사건이다 · 루트 CLAUDE.md §배포).
+GUI_BINARIES = ("client/target/release/pytmux-gui", "client/target/debug/pytmux-gui")
 
 
 class EnvBroken(Exception):
@@ -52,16 +62,103 @@ class NotSupported(Exception):
     호출부가 잡아 명시 SKIP 으로 회계하고, 리포트와 종료코드가 그 사실을 말한다."""
 
 
+@dataclass
+class GuiShot:
+    """실 GUI 창을 한 번 띄워 프레임을 뜬 결과. 판정은 시나리오가 한다."""
+    binary: str
+    rc: int
+    stdout: str
+    stderr: str
+    path: str
+    timed_out: bool = False
+    #: 이진이 **스스로 말한** 크기(`frame-dump: <경로> (WxH)`). 실제 PNG 와 대조하면
+    #: "찍었다고 말하고 안 찍은" 부류가 갈린다.
+    said: tuple[int, int] | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.rc == 0 and not self.timed_out and os.path.exists(self.path)
+
+    def why(self) -> str:
+        """실패 사유 한 줄 — 결함 본문에 그대로 싣는다."""
+        if self.timed_out:
+            return f"시간 안에 안 끝나 죽였다(rc={self.rc}) · stderr: {self.stderr[:300] or '(없음)'}"
+        if self.rc != 0:
+            return f"rc={self.rc} · stderr: {self.stderr[:300] or '(없음)'}"
+        if not os.path.exists(self.path):
+            return (f"rc=0 인데 PNG 가 없다: {self.path} · "
+                    f"stdout: {self.stdout[:200] or '(없음)'}")
+        return ""
+
+
+def _newest_source(root: str) -> tuple[float, str]:
+    """GUI 이진에 **굽히는** 소스 중 가장 새것 `(mtime, 경로)`.
+
+    ⛔ `crates/*/tests/` 는 뺀다 — 별개 테스트 타깃이라 이진에 안 들어간다. 넣으면 시험
+       한 줄 고친 날 T3 이 「이진이 낡았다」로 통째로 건너뛴다(없는 문제를 만드는 관문).
+    """
+    newest = (0.0, "")
+    for base, dirs, names in os.walk(os.path.join(root, "client", "crates")):
+        dirs[:] = [d for d in dirs if d not in ("target", "tests")]
+        for n in names:
+            if n.endswith(".rs") or n == "Cargo.toml":
+                p = os.path.join(base, n)
+                try:
+                    m = os.path.getmtime(p)
+                except OSError:
+                    continue
+                if m > newest[0]:
+                    newest = (m, p)
+    return newest
+
+
+def gui_binary() -> str:
+    """이 상자에서 잴 수 있는 GUI 이진. 없으면 `NotSupported`(= 사유 붙은 SKIP).
+
+    ⛔ **「없으면 통과」로 접지 않는다**(원칙 ⓑ) — 그리고 **낡은 이진도 안 잰다.**
+       후자가 더 나쁘다: 이미 고친 결함을 다시 신고하고(늑대소년), 아직 안 고친 것에
+       초록을 판다. 어느 쪽이든 그 런은 「무엇을 잰 것인가」를 말할 수 없다.
+    """
+    named = os.environ.get("PYTMUX_GUI")
+    ext = ".exe" if IS_WINDOWS else ""
+    cands = [named] if named else [os.path.join(ROOT, c) + ext for c in GUI_BINARIES]
+    found = [c for c in cands if c and os.path.exists(c)]
+    if not found:
+        raise NotSupported(
+            "실 GUI 이진이 없다 — `cd client && cargo build -p gui --bin pytmux-gui` "
+            f"(또는 PYTMUX_GUI 로 지목) · 찾아본 곳: {', '.join(cands)}")
+    binary = max(found, key=os.path.getmtime)
+    if not named:
+        src_mtime, src_path = _newest_source(ROOT)
+        if src_mtime > os.path.getmtime(binary):
+            raise NotSupported(
+                f"GUI 이진이 소스보다 낡았다 — 지금 재면 어느 코드를 잰 것인지 말할 수 "
+                f"없다. `cd client && cargo build -p gui --bin pytmux-gui` 뒤에 다시 "
+                f"돌려라 (이진 {_when(os.path.getmtime(binary))} · "
+                f"{os.path.relpath(src_path, ROOT)} {_when(src_mtime)})")
+    if not IS_WINDOWS and sys.platform.startswith("linux") \
+            and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        raise NotSupported("창을 만들 수 있는 디스플레이가 없다(DISPLAY·WAYLAND_DISPLAY 둘 다 비었다)")
+    return binary
+
+
+def _when(mtime: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime))
+
+
 class Session:
     """격리 슬롯 위에 선 pytmux 스택 하나."""
 
     def __init__(self, slot: HomeSlot, cols: int = 100, rows: int = 30,
-                 python: str | None = None):
+                 python: str | None = None, ledger=None):
         self.slot = slot
         self.cols = cols
         self.rows = rows
         self.python = python or sys.executable
         self.endpoint: str | None = None
+        #: 커버리지 원장(`qa/ledger.py`). ★ **여기서 적는다** — 시나리오가 따로 적으면
+        #: 적기를 잊은 명령이 「안 지났다」로 세어져 원장이 조용히 거짓말한다.
+        self.ledger = ledger
 
     # ── 수명 ─────────────────────────────────────────────────────────────────
     def start(self, timeout: float = 12.0) -> None:
@@ -92,8 +189,18 @@ class Session:
         return r.stdout
 
     def control(self, line: str) -> str:
-        """tmux 스타일 제어 명령(`split-window -h`·`new-window`·…). 실 CLI 를 지난다."""
-        return self._run(["cmd"] + line.split()).strip()
+        """tmux 스타일 제어 명령(`split-window -h`·`new-window`·…). 실 CLI 를 지난다.
+
+        ★ **지난 명령을 원장에 적는다**(`qa/ledger.py`). 적는 자리를 여기 하나로 두는
+        이유는 하나다 — 시나리오가 적으면 「보냈는데 안 적은」 명령이 생기고, 원장은
+        그것을 미커버로 세어 없는 구멍을 신고한다(위양성 · 원칙 ⓓ).
+        ⛔ 응답도 함께 적는다: 서버가 `unknown:` 이라고 답한 것은 **지난 것이 아니다.**
+        """
+        out = self._run(["cmd"] + line.split()).strip()
+        if self.ledger is not None:
+            head = line.split()[0] if line.split() else ""
+            self.ledger.record("control", head, out)
+        return out
 
     def tree(self) -> tuple[int, int]:
         """`(탭 수, 패널 수)`. 서버가 말하는 트리를 사람이 읽는 그 요약으로 받는다."""
@@ -115,10 +222,86 @@ class Session:
         if IS_WINDOWS:
             raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
         raw, alive = ptyshot.capture(
-            [self.python, os.path.join(ROOT, "pytmux.py")],
+            self.client_argv(),
             cols=self.cols, rows=self.rows, seconds=seconds, feed=feed,
             env={"PYTMUX_HOME": self.slot.home})
         return raw, alive, ptyshot.screen_text(raw)
+
+    def client_argv(self) -> list[str]:
+        """클라 하나를 띄우는 명령줄. `capture_client` 와 `clients` 가 **같은 것**을 쓴다."""
+        return [self.python, os.path.join(ROOT, "pytmux.py")]
+
+    def clients(self, n: int = 2):
+        """실 Textual 클라 **n 개를 동시에** 같은 서버에 붙인다(`ptyshot.Multi`).
+
+        ★ **이것이 T2 의 전부다.** `capture_client` 를 두 번 부르면 그건 동시 접속이
+        아니라 **재부착**이다 — 저쪽은 상한까지 한 프로세스를 붙들고 있다 돌려주므로
+        두 클라가 같은 시각에 서 있는 순간이 없다. 이 제품은 단일 서버 · 다중 클라라
+        「둘이 함께 붙어 있는 동안」에만 성립하는 계약이 있고(한쪽 조작이 다른 쪽
+        화면에 · 하나가 죽어도 나머지가 산다) 그것을 재는 자리가 여기다.
+
+        ⛔ 돌려주는 것은 **호출부가 운전하는** 핸들이다. 다 쓰면 `close()` 로 회수한다
+        (`with` 를 쓰면 저절로) — 우리가 쥔 pid 로만 죽는다(안전 규율 ⑵).
+        """
+        if IS_WINDOWS:
+            raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
+        if n < 2:
+            raise ValueError(f"다중 클라가 둘 미만이면 이 시나리오는 뜻이 없다: n={n}")
+        return ptyshot.Multi([self.client_argv()] * n, cols=self.cols, rows=self.rows,
+                             env={"PYTMUX_HOME": self.slot.home})
+
+    # ── 실 GUI 창 (T3 · pytmux/pytmux-147) ───────────────────────────────────
+    def gui_frame(self, path: str, keys: str | None = None,
+                  timeout: float = 90.0) -> "GuiShot":
+        """실 GUI 창(Rust `pytmux-gui`)을 이 슬롯에 붙여 **프레임 한 장**을 PNG 로 뜬다.
+
+        ★ **이것이 T3 의 전부다**(`pytmux/pytmux-147`). `capture_client` 가 실 Textual
+        클라의 ANSI 화면을 잡는 것과 같은 자리이고, 여기서 잡는 것은 **GPU 드로어블에서
+        읽은 진짜 창의 픽셀**이다. 그 둘이 이 저장소가 스스로 적어 둔 사각지대 둘이다.
+
+        ⛔ **`client/scripts/*.ps1` 하네스를 부르지 않는다** — 이슈 본문이 그 여덟 개를
+           재료로 들었지만(`capture_window.ps1` 외) 실측하고 나서 뒤집었다:
+
+           ⑴ 그 하네스는 **화면을 찍는다**(`PrintWindow`) — 제품이 그 함정을 이미 알고
+              있고(까만 사각형을 성공으로 돌려준다 · `gui/src/main.rs` `take_frame_dump`
+              머리말) 그래서 **제품 안에 자가 덤프**(`--frame-dump`)를 두었다. 오라클이
+              같은 함정을 다시 밟을 이유가 없다.
+           ⑵ 그 여덟 개는 PowerShell 이라 **Windows 밖에서는 통째로 못 돈다.** 그것을
+              부르는 층으로 T3 을 지으면 맥·리눅스에서 T3 은 영영 SKIP 이고, 그러면 이
+              티어는 이 상자에서 **한 번도 안 도는 티어**가 된다.
+           ⑶ `--frame-dump` 는 세 OS 에서 같은 코드다(`cfg` 갈림이 없다). 즉 받아들임
+              기준의 「Windows 상자에서 판정한다」를 **같은 경로로** 만족한다.
+
+           ⚠ **그래서 남는 구멍은 마우스다** — 키는 `--frame-keys` 로 넣지만 클릭·휠·
+             드래그를 넣는 길은 저 여덟 개(Windows 전용)뿐이다. 조용히 덮지 않고
+             시나리오가 **사유 붙은 SKIP** 으로 회계한다.
+
+        ⛔ **`--socket` 으로 지목해서 붙인다** — 인자 없이 띄우면 서버를 못 찾았을 때
+           **직접 띄우고**(`Plan::FindOrStart`) 그 순간 격리 밖의 데몬이 생긴다.
+        """
+        binary = gui_binary()
+        endpoint = self.endpoint or self.slot.endpoint
+        argv = [binary, "--socket", endpoint, f"--frame-dump={path}"]
+        if keys:
+            argv.append(f"--frame-keys={keys}")
+        env = dict(os.environ, PYTMUX_HOME=self.slot.home)
+        # ⛔ pid 를 우리가 쥔다(안전 규율 ⑵) — `run()` 은 시간이 넘쳤을 때 죽일 대상을
+        #    이름으로 찾게 만든다. Popen 이라야 우리가 판 pid 하나만 겨냥할 수 있다.
+        p = subprocess.Popen(argv, cwd=ROOT, env=env, text=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.slot.spawned.append(p.pid)
+        try:
+            out, err = p.communicate(timeout=timeout)
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            proc.terminate(p.pid, force=True)
+            out, err = p.communicate(timeout=10)
+            timed_out = True
+        m = _DUMPED.search(out or "")
+        return GuiShot(
+            binary=binary, rc=p.returncode, stdout=(out or "").strip(),
+            stderr=(err or "").strip(), path=path, timed_out=timed_out,
+            said=(int(m.group("w")), int(m.group("h"))) if m else None)
 
     def error_blocks(self) -> list[str]:
         """서버·클라 로그에 남은 **트레이스백** 블록.

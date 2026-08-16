@@ -83,19 +83,60 @@ CASES = {
 }
 
 
+def graph_data(hist, thr=0.4, width=48, height=5):
+    """GraphData 값 계산 (Rust 코드의 graph_data 메서드와 동일 로직)."""
+    if not hist or width == 0 or height == 0:
+        return None
+
+    from clientconn._RestartVersionMixin import _RTT_WINDOW
+    span = _RTT_WINDOW
+
+    buckets = [None] * width
+    raw = []
+    for ts, rtt in hist:
+        age = NOW - ts
+        if not (0.0 <= age <= span):
+            continue
+        raw.append(rtt)
+        col_back = int(age / span * width)
+        col = width - 1 - min(col_back, width - 1)
+        buckets[col] = max(rtt, buckets[col]) if buckets[col] is not None else rtt
+
+    if not raw:
+        return None
+
+    peak = max(raw)
+    vmax = peak if peak > 0 else thr if thr > 0 else 1e-9
+    avg = sum(raw) / len(raw)
+    has_gaps = any(b is None for b in buckets)
+
+    return {
+        "buckets": buckets,
+        "threshold": thr,
+        "vmax": vmax,
+        "peak": peak,
+        "avg": avg,
+        "count": len(raw),
+        "has_gaps": has_gaps,
+    }
+
+
 def main():
     out = {"_comment": "gen_rtt_fixture.py 가 파이썬 정본에서 뽑음 — 손으로 고치지 말 것",
            "now": NOW,
            "cases": {}}
     for name, spec in CASES.items():
-        got = lines(spec["hist"], spec.get("thr", 0.4),
-                    spec.get("width", 48), spec.get("height", 5))
+        lines_val = lines(spec["hist"], spec.get("thr", 0.4),
+                          spec.get("width", 48), spec.get("height", 5))
+        data_val = graph_data(spec["hist"], spec.get("thr", 0.4),
+                              spec.get("width", 48), spec.get("height", 5))
         out["cases"][name] = {
             "hist": spec["hist"],
             "thr": spec.get("thr", 0.4),
             "width": spec.get("width", 48),
             "height": spec.get("height", 5),
-            "lines": got,   # None 이면 그래프 생략 계약
+            "lines": lines_val,   # None 이면 그래프 생략 계약
+            "data": data_val,     # GraphData 값
         }
     path = os.path.join(HERE, "..", "crates", "proto",
                         "tests", "fixtures", "rtt_graph.json")

@@ -3,6 +3,7 @@
   "setting_ko": {
     "alt-scroll": "휠 스크롤백(1007)",
     "automatic-rename": "탭 자동 이름",
+    "claude-command": "Claude 탭 실행 명령(esc c)",
     "claude-rules": "Claude 시작 규칙…",
     "claude-settings": "Claude 설정…",
     "claude-token-log": "Claude 토큰 사용량…",
@@ -47,6 +48,7 @@
   "setting_en": {
     "alt-scroll": "Wheel scrollback (1007)",
     "automatic-rename": "Tab auto-rename",
+    "claude-command": "Claude tab command (esc c)",
     "claude-rules": "Claude start rules…",
     "claude-settings": "Claude settings…",
     "claude-token-log": "Claude token usage…",

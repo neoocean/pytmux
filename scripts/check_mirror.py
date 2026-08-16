@@ -122,7 +122,20 @@ def scan_paths(paths):
     `client/scripts/build_release.*` 가 갓 구운 이진을 `build/` 에 넣기 **전에** 부른다.
     유출을 미러 문턱에서만 재면 이미 depot 에 들어간 뒤라 되돌리는 값이 커진다 —
     산출 지점에서 같은 자를 대는 편이 싸다(그리고 자가 한 벌이라 갈라지지 않는다).
+
+    ⛔ **인자가 없으면 통과가 아니라 고장이다**(검수 2026-08-09 B-5). 종전에는
+    `--scan` 만 치면 `OK: 유출 문자열 0 (0개 파일)` + rc 0 이었다 — 아무것도 안 재고
+    초록이다. 그런데 이 함수를 부르는 자리가 **갓 구운 이진을 재는 곳**이라, 빌드가
+    산출물을 못 냈거나 경로 확장이 빈 자리에서 그 빌드는 **아무 검사도 없이** `build/`
+    로 들어간다. 같은 저장소의 `check_licenses.sh` 가 「한 줄도 못 잡았으면 고장」으로
+    보는 것과 같은 규율이고, 갈라져 있던 것이 결함이었다(한 질문에 두 술어).
     """
+    if not paths:
+        print("FAIL: --scan 에 잴 파일이 하나도 안 왔다 — 이것은 통과가 아니라 고장이다",
+              file=sys.stderr)
+        print("  → 부르는 쪽의 경로 확장이 빈 것은 아닌지 볼 것"
+              " (빌드가 산출물을 안 냈을 수 있다)", file=sys.stderr)
+        return 1
     bad = [(p, why) for p in paths for why in [_scan(p)] if why]
     for path, why in bad:
         print(f"FAIL: {path} — {why}")

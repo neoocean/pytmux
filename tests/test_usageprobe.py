@@ -133,7 +133,11 @@ async def test_query_usage_dismisses_managed_settings_screen():
 def test_managed_yes_selected_requires_affirmative_default():
     """SEC-1: _managed_yes_selected 는 ❯/> 셀렉터가 **'Yes, I trust these settings'
     줄에 있을 때만** True. 다른 옵션(No, exit)에 있거나 문구가 바뀌면 False —
-    무턱대고 Enter 를 쳐 미지의 선택을 확정하지 않게 한다."""
+    무턱대고 Enter 를 쳐 미지의 선택을 확정하지 않게 한다.
+
+    pytmux-151 이후 **미결 옵션('No, exit Claude Code')이 함께 보일 때만** True 다 —
+    통과된 승인 화면의 잔상(옵션 줄이 다음 프레임에 덮인 상태)을 승인 대기로 세지
+    않기 위해서다. 프로브도 패널 스캔과 같은 함수를 쓰므로 같은 계약이다."""
     yes_sel = (" Managed settings require approval\n"
                " ❯ 1. Yes, I trust these settings\n"
                "   2. No, exit Claude Code\n")
@@ -141,13 +145,20 @@ def test_managed_yes_selected_requires_affirmative_default():
               "   1. Yes, I trust these settings\n"
               " ❯ 2. No, exit Claude Code\n")
     gt_sel = (" Managed settings require approval\n"
-              " > Yes, I trust these settings\n")
+              " > Yes, I trust these settings\n"
+              "   No, exit Claude Code\n")
+    # 승인이 끝나 옵션 줄이 덮인 잔상(응답 대기 아님) — 여기서 True 면 프로브·패널
+    # 모두 다음 인스턴스를 못 알아본다(pytmux-151).
+    leftover = (" Managed settings require approval\n"
+                " ❯ 1. Yes, I trust these settings\n"
+                " Resume this session with:\n")
     reworded = (" Managed settings require approval\n"
                 " ❯ 1. Accept and continue\n")
     unrelated = " ? for shortcuts\n"
     assert usageprobe._managed_yes_selected(yes_sel) is True
     assert usageprobe._managed_yes_selected(gt_sel) is True
     assert usageprobe._managed_yes_selected(no_sel) is False
+    assert usageprobe._managed_yes_selected(leftover) is False
     assert usageprobe._managed_yes_selected(reworded) is False
     assert usageprobe._managed_yes_selected(unrelated) is False
 

@@ -129,6 +129,7 @@ static COMMANDS: &[Item] = &[
     i("move-tab-left", Done, "팔레트 - 끝이면 아무 일도 안 한다"),
     i("move-tab-right", Done, "팔레트"),
     i("nest-auto-attach", Done, "팔레트"),
+    i("new-claude-tab", Done, "esc c · 팔레트 — 지금 디렉토리에서 Claude Code 가 도는 새 탭(pytmux-137)"),
     i("new-tab", Done, "prefix c (지금 패널의 디렉토리에서)"),
     i("next-layout", Done, "prefix Space"),
     i("next-tab", Done, "prefix n · esc j / esc down"),
@@ -253,6 +254,7 @@ static ESC_KEYS: &[Item] = &[
         Done,
         "esc Ctrl+↑/↓ — 이전·다음 프롬프트로 점프(스크롤 모드로 들어가 연타)",
     ),
+    i("e_c", Done, "esc c — 지금 디렉토리에서 Claude Code 가 도는 새 탭(pytmux-137)"),
     i("e_n", Done, "esc n — 새 탭(G1c)"),
     i("e_num", Done, "esc 1~9 — 번호로 탭 전환"),
     i("e_p", Done, "esc p — 상하 분할(G1c)"),
@@ -271,6 +273,7 @@ static SETTINGS: &[Item] = &[
     ),
     i("ambiguous-width", Done, "설정 화면 - unicode-width 의 CJK 판정을 쓴다(auto=narrow)"),
     i("automatic-rename", Done, "설정 화면 · 팔레트"),
+    i("claude-command", Done, "설정 화면 → 동작 · `esc c` 가 실행할 명령(빈 값이면 셸만)"),
     i("coalesce-repaints", Done, "설정 화면 · 팔레트"),
     i("default-path", Done, "설정 화면 → 입력"),
     i("exit-empty", Done, "설정 화면 - 현재값도 status 의 exit_empty 로 온다(2026-07-30 서버 CL)"),
@@ -407,26 +410,23 @@ static TABLES_ONLY: &[&[Item]] = &[COMMANDS, PREFIX_KEYS, ESC_KEYS, SETTINGS, SC
 /// 이 칸을 진짜로 재는 것(=표면 189개를 GUI 기준으로 전수 확인)이 **Rust TUI 퇴역의
 /// 문턱**이다(같은 문서 §5 의 S3). 그때까지 이 숫자를 "GUI 가 다 된다"로 읽지 말 것.
 static SCORE: &[(&str, usize, usize)] = &[
-    ("commands", 87, 0),
+    ("commands", 88, 0),
     ("prefix_keys", 32, 0),
-    ("esc_keys", 17, 0),
-    ("settings", 37, 0),
+    ("esc_keys", 18, 0),
+    ("settings", 38, 0),
     ("screens", 17, 0),
 ];
 
 /// 픽스처의 명령 전부가 팔레트에 실려 있는가 — `commands`/`list-commands` 의 Done 을
 /// 지키는 게이트다(파이썬이 명령을 늘리면 팔레트가 따라잡을 때까지 여기가 운다).
 ///
-/// 예외 하나: `paste-clipboard` 는 **뷰별 능력**이라(GUI Ctrl+Shift+V · TUI bracketed
-/// paste — 터미널이 쥔 조합) 공통 팔레트 표에 못 싣는다. 예외가 늘면 이 목록에 이유와
-/// 함께 적을 것 — 조용히 빠지면 "명령이 있는데 팔레트에 없다"가 된다.
+/// 예외: `monitor-bell` 과 `paste-clipboard` 는 뷰별 능력이다.
+/// - `monitor-bell`: **사용자 결정으로 화면에서 감췄다**(§10-21ⓜ — "당장은 지원하지 않겠다").
+///   못 하는 것이 아니라 **입구를 닫은** 것이다.
+/// - `paste-clipboard`: **Ctrl+Shift+V 단축키가 주 입구**다. 팔레트에는 없지만 기능은 동작한다
+///   (GUI 에서 클립보드 텍스트·이미지를 붙여넣을 수 있다).
 #[test]
 fn every_python_command_is_in_the_palette() {
-    /// ⚠ 예외 둘째: `monitor-bell` 은 **사용자 결정으로 화면에서 감췄다**(§10-21ⓜ —
-    /// "당장은 지원하지 않겠다"). 못 하는 것이 아니라 **입구를 닫은** 것이다: 액션
-    /// (`ToggleMonitorBell`)도 설정 값(`monitor_bell`)도 그대로 있고, 서버가 켜 두면
-    /// 우리도 그 값을 나른다. 지운 것은 팔레트 줄 · 설정 화면 줄 · 상태줄 표식 셋뿐이다.
-    /// 정본(파이썬)에서도 감출지는 **정하지 않았다** — 제보는 GUI 화면에 대한 것이었다.
     const NOT_IN_PALETTE: &[&str] = &["monitor-bell", "paste-clipboard"];
     let have: BTreeSet<&str> = base::PALETTE
         .iter()

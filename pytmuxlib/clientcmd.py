@@ -455,6 +455,12 @@ class _CommandMixin:
             self.send_cmd("kill_pane")
         elif c in ("new-tab", "newt", "new-window", "neww"):
             self.send_cmd("new_window")
+        elif c in ("new-claude-tab", "new-claude-window"):
+            # `esc c` 와 같은 자리(pytmux-137). path 를 박아 보내는 이유도 같다 —
+            # 이 명령의 값은 「지금 디렉토리에서 바로 붙는다」라 default-path 를
+            # 안 따른다.
+            self.send_cmd("new_window", path="current",
+                          cmd=getattr(self, "claude_command", "claude"))
         elif c in ("kill-tab", "killt", "kill-window", "killw"):
             # 원격 탭이면 kill_window(서버가 §1.7-c 거부) 대신 그 탭 하나만 분리한다
             # ([x]/esc x 와 동일 라우팅, confirm_kill_tab 참조). 활성 원격 탭의 병합

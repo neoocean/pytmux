@@ -300,11 +300,18 @@ impl PluginScreen {
         }
         let name = match key {
             base::Key::Char(c) => return self.char_action(c),
-            base::Key::Right => "right",
-            base::Key::Left => "left",
+            base::Key::Right => "right".to_owned(),
+            base::Key::Left => "left".to_owned(),
+            // ★ F1~F12(pytmux-125) — 정본 mdir 의 `F10`(트리)·`F5`(복사)·`F8`(삭제)…가
+            //   그 손이다. 글자 키로 옮기지 않는 이유는 `alt-` 때와 같다: 손버릇이
+            //   갈린다(그리고 `F5` 의 글자 짝인 `c` 는 이미 복사라 옮길 자리도 없다).
+            //   이름은 **core 의 표가 짓는다**(`binding_name_with`) — 여기서
+            //   `format!("f{n}")` 을 다시 적으면 어휘가 두 벌이 되고, 갈리는 순간
+            //   그 키만 조용히 안 먹는다.
+            base::Key::Function(_) => base::keys::binding_name_with(key, mods)?,
             _ => return None,
         };
-        self.keys.get(name).map(String::as_str)
+        self.keys.get(&name).map(String::as_str)
     }
 
     /// 물음·확인 화면에 적을 글 — **첫 줄이 물음이고 나머지가 상세**다.
@@ -1404,6 +1411,37 @@ impl SessionState {
         Some(OverlayToggle { pane: active, on: true, closed: closed.into_iter().next() })
     }
 
+    /// **그 패널**에 떠 있는 오버레이 이름(없으면 `None`).
+    ///
+    /// 한 패널엔 오버레이 하나라([`set_overlay`](Self::set_overlay) 가 켜면서 나머지를
+    /// 닫는다) 답은 많아야 하나다.
+    pub fn overlay_on_pane(&self, pane: i64) -> Option<&str> {
+        self.overlays
+            .iter()
+            .find(|(_, on)| on.contains(&pane))
+            .map(|(name, _)| name.as_str())
+    }
+
+    /// **그 패널**의 오버레이를 끈다 — 껐으면 `(이름, 서버에 올릴 끔)`.
+    ///
+    /// # 왜 `set_overlay` 로 안 되나
+    ///
+    /// 저것은 **활성 패널** 전용이다(정본의 `prefix t`·팔레트가 그렇다). 여기서 필요한
+    /// 것은 *누른 패널*을 지목해 끄는 길이다 — 비활성 패널에 뜬 시계를 눌러 닫는 것이
+    /// 정본의 동작이고(`clientwidgets.py:544` 는 `_pane_at` 이 준 id 로 닫는다), 활성
+    /// 패널로 넘겨 끄면 **엉뚱한 패널의 오버레이가 사라진다.**
+    ///
+    /// 안 켜져 있으면 `None` 이다 — 여기서 끄기의 멱등([`set_overlay`](Self::set_overlay))
+    /// 을 흉내 내면 오버레이가 없는 패널을 누른 것까지 "닫았다"가 되어, 부르는 쪽이
+    /// 그 클릭을 삼켜 버린다(선택·포커스가 통째로 죽는다).
+    pub fn close_overlay_on_pane(&mut self, pane: i64) -> Option<(String, OverlayToggle)> {
+        let name = self.overlay_on_pane(pane)?.to_owned();
+        if let Some(on) = self.overlays.get_mut(&name) {
+            on.remove(&pane);
+        }
+        Some((name, OverlayToggle { pane, on: false, closed: None }))
+    }
+
     /// 입력기 배지 글(뷰가 넣는다). 상태를 모르는 판에서는 `None` — 모르는 것을
     /// "영문"이라고 단정하지 않는다.
 
@@ -1510,9 +1548,12 @@ impl SessionState {
     /// 화면 좌표 클릭이 **화면을 여는 자리**에 맞았나 — 맞았으면 `(화면 이름, 패널)`.
     ///
     /// [`overlay_zone_at`](Self::overlay_zone_at) 과 같은 자리 목록을 보되 `opens` 가
-    /// 실린 것만 고른다. 부르는 쪽은 이것을 **먼저** 물어야 한다: 같은 자리를
-    /// `plugin_overlay_action` 으로 보내면 서버가 그 이름을 아무도 안 집어 조용히
-    /// 사라진다(눌렀는데 아무 일도 안 나는, 이 저장소의 상습 결함).
+    /// 실린 것만 고른다. 같은 자리를 `plugin_overlay_action` 으로 보내면 서버가 그
+    /// 이름을 아무도 안 집어 조용히 사라지는데(눌렀는데 아무 일도 안 나는, 이 저장소의
+    /// 상습 결함), **그것을 막는 것은 부르는 차례가 아니라 저쪽의 가드다** — `opens`
+    /// 나 `send` 가 실린 자리면 `overlay_zone_at` 이 스스로 `None` 을 준다. 그래서 셋은
+    /// 서로 배타적이고, 뷰는 정본과 같은 차례(화살표 → 판 클릭으로 닫기 → 화면·치기)로
+    /// 물어도 된다(pytmux-156).
     pub fn open_zone_at(&self, x: u16, y: u16) -> Option<(String, i64)> {
         let z = self.zone_at(x, y)?;
         (!z.opens.is_empty()).then(|| (z.opens.clone(), z.pane))

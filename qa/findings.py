@@ -11,11 +11,19 @@
 
     {"run": {"runId", "profile", "build", "head", "seed"},
      "findings": [{"fp", "title", "severity", "scenario", "oracle", "step",
-                   "expected", "actual", "env", "count", "flaky", "staged_only"}]}
+                   "expected", "actual", "env", "count", "flaky", "staged_only"}],
+     "skipped": [{"scenario", "step", "reason"}]}
 
 ⛔ **`fp`(지문)가 없으면 트래커가 흡수를 거부한다** — 조용한 병합 금지가 그쪽 계약이다.
    지문은 **런마다 안 흔들려야** 한다(시각·runId·경로가 들어가면 매 런 새 이슈가 태어나
    "자동 QA 는 첫 주에 익사한다"). 그래서 `(시나리오, 오라클, 키)` 셋으로만 짓는다.
+
+★ **`skipped` 도 함께 싣는다**(`pytmux/pytmux-148`). 종전에는 이 배열이 계약에 없어서
+  미검증이 `REPORT.md` 에만 남았고 — 그 파일은 `.p4ignore` 라 **돌린 머신에만 있다** —
+  트래커에는 결함 0건만 도착했다. 그러면 rc 3(미검증)과 rc 0(초록)이 트래커에서 **같은
+  모양**이 된다. 그것을 못 박은 §4 의 표가 흡수 경계에서 무너지던 자리다.
+  ⛔ 미검증은 **이슈가 되지 않는다**(지문이 없다 · 사람이 고칠 대상이 아니라 런의 회계다).
+     담기는 자리는 트래커가 남기는 **런 한 행**이고, 거기서 결함 수 옆에 앉는다.
 """
 from __future__ import annotations
 
@@ -97,11 +105,19 @@ class Run:
                 "head": self.head, "seed": self.seed}
 
 
-def write_findings(out_dir: str, run: Run, findings: list[Finding]) -> str:
-    """`findings.json` 을 굽는다. 트래커는 이 파일만 있으면 며칠 밀렸다가 흡수해도 된다."""
+def write_findings(out_dir: str, run: Run, findings: list[Finding],
+                   skipped: list[Skipped] | None = None) -> str:
+    """`findings.json` 을 굽는다. 트래커는 이 파일만 있으면 며칠 밀렸다가 흡수해도 된다.
+
+    ⛔ **`skipped` 를 빼고 부르지 마라.** 빼면 트래커에 도착하는 것이 결함 수뿐이라
+       「돌았는데 절반을 건너뛰었다」가 「초록」과 구별되지 않는다(원칙 ⓑ · §4 의 rc 표).
+       기본값을 둔 것은 옛 호출자를 위해서지 생략해도 된다는 뜻이 아니다.
+    """
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "findings.json")
-    doc = {"run": run.as_dict(), "findings": [f.as_dict() for f in findings]}
+    doc = {"run": run.as_dict(), "findings": [f.as_dict() for f in findings],
+           "skipped": [{"scenario": s.scenario, "step": s.step, "reason": s.reason}
+                       for s in (skipped or [])]}
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
@@ -109,13 +125,16 @@ def write_findings(out_dir: str, run: Run, findings: list[Finding]) -> str:
 
 
 def render_report(run: Run, findings: list[Finding], skipped: list[Skipped],
-                  steps: list[tuple[str, str, str]]) -> str:
+                  steps: list[tuple[str, str, str]], ledger_rows=None) -> str:
     """사람이 읽는 리포트.
 
     ★ **첫 줄이 빌드 스탬프다.** 어느 개정을 잰 런인지 없으면 리포트가 뜻을 잃는다 —
     미제출 편집이 섞였으면 그 사실도 첫 줄에 나온다("그 런은 「제출본 QA」가 아니다").
     ⛔ 결함의 SSOT 는 이 리포트가 아니라 **트래커의 이슈**다. 여기 있는 것은 그 런의
     관측 요약이고, 사라져도 이슈는 남는다.
+
+    ★ **커버리지 원장이 숫자로 뜨는 자리가 여기다**(`pytmux/pytmux-145`). 결함 목록만
+    보면 「무엇을 안 봤나」가 안 보인다 — 미커버는 조용하기 때문이다(원칙 ⓑ).
     """
     stamp = run.build if run.stamped else "unstamped(p4 없음 — 제출본 QA 아님)"
     if run.dirty:
@@ -136,7 +155,11 @@ def render_report(run: Run, findings: list[Finding], skipped: list[Skipped],
     ]
     for scenario, step, verdict in steps:
         lines.append(f"- `{scenario}` / `{step}` — {verdict}")
-    lines += ["", "## 결함", ""]
+    lines += [""]
+    if ledger_rows is not None:
+        from .ledger import render_ledger      # 지연 import — 순환(ledger→findings) 차단
+        lines += render_ledger(list(ledger_rows))
+    lines += ["## 결함", ""]
     if not findings:
         lines.append("없음.")
     for f in findings:

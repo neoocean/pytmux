@@ -17,7 +17,31 @@
     depot≠workspace 인데 git 은 clean  → git 에만 있는 내용 = **p4 미제출**
     depot==workspace 인데 git 은 modified → p4 에만 있는 내용 = **git 미푸시**
     양쪽 다 다름 → 그냥 작업 중(WIP, 게시 전)이라 드리프트 아님
-종료코드 = 0(깨끗)/1(드리프트 또는 오염). 게시 직전 훅으로 쓸 수 있다.
+종료코드 = 0(깨끗)/1(드리프트 또는 오염)/**2(기준선이 낡아 못 쟀다)**. 게시 직전 훅으로 쓸 수 있다.
+
+## ⛔ 재기 전에 **기준선이 신선한지** 먼저 잰다 (pytmux/pytmux-153)
+
+이 게이트는 두 개의 기준선 위에서 판정한다 — git 쪽은 **로컬 HEAD**, p4 쪽은 **워크스페이스의
+have 리비전**. 둘 중 하나라도 낡으면 나오는 숫자는 드리프트가 아니라 **낡음의 그림자**다.
+
+- ☠ **거짓 초록**(2026-08-08): `run()` 이 로케일로 디코드해 한국어 커밋 메시지에서 죽었고,
+  미푸시가 0 일 때만 초록이 나왔다 — 그 초록은 「드리프트 없음」이 아니라 「잰 것이 없음」이었다.
+- ☠ **거짓 붉음**(2026-08-10 실측): 이 워크스페이스의 클론은 `origin/main` 보다 **30커밋 뒤**에
+  있었고 한 번도 `git fetch` 하지 않았다. 그 낡은 HEAD 를 기준으로 `git status` 를 읽으니
+  **남이 이미 밀어 놓은 143개**가 「git 미푸시」로, **61개**가 「git 에 없는 파일」로 올라왔다
+  (표본 3개 중 2개가 `origin/main` 에 이미 있었다). 상주하는 빨간 줄은 곧 아무도 안 본다 —
+  **거짓 붉음은 거짓 초록의 다른 얼굴**이고, 실제로 pytmux-134 가 그 값을 치렀다.
+
+그래서 `measure_freshness()` 가 먼저 돌고, 낡았으면 **드리프트 목록을 아예 내지 않고 rc 2** 로
+멈춘다. ⛔ 「그래도 참고는 되지 않나」로 되돌리지 마라 — 143줄 중 참인 것이 1줄이면 그 목록은
+정보가 아니라 소음이고, 사람은 소음을 끄지 판별하지 않는다.
+
+## 재는 것과 말하는 것을 가른다
+
+⛔ **소비자가 둘이면 판정도 둘이 된다.** 야간 감시(`qa/repo.py`)가 이 파일의 **화면 문구를
+파싱**하게 두면 문구를 다듬는 순간 감시가 조용히 아무것도 못 세게 된다 — 한 질문을 두 술어로
+묻는 자리다. 그래서 `measure_*()` 가 **데이터**를 내고, 이 파일의 `check_*()` 와 `qa/repo.py` 가
+그 같은 데이터를 각자 그린다.
 """
 import argparse
 import os
@@ -163,8 +187,99 @@ def rel_any(path):
     return rel_depot(p) if p.startswith("//") else rel(p)
 
 
-def check_existence(out=print):
-    """**파일이 한쪽에만 존재**하는 드리프트.
+#: 신선도 미달 종료코드. ⛔ **1(빚이 있다)과 갈라야 한다** — 「못 쟀다」와 「빚이 있다」가
+#: 같은 색이면 사람은 둘을 같은 것으로 배우고, 그러면 못 잰 날이 갚은 날처럼 지나간다.
+RC_STALE = 2
+
+#: 드리프트 갈래. **`kind` 는 트래커 지문의 재료다**(`qa/repo.py`) — 바꾸면 같은 빚이
+#: 새 이슈로 다시 태어난다. 심각도는 pytmux-38 이 가른 그대로다: **존재** 드리프트(한쪽에
+#: 파일이 아예 없다)는 공개 GitHub 만 보는 사람의 빌드를 깨뜨리므로 S2, **내용·커밋**은
+#: 늦게 갚아도 되는 빚이라 S3.
+SEVERITY = {
+    "git-unpushed-commits": "S3",
+    "p4-unsubmitted": "S3",
+    "git-unpushed-content": "S3",
+    "git-only-files": "S2",
+    "depot-only-files": "S2",
+}
+
+
+def _drift(kind, head, why, items, fix):
+    """드리프트 한 갈래를 **데이터로**. `head`·`why` 가 곧 화면 한 줄이 된다."""
+    return {"kind": kind, "severity": SEVERITY[kind], "head": head, "why": why,
+            "items": list(items), "count": len(items), "fix": fix}
+
+
+def _int(txt, default=None):
+    try:
+        return int(txt.strip())
+    except (AttributeError, ValueError):
+        return default
+
+
+def measure_freshness(remote=True):
+    """**기준선이 신선한가** → `(stale, unmeasured)`. 둘 다 dict 목록이다.
+
+    ⛔ 이것을 안 재고 드리프트를 세면 나오는 숫자가 남의 게시다(모듈 docstring §거짓 붉음).
+    ⚠ `git fetch` 는 `refs/remotes/` 만 건드린다 — **작업 트리는 안 만진다.** 이 트리는 p4
+      워크스페이스이고 남의 열린 파일이 그 안에 있으므로, 게이트가 스스로 `pull`·`sync` 하는
+      길은 만들지 않는다(처방만 낸다 · 당길지는 사람이 정한다).
+    """
+    stale, unmeasured = [], []
+
+    # ── git 기준선 ────────────────────────────────────────────────────────
+    if remote:
+        rc, txt = run(["git", "fetch", "--no-tags", "--quiet", "origin"])
+        if rc:
+            unmeasured.append({
+                "what": "원격 대조",
+                "detail": f"git fetch 실패(오프라인?): {txt.strip()[:120]} — "
+                          "origin/main 이 낡았을 수 있어 미푸시 판정은 하한이다"})
+    else:
+        unmeasured.append({"what": "원격 대조",
+                           "detail": "--no-remote 로 껐다 — origin/main 의 신선도를 안 쟀다"})
+    rc, txt = run(["git", "rev-list", "--count", "HEAD..origin/main"])
+    behind = _int(txt, 0) if not rc else None
+    rc2, txt2 = run(["git", "rev-list", "--count", "origin/main..HEAD"])
+    ahead = _int(txt2, 0) if not rc2 else None
+    if behind is None:
+        unmeasured.append({"what": "git 기준선",
+                           "detail": "origin/main 을 못 읽었다 — 로컬 HEAD 의 신선도 미확인"})
+    elif behind:
+        # ★ 처방이 `pull` 이 아니다. 이 트리의 파일은 **p4 가 소유**하고 대개 origin 보다
+        #   앞서 있어서, `pull`(=merge)은 남의 열린 파일을 덮으려다 거절당하거나 덮는다.
+        #   로컬 커밋이 없으면 브랜치 포인터만 앞으로 옮기면 된다(`--mixed` 는 작업 트리를
+        #   안 건드린다). 로컬 커밋이 있으면 그것을 잃지 않게 rebase 로 보낸다.
+        fix = ("git fetch origin && git reset --mixed origin/main   "
+               "# 작업 트리는 안 건드린다(p4 소유)"
+               if not ahead else
+               "git fetch origin && git rebase origin/main   # 로컬 커밋이 있다 — 잃지 않게")
+        stale.append({"what": "git 기준선",
+                      "detail": f"로컬 HEAD 가 origin/main 보다 {behind}커밋 뒤 — "
+                                "이 HEAD 를 기준으로 잰 '미푸시'는 남의 게시다",
+                      "fix": fix})
+
+    # ── p4 기준선 ─────────────────────────────────────────────────────────
+    rc, txt = run(["p4", "sync", "-n", "./..."])
+    if rc:
+        unmeasured.append({"what": "p4 기준선",
+                           "detail": f"p4 sync -n 실패: {txt.strip()[:120]}"})
+    else:
+        # ⚠ 깨끗하면 stdout 이 **비고**("file(s) up-to-date." 는 stderr 라 `run` 이 안 받는다).
+        #   그래도 그 문구를 걸러 두는 것은 p4 판마다 스트림이 다를 수 있어서다.
+        pending = [ln for ln in txt.splitlines()
+                   if ln.strip() and "up-to-date" not in ln]
+        if pending:
+            stale.append({
+                "what": "p4 기준선",
+                "detail": f"워크스페이스가 depot head 보다 뒤 — 안 받은 파일 {len(pending)}개. "
+                          "내용 드리프트를 **과소평가**한다(2026-08-08 실측: 4개 → sync 후 19개)",
+                "fix": "p4 sync ./...   ⚠ 공유 워크스페이스다 — 남이 연 파일은 안 받아진다"})
+    return stale, unmeasured
+
+
+def measure_existence():
+    """**파일이 한쪽에만 존재**하는 드리프트 → `(drifts, unmeasured)`.
 
     내용 대조(`p4 diff -se` × `git status`)가 원리적으로 못 보는 구멍이다: depot 에 아예
     없는 파일은 `p4 diff -se` 에 안 나오고, git 에 커밋까지 끝난 파일은 `git status` 에
@@ -172,67 +287,48 @@ def check_existence(out=print):
     '✓ 미러 일치' 라고 말한다 — 미러 사고 3건과 정확히 같은 부류의 남은 절반이다."""
     depot = depot_files()
     if depot is None:
-        out("· p4 files 조회 실패 — 존재 대조 생략")
-        return 0
+        return [], [{"what": "존재 대조", "detail": "p4 files 조회 실패"}]
     rc, txt = run(["git", "ls-files"])
     if rc:
-        out("· git ls-files 실패 — 존재 대조 생략")
-        return 0
+        return [], [{"what": "존재 대조", "detail": "git ls-files 실패"}]
     tracked = {ln.strip() for ln in txt.splitlines() if ln.strip()}
     git_only = sorted(tracked - depot)
     # depot 에만 있는 것은 gitignore 된 p4 전용 파일(docs/internal·captures·db)이 대부분이다.
     depot_only_raw = sorted(depot - tracked)
     depot_only = sorted(set(depot_only_raw) - git_ignored(depot_only_raw))
-    problems = 0
+    drifts = []
     if git_only:
-        problems += 1
-        out(f"✗ depot 에 없는 파일 {len(git_only)}개 — git 에만 커밋됐다(p4 add 누락):")
-        for f in git_only[:20]:
-            out(f"    {f}")
-        out("  → p4 add <파일> 후 번호 CL 로 submit")
+        drifts.append(_drift(
+            "git-only-files", "depot 에 없는 파일", "git 에만 커밋됐다(p4 add 누락)",
+            git_only, "p4 add <파일> 후 번호 CL 로 submit"))
     if depot_only:
-        problems += 1
-        out(f"✗ git 에 없는 파일 {len(depot_only)}개 — p4 에만 제출됐다(gitignore 도 아님):")
-        for f in depot_only[:20]:
-            out(f"    {f}")
-        out("  → git add/commit + push, 또는 p4 전용이면 .gitignore 에 규칙 추가")
-    return problems
+        drifts.append(_drift(
+            "depot-only-files", "git 에 없는 파일", "p4 에만 제출됐다(gitignore 도 아님)",
+            depot_only,
+            "git add/commit + push, 또는 p4 전용이면 .gitignore 에 규칙 추가"))
+    return drifts, []
 
 
-def check_mirror(out=print, remote=True):
-    problems = 0
+def measure_drift():
+    """미러 빚 전량 → `(drifts, wip, unmeasured)`.
 
-    # ── git 쪽: 푸시 안 된 커밋 / 원격이 앞선 상태 ──────────────────────────
-    rc, head = run(["git", "rev-parse", "HEAD"])
-    if rc:
-        out(f"✗ git 저장소가 아니다: {head.strip()[:120]}")
-        return 1
-    head = head.strip()
+    ⛔ **기준선 신선도는 여기서 안 본다** — 부르는 쪽이 `measure_freshness()` 로 먼저 재고,
+       낡았으면 이 함수를 **아예 부르지 않는다**(낡은 기준선의 목록은 정보가 아니라 소음이다).
+    """
+    drifts, unmeasured = [], []
+
     rc, unpushed = run(["git", "log", "--oneline", "origin/main..HEAD"])
     unpushed = [ln for ln in unpushed.splitlines() if ln.strip()] if not rc else []
     if unpushed:
-        problems += 1
-        out(f"✗ git 미푸시 커밋 {len(unpushed)}개 (p4 만 게시된 상태일 수 있다):")
-        for ln in unpushed[:10]:
-            out(f"    {ln}")
-        out("  → git push origin main")
-    if remote:
-        rc, ls = run(["git", "ls-remote", "origin", "refs/heads/main"])
-        remote_sha = ls.split()[0] if (not rc and ls.split()) else ""
-        if remote_sha:
-            rc2, _ = run(["git", "merge-base", "--is-ancestor", remote_sha, head])
-            if rc2 == 1:
-                out(f"· 원격 main({remote_sha[:8]})이 로컬 HEAD 조상이 아니다 — "
-                    "CI(bench 동기) 커밋이 앞서 있을 수 있다: git pull --rebase "
-                    "--autostash 후 다시 확인")
-        else:
-            out("· 원격 조회 실패(오프라인?) — 커밋 대조는 생략")
+        drifts.append(_drift(
+            "git-unpushed-commits", "git 미푸시 커밋", "p4 만 게시된 상태일 수 있다",
+            unpushed, "git push origin main"))
 
-    # ── 양방향 드리프트 ────────────────────────────────────────────────────
     rc, opened_txt = run(["p4", "opened", "./..."])
     if rc and "not opened" not in opened_txt:
-        out(f"· p4 조회 실패 — 미러 대조 생략: {opened_txt.strip()[:120]}")
-        return 1 if problems else 0
+        unmeasured.append({"what": "내용·존재 대조",
+                           "detail": f"p4 조회 실패: {opened_txt.strip()[:120]}"})
+        return drifts, [], unmeasured
     # 프로젝트 판별은 **세퍼레이터 무관**으로 — Windows 워크스페이스의 로컬 경로는
     # `D:\...\pytmux\pytmux\tests\run.py` 라 `"/pytmux/"` 리터럴이 절대 안 맞고, 그러면
     # opened 가 통째로 비어 열린 파일이 전부 "한쪽에만 있는 내용"으로 오분류된다.
@@ -256,37 +352,85 @@ def check_mirror(out=print, remote=True):
     # ② depot 과 같은데 git 은 modified → p4 에만 있는 내용(git 미푸시)
     git_missing = sorted(git_dirty - depot_diff - opened)
     if p4_missing:
-        problems += 1
-        out(f"✗ p4 미제출 {len(p4_missing)}개 — git 에는 있고 depot 에는 없는 내용:")
-        for f in p4_missing[:20]:
-            out(f"    {f}")
-        out("  → p4 edit <파일> 후 번호 CL 로 submit(캐치업)")
+        drifts.append(_drift(
+            "p4-unsubmitted", "p4 미제출", "git 에는 있고 depot 에는 없는 내용",
+            p4_missing, "p4 edit <파일> 후 번호 CL 로 submit(캐치업)"))
     if git_missing:
-        problems += 1
-        out(f"✗ git 미푸시 {len(git_missing)}개 — depot 과 같은데 git HEAD 와 다른 내용:")
-        for f in git_missing[:20]:
-            out(f"    {f}")
-        out("  → git add/commit + push(p4 만 게시된 상태)")
+        drifts.append(_drift(
+            "git-unpushed-content", "git 미푸시", "depot 과 같은데 git HEAD 와 다른 내용",
+            git_missing, "git add/commit + push(p4 만 게시된 상태)"))
     # 양쪽 다 미게시(수정 중이거나 아직 아무 쪽에도 없는 신규 파일) = 드리프트 아님.
     wip = sorted(((git_dirty | git_untracked) & (depot_diff | opened))
                  | (git_untracked - depot_diff - opened))
+
+    edrifts, eunmeasured = measure_existence()
+    return drifts + edrifts, wip, unmeasured + eunmeasured
+
+
+def render_drift(drift, out=print, limit=20):
+    """드리프트 한 갈래를 사람이 읽는 세 줄로. 문구의 SSOT 는 여기 하나다."""
+    out(f"✗ {drift['head']} {drift['count']}개 — {drift['why']}:")
+    for item in drift["items"][:limit]:
+        out(f"    {item}")
+    out(f"  → {drift['fix']}")
+
+
+def check_existence(out=print):
+    """존재 드리프트 — `measure_existence()` 의 화면 판(반환값은 **갈래 수**)."""
+    drifts, unmeasured = measure_existence()
+    for u in unmeasured:
+        out(f"· {u['detail']} — {u['what']} 생략")
+    for d in drifts:
+        render_drift(d, out=out)
+    return len(drifts)
+
+
+def check_mirror(out=print, remote=True):
+    # ── git 클론인가 (없으면 잴 것 자체가 없다 — check_all 은 이 스텝을 SKIP 한다) ──
+    rc, head = run(["git", "rev-parse", "HEAD"])
+    if rc:
+        out(f"✗ git 저장소가 아니다: {head.strip()[:120]}")
+        return 1
+
+    # ── ⛔ 기준선 신선도부터. 낡았으면 **판정을 내지 않는다** ────────────────
+    stale, unmeasured = measure_freshness(remote=remote)
+    for u in unmeasured:
+        out(f"· 못 쟀다 — {u['what']}: {u['detail']}")
+    if stale:
+        out("✗ 기준선이 낡아 미러 판정을 내지 않는다 "
+            "(지금 재면 남의 게시가 내 빚으로 보인다):")
+        for s in stale:
+            out(f"    {s['what']} — {s['detail']}")
+            out(f"      → {s['fix']}")
+        out("  → 위 처방을 돌린 뒤 이 게이트를 다시 돌린다")
+        return RC_STALE
+
+    # ── 양방향 드리프트 + 존재 드리프트 ──────────────────────────────────────
+    drifts, wip, dunmeasured = measure_drift()
+    for d in drifts:
+        render_drift(d, out=out, limit=10 if d["kind"] == "git-unpushed-commits" else 20)
     if wip:
         out(f"· 작업 중 {len(wip)}개(양쪽 미게시 — 드리프트 아님): "
             f"{', '.join(wip[:6])}{' …' if len(wip) > 6 else ''}")
+    for u in dunmeasured:
+        out(f"· 못 쟀다 — {u['what']}: {u['detail']}")
 
-    # ── 존재 드리프트(내용 대조가 원리적으로 못 보는 구멍) ──────────────────
-    problems += check_existence(out=out)
-
-    if not problems:
-        out("✓ p4↔git 미러 일치(미푸시 커밋 없음, 내용·존재 드리프트 없음)")
-    return 1 if problems else 0
+    if drifts:
+        return 1
+    # ⛔ 못 잰 것이 있으면 초록이 아니다(원칙 ⓑ — "안 재고 있는 줄 모르는 것"이 최악이다).
+    if dunmeasured or unmeasured:
+        out("· 미러 드리프트는 못 찾았지만 **못 잰 항목이 있다** — 초록으로 읽지 말 것")
+        return RC_STALE
+    out("✓ p4↔git 미러 일치(미푸시 커밋 없음, 내용·존재 드리프트 없음)")
+    return 0
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="p4↔git 게시 게이트")
+    ap = argparse.ArgumentParser(
+        description="p4↔git 게시 게이트 — rc 0(깨끗)/1(빚)/2(기준선이 낡아 못 쟀다)")
     ap.add_argument("--cl", help="이 CL 이 내 파일만 담았는지 검사(부정 게이트)")
     ap.add_argument("--no-remote", action="store_true",
-                    help="git ls-remote 대조 생략(오프라인)")
+                    help="git fetch 생략(오프라인) — 기준선 신선도는 '못 쟀다'로 남는다")
     a = ap.parse_args(argv)
     if a.cl:
         return check_cl(a.cl)

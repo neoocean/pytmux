@@ -897,6 +897,7 @@ MENU_ITEMS = [
     ("autoresume", "토큰리밋 자동재개 토글"),
     ("prompt_clear", "프롬프트 단위 클리어 토글"),
     ("new_window", "새 탭"),
+    ("new_claude_window", "새 탭에서 Claude Code 실행"),
     ("rename_window", "탭 이름 변경"),
     ("kill_window", "탭 삭제"),
     ("toggle_pin", "탭 고정 토글 (오른쪽 구역으로)"),
@@ -926,8 +927,8 @@ MENU_GROUPS = {
              "kill_pane"],
     "layout": ["select_layout", "next_layout", "layout_save",
                "layout_load_over", "layout_load_new"],
-    "tab": ["new_window", "rename_window", "kill_window", "toggle_pin",
-            "choose_tree", "next_window", "prev_window"],
+    "tab": ["new_window", "new_claude_window", "rename_window", "kill_window",
+            "toggle_pin", "choose_tree", "next_window", "prev_window"],
 }
 # 최상위 표시 순서. "group:<g>"=서브메뉴 진입점, "--"=비선택 구분선, 그 외=직접 액션.
 # 자주 쓰는 단독 항목·토글·세션 동작만 최상위에 두어 짧게 — 파괴적 동작
@@ -973,6 +974,7 @@ COMMANDS = [
     ("next-layout", "다음 레이아웃 프리셋", "패널"),
     ("synchronize-panes", "입력 동기화 토글 [on|off]", "패널"),
     ("new-tab", "새 탭 (새 윈도우 1개 생성, = new-window)", "탭"),
+    ("new-claude-tab", "새 탭에서 Claude Code 실행 (현재 디렉토리 · esc c · 실행할 명령은 set claude-command)", "탭"),
     ("kill-tab", "탭 삭제 (= kill-window)", "탭"),
     ("next-tab", "다음 탭", "탭"),
     ("previous-tab", "이전 탭", "탭"),
@@ -1080,7 +1082,7 @@ _SET_OPTION_NAMES = (
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
     "set-titles", "set-titles-string", "tab-bar", "default-path",
-    "remote-title",
+    "remote-title", "claude-command",
 )
 
 # `set <옵션> <값>` 의 선택지(enum/bool) — 값 자동완성(ghost)·후보 추천(↑↓)용.
@@ -1227,6 +1229,8 @@ SETTINGS = [
     # 동작
     {"key": "default-path", "cat": "동작", "type": "str",
      "cmd": "set default-path", "backend": "config"},
+    {"key": "claude-command", "cat": "동작", "type": "str",
+     "cmd": "set claude-command", "backend": "config"},
     {"key": "set-titles", "cat": "동작", "type": "bool",
      "cmd": "set set-titles", "backend": "config"},
     {"key": "status-interval", "cat": "동작", "type": "int",
@@ -1285,6 +1289,8 @@ ESC_MODE_KEYS = [
     ("e_tab", "Tab", "탭 스위처(Tab 다음 · Shift+Tab 이전 · Enter 전환)",
      "Tab switcher (Tab next · Shift+Tab prev · Enter switch)"),
     ("e_n", "n", "새 탭", "New tab"),
+    ("e_c", "c", "새 탭에서 Claude Code 실행(현재 디렉토리 · set claude-command)",
+     "New tab running Claude Code (current dir · set claude-command)"),
     ("e_p", "p", "상하 분할", "Split top/bottom"),
     ("e_P", "P", "탭 고정(핀) 토글", "Toggle tab pin"),
     ("e_e", "e", "활성 패널에 ESC 전달", "Send ESC to active pane"),
@@ -1503,6 +1509,7 @@ i18n.register({
         "cmd.next-layout": "Next layout preset",
         "cmd.synchronize-panes": "Toggle input sync [on|off]",
         "cmd.new-tab": "New tab (creates one new window, = new-window)",
+        "cmd.new-claude-tab": "New tab running Claude Code (current dir · esc c · command from set claude-command)",
         "cmd.kill-tab": "Delete tab (= kill-window)",
         "cmd.next-tab": "Next tab",
         "cmd.previous-tab": "Previous tab",
@@ -1599,6 +1606,7 @@ i18n.register({
         "menu.autoresume": "Toggle token-limit auto-resume",
         "menu.prompt_clear": "Toggle per-prompt clear",
         "menu.new_window": "New tab",
+        "menu.new_claude_window": "New tab running Claude Code",
         "menu.rename_window": "Rename tab",
         "menu.kill_window": "Delete tab",
         "menu.toggle_pin": "Toggle tab pin (to right zone)",

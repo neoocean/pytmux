@@ -13,10 +13,10 @@
 """
 from __future__ import annotations
 
-from . import t0_core_loop
+from . import t0_core_loop, t1_commands, t2_multi_client, t3_gui_window
 
 #: 도는 순서 그대로. 티어가 낮은 것이 먼저다(T0 가 깨지면 위 티어의 결과는 뜻이 없다).
-REGISTRY = (t0_core_loop,)
+REGISTRY = (t0_core_loop, t1_commands, t2_multi_client, t3_gui_window)
 
 
 def by_tier(tier: str | None):

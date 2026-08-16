@@ -207,6 +207,42 @@ fn every_binding_name_round_trips_through_the_reverse_mapping() {
 }
 
 #[test]
+fn a_function_key_has_a_name_even_though_our_table_has_none() {
+    // ★ pytmux-125 — F-키는 [`BINDINGS`] 에 한 줄도 없지만 **플러그인 스펙이 가져간다**
+    //   (mdir 의 `F10` 트리·`F5` 복사). 이름이 없으면 서버가 `"f10"` 을 광고해도 그 표에서
+    //   영영 안 찾아지고, 증상은 "F-키만 안 먹는다"다 — `Home` 이 여기 있는 이유와 같다.
+    assert_eq!(super::binding_name(Key::Function(10)).as_deref(), Some("f10"));
+    assert_eq!(super::binding_name(Key::Function(1)).as_deref(), Some("f1"));
+    // 수정키 접두 문법도 같은 자가 짓는다(두 벌이 되면 `alt-f5` 가 갈린다).
+    assert_eq!(
+        super::binding_name_with(Key::Function(5), Mods::ALT).as_deref(),
+        Some("alt-f5")
+    );
+    // ⛔ 그런데 우리 표에는 여전히 한 줄도 없어야 한다 — 이름이 생겼다고 esc 모드나
+    //    prefix 가 그 키를 먹기 시작하면 패널 안 프로그램의 F-키가 사라진다.
+    assert_eq!(command_action(Key::Function(10), Mods::NONE), None);
+    assert!(
+        !crate::BINDINGS.iter().any(|b| b.key.starts_with('f') && b.key.len() > 1
+            && b.key[1..].chars().all(|c| c.is_ascii_digit())),
+        "표에 F-키가 생겼다 — 그러면 패널 안 프로그램의 그 키가 사라진다"
+    );
+}
+
+#[test]
+fn the_harness_token_table_can_press_a_function_key() {
+    // 하네스(`--frame-keys`)가 이 키를 못 넣으면 mdir 의 F-키가 든 화면을 **영영 못
+    // 찍는다** — 맥에서는 창에 키를 따로 넣을 길이 없다(`insert` 가 토큰인 이유와 같다).
+    assert_eq!(
+        super::parse_token("f10"),
+        Some((Key::Function(10), Mods::NONE))
+    );
+    assert_eq!(super::parse_token("f5"), Some((Key::Function(5), Mods::NONE)));
+    // ⛔ 낱글자 `f` 는 여전히 **글자**다 — 여기서 삼키면 mdir 의 빨리찾기가 죽는다.
+    assert_eq!(super::parse_token("f"), Some((Key::Char('f'), Mods::NONE)));
+    assert_eq!(super::parse_token("foo"), None);
+}
+
+#[test]
 fn a_shifted_letter_is_written_with_the_shift_prefix() {
     // 이 규칙이 문법의 전부다. 어기면 GUI 는 패닉하고(디버그) 릴리스에서는 그 키가
     // 영영 안 먹는다 — 후자가 더 나쁘다.

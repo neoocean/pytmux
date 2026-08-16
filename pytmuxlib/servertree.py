@@ -246,13 +246,20 @@ class ServerTreeMixin:
     # (_resolve_start_cwd→_pane_cwd)만 빌린다. 플러그인 디렉토리를 지우면 이 기능은
     # 조용히 사라진다(서버는 그 action 에 회신하지 않는다).
 
-    def new_window(self, sess: Session, path: str | None = None):
-        """새 탭(= 새 윈도우, 단일 패널)을 만들고 활성화한다."""
+    def new_window(self, sess: Session, path: str | None = None,
+                   cmd: str | None = None):
+        """새 탭(= 새 윈도우, 단일 패널)을 만들고 활성화한다.
+
+        cmd 가 있으면 그 명령을 **먼저 실행하고 그 자리에 셸을 남긴다**
+        (`_cmd_then_shell` — pytmux-137). 빈 문자열은 없는 것과 같다: 설정이
+        비어 있을 때 `셸 -c ''` 로 **즉시 죽는 탭**이 뜨는 것을 막는다."""
         c = self.clients_of(sess)
         cols = c.cols if c else 80
         rows = c.rows if c else 24
         cwd = self._resolve_start_cwd(sess, path)
-        root = self.spawn_pane(cols, rows, cwd=cwd)
+        cmd = (cmd or "").strip() or None
+        root = self.spawn_pane(cols, rows, cwd=cwd,
+                               cmd=self._cmd_then_shell(cmd) if cmd else None)
         # 새 탭은 비고정 구역의 끝(첫 고정 탭 앞)에 삽입한다 — 고정 구역을 침범하지
         # 않게(항목7). 고정 탭이 없으면 종전대로 맨 뒤(= append 와 동일).
         prev_active = sess.active_tab

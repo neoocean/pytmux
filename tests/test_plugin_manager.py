@@ -184,3 +184,48 @@ async def test_plugin_manager_click_outside_closes():
         assert app.screen_stack[-1] is not scr, "바깥 클릭은 팝업을 닫는다"
         assert ev_out.stopped
     await _with_app(body)
+
+
+async def test_plugin_manager_typing_filters_list():
+    """플러그인 목록에 타이핑 찾기 — 글자를 치면 플러그인 이름으로 필터링."""
+    from pytmuxlib.clientscreens import PluginManagerScreen
+
+    async def body(app, pilot, srv):
+        app.push_screen(PluginManagerScreen())
+        scr = await wait_mounted(pilot, "PluginManagerScreen", child="#plgbox")
+        await pilot.pause(0.05)
+
+        # 초기: 모든 플러그인 표시
+        lv = scr.query_one("#plglist", ListView)
+        initial_count = len(lv.children)
+        assert initial_count > 1, "최소 2개 이상 플러그인 있어야 함"
+
+        # 'c' 입력 → clock, claude 등 c로 시작하는 플러그인만 필터링
+        await pilot.press("c")
+        await pilot.pause(0.05)
+        filtered_count = len(lv.children)
+        assert filtered_count < initial_count, f"필터링 후 줄어야 함: {filtered_count} < {initial_count}"
+
+        # 검색창에 'c' 표시되어야 함
+        search_input = scr.query_one("#plgsearch", Input)
+        assert search_input.value == "c", f"검색어가 'c'여야 함: {search_input.value}"
+
+        # 다시 'l' 입력 → clock 정도만 남음
+        await pilot.press("l")
+        await pilot.pause(0.05)
+        more_filtered = len(lv.children)
+        assert more_filtered <= filtered_count, f"더 필터링되어야 함: {more_filtered} <= {filtered_count}"
+        assert search_input.value == "cl", f"검색어가 'cl'여야 함: {search_input.value}"
+
+        # Backspace → 'c' 로 돌아감
+        await pilot.press("backspace")
+        await pilot.pause(0.05)
+        back_count = len(lv.children)
+        assert back_count == filtered_count, f"Backspace 후 이전 상태로: {back_count} == {filtered_count}"
+        assert search_input.value == "c", f"검색어가 'c'여야 함: {search_input.value}"
+
+        # Escape → 창 닫힘
+        await pilot.press("escape")
+        await wait_until(pilot, lambda: app.screen_stack[-1] is not scr)
+        assert app.screen_stack[-1] is not scr, "Escape 로 팝업 닫혀야 함"
+    await _with_app(body)

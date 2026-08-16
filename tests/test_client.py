@@ -6,6 +6,7 @@ import harness
 from harness import (
     make_app, server_only, teardown, wait_mounted, wait_until,
 )
+from pytmuxlib import client as client_mod
 from textual.events import Key
 from textual.widgets import Input
 
@@ -1411,6 +1412,56 @@ async def test_esc_n_new_tab_and_p_new_pane():
     await _with_app(body)
 
 
+async def test_esc_c_opens_a_claude_tab_here():
+    # ESC+c = **지금 워킹디렉토리에서 Claude Code CLI 가 도는 새 탭**(pytmux-137).
+    # 재는 것 셋:
+    #   ⑴ 명령이 나가고 모드를 빠진다
+    #   ⑵ 자리가 `current` 다 — `default-path` 가 home 이어도 그렇다. send_cmd 는
+    #      안 적으면 그 설정을 싣는데, 이 키의 값은 「이 디렉토리에서 바로 붙는다」에
+    #      있어서 설정이 요구를 조용히 덮으면 안 된다.
+    #   ⑶ 실행할 것은 `claude-command` 설정이 정한다(실행 파일 이름을 안 박는다).
+    async def body(app, pilot, srv):
+        sent = []
+        app.send_cmd = lambda a, **k: sent.append((a, k))
+        app.default_path = "home"
+        app.claude_command = "my-claude --resume"
+        app._last_esc_ts = 0.0
+        await pilot.press("escape")
+        assert app.mode == "esc"
+        await pilot.press("c")
+        assert sent == [("new_window",
+                         {"path": "current", "cmd": "my-claude --resume"})], sent
+        assert app.mode == "normal", "c=Claude 탭 후 종료"
+    await _with_app(body)
+
+
+async def test_send_cmd_fills_default_path_only_when_it_is_missing():
+    # ⛔ `esc c` 의 예외가 **`esc n` 까지 먹지 않았는지** 재는 자리(pytmux-137).
+    #
+    # send_cmd 는 자리를 안 적은 new_window/split 에만 `default-path` 를 싣는다 —
+    # 그러니 `esc n`(자리 안 적음)은 설정을 그대로 따르고, `esc c`(자리를 `current`
+    # 로 박음)는 설정을 안 따른다. 그 갈림을 **실제 send_cmd** 로 잰다(호출부 인자만
+    # 보면 이 규칙이 그대로인지 알 수 없다).
+    async def body(app, pilot, srv):
+        wrote = []
+
+        async def fake_write(_writer, msg):
+            wrote.append(msg)
+
+        app.writer = object()
+        app.default_path = "home"
+        with harness.patched(client_mod, write_msg=fake_write):
+            app.send_cmd("new_window")                       # esc n 이 보내는 것
+            app.send_cmd("new_window", path="current", cmd="claude")  # esc c
+            await pilot.pause()
+        assert wrote == [
+            {"t": "cmd", "action": "new_window", "path": "home"},
+            {"t": "cmd", "action": "new_window", "path": "current",
+             "cmd": "claude"},
+        ], wrote
+    await _with_app(body)
+
+
 async def test_esc_e_sends_escape_to_pane():
     # ESC+e = 활성 패널에 ESC(\x1b) 전달 후 모드 종료 — Shift+ESC 로 ESC 를 못 보내는
     # 터미널(WT 등)용 2단 키보드 동선(요청 2026-06-18). 대조: 단독 ESC 두 번은 여전히
@@ -2771,6 +2822,153 @@ async def test_search_all_result_panel_speaks_about_the_remote_hosts():
         cb(msg["items"][1])
         assert ("search_goto", {"wid": 9, "win": 1, "pane": 2, "line": 42,
                                 "route": ["B"], "query": "NEEDLE"}) in sent, sent
+    await _with_app(body)
+
+
+def _sres(items):
+    from pytmuxlib.clientscreens import SearchResultsScreen
+    return SearchResultsScreen({"t": "search_results", "query": "Q",
+                                "panes": len(items), "items": items})
+
+
+_SRES_ITEMS = [
+    # 탭 이름 길이가 제각각이고 한글이 섞인다 — 글자 수로 재면 반드시 어긋나는 배치.
+    {"win": 0, "wid": 1, "tab": "sh", "pane": 0, "title": "zsh",
+     "line": 7, "text": "짧은 탭 이름"},
+    {"win": 1, "wid": 2, "tab": "빌드로그", "pane": 1, "title": "make",
+     "line": 420, "text": "긴 줄 " * 40},
+    {"win": 2, "wid": 3, "tab": "a" * 40, "pane": 2, "title": "python3.13",
+     "line": 5, "text": "이름이 상한을 넘는 탭"},
+]
+
+
+def test_search_all_result_panel_lines_its_columns_up():
+    """③ 결과 판(pytmux-27) — 네 칸이 **줄마다 같은 열**에서 시작한다.
+
+    종전 한 줄은 `탭 · 패널제목 │ 본문` **한 덩이**라, 이름 길이에 따라 정작 고르는
+    근거인 미리보기가 줄마다 다른 자리에서 시작했다(ⓞ/pytmux-59 가 팔레트에서 잡은 것과
+    같은 결함). ⛔ **글자 수가 아니라 셀 폭**이다 — 탭 이름에 한글이 섞이면 `len()` 패딩은
+    두 배까지 벌어진다(pytmux-47 이 난 자리와 같은 뿌리)."""
+    from pytmuxlib.clientscreens import _cells
+    scr = _sres(_SRES_ITEMS)
+    rows = [scr._row_text(it).plain for it in _SRES_ITEMS]
+    starts = {_cells(r.split(" │ ", 1)[0]) for r in rows}
+    assert len(starts) == 1, ("미리보기 시작 열이 줄마다 다르다", starts, rows)
+
+    # 칸 폭은 목록 전체로 한 번 정한다 — 상한에 걸리면 그 칸만 접힌다(미리보기를
+    # 밀어내지 않는다).
+    w_tab, w_pane, w_line = scr._col_widths()
+    assert w_tab == scr._TAB_MAX, (w_tab, "상한을 안 물었다")
+    assert rows[2].startswith("3:" + "a" * (scr._TAB_MAX - 3) + "…"), rows[2]
+    assert w_pane == _cells("python3.13") and w_line == 3, (w_pane, w_line)
+
+    # 줄 번호는 **오른쪽 정렬**(자리값을 맞춘다) — 그리고 없는 값을 0 으로 꾸미지 않는다.
+    assert "  7 │ " in rows[0] and "420 │ " in rows[1], rows[:2]
+    assert _sres([{"win": 0, "tab": "t", "title": "x", "text": "y"}]
+                 )._col_widths()[2] == 0, "줄 번호가 없으면 그 칸도 없다"
+
+
+def test_search_all_result_row_never_spills_past_the_panel():
+    """③ 판의 기하는 내용에 안 따라간다(ⓗ/pytmux-58) — 긴 히트도 **한 줄**이다.
+
+    ⛔ 미리보기를 안 자르면 Textual 이 soft-wrap 해 그 항목만 두세 줄이 되고, 그러면
+    같은 판이 결과에 따라 커졌다 작아졌다 한다. 폭을 모를 때(마운트 전)는 자르지
+    않는다 — 모르면서 자르면 멀쩡한 줄을 깎는다."""
+    from pytmuxlib.clientscreens import SearchResultsScreen, _cells
+    scr = _sres(_SRES_ITEMS)
+    for it in _SRES_ITEMS:
+        assert _cells(scr._row_text(it, width=60).plain) <= 60, it["tab"]
+    assert _cells(scr._row_text(_SRES_ITEMS[1]).plain) > 60, "폭을 모르면 안 자른다"
+
+    # 판 높이는 화면 비율로 못박혀 있다(#sresbox) — 결과 수에 안 따라간다.
+    css = SearchResultsScreen.CSS
+    assert "#sresbox { width: 90%; height: 80%;" in css, css
+
+
+def test_search_all_result_panel_does_not_swallow_the_cap_notice():
+    """③ — 상한·무응답 상류는 **테두리 제목이 아니라 판 안**에 적는다.
+
+    ⛔ 테두리 제목은 판 폭을 넘으면 Textual 이 말없이 `…` 로 자른다. 실측 120칸에서
+    「패널 N개는 …까지만 실었다 · 원격 1/2곳 · 빠진 곳 — …」이 통째로 잘렸다 — 서버까지
+    고쳐 밝힌 상한(①②)을 마지막 한 칸에서 도로 삼키는 자리였다(no silent caps)."""
+    from pytmuxlib.clientscreens import SearchResultsScreen
+    scr = SearchResultsScreen(
+        {"query": "Q", "panes": 9, "items": _SRES_ITEMS, "truncated": True,
+         "cap": 200, "capped_panes": 2, "per_pane": 20,
+         "hosts": [{"host": "build01", "state": "ok"},
+                   {"host": "gpu-7", "state": "timeout"}]})
+    head, notes = scr.headline_text(), scr.notes_text()
+    assert "200" not in head and "gpu-7" not in head, ("머리말이 다 짊어졌다", head)
+    for must in ("200", "20", "1/2", "gpu-7"):
+        assert must in notes, (must, notes)
+    # 이어 붙인 한 문장은 그대로 남는다(로그·시험이 한 번에 본다).
+    assert scr.title_text() == head + " · " + notes
+    # 할 말이 없으면 그 줄도 없다.
+    assert SearchResultsScreen({"query": "Q", "items": []}).notes_text() == ""
+
+
+async def test_search_all_result_rows_reach_the_list_items():
+    """③ 칸 계산이 **실제로 화면에 붙는지**까지 본다 — 진짜로 판을 띄워 라벨을 읽는다.
+
+    ⛔ `_row_text` 만 단언하면 그 값을 붙이는 호출을 지워도 통과한다(공허 통과 —
+    루트 CLAUDE.md "표시 기능은 호출부까지 단언"). 그리고 마운트 뒤에는 폭이 정해지므로
+    `_refresh_rows` 가 미리보기를 그 폭에 맞춰 다시 자른다.
+
+    칸별 색(ⓞ): 원격 줄의 첫 칸은 탭바 규약대로 분홍(§1.7-a)이고, 미리보기 칸은
+    무색이다 — 거기에 색을 얹으면 선택 줄 하이라이트 위에서 대비가 무너진다.
+    ⛔ 그리고 **커서가 놓인 줄만** 칸 색을 다 비운다 — 흐린 회색을 하이라이트 파랑 위에
+    얹으면 그 줄만 안 읽힌다(ⓞ 가 못박은 검사가 정확히 그 상태의 대비다)."""
+    async def body(app, pilot, srv):
+        from textual.color import Color
+        from textual.widgets import Label, ListView
+        from pytmuxlib.clientscreens import SearchResultsScreen, _cells
+        from pytmuxlib.clientutil import REMOTE_PINK
+        remote = dict(_SRES_ITEMS[0], remote=True, gwin=4, tab="⇄B:빌드")
+        app.push_screen(SearchResultsScreen(
+            {"query": "Q", "panes": 3, "items": _SRES_ITEMS[1:] + [remote]}))
+        await wait_mounted(pilot, "SearchResultsScreen", child="#sres ListItem")
+        scr = app.screen_stack[-1]
+        await wait_until(pilot, lambda: scr._width() > 0)
+        scr._refresh_rows()
+
+        def shown():
+            # Label 이 **실제로 그리는** 것을 읽는다(`visual` = Textual Content).
+            # ⛔ 여기서 색을 세는 것이 요점이다: Rich `Text(s, style=…)` 의 바탕색은
+            # Content 로 오면 **줄 전체를 덮는 스팬**이 되므로, 미리보기까지 물든 사고
+            # (원격 줄이 통째로 분홍)가 그대로 잡힌다.
+            return [it.query_one(Label).visual
+                    for it in scr.query_one(ListView).children]
+
+        def colored(v, lo=0):
+            return [s for s in v.spans if s.end > lo and s.style.foreground]
+
+        texts = shown()
+        assert len(texts) == 3, texts
+
+        plain = texts[2].plain
+        assert plain.startswith("5:⇄B:빌드"), plain          # gwin+1, 병합 탭바 번호
+        assert plain.split(" │ ", 1)[1] == "짧은 탭 이름", plain
+        # 마운트했으므로 폭을 안다 — 긴 줄은 판을 안 넘고 한 줄로 남는다.
+        assert all(_cells(t.plain) <= scr._width() for t in texts), \
+            [(_cells(t.plain), scr._width()) for t in texts]
+
+        pink = Color.parse(REMOTE_PINK)
+        assert any(s.style.foreground == pink for s in texts[2].spans), \
+            ("원격 줄의 자리 표시가 분홍이 아니다", texts[2].spans)
+        body_at = len(plain) - len(plain.split(" │ ", 1)[1])
+        assert not colored(texts[2], body_at), \
+            ("미리보기 칸에 색이 붙었다", texts[2].spans)
+
+        # 커서 줄(마운트 직후 0번)은 색이 없고, 커서를 옮기면 그 자리도 **따라 옮긴다**.
+        assert not colored(texts[0]), texts[0].spans
+        await pilot.press("down")
+        await wait_until(pilot, lambda: scr._hl == 1)
+        after = shown()
+        assert colored(after[0]), "떠난 줄이 안 돌아왔다"
+        assert not colored(after[1]), after[1].spans
+        # 색이 바뀌어도 **칸은 안 움직인다**(하이라이트 줄만 미리보기가 밀리면 안 된다).
+        assert len({_cells(t.plain.split(" │ ", 1)[0]) for t in after}) == 1, \
+            [t.plain for t in after]
     await _with_app(body)
 
 

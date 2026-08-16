@@ -185,6 +185,7 @@ pub static EN: &[(&str, &str)] = &[
     ("비활성 패널 흐리게 토글 [on|off]", "Toggle dimming of inactive panes [on|off]"),
     ("상태줄에 메시지 표시", "Show message in status bar"),
     ("새 탭 (새 윈도우 1개 생성, = new-window)", "New tab (creates one new window, = new-window)"),
+    ("새 탭에서 Claude Code 실행 (현재 디렉토리 · esc c · 실행할 명령은 set claude-command)", "New tab running Claude Code (current dir · esc c · command from set claude-command)"),
     ("서버와 모든 탭/셸 종료", "Kill server and all tabs/shells"),
     ("설정 파일 다시 불러오기", "Reload config file"),
     ("세션이 0개여도 서버 종료 on/off — tmux exit-empty 동형, off=원격 federation 링크 보존용 상주(exit-empty on|off|toggle)", "Exit server when session count hits 0 on/off — tmux exit-empty equivalent, off=stay resident for remote federation links (exit-empty on|off|toggle)"),

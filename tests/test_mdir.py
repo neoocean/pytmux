@@ -1087,6 +1087,32 @@ async def test_the_spec_declares_the_canonical_sort_and_mask_keys():
         assert keys.get("t") == "tag" and keys.get("enter") == "into", keys
 
 
+async def test_the_spec_declares_the_canonical_function_keys():
+    """★ F-키도 **정본과 같은 표**다(pytmux-125) — 정본 화면(`screen.py::on_key`)의
+    `f2`·`f3`·`f4`·`f5`·`f6`·`f7`·`f8`·`f10` 을 그대로 옮겼다.
+
+    ⛔ 글자 키를 **대체하지 않는다**: 노트북 자판에서 F-키는 Fn 조합이라 한 손을
+    없애면 그 사람에게는 기능이 사라진 것과 같다."""
+    import importlib, tempfile
+    mod = importlib.import_module("pytmuxlib.plugins.mdir")
+    plug = mod.PLUGIN
+    with tempfile.TemporaryDirectory() as td:
+        spec = plug._spec({"path": td, "tags": []}, 0, "")
+        keys = spec["keys"]
+        for k, act in (("f2", "rename"), ("f3", "view"), ("f4", "cd"),
+                       ("f5", "copy"), ("f6", "move"), ("f7", "mkdir"),
+                       ("f8", "delete"), ("f10", "tree")):
+            assert keys.get(k) == act, (k, keys)
+        # 글자 짝은 그대로 있다 — F-키는 별칭이지 이사가 아니다.
+        for letter, act in (("r", "rename"), ("v", "view"), ("p", "cd"),
+                            ("c", "copy"), ("m", "move"), ("k", "mkdir"),
+                            ("d", "delete")):
+            assert keys.get(letter) == act, (letter, keys)
+        # 안내줄이 `F10` 을 말한다 — 글자 짝이 없는 유일한 손이라, 안 적으면 아무도
+        # 그 키가 있는 줄 모른다.
+        assert "F10" in spec["hint"], spec["hint"]
+
+
 async def test_sorting_actually_reorders_the_spec_rows():
     """★ **호출부 오라클** — 규칙이 맞아도 스펙이 안 쓰면 화면은 늘 이름순이다."""
     import importlib, os, tempfile
@@ -1101,3 +1127,85 @@ async def test_sorting_actually_reorders_the_spec_rows():
         by_size = [r["label"].strip() for r in plug._spec(mine, 0, "")["rows"]]
         assert by_name.index("big.txt") < by_name.index("small.txt"), by_name
         assert by_size.index("small.txt") < by_size.index("big.txt"), by_size
+
+
+def test_the_counts_rule_is_one_copy():
+    """★ 집계줄의 **서식**이 한 벌이다(pytmux-126).
+
+    이 줄이 나르는 것은 표현이 아니라 **자료**다 — 몇 개가 보이고, 몇 바이트이고,
+    볼륨에 얼마가 남았고, 지금 무슨 정렬인지. 그 계산이 `screen.py`(Textual) 안에만
+    있어서 서버가 못 불렀고, 네이티브 클라의 mdir 에는 그 값이 하나도 없었다.
+
+    서식을 글자 단위로 못박는 이유: 원조 Mdir III 의 줄이라 `File`·`Dir`·`Byte`·
+    `free` 는 **번역 대상이 아니다**(색과 같은 부류 — 제품의 정체성). 한 칸이라도
+    바뀌면 정본을 쓰던 사람이 다른 화면을 보게 된다.
+    """
+    from pytmuxlib.plugins.mdir.listing import counts
+    dirs = [_e("sub", d=True)]
+    files = [_e("a.txt", s=5), _e("b.txt", s=10)]
+    assert counts(dirs, files, free=500, total=1000) == (
+        "2 File  1 Dir  15 Byte  500(50%)byte free  N")
+    # 태그 — **수는 태그 전부**, 바이트는 파일만(정본이 그렇게 센다).
+    assert counts(dirs, files, {"a.txt", "sub"}, 500, 1000) == (
+        "2 File  1 Dir  15 Byte  500(50%)byte free  Sel 2 (5)  N")
+    # 정렬·내림차순·숨김·꼬리말.
+    assert counts(dirs, files, (), 500, 1000, "s", True, True, "(잘림)") == (
+        "2 File  1 Dir  15 Byte  500(50%)byte free  S↓ H  (잘림)")
+    # 볼륨을 못 읽으면 0 이다 — 0 으로 나누지 않는다(네트워크 드라이브).
+    assert "0(0%)byte free" in counts(dirs, files)
+    # 열쇠는 부르는 쪽이 정한다 — 화면 스펙은 **절대경로**로 태그한다.
+    assert "Sel 1 (5)" in counts(dirs, files, {"/r/a.txt"}, 500, 1000,
+                                 key=lambda e: "/r/" + e["n"])
+
+
+async def test_both_clients_count_the_same_directory_the_same_way():
+    """★ **호출부 오라클** — 규칙이 한 벌이어도 한쪽이 안 부르면 수가 갈린다.
+
+    같은 디렉터리를 정본 화면과 화면 스펙에 각각 보이고, 정본의 집계줄과 스펙의
+    `note` 가 **글자 단위로 같은지** 잰다. 어느 한쪽이 자기 셈을 다시 갖는 순간
+    (또는 스펙이 그 줄을 아예 안 실으면) 여기가 운다.
+    """
+    import os
+    import shutil
+    import tempfile
+    from pytmuxlib.plugins.mdir import PLUGIN
+    from pytmuxlib.plugins.mdir.server import list_entries
+    with tempfile.TemporaryDirectory() as td:
+        os.makedirs(os.path.join(td, "sub"))
+        for name, body_ in (("a.txt", "12345"), ("b.txt", "0123456789")):
+            with open(os.path.join(td, name), "w", encoding="utf-8") as fh:
+                fh.write(body_)
+        ents, _err, _over = list_entries(td)
+        # ⚠ 볼륨 여유는 **살아 있는 값**이다 — 두 쪽이 각자 재면 몇 킬로바이트가
+        #    어긋나 이 오라클이 간헐로 붉는다. 같은 수를 보게 못박는다.
+        real = shutil.disk_usage
+
+        class _Du:
+            free, total = 500, 1000
+
+        async def body(app, pilot, srv):
+            from pytmuxlib.plugins.mdir.screen import MdirScreen
+            app.send_cmd = lambda *a, **k: None
+            app._run_command("mdir")
+            app._dispatch({"t": "mdir_list", "path": td, "entries": ents,
+                           "drives": [], "free": _Du.free,
+                           "total": _Du.total, "nt": False,
+                           "over": False, "err": None})
+            assert await wait_until(pilot,
+                                    lambda: isinstance(app.screen, MdirScreen))
+            view = app.screen._view
+            shutil.disk_usage = lambda _p: _Du
+            try:
+                spec = PLUGIN._spec({"path": td, "tags": []}, 0, "")
+                assert view._line_counts(200).text.strip() == spec["note"], (
+                    view._line_counts(200).text, spec["note"])
+                # 태그를 걸어도 같다 — 열쇠만 다르다(정본은 이름, 스펙은 절대경로).
+                view._tags.add("a.txt")
+                tagged = PLUGIN._spec(
+                    {"path": td, "tags": [os.path.join(td, "a.txt")]}, 0, "")
+                assert "Sel 1 (5)" in tagged["note"], tagged["note"]
+                assert view._line_counts(200).text.strip() == tagged["note"], (
+                    view._line_counts(200).text, tagged["note"])
+            finally:
+                shutil.disk_usage = real
+        await _with_app(body)

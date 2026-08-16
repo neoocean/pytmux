@@ -189,6 +189,7 @@ impl BlockList {
             | Action::SplitTopBottom
             | Action::KillPane
             | Action::NewTab
+            | Action::NewClaudeTab
             | Action::KillTab
             | Action::NextTab
             | Action::PrevTab

@@ -90,7 +90,12 @@ pub fn open_capture_dir(path: &str) -> bool {
     let opener = "explorer";
     #[cfg(all(unix, not(target_os = "macos")))]
     let opener = "xdg-open";
-    std::process::Command::new(opener).arg(dir).spawn().is_ok()
+    // ⛔ 이름 그대로 띄우지 않는다 — Windows 에서 **이진 옆 폴더**가 시스템 디렉터리보다
+    //    먼저 잡힌다(`clip::system_tool` 의 문서에 std 원문과 함께 적었다).
+    std::process::Command::new(clip::system_tool(opener))
+        .arg(dir)
+        .spawn()
+        .is_ok()
 }
 
 /// 링크를 **OS 기본 브라우저**로 연다(§10-21ⓥ2). 열었으면 `true`.
@@ -112,7 +117,11 @@ pub fn open_link(url: &str) -> bool {
     let opener = "explorer";
     #[cfg(all(unix, not(target_os = "macos")))]
     let opener = "xdg-open";
-    std::process::Command::new(opener).arg(url).spawn().is_ok()
+    // 스킴을 좁힌 것과 **같은 이유로** 띄우는 프로그램도 좁힌다(`clip::system_tool`).
+    std::process::Command::new(clip::system_tool(opener))
+        .arg(url)
+        .spawn()
+        .is_ok()
 }
 
 /// 상대 경로를 **전체 경로**로 푼다(§10-21ⓧ2). 기준은 그 패널의 작업 디렉터리다.

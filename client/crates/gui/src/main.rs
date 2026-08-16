@@ -150,6 +150,54 @@ fn tell_window_the_band(ctx: &warpui::AppContext, window_id: warpui::WindowId, f
     }
 }
 
+/// 이 클라를 **지금** 끝낸다 — 끝내는 자리는 이 한 곳이다.
+///
+/// GUI 에서는 창 하나가 곧 앱이라 "창을 닫는다 = 프로세스가 끝난다"이고, 그 뜻을 두
+/// 군데에 적으면 한쪽만 고쳐진다. 실제로 그랬다(`pytmux/pytmux-163` — 아래
+/// [`app_callbacks`]).
+///
+/// ⛔ 상류의 정상 종료(`window_target.exit()` → `LoopExiting`)를 기다리지 않는다:
+/// 그 길은 **창이 실제로 드롭될 때만** 열리는데(§`app_callbacks`) 이 앱은 그 자리를
+/// 안 쥐고 있다. 여기서 끊는 편이 "창은 사라졌는데 프로세스가 남는" 상태보다 낫다.
+pub(crate) fn quit_now() -> ! {
+    std::process::exit(0)
+}
+
+/// 상류에게 건네는 콜백 한 벌.
+///
+/// # 왜 `AppCallbacks::default()` 가 아닌가 (`pytmux/pytmux-163`)
+///
+/// ⛔ **OS 가 닫는 길과 우리가 닫는 길이 갈라져 있었다.** 우리가 그리는 × 는
+/// `press_window_button` → `quit_requested` → [`quit_now`] 로 프로세스를 끝내는데,
+/// **Alt+F4**(그리고 작업 표시줄의 「창 닫기」·맥 신호등 빨강)는 그 자리를 안 지난다 —
+/// 상류 이벤트 루프가 `WindowEvent::CloseRequested` 를 받아 `should_close_window` 를
+/// 묻고, 콜백이 없으면 기본값 `Terminate` 로 창을 접는다.
+///
+/// 그 "접는다"가 끝까지 안 간다. 상류는 이벤트 루프의 창 상태를 지우고 **렌더러를
+/// 드롭**한 뒤 `window_will_close` 를 부르는데, 창(winit `Window`)을 실제로 놓는 줄은
+/// 그 콜백 안의 `handle_window_closed` 에만 있다 — 콜백이 `None` 이면 아무도 안 부른다.
+/// 그래서:
+///
+/// - HWND 가 살아 있어 `WindowEvent::Destroyed` 가 안 오고 → `window_target.exit()` 도,
+///   그 뒤의 `LoopExiting` → `exit(0)` 도 영영 안 온다 = **프로세스가 남는다**.
+/// - 창은 투명하게(`with_transparent(true)`) 만들어져 있어, 렌더러가 사라지면 그릴 것이
+///   없어 **바탕화면이 비쳐 보인다** = 사용자에게는 "창이 닫혔다"로 보인다.
+///
+/// 둘이 겹치면 제보 그대로가 된다: *창은 사라졌는데 작업관리자에는 남아 있다.*
+///
+/// 그래서 그 물음에 우리가 답한다 — **되묻지 않고 끝낸다.** 창 버튼이 하는 일과 같은
+/// 일이고(같은 [`quit_now`]), 우리가 `ctx.close_window()` 로 닫을 때도 같은 곳으로
+/// 온다(상류 `close_window_async` 가 같은 물음을 낸다) — 닫는 길이 셋이어도 끝은 하나다.
+///
+/// ⚠ 서버(파이썬 데몬)는 여기서 안 건드린다. tmux 와 같은 모델이라 **클라가 빠져도
+/// 세션은 산다** — 다시 띄우면 그 세션에 도로 붙는다.
+fn app_callbacks() -> platform::AppCallbacks {
+    platform::AppCallbacks {
+        on_should_close_window: Some(Box::new(|_window_id, _ctx| quit_now())),
+        ..Default::default()
+    }
+}
+
 fn plan_for(args: Args) -> Plan {
     match args {
         Args::Usage => Plan::Usage,
@@ -164,13 +212,19 @@ fn plan_for(args: Args) -> Plan {
 ///
 /// # 왜 화면 캡처가 아니라 자가 덤프인가
 ///
-/// 이 저장소의 라이브 확인은 "창 안의 그림"을 봐야 하는데, macOS 에서 에이전트 셸은
-/// **Background launchd 세션**이라(2026-07-30 실측 — `launchctl managername`) 여기서
-/// 띄운 창은 사용자의 Aqua 세션 화면에 컴포지트되지 않고, `screencapture` 도 그
-/// 별세계를 찍는다 — 창이 멀쩡히 그려져도 "안 그려진다"로 오판하게 된다(G9i 가 정확히
-/// 그 자리에 섰다). 드로어블 텍스처를 **앱이 직접 읽으면**(warpui `request_frame_capture`)
-/// 세션도 화면 기록 권한도 필요 없다. Windows 하네스의 `PrintWindow` 함정(까만 사각형을
-/// 성공으로 돌려준다)과 같은 부류의 답이다 — 화면이 아니라 원본에서 뜬다.
+/// 이 저장소의 라이브 확인은 "창 안의 그림"을 봐야 하는데, macOS 에서 에이전트 셸이 띄운
+/// 창은 **화면 캡처에 안 나온다** — 창이 멀쩡히 그려져도 "안 그려진다"로 오판하게 된다
+/// (G9i 가 정확히 그 자리에 섰다). 드로어블 텍스처를 **앱이 직접 읽으면**(warpui
+/// `request_frame_capture`) 화면도 권한도 필요 없다. Windows 하네스의 `PrintWindow`
+/// 함정(까만 사각형을 성공으로 돌려준다)과 같은 부류의 답이다 — 화면이 아니라 원본에서 뜬다.
+///
+/// ⛔ **까닭은 「Background launchd 세션이라 컴포지트가 안 된다」가 아니다**(2026-08-09 실측 ·
+/// `pytmux-150`). 종전에 이 자리에 그렇게 적혀 있었는데 지금 재면 `launchctl managername` 은
+/// **Aqua** 고, 창은 `CGWindowList` 에 `onscreen=1` 로 정상으로 있다. 진짜 까닭은 **화면 기록
+/// 권한**이고, 권한 없이 화면을 찍으면 실패하지 않고 **벽지 + 메뉴바만** 담긴 그림이 rc 0 으로
+/// 나온다(거짓 초록). 갈래별 실측과 그때 쓸 하네스는 `client/CLAUDE.md` 의 macOS 절에 있다.
+/// ⚠ 그리고 이 덤프는 **정의상 OS 크롬(맥 신호등)을 담지 못한다** — 그것을 봐야 하면
+/// `scripts/capture_window_mac.sh`(권한 있는 셸에서) 뿐이다.
 fn take_frame_dump(
     argv: impl IntoIterator<Item = String>,
 ) -> (Option<String>, Option<String>, Vec<String>) {
@@ -326,8 +380,9 @@ fn main() -> Result<()> {
         (!config_lang.is_empty()).then_some(config_lang.as_str()),
     );
 
-    let app_builder =
-        platform::AppBuilder::new(platform::AppCallbacks::default(), Box::new(NoAssets), None);
+    // ⛔ `AppCallbacks::default()` 를 넣지 않는다 — 그러면 OS 가 닫는 길(Alt+F4)이
+    //    끝까지 안 가고 프로세스가 남는다(`app_callbacks` 문서 · `pytmux/pytmux-163`).
+    let app_builder = platform::AppBuilder::new(app_callbacks(), Box::new(NoAssets), None);
 
     let _ = app_builder.run(move |ctx| {
         // core 의 키 바인딩 표를 GUI 키맵에 등록한다(뷰를 만들기 전에).
@@ -530,6 +585,44 @@ mod tests {
                 vec![(Key::Left, Mods::NONE)],
             ],
             "wait 가 배치를 가르지 않으면 순서를 못 만든다"
+        );
+    }
+
+    #[test]
+    fn the_os_close_request_is_answered_by_us_not_by_the_default() {
+        // ★ `pytmux/pytmux-163` 이 여기였다. 이 배선이 없으면 상류 기본값이 답하고,
+        //   그 길은 창을 실제로 놓지 않아 **프로세스가 남는다**(`app_callbacks` 문서).
+        //   콜백은 부르면 프로세스가 끝나므로(`quit_now`) 여기서는 **달려 있는지**까지
+        //   잰다 — 그 배선을 지우는 변이를 이 단언이 잡는다.
+        assert!(
+            app_callbacks().on_should_close_window.is_some(),
+            "Alt+F4 를 상류 기본값에 맡기면 창만 사라지고 프로세스가 남는다"
+        );
+        // 나머지 자리는 비워 둔다 — 필요 없는 훅을 채우면 상류의 미검증 경로가 는다.
+        let callbacks = app_callbacks();
+        assert!(callbacks.on_should_terminate_app.is_none());
+        assert!(callbacks.on_window_will_close.is_none());
+    }
+
+    #[test]
+    fn the_app_is_built_with_our_callbacks() {
+        // ⛔ 위 오라클은 **함수**만 본다 — `AppBuilder` 에 그것을 넘기는 줄이 지워지면
+        //    아무 테스트도 안 깨진다(그 자리가 정확히 회귀 지점이었다). GUI 에는 앱을
+        //    띄우지 않고 그 줄을 잴 하네스가 없으니 원문으로 잰다.
+        //    ⚠ 시험 자리는 잘라내고 본다 — 안 그러면 이 단언들이 **자기 문자열**을
+        //    찾아내 제품이 어떻든 통과한다(자기 참조 = 거짓 초록).
+        let source = include_str!("main.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("본문은 늘 한 토막 있다");
+        assert!(
+            production.contains("AppBuilder::new(app_callbacks()"),
+            "AppBuilder 에 우리 콜백을 안 넘기면 Alt+F4 가 다시 기본값으로 간다"
+        );
+        assert!(
+            !production.contains("AppBuilder::new(platform::AppCallbacks::default()"),
+            "기본 콜백 한 벌을 그대로 넘기는 줄이 돌아왔다"
         );
     }
 

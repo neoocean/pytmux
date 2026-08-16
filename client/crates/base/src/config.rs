@@ -47,6 +47,12 @@ pub struct Config {
     pub tab_bar_always: bool,
     /// 새 탭·분할이 시작할 자리(`current`/`home`/절대경로). 서버가 해석한다.
     pub default_path: String,
+    /// `esc c` 가 새 탭에서 실행할 명령(파이썬 `claude-command`, 기본 `claude`).
+    ///
+    /// 실행 파일 이름을 코드에 박지 않는 이유: 경로·플래그가 사람마다 다르다. 비우면
+    /// 그냥 셸 탭이 열린다 — 그 탭은 **언제나** 지금 패널의 디렉토리에서 뜬다
+    /// (`default_path` 를 안 따른다 · pytmux-137).
+    pub claude_command: String,
     /// 선택이 시작되기까지 움직여야 하는 칸 수(1~20, 파이썬 기본값 1).
     ///
     /// 손이 떨려 한 칸 밀린 클릭이 선택으로 읽히는 것을 막는 값이다.
@@ -191,6 +197,7 @@ impl Default for Config {
             mouse_drag_copy: true,
             tab_bar_always: true,
             default_path: "current".to_owned(),
+            claude_command: "claude".to_owned(),
             strip_box_drawing: true,
             copy_unwrap: true,
             touch_scroll: true,
@@ -382,6 +389,7 @@ impl Config {
                     _ => {}
                 },
                 "default-path" => config.default_path = value.to_owned(),
+                "claude-command" => config.claude_command = value.to_owned(),
                 // 형식 문자열은 **그대로 받는다** — 무엇이 유효한 토큰인지는 펼치는
                 // 쪽(`proto::status`)이 알고, 모르는 `#x` 는 글자 그대로 남는다.
                 "status-left" => config.status_left = value.to_owned(),
@@ -535,6 +543,7 @@ pub struct SettingValues {
     pub mouse_drag_copy: bool,
     pub tab_bar_always: bool,
     pub default_path: String,
+    pub claude_command: String,
     pub strip_box_drawing: bool,
     /// 복사할 때 접힌 줄을 펼까(설정 파일).
     pub copy_unwrap: bool,
@@ -588,6 +597,7 @@ impl Default for SettingValues {
             mouse_drag_copy: false,
             tab_bar_always: false,
             default_path: String::new(),
+            claude_command: String::new(),
             strip_box_drawing: false,
             copy_unwrap: false,
             touch_scroll: false,
@@ -733,6 +743,13 @@ pub const SETTINGS: &[Setting] = &[
         key: "default-path",
         cat: "동작",
         kind: SettingKind::Text(Prompt::DefaultPath),
+    },
+    // 파이썬 `SETTINGS` 에서도 `default-path` 바로 다음이다 — 둘 다 「새 탭이 어디서
+    // 무엇으로 뜨나」라 같은 자리에 있어야 눈이 함께 찾는다.
+    Setting {
+        key: "claude-command",
+        cat: "동작",
+        kind: SettingKind::Text(Prompt::ClaudeCommand),
     },
     // 파이썬 `SETTINGS` 의 `{"key": "set-titles", "cat": "동작"}` 과 같은 자리다.
     Setting {
@@ -935,6 +952,7 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("win-mouse-motion", "Windows 마우스 이동 추적"),
     ("exit-empty", "세션 0개 시 종료"),
     ("default-path", "새 패널 시작 경로"),
+    ("claude-command", "Claude 탭 실행 명령(esc c)"),
     ("status-interval", "상태줄 갱신 주기(초)"),
     ("vt-parser", "VT 파서 백엔드"),
     ("window-size", "창 크기 규칙"),
@@ -1088,6 +1106,7 @@ impl Setting {
             "mouse-drag-copy" => on(values.mouse_drag_copy),
             "tab-bar" => if values.tab_bar_always { "always" } else { "auto" }.to_string(),
             "default-path" => values.default_path.clone(),
+            "claude-command" => values.claude_command.clone(),
             "strip-box-drawing" => on(values.strip_box_drawing),
             "copy-unwrap" => on(values.copy_unwrap),
             "touch-scroll" => on(values.touch_scroll),
@@ -1368,6 +1387,7 @@ pub fn set_config(
         "status-position" => next.status_position = value.to_owned(),
         "remote-title" => next.remote_title = value.to_owned(),
         "default-path" => next.default_path = value.to_owned(),
+        "claude-command" => next.claude_command = value.to_owned(),
         "status-left" => next.status_left = value.to_owned(),
         "status-right" => next.status_right = value.to_owned(),
         "status-bg" => next.status_bg = value.to_owned(),
@@ -1404,6 +1424,7 @@ pub fn key_to_tmux((key, mods): (Key, Mods)) -> String {
 const OPT_ALIASES: &[(&str, &[&str])] = &[
     ("tab-bar", &["tabbar"]),
     ("default-path", &["default_path"]),
+    ("claude-command", &["claude_command"]),
     ("inactive-dim", &["inactive_dim"]),
     ("inactive-dim-ratio", &["inactive_dim_ratio"]),
     ("mouse-drag-copy", &["mouse_drag_copy"]),

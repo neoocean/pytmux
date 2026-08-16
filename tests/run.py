@@ -16,6 +16,10 @@ import sys
 import time
 import traceback
 
+# 스위트 위생 헬퍼(같은 디렉터리). os·tempfile 밖의 것을 안 물어서 아래 startup
+# 백스톱이 무장하기 전에 import 해도 매달릴 자리가 없다.
+import hermetic
+
 faulthandler.enable()   # 세그폴트/치명 신호 시 전 스레드 트레이스백 덤프
 
 # CI 견고성(2026-06-07). ① Windows 콘솔 기본 인코딩(cp1252)이 한글 실패 메시지를 못
@@ -158,6 +162,27 @@ if _STARTUP_TIMEOUT > 0:
 # 없어 초록이라 더 헷갈린다. 여기서 미리 거둬 셸 상태와 무관하게 만든다 — PYTMUX_HOME 이
 # 필요한 test_pytmux_home 은 자체 _Env 로 매 테스트 설정/해제하므로 영향 없다.
 os.environ.pop("PYTMUX_HOME", None)
+
+# ⛔ **그 pop 이 열어 놓은 길을 여기서 막는다**(2026-08-10 · pytmux/pytmux-135). 설정
+# 파일 탐색 차례는 `$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` →
+# `$XDG_CONFIG_HOME/pytmux/config` → `~/.pytmux.conf` 라(`pytmuxlib/keymap.py`),
+# PYTMUX_HOME 을 **거둔 결과** 두 번째 자리가 사라져 곧장 **세 번째 = 사용자의 진짜
+# 설정 파일**로 떨어졌다 — 위생을 지키려던 위의 한 줄이 오히려 진짜 파일로 가는 길을
+# 열었다. 그래서 설정만은 **거두지 말고 세운다**(거두면 또 떨어진다). 왜 이것이
+# 읽기·쓰기 양쪽 문제인지와 Rust 쪽 선례는 `tests/hermetic.py` 머리말.
+HERMETIC_CONFIG = hermetic.isolate_config()
+
+# 같은 위생 축(2026-08-05): 셸의 `NO_COLOR` 도 여기서 거둔다. Claude Code 툴 환경은
+# `NO_COLOR=1` 을 심는데, 그러면 Textual 이 Monochrome 필터를 물어 **색을 단언하는
+# 테스트가 내 변경과 무관하게 떨어진다**(실측: test_notice_history_cursor_leaves_no_color_trail
+# — "커서 줄은 등급색으로 칠해져야"). `scripts/check_all.py` 는 이미 자식 env 에서 이것을
+# 지우고 있었지만(그 파일 §main), `tests/run.py` 를 **직접** 부르면 그 보호 밖이었다 —
+# CLAUDE.md 가 "먼저 unset 하라"고 사람에게 시키던 자리다. 사람이 기억해서 치는 위생은
+# 언젠가 빠지고, 이제는 그 거짓 실패가 `scripts/tracker_tests.py` 를 타고 **이슈트래커에
+# 가짜 결함으로 등록**되므로 값이 더 커졌다(pytmux/pytmux-132).
+# ⚠ 안전판 자체를 재는 test_no_color_guard 는 **제 손으로** NO_COLOR 를 세우고 되돌리므로
+#   영향 없다(이 pop 은 셸에서 물려받은 것만 거둔다).
+os.environ.pop("NO_COLOR", None)
 
 # 같은 위생 축(2026-07-31): 코드 버전 조회를 **서브프로세스 없이** 고정한다. 서버·클라는
 # 기동 때마다 `version.code_version()`(p4 `#have` → git → unknown)을 부르는데, p4/git 이
@@ -452,7 +477,11 @@ def main(argv):
     global _REPORTER
     _REPORTER = rep
     _install_fatal_signal_logger()
-    rep.emit("start", modules=mods, argv=list(argv), pid=os.getpid())
+    # ★ 시작 시각을 남긴다(pytmux/pytmux-132). 리포트는 나중에·다른 머신에서 읽히고
+    #   (`--report` · `scripts/tracker_tests.py`), 그때 "언제 돈 run 인가"에 답할 수 있는 것은
+    #   이 줄뿐이다 — 없으면 파일 mtime 으로 떨어지는데 그건 복사 한 번에 바뀐다.
+    rep.emit("start", ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
+             modules=mods, argv=list(argv), pid=os.getpid())
     for modname in mods:
         # import 도 SIGALRM 으로 감싼다 — 모듈 import 가 매달리면(과거 macOS CI 에서
         # 스위트가 첫 출력도 없이 17분 매달리던 정확한 지점) 여기서 TIMEOUT 실패로

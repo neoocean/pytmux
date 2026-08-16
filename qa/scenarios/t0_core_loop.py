@@ -9,8 +9,7 @@
 """
 from __future__ import annotations
 
-import re
-
+from .. import screens
 from ..session import NotSupported
 
 NAME = "T0-core-loop"
@@ -103,7 +102,7 @@ def _judge_screen(ctx, text: str, alive: bool, key_prefix: str) -> None:
                  severity="S1",
                  title="실 클라 화면에 파이썬 트레이스백이 그려진다",
                  expected="화면에 트레이스백이 없다",
-                 actual=_around(text, "Traceback (most recent call last)"))
+                 actual=screens.around(text, "Traceback (most recent call last)"))
         return
     missing = [n for n, ok in (
         ("탭 1", "1:" in text),
@@ -119,24 +118,4 @@ def _judge_screen(ctx, text: str, alive: bool, key_prefix: str) -> None:
                  title="실 클라 화면에 탭바·패널 테두리가 안 그려진다",
                  expected="탭 둘(1:·2:)과 패널 테두리가 화면에 있다",
                  actual=f"안 보이는 것: {', '.join(missing)} · 화면 {len(text)}자\n"
-                        f"상태줄: {_status_line(text) or '(못 찾음)'}")
-
-
-def _status_line(text: str) -> str:
-    """화면의 마지막 상태줄(탭바가 사는 줄). 판정이 아니라 **증거**를 위한 것이라
-    못 찾으면 조용히 빈 문자열이다 — 여기서 예외를 내면 진짜 결함이 묻힌다.
-
-    ⚠ 「`:` 가 든 마지막 줄」로 고르면 **시계**(`03:32`)를 집는다(실측). 탭은
-    `2:zsh` 처럼 콜론 뒤가 숫자가 아니라는 점으로 갈린다.
-    """
-    tab = re.compile(r"\d+:[^\d\s]")
-    for line in reversed(text.replace("\r", "").split("\n")):
-        s = line.strip()
-        if tab.search(s):
-            return s[:200]
-    return ""
-
-
-def _around(text: str, needle: str, span: int = 400) -> str:
-    i = text.find(needle)
-    return text[max(0, i - 80):i + span] if i >= 0 else text[-span:]
+                        f"상태줄: {screens.tabbar(text) or '(못 찾음)'}")
