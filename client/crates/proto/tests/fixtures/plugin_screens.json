@@ -3,6 +3,7 @@
     "confirm",
     "form",
     "list",
+    "panel",
     "prompt",
     "table",
     "text"
@@ -10,8 +11,8 @@
   "sites": {
     "confirm": [
       "pytmuxlib/plugins/claude-name-sync/screenspec.py:183",
-      "pytmuxlib/plugins/mdir/__init__.py:764",
-      "pytmuxlib/plugins/mdir/__init__.py:800"
+      "pytmuxlib/plugins/mdir/__init__.py:781",
+      "pytmuxlib/plugins/mdir/__init__.py:817"
     ],
     "form": [
       "pytmuxlib/plugins/claude-code/screenspec.py:231"
@@ -22,29 +23,31 @@
       "pytmuxlib/plugins/claude-code/screenspec.py:335",
       "pytmuxlib/plugins/claude-prompt-history/__init__.py:217",
       "pytmuxlib/plugins/claude-resume/__init__.py:184",
-      "pytmuxlib/plugins/ncd/__init__.py:486",
+      "pytmuxlib/plugins/ncd/__init__.py:442",
       "pytmuxlib/plugins/p4-show-submitted-changelists/__init__.py:209"
+    ],
+    "panel": [
+      "pytmuxlib/plugins/mdir/__init__.py:645"
     ],
     "prompt": [
       "pytmuxlib/plugins/claude-code/screenspec.py:176",
       "pytmuxlib/plugins/claude-name-sync/screenspec.py:164",
       "pytmuxlib/plugins/claude-name-sync/screenspec.py:173",
       "pytmuxlib/plugins/claude-name-sync/screenspec.py:200",
-      "pytmuxlib/plugins/mdir/__init__.py:484",
-      "pytmuxlib/plugins/mdir/__init__.py:739",
-      "pytmuxlib/plugins/mdir/__init__.py:747",
-      "pytmuxlib/plugins/mdir/__init__.py:751",
-      "pytmuxlib/plugins/mdir/__init__.py:757"
+      "pytmuxlib/plugins/mdir/__init__.py:496",
+      "pytmuxlib/plugins/mdir/__init__.py:756",
+      "pytmuxlib/plugins/mdir/__init__.py:764",
+      "pytmuxlib/plugins/mdir/__init__.py:768",
+      "pytmuxlib/plugins/mdir/__init__.py:774"
     ],
     "table": [
       "pytmuxlib/plugins/claude-code/screenspec.py:406",
-      "pytmuxlib/plugins/claude-name-sync/screenspec.py:100",
-      "pytmuxlib/plugins/mdir/__init__.py:639"
+      "pytmuxlib/plugins/claude-name-sync/screenspec.py:100"
     ],
     "text": [
       "pytmuxlib/plugins/claude-code/__init__.py:1801",
       "pytmuxlib/plugins/claude-code/screenspec.py:363",
-      "pytmuxlib/plugins/mdir/__init__.py:700",
+      "pytmuxlib/plugins/mdir/__init__.py:717",
       "pytmuxlib/plugins/p4-show-submitted-changelists/__init__.py:229"
     ]
   },

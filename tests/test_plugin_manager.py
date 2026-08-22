@@ -6,6 +6,7 @@ import os
 from harness import (make_app, server_only, teardown, wait_mounted,
                      wait_until)
 from pytmuxlib import plugins
+from textual.widgets import Input, ListView
 
 
 async def _with_app(coro, size=(100, 30)):

@@ -1161,7 +1161,7 @@ class PluginManagerScreen(ModalScreen):
 
         with Vertical(id="plgbox"):
             yield Label(i18n.t("plugins.title"), id="plgtitle")
-            yield Input(placeholder=i18n.t("ui.search"), id="plgsearch", can_focus=False)
+            yield Input(placeholder=i18n.t("ui.search"), id="plgsearch")
             yield ListView(id="plglist")
             yield Label(i18n.t("plugins.hint"), id="plghint", markup=False)
 
