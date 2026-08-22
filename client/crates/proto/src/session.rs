@@ -178,7 +178,9 @@ pub use base::plugins::{PluginCommand, PluginMenuItem, PluginSetting, PluginSurf
 pub struct PluginScreen {
     #[serde(default)]
     pub id: String,
-    /// `list` · `text`(P4). 나머지 넷은 P5.
+    /// 화면 모양. ⛔ **목록을 여기 적지 않는다** — 정본이 내는 것을 전수로 세는 자는
+    /// `client/scripts/gen_plugin_screens.py` 이고, 그 픽스처를 읽는 적합성 테스트가
+    /// "우리가 아는 것"과 대조한다(`tests/plugin_screen_conformance.rs`).
     #[serde(default)]
     pub kind: String,
     #[serde(default)]
@@ -201,6 +203,27 @@ pub struct PluginScreen {
     /// 실패했거나 비었을 때 화면에 적을 한 줄. **빈 목록과 실패는 다르다.**
     #[serde(default)]
     pub note: String,
+    /// 다열 판(`panel`)이 **몇 열**인가 — `0` 이면 이 클라가 자기 폭을 보고 정한다
+    /// (설계 §4.3 · pytmux-126).
+    ///
+    /// # 왜 스펙이 이것을 나르나
+    ///
+    /// 열 수는 **표현 그 자체**라 §6 의 선 바깥이다. 그래도 실은 이유는 정본 `mdir` 의
+    /// `Alt+1~6` 이 이미 사람 손에 있어서다 — 그 손이 스펙을 못 타면 같은 키가 클라마다
+    /// 다른 일을 하거나(손버릇이 갈린다) 아예 없어진다. 그래서 **못박을 수 있게**
+    /// 두되 기본은 `0`(= 이 클라의 관례)이다.
+    #[serde(default)]
+    pub columns: u8,
+    /// 판 **위** 한 줄 — `mdir` 의 볼륨(`Free …`)이 그 자리다. 비면 안 그린다.
+    #[serde(default)]
+    pub head: String,
+    /// 판 **아래** 한 줄 — `mdir` 의 집계줄(`N File  M Dir …`). 비면 안 그린다.
+    ///
+    /// ⛔ [`note`](Self::note) 와 다른 것이다. 저것은 **실패·빈 목록**이라 평상시엔 비고,
+    /// 이것은 평상시에 늘 있는 **자료**다. 한 칸에 겹쳐 넣으면 실패한 순간 집계가
+    /// 사라지거나 그 반대가 된다.
+    #[serde(default)]
+    pub foot: String,
     #[serde(default)]
     pub selected: usize,
     /// 키 → 플러그인 액션 이름. 이 표에 있는 키만 되돌려준다.
@@ -212,6 +235,12 @@ pub struct PluginScreen {
 }
 
 impl PluginScreen {
+    /// 다열 판의 열 수 상한 — 원조 Mdir 의 `Alt+1~6` 과 같은 값이다.
+    pub const MAX_COLUMNS: usize = 6;
+
+    /// 자동 열수를 정할 때 한 열이 최소 몇 칸은 돼야 하나(정본 `mdir::_cols`).
+    pub const MIN_COLUMN_CELLS: usize = 34;
+
     /// 제목 — **이 클라의 로케일로**.
     pub fn say_title(&self) -> String {
         i18n_say(&self.i18n, "title", &self.title)
@@ -225,6 +254,39 @@ impl PluginScreen {
     /// 빈/실패 한 줄 — 이 클라의 로케일로.
     pub fn say_note(&self) -> String {
         i18n_say(&self.i18n, "note", &self.note)
+    }
+
+    /// 다열 판의 머리줄 — 이 클라의 로케일로.
+    pub fn say_head(&self) -> String {
+        i18n_say(&self.i18n, "head", &self.head)
+    }
+
+    /// 다열 판의 꼬리줄 — 이 클라의 로케일로.
+    ///
+    /// ⚠ `mdir` 이 여기 싣는 것은 원조 서식의 **자료**라(`File`·`Dir`·`Byte`·`free`)
+    /// 카탈로그에 없다 — `t()` 가 못 찾은 글은 그대로 돌려주므로 안전하다.
+    pub fn say_foot(&self) -> String {
+        i18n_say(&self.i18n, "foot", &self.foot)
+    }
+
+    /// 다열 판이 실제로 **몇 열**인가 — `room` 칸이 주어졌을 때.
+    ///
+    /// # 왜 클라가 아니라 여기서 푸나
+    ///
+    /// 스펙의 `columns` 는 **제안**이고(0 = 자동) 그것을 폭에 맞춰 자르는 산술은 뷰마다
+    /// 다를 이유가 없다. 뷰가 각자 풀면 같은 스펙이 클라마다 다른 열수로 뜨고, 그때
+    /// 커서 이동(←→ 한 열)의 뜻까지 함께 갈린다.
+    ///
+    /// 잣대는 정본 `mdir` 의 것 그대로다 — 자동은 한 열이 최소
+    /// [`MIN_COLUMN_CELLS`](Self::MIN_COLUMN_CELLS) 칸은 되게, 손으로 못박은 값도
+    /// 한 열 16칸 아래로는 안 내려간다(그 아래는 이름이 한 글자도 안 보인다).
+    pub fn column_count(&self, room: usize) -> usize {
+        let cap = Self::MAX_COLUMNS.min((room / 16).max(1));
+        if self.columns == 0 {
+            (room / Self::MIN_COLUMN_CELLS).clamp(1, cap)
+        } else {
+            (self.columns as usize).clamp(1, cap)
+        }
     }
 
     /// **글 판(`text`)의 본문** — 이 클라의 로케일로.
@@ -340,7 +402,7 @@ impl PluginScreen {
     ///
     /// core 는 스펙을 안 들으므로 뷰가 이 값을 넘겨 준다(`open_plugin_view`).
     pub fn is_selectable(&self) -> bool {
-        matches!(self.kind.as_str(), "list" | "table" | "form")
+        matches!(self.kind.as_str(), "list" | "table" | "form" | "panel")
     }
 }
 

@@ -245,8 +245,8 @@ def _tree(tmp):
     return tmp
 
 
-async def test_mdir_lists_a_directory_as_a_table_the_client_can_draw(tmp_path=None):
-    """표 스펙의 모양이 계약이다 — 줄의 `key` 가 **절대경로**(그 줄의 뜻)라야 다음
+async def test_mdir_lists_a_directory_as_a_panel_the_client_can_draw(tmp_path=None):
+    """다열 판 스펙의 모양이 계약이다 — 줄의 `key` 가 **절대경로**(그 줄의 뜻)라야 다음
     액션이 자리가 아니라 그 항목을 가리킨다."""
     import os
     import tempfile
@@ -254,7 +254,7 @@ async def test_mdir_lists_a_directory_as_a_table_the_client_can_draw(tmp_path=No
         _tree(tmp)
         mine = {"path": tmp, "tags": []}
         spec = _mdir()._spec(mine, 0, "")
-        assert spec["kind"] == "table" and spec["id"] == "mdir", spec
+        assert spec["kind"] == "panel" and spec["id"] == "mdir", spec
         labels = [r["label"] for r in spec["rows"]]
         assert labels[0].strip() == "..", labels
         assert spec["rows"][0]["key"] == os.path.dirname(tmp), spec["rows"][0]
@@ -271,6 +271,47 @@ async def test_mdir_lists_a_directory_as_a_table_the_client_can_draw(tmp_path=No
         # 글자 키를 스펙이 정한다 — 여기 없는 글자는 클라에서 판을 닫는다.
         assert spec["keys"]["enter"] == "into", spec["keys"]
         assert spec["keys"]["d"] == "delete" and spec["keys"]["p"] == "cd", spec["keys"]
+
+
+async def test_mdir_panel_carries_the_column_count_and_the_head_and_foot_lines():
+    """다열 판이 스펙으로 나르는 것 셋(pytmux-126 · 설계 §4.3 `panel`).
+
+    ⛔ **셋을 한 칸에 겹치지 않는다.** `note` 는 «실패했거나 비었다»라 평상시엔 비고
+    `foot` 은 평상시에 늘 있는 자료다 — 겹쳐 놓으면 실패한 순간 집계가 사라진다.
+
+    ⚠ 열 수는 **제안**이라 `0`(자동)이 기본이고, 정본 `Alt+1~6` 이 그것을 못박는다.
+    그 손이 스펙을 못 타면 같은 키가 클라마다 다른 일을 한다."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        spec = p._spec(mine, 0, "")
+        # ⑴ 기본은 «자동»이다 — 여기서 수를 못박으면 좁은 창에서 이름이 안 보인다.
+        assert spec["columns"] == 0, spec["columns"]
+        # ⑵ 꼬리줄 = 집계. 셈은 정본 화면과 **같은 함수**라(`listing.counts`) 서식까지 같다.
+        assert " File  " in spec["foot"] and " Dir  " in spec["foot"], spec["foot"]
+        assert spec["foot"].endswith("N"), ("정렬 표시가 없다: %r" % spec["foot"])
+        # ⑶ 평상시 `note` 는 비어 있다 — 빈 목록·실패와 섞이면 안 된다.
+        assert spec["note"] == "", spec["note"]
+        # 머리줄 = 볼륨. 못 재는 자리면 **빈 줄**이고, 그때 클라는 안 그린다.
+        assert spec["head"] == "" or spec["head"].startswith("Free "), spec["head"]
+
+        # 태그를 찍으면 꼬리줄이 그 사실을 말한다 — 손만 있고 눈이 없으면 안 된다.
+        a = os.path.join(tmp, "a.txt")
+        assert "Sel " in p._tag(mine, a, 2)["foot"], "태그가 집계줄에 안 보인다"
+
+        # 정본 `Alt+3` 이 열을 못박고 `Alt+0` 이 자동으로 되돌린다.
+        assert spec["keys"]["alt-3"] == "cols-3", spec["keys"]
+        assert spec["keys"]["alt-0"] == "cols-0", spec["keys"]
+        assert p._spec({**mine, "cols": 3}, 0, "")["columns"] == 3
+        assert p._spec({**mine, "cols": 0}, 0, "")["columns"] == 0
+
+        # 마스크가 걸리면 **제목이** 말한다 — 안 그러면 "파일이 절반 사라졌다"로 보인다.
+        masked = p._spec({**mine, "mask": ["*.txt"]}, 0, "")
+        assert "[*.txt]" in masked["title"], masked["title"]
+        assert "mask" in masked["i18n"]["title"]["args"], masked["i18n"]["title"]
 
 
 async def test_mdir_hidden_toggle_and_tagging_live_in_this_clients_state():
@@ -321,7 +362,7 @@ async def test_mdir_delete_asks_before_it_does_anything_and_says_what_disappears
         spec = p._apply(mine, "y", 2)
         assert not os.path.exists(a), "답했는데 안 지워졌다"
         assert "삭제 1건" in spec["note"], spec["note"]
-        assert spec["kind"] == "table", spec
+        assert spec["kind"] == "panel", spec
 
 
 async def test_mdir_copy_asks_where_and_the_two_step_overwrite_protocol_survives():
@@ -602,6 +643,12 @@ async def test_mdir_says_everything_through_the_catalog():
         ask = p._begin(mine, "delete", os.path.join(tmp, "a.txt"), 1)
         assert ask["i18n"]["title"]["fmt"] in values, ask["i18n"]
         assert p._begin(mine, "mkdir", "", 0)["title"] in values, "mkdir 물음"
+        # ⚠ **머리·꼬리줄은 일부러 카탈로그 밖이다**(pytmux-126). `Free`·`File`·`Dir`·
+        #   `Byte`·`free` 는 Mdir III 원조의 서식이고 색과 같은 부류다 — 정본도 로케일과
+        #   무관하게 이 글자를 쓴다. 여기서 `i18n.t` 를 부르면 **서버 로케일이 스펙에
+        #   실려** 영어 클라로 샌다(그 자리가 이 시험이 지키는 것의 반대편이다).
+        assert not spec["head"] or spec["head"].startswith("Free "), spec["head"]
+        assert "File" in spec["foot"] and spec["foot"] not in values, spec["foot"]
 
 
 async def test_mdir_tells_why_it_failed_in_words_the_client_can_translate():

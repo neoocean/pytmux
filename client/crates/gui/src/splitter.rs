@@ -152,6 +152,34 @@ pub struct BlockPick {
 pub struct Cursor {
     pub x: u16,
     pub y: u16,
+    /// 무엇으로 그릴까(설정 `cursor-style`). 기본은 종전 그대로 외곽선 네모다.
+    ///
+    /// ⛔ [`CursorStyle::Block`] 은 **여기서 안 그린다** — 그 모양은 칸을 반전하는
+    /// 것이라 오버레이가 아니라 캔버스 런이 낸다(`SessionView::render_row`). 여기까지
+    /// 오면 그릴 것이 없으므로 `paint_cursor` 가 조용히 돌아간다.
+    pub style: CursorStyle,
+    /// 무슨 색으로(설정 `cursor-color`). `None` 이면 테마의 포커스색이다.
+    pub color: Option<ColorU>,
+}
+
+/// 커서 모양(설정 `cursor-style` — `base::config::CURSOR_STYLES` 와 같은 어휘).
+///
+/// # 왜 뷰가 문자열을 안 넘기나
+///
+/// 설정 파일의 낱말은 **사용자가 치는 것**이고 그리는 규칙은 우리 것이다. 문자열을
+/// 여기까지 들고 오면 오타 하나가 "아무것도 안 그림"이 되고, 그 실패는 조용하다.
+/// 뷰에서 한 번 갈라 놓으면 모르는 값은 그 자리에서 기본값으로 접힌다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorStyle {
+    /// 외곽선 네모(종전 동작 · 기본값). 글자를 하나도 안 가린다.
+    #[default]
+    Hollow,
+    /// 채운 네모 — **캔버스가 그 칸을 반전해 그린다**(여기서는 안 그린다).
+    Block,
+    /// 칸 아래 밑줄.
+    Underline,
+    /// 칸 왼쪽 세로선.
+    Bar,
 }
 
 /// 패널 오른쪽 **외곽선 위**에 얹는 표시용 스크롤바(§10-21ⓨ2).
@@ -464,29 +492,48 @@ impl SplitterOverlay {
             .with_background(Fill::Solid(color));
     }
 
-    /// 커서 칸을 **테두리 상자**로 그린다.
+    /// 커서 칸을 설정된 모양으로 그린다(`cursor-style`·`cursor-color`).
     ///
-    /// # 왜 꽉 찬 블록이 아닌가 (첫 판의 의도된 한계)
+    /// # 왜 채운 네모가 여기 없나 (`pytmux/pytmux-161`)
     ///
-    /// 터미널의 기본 커서는 꽉 찬 블록이고, 그 아래 글자는 **반전**돼 보인다. 이
-    /// 오버레이는 캔버스를 **다 그린 뒤에** 얹히므로 블록을 칠하면 그 칸의 글자가
-    /// 그대로 덮인다 — 커서가 놓인 글자를 못 읽게 만드는 것은 "커서가 보여야 한다"의
-    /// 답이 될 수 없다. 반전을 하려면 그 칸을 런에서 갈라 **배경색**으로 칠해야 하고
-    /// (터미널이 하는 방식), 그건 런 렌더를 손대는 일이라 §10-21ⓙ(셀 격자 슬라이스)와
-    /// 같은 자리다. 그때 함께 옮긴다.
+    /// 터미널의 채운 커서는 그 아래 글자를 **반전**해 보인다. 이 오버레이는 캔버스를
+    /// **다 그린 뒤에** 얹히므로 여기서 칠하면 그 칸의 글자가 그대로 덮인다 — 커서가
+    /// 놓인 글자를 못 읽게 만드는 것은 "커서가 보여야 한다"의 답이 될 수 없다.
+    /// 그래서 그 모양만 캔버스 런이 낸다(`SessionView::render_row` — 그 칸을 런에서
+    /// 갈라 배경색으로 칠한다. §10-21ⓙ 셀 격자 슬라이스가 이미 여는 자리다).
+    /// 여기 [`CursorStyle::Block`] 이 오면 **그릴 것이 없다**.
+    ///
+    /// # 굵기를 모양마다 안 나누는 이유
+    ///
+    /// 셋 다 [`CURSOR_PX`] 한 값이다. 밑줄만 굵게·세로선만 얇게 같은 손을 대면
+    /// 「커서」가 모양마다 다른 무게로 보여, 모양을 바꾼 것이 아니라 **다른 것**으로
+    /// 바뀐 것처럼 읽힌다.
     fn paint_cursor(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
         let Some(cur) = &self.cursor else { return };
+        let color = cur.color.unwrap_or(theme::FOCUS);
         let x0 = origin.x() + cur.x as f32 * cw;
         let y0 = origin.y() + cur.y as f32 * ch;
         let mut line = |rect: RectF| {
             ctx.scene
                 .draw_rect_without_hit_recording(rect)
-                .with_background(Fill::Solid(theme::FOCUS));
+                .with_background(Fill::Solid(color));
         };
-        line(RectF::new(vec2f(x0, y0), vec2f(cw, CURSOR_PX)));
-        line(RectF::new(vec2f(x0, y0 + ch - CURSOR_PX), vec2f(cw, CURSOR_PX)));
-        line(RectF::new(vec2f(x0, y0), vec2f(CURSOR_PX, ch)));
-        line(RectF::new(vec2f(x0 + cw - CURSOR_PX, y0), vec2f(CURSOR_PX, ch)));
+        match cur.style {
+            CursorStyle::Hollow => {
+                line(RectF::new(vec2f(x0, y0), vec2f(cw, CURSOR_PX)));
+                line(RectF::new(vec2f(x0, y0 + ch - CURSOR_PX), vec2f(cw, CURSOR_PX)));
+                line(RectF::new(vec2f(x0, y0), vec2f(CURSOR_PX, ch)));
+                line(RectF::new(vec2f(x0 + cw - CURSOR_PX, y0), vec2f(CURSOR_PX, ch)));
+            }
+            CursorStyle::Underline => {
+                line(RectF::new(vec2f(x0, y0 + ch - CURSOR_PX), vec2f(cw, CURSOR_PX)));
+            }
+            CursorStyle::Bar => {
+                line(RectF::new(vec2f(x0, y0), vec2f(CURSOR_PX, ch)));
+            }
+            // 캔버스가 이미 그 칸을 반전해 그렸다 — 여기서 또 칠하면 그 글자를 덮는다.
+            CursorStyle::Block => {}
+        }
     }
 
     /// 고른 블록을 **왼쪽 띠 + 얇은 테두리**로 감싼다(pytmux-18).

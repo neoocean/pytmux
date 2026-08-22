@@ -10,6 +10,15 @@
 크레이트만** 가져왔고, 그 크레이트들이 의존하던 **AGPL 크레이트 6개는 전부 자체 구현으로
 갈아끼웠다**. AGPL 코드는 이 트리에 한 줄도 없다.
 
+⚠ **이 파일이 재는 것은 «이 트리의 코드가 어디서 왔나»뿐이다.** 배포 이진에 링크되는
+**바깥 크레이트**(수백 건)의 저작권 고지는 `THIRD-PARTY-NOTICES.md` 가 쥔다 —
+생성물이고 짓는 자리는 `scripts/third_party_notices.py`, 낡았는지는
+`scripts/check_licenses.sh` 가 잰다. ⛔ 여기에 그 수를 적지 않는다(움직인다 — 세려면
+`python3 scripts/third_party_notices.py --check` 의 마지막 줄을 본다).
+종전에는 그 자리가 아예 없어서, MIT·BSD·ISC·Zlib·Apache-2.0 이 요구하는 **이진 재배포
+시 고지 재현**을 지키는 파일이 트리에도 `build/` 에도 없었다
+(검수 2026-08-09 B-7 · pytmux/pytmux-193).
+
 ## 1. 가져온 것 (MIT, warp 저작권 유지)
 
 | 경로 | 출처 | 라이선스 |

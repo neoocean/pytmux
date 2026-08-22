@@ -219,8 +219,12 @@ def main():
     elif kind == "skip":
         skipped.append(msg)
 
-    # ③ MIT 경계의 기록이 함께 올라간다.
-    for rel in ("client/PROVENANCE.md", "client/LICENSE-MIT"):
+    # ③ MIT 경계의 기록과 **서드파티 저작권 고지**가 함께 올라간다.
+    #
+    # 고지가 무시 목록에 걸리면 미러에는 이진만 가고 그 이진이 지고 있는 MIT·BSD·ISC·
+    # Zlib·Apache-2.0 의 고지 의무는 아무 데도 안 남는다 — 규칙 한 줄이 조용히 그렇게
+    # 만든다(pytmux-193). `build/` 사본은 굽는 자리가 놓는 파생물이라 여기서 안 센다.
+    for rel in ("client/PROVENANCE.md", "client/LICENSE-MIT", "client/THIRD-PARTY-NOTICES.md"):
         if not os.path.isfile(os.path.join(ROOT, rel)):
             problems.append(f"{rel} 이 없다 — 가져온 코드의 라이선스 근거가 사라졌다")
         elif ignored(rel):

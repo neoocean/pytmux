@@ -1469,6 +1469,61 @@ fn sections_come_through_in_order() {
     assert!(parts[1].starts_with("Affected files"));
 }
 
+// ── 다열 판의 열 수(설계 §4.3 `panel` · pytmux-126) ──────────────────────────
+
+#[test]
+fn a_panel_without_a_column_count_lets_the_client_decide() {
+    // 구버전 서버는 이 칸을 안 보내고(0), 새 서버도 기본은 «자동»이다.
+    let spec = crate::session::PluginScreen { kind: "panel".into(), ..Default::default() };
+    // 정본 잣대 그대로 — 한 열이 최소 34칸.
+    assert_eq!(spec.column_count(110), 3);
+    assert_eq!(spec.column_count(34), 1);
+    // ⛔ 0 칸이어도 열은 하나다 — 0 을 돌려주면 나누는 쪽이 0 으로 나눈다.
+    assert_eq!(spec.column_count(0), 1);
+}
+
+#[test]
+fn a_pinned_column_count_still_bows_to_the_room_there_is() {
+    // 정본 `Alt+1~6` 이 못박는 값이다. 그래도 한 열 16칸 아래로는 안 내려간다 —
+    // 그 아래는 이름이 한 글자도 안 보여서 "골랐다"가 성립하지 않는다.
+    let six = crate::session::PluginScreen {
+        kind: "panel".into(),
+        columns: 6,
+        ..Default::default()
+    };
+    assert_eq!(six.column_count(110), 6);
+    assert_eq!(six.column_count(40), 2);
+    // 상한 밖의 값이 와도 조용히 받지 않는다(원조가 여섯까지다).
+    let many = crate::session::PluginScreen {
+        kind: "panel".into(),
+        columns: 40,
+        ..Default::default()
+    };
+    assert_eq!(many.column_count(1000), 6);
+}
+
+#[test]
+fn a_panel_is_a_screen_you_pick_from() {
+    // 목록을 여러 열로 흘려 담은 것뿐이라 커서가 있고 `Enter` 에 뜻이 있다.
+    // 여기서 거짓이면 뷰가 판을 **글 화면**으로 열어 커서가 통째로 사라진다.
+    let spec = crate::session::PluginScreen { kind: "panel".into(), ..Default::default() };
+    assert!(spec.is_selectable());
+}
+
+#[test]
+fn the_head_and_foot_lines_go_through_the_catalog_like_every_other_line() {
+    // `mdir` 이 여기 싣는 것은 원조 서식의 **자료**라 카탈로그에 없다 — 못 찾은 글을
+    // 그대로 돌려주는 것이 계약이다(안 그러면 집계줄이 빈칸이 된다).
+    let spec = crate::session::PluginScreen {
+        kind: "panel".into(),
+        head: "Free 1.0G/2.0G".into(),
+        foot: "2 File  1 Dir".into(),
+        ..Default::default()
+    };
+    assert_eq!(spec.say_head(), "Free 1.0G/2.0G");
+    assert_eq!(spec.say_foot(), "2 File  1 Dir");
+}
+
 // ── 패널 글의 **뜻이 있는 범위**(§10-21ⓥ2·ⓧ2) ────────────────────────────────
 
 fn state_with_line(line: &str) -> SessionState {

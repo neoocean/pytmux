@@ -122,6 +122,10 @@ pub static EN: &[(&str, &str)] = &[
         "프레임이 너무 크다: {advertised} 바이트 (상한 {limit})",
         "Frame too large: {advertised} bytes (limit {limit})",
     ),
+    (
+        "프레임이 오다 말았다: {got}/{want} 바이트",
+        "Frame stopped mid-way: {got}/{want} bytes",
+    ),
     ("입출력 오류: {err}", "I/O error: {err}"),
     ("프레임을 해석할 수 없다: {err}", "Could not decode the frame: {err}"),
     // ── boot.rs — 서버를 못 띄웠을 때(§10-24 · pytmux-36) ──

@@ -156,10 +156,32 @@ jobs:
         # 도입했으나, run 27756140019 에서 windows-latest py3.11/3.12/3.13 전부
         # VERDICT: PASS(GHA VM 도 AllocConsole 출력 왕복 성립) 확인 → 회귀 게이트로
         # 전환한다. 이제 VERDICT≠PASS(예: §1.1② 손상 재발로 U+FFFD>0) 면 잡이 빨강.
+        # ★ **2026-08-22 부터 이 스텝이 재는 호스트는 «시스템 conhost» 다**(pytmux/pytmux-208 ·
+        # `conpty.py` §호스트 선택 — 기본을 번들 OpenConsole 에서 뒤집었다). 그 뒤집기의
+        # 가장 큰 위험이 「시스템 conhost 는 콘솔-less 에서 스트리밍을 못 한다」(2026-06-11
+        # 실측)인데, ⛔ **여기를 옛 호스트로 고정하면 그 위험이 CI 밖으로 숨는다** —
+        # 그래서 일부러 기본을 따르게 둔다. 빨강이 뜨면 그것이 실험의 답이고, 되돌리는
+        # 스위치는 `PYTMUX_CONPTY_DLL=bundled` 한 줄이다(아래 A/B 스텝이 그 길을 상시로 잰다).
         # validate_conpty.py 는 비-Windows 에서 SKIP(exit 0)이라 이 스텝은 Windows 한정.
         # 자식-종료→EOF(좀비) 경로는 출력 왕복이 불필요해 헤드리스에서도 확실히 돌므로
         # test_pty_backend 의 정식 테스트로 따로 둔다.
-        if: runner.os == 'Windows'
+        #
+        # ☠ **`if:` 에서 `!cancelled()` 를 빼지 마라 — 빼면 이 스텝은 「앞이 초록일 때만」
+        # 돈다.** GHA 는 상태 함수(`always()`·`failure()`·`!cancelled()`)가 없는 `if:` 에
+        # **`success()` 를 묵시적으로 AND** 한다. 그래서 종전의 `if: runner.os == 'Windows'`
+        # 는 앞의 「Headless test suite」가 붉은 회차에서 **통째로 skipped** 였다 — 실측
+        # (2026-08-22 · pytmux/pytmux-208): 최근 os-compat 회차 셋(31971495768 · 31238484557 ·
+        # 31015955976 · 2026-08-05~08-16)의 windows 잡 **9개 전부** suite=✗ → 이 스텝 `-`.
+        # ⛔ **skipped 는 초록도 붉음도 아니라 «안 쟀다» 다.** 이 저장소는 같은 값을 이미
+        # 한 번 치렀다 — 위 스텝 주석의 「이 스텝은 그동안 한 번도 안 돌았다(직전 12 run
+        # 전부)」가 그것이고, 그때도 원인은 **앞 스텝의 실패로 인한 skip** 이었다.
+        # ⚠ `always()` 가 아니라 `!cancelled()` 인 이유: 이 저장소는 러너가 wedge 해서
+        # 잡이 **cancel** 되는 회차가 있고(위 macOS 주석), `always()` 는 그때도 이 3분
+        # 스텝을 띄운다. 아래 업로드 스텝들이 `always()` 인 것은 뜻이 다르다 — 잘린
+        # 회차에서도 **이미 만들어진 리포트**는 건져야 한다.
+        # ⛔ 이것은 게이트 완화가 아니다 — `continue-on-error` 를 안 붙였으므로
+        # VERDICT≠PASS 면 여전히 잡이 빨강이다. 바뀐 것은 «언제 재나» 하나다.
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         timeout-minutes: 3
         env:
           PYTMUX_PTY_BACKEND: owned
@@ -172,6 +194,39 @@ jobs:
         with:
           name: validate-conpty-${{ matrix.os }}-py${{ matrix.python }}
           path: ${{ runner.temp }}/validate_conpty.out
+          if-no-files-found: warn
+
+      - name: owned-ConPTY A/B — 번들 OpenConsole (advisory · pytmux-208)
+        # 위 스텝의 **짝**이다: 같은 검증을 되돌리는 스위치(`PYTMUX_CONPTY_DLL=bundled`)로
+        # 한 번 더 돌려 ⑴ 그 탈출구가 아직 사는지 ⑵ 리포트의 `[4] 폭2 이중 방출` 이
+        # **어느 호스트에서만** 나오는지를 남긴다 — 그 둘이 pytmux-208 의 자리를
+        # 「호스트 안/밖」으로 가른다(macOS 러너로는 못 재는 자리다).
+        # ⛔ **advisory 다**(continue-on-error): 이 스텝은 «지금 기본이 아닌» 경로를 재므로
+        # 여기가 빨갛다고 제품이 깨진 것이 아니다. 승격은 값을 보고 사람이 정한다
+        # (위 스텝이 2026-06-18 에 그렇게 승격됐다).
+        # ☠ `!cancelled()` 의 까닭은 위 스텝과 같다(묵시적 `success()`). ⛔ 여기서는 그것이
+        # **더** 중요하다: 이 A/B 가 재려는 것이 바로 「지금 기본이 무엇을 뱉나」인데,
+        # 앞 스텝이 붉을 때가 정확히 그 값이 필요한 때다. 종전 gating 이면 A/B 는 「실험이
+        # 실패한 회차에서만 조용히 사라지는」 계측이었다.
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          PYTMUX_PTY_BACKEND: owned
+          PYTMUX_CONPTY_DLL: bundled
+          # ⚠ 리포트 경로가 `%TEMP%\validate_conpty.out` 로 고정이라 TEMP 를 갈라 준다 —
+          # 안 가르면 이 회차가 위 스텝의 리포트를 덮어써 A/B 가 한쪽만 남는다.
+          TEMP: ${{ runner.temp }}/ab-bundled
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+          python -u scripts/validate_conpty.py
+
+      - name: Upload validate_conpty A/B report (Windows only)
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: validate-conpty-bundled-${{ matrix.os }}-py${{ matrix.python }}
+          path: ${{ runner.temp }}/ab-bundled/validate_conpty.out
           if-no-files-found: warn
 
       - name: Perf report (env + perf only)

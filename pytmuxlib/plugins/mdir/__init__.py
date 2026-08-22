@@ -24,7 +24,7 @@ from pytmuxlib import i18n
 from .rowtag import row_tag
 
 # 늘어놓는 규칙 — 정본 화면과 **같은 함수**다(UI 무의존이라 서버도 부른다).
-from .listing import arrange, next_sort, parse_masks
+from .listing import arrange, counts, next_sort, parse_masks
 
 # 화면 스펙(Tier C)이 **소켓 너머로 실어 보내는** 글. 여기 없으면 게이트가 못 본다 —
 # 픽스처는 카탈로그에서 뽑히므로, 스펙에 직접 적은 한국어는 영어 표에도 안 들어가고
@@ -36,6 +36,10 @@ from .listing import arrange, next_sort, parse_masks
 i18n.register({
     "ko": {
         "mdir.title": "파일 관리자 — {path}",
+        # 마스크가 걸려 있으면 **어디에** 걸렸는지 제목이 말한다(정본은 Path 줄의
+        # `[*.txt]`). 판이 둘인 이유: 한 판에 `[{mask}]` 를 두면 마스크가 없을 때
+        # `[]` 한 쌍이 늘 붙는다.
+        "mdir.title_mask": "파일 관리자 — {path}  [{mask}]",
         "mdir.hint": ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · "
                       "d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · "
                       "Esc 닫기)"),
@@ -89,6 +93,7 @@ i18n.register({
     },
     "en": {
         "mdir.title": "File manager — {path}",
+        "mdir.title_mask": "File manager — {path}  [{mask}]",
         "mdir.hint": ("(Enter open · . up · t tag · u tag all · c copy · m move · "
                       "d delete · r rename · k new directory · v view · h hidden · "
                       "p cd panel · Esc close)"),
@@ -161,6 +166,12 @@ _SCREEN_KEYS = {
     "alt-n": "sort-n", "alt-e": "sort-e", "alt-s": "sort-s",
     "alt-t": "sort-t", "alt-o": "sort-o",
     "alt-f": "mask",
+    # ★ **열 수**도 정본과 같은 손이다(pytmux-126) — 원조 Mdir 의 `Alt+1~6` 이 열을
+    #   못박고 `Alt+0` 이 자동으로 되돌린다. 이 값은 스펙의 `columns` 로 나가고
+    #   (설계 §4.3 `panel`), 0 이면 «클라가 자기 폭을 보고» 정한다.
+    "alt-0": "cols-0", "alt-1": "cols-1", "alt-2": "cols-2",
+    "alt-3": "cols-3", "alt-4": "cols-4", "alt-5": "cols-5",
+    "alt-6": "cols-6",
 }
 
 def _reason(code) -> str:
@@ -182,6 +193,28 @@ def _human(n: int) -> str:
             return f"{n}{unit}" if unit == "B" else f"{n:.1f}{unit}"
         n /= 1024.0
     return str(n)
+
+
+def _disk(path: str):
+    """그 볼륨의 `(남은 바이트, 전체 바이트)`. 못 재면 `(0, 0)`.
+
+    ⛔ **못 잰 것을 0 으로 뭉개지 않는다** — 부르는 쪽이 둘을 갈라야 하므로 전체가 0
+    이면 "모른다"이고, 그때 집계줄의 `free` 는 0 이 아니라 **0(0%)** 으로 나가지만
+    머리줄(`_volume`)은 아예 빈 줄이 된다(없는 것을 그리는 것보다 안 그리는 것이 낫다).
+    """
+    import shutil
+    try:
+        u = shutil.disk_usage(path)
+        return int(u.free), int(u.total)
+    except (OSError, ValueError):
+        return 0, 0
+
+
+def _volume(free: int, total: int) -> str:
+    """머리줄 — 정본 Path 줄의 오른쪽(`Free 남은 것/전체`). 못 재면 빈 줄.
+
+    ⚠ 글자(`Free`)는 집계줄과 같은 부류라 **번역하지 않는다**(원조 서식)."""
+    return f"Free {_human(free)}/{_human(total)}" if total else ""
 
 
 def _when(mtime: int) -> str:
@@ -398,13 +431,21 @@ class _MdirPlugin:
     def plugin_screen(self, server, sess, req):
         """네이티브 클라용 파일 관리자 화면.
 
-        # 정본과 모양이 다르다(그리고 그래도 된다)
+        # 정본과 **같은 모양**이다(pytmux-126 · 사람 결정 2026-08-10)
 
         정본은 검정 바탕 **다열** 리스트에 상단 Path/Volume 줄과 하단 집계·정보줄을 두는
-        Mdir III 재현이다. 여기서는 한 줄에 한 항목인 **표**(이름·크기·시각)다 — 설계 §6
-        이 그은 선 그대로: 스펙은 **내용과 선택**을 정하고 표현은 각 클라 관례를 따른다.
-        열 수·정렬 토글·압축 보기·트리(F10)처럼 **위젯 고유의 것**은 안 담았다(담기
-        시작하면 스펙이 화면마다 늘어난다 — 설계 §10 의 무한 확장 위험).
+        Mdir III 재현이다. 여기도 이제 그 모양이다 — 설계 §4.3 의 일곱째 모양 `panel`
+        이 **열 수와 머리·꼬리줄**을 나른다.
+
+        ⛔ **그 셋이 §6 의 선을 넘은 것은 «열 수» 하나뿐이다.** 나머지 둘이 나르는 것은
+        표현이 아니라 **자료**다(몇 개가 보이고, 몇 바이트이고, 볼륨에 얼마가 남았고,
+        지금 무슨 정렬·마스크가 걸렸는지). 선을 넘는 값을 치른 것은 다열 하나이고,
+        그 값과 되돌리는 길은 설계 문서 §4.3·§10 이 쥔다.
+
+        ⚠ 열 수는 **제안**이다 — `0` 이면 클라가 자기 폭을 보고 정한다. 스펙이 못박을
+        수 있는 이유는 정본의 `Alt+1~6` 이 그 손을 이미 갖고 있어서다(`alt-N` 키).
+        압축 보기처럼 **위젯 고유의 것**은 여전히 안 담는다(담기 시작하면 스펙이
+        화면마다 늘어난다 — 설계 §10 의 무한 확장 위험).
 
         # 되돌릴 수 없는 것은 이 클라의 화면이 묻는다
 
@@ -459,6 +500,10 @@ class _MdirPlugin:
         if do == "mask-apply":
             mine["mask"] = parse_masks(picked)
             return _offload(self._spec, mine, 0, "")
+        if do.startswith("cols-"):
+            # 열 수 — `0` 은 «자동»(클라가 폭을 보고 정한다). 정본 `Alt+0~6` 과 같은 손.
+            mine["cols"] = int(do[len("cols-"):])
+            return _offload(self._spec, mine, row, "")
         if do == "hidden":
             mine["hidden"] = not mine.get("hidden")
             return _offload(self._spec, mine, row, "")
@@ -507,10 +552,20 @@ class _MdirPlugin:
 
     # ---- 화면 만들기(전부 순수 fs — executor 에서 돈다) ----
     def _spec(self, mine, sel, note):
-        """지금 디렉터리의 표 스펙.
+        """지금 디렉터리의 **다열 판** 스펙(설계 §4.3 `panel`).
 
         `note` 는 글 하나이거나 `(글, 재료)` 짝이다 — 자리가 있는 글은 **재료까지**
-        실어야 영어 클라가 자기 로케일로 다시 짓는다(로케일 ⓑ · `i18n.phrase`)."""
+        실어야 영어 클라가 자기 로케일로 다시 짓는다(로케일 ⓑ · `i18n.phrase`).
+
+        # 네 줄이 각자 다른 것을 진다 (⛔ 겹쳐 적지 않는다)
+
+        - `title` — **어디인가**. 마스크가 걸렸으면 그것까지(`mdir.title_mask`).
+        - `head`  — **볼륨**(`Free 쓴 것/전체`). 정본 Path 줄의 오른쪽이 이 자리다.
+          Path 자체는 제목이 이미 말하므로 여기 다시 안 적는다.
+        - `foot`  — **집계**. 셈과 서식은 정본 화면과 같은 함수 한 벌이다
+          (`listing.counts`) — 두 벌이면 같은 디렉터리가 두 클라에서 다른 수를 말한다.
+        - `note`  — **실패했거나 빈 것**. 평상시엔 비어 있다(빈 목록과 실패는 다르다).
+        """
         import os
         from .server import list_entries, _drive_roots
         path = mine.get("path") or os.path.abspath(os.sep)
@@ -572,15 +627,37 @@ class _MdirPlugin:
                 note_text = i18n.t("mdir.too_many")
             elif not operable:
                 note_text = i18n.t("mdir.empty")
-        title, title_spec = i18n.phrase("mdir.title", path=path)
+        # 볼륨은 **한 번만** 잰다(느린 마운트에서 두 번 물으면 그만큼 두 배다).
+        # 이 자리는 이미 executor 안이라(`_offload`) 루프를 안 막는다.
+        free, total = _disk(path)
+        masks = mine.get("mask") or []
+        # ⚠ `i18n.phrase` 를 **리터럴 키로** 갈래마다 부른다. 서버가 보내는 글의 게이트가
+        #   `phrase("리터럴")` 을 소스에서 긁어 픽스처를 짓기 때문이다 — 키를 변수로
+        #   넘기면 실려 나가기는 해도 정적 스캔에 안 잡혀 게이트가 못 센다.
+        if masks:
+            title, title_spec = i18n.phrase("mdir.title_mask", path=path,
+                                            mask=" ".join(masks))
+        else:
+            title, title_spec = i18n.phrase("mdir.title", path=path)
         carried = {"title": title_spec}
         if note_spec:
             carried["note"] = note_spec
         return {
-            "t": "plugin_screen", "id": "mdir", "kind": "table",
+            "t": "plugin_screen", "id": "mdir", "kind": "panel",
             "title": title,
             "hint": i18n.t("mdir.hint"),
             "rows": rows, "text": "",
+            # 열 수는 **제안**이다(정본 `Alt+0~6`) — 0 이면 클라가 자기 폭을 보고 정한다.
+            "columns": int(mine.get("cols") or 0),
+            # 머리줄 = 볼륨. 못 재는 자리(권한 없는 경로·이상한 마운트)면 **빈 줄**이고,
+            # 그때 클라는 그 줄을 아예 안 그린다 — 0 을 적으면 그것이 거짓말이 된다.
+            "head": _volume(free, total),
+            # 꼬리줄 = 집계. 글자(`File`·`Dir`·`Byte`·`free`)는 Mdir III 원조의 서식이라
+            # **번역 대상이 아니다**(색과 같은 부류 — `listing.counts` 주석).
+            "foot": counts(dirs, files, mine.get("tags") or [],
+                           free, total, mine.get("sort") or "n",
+                           bool(mine.get("rev")), bool(mine.get("hidden")),
+                           key=lambda e: os.path.join(path, e["n"])),
             "selected": max(0, min(int(sel), max(0, len(rows) - 1))),
             "keys": dict(_SCREEN_KEYS),
             "note": note_text,

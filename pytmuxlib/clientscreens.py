@@ -1533,6 +1533,38 @@ class TabSwitcherScreen(ModalScreen):
 _DIVIDER_CHARS = {"─", "—", "-", "·", " "}
 
 
+def _cells(s) -> int:
+    """표시 셀 폭. `len()` 이 아니다 — 한글·이모지는 한 글자가 두 칸이다."""
+    return sum(_char_cells(c) for c in s)
+
+
+def _elide_cells(s, width, mark="…"):
+    """`s` 를 **셀 폭** `width` 안으로 자르고, 잘렸으면 말줄임표를 붙인다.
+
+    ⛔ **글자 수로 자르지 않는다.** 한글이 섞인 줄을 `len()` 으로 재면 실제 폭이 두 배까지
+    벌어져 칸이 밀린다 — `pytmux-47`(알림 판 칼럼)이 난 자리가 정확히 그것이다. 자를 때
+    말줄임표 자리(1칸)를 먼저 떼고 세므로 결과는 **언제나** `width` 이하다.
+
+    `width <= 0` 이면 빈 문자열(칸이 없는데 한 글자를 밀어 넣으면 그 줄만 길어진다)."""
+    if width <= 0:
+        return ""
+    if _cells(s) <= width:
+        return s
+    out, acc, room = [], 0, width - _cells(mark)
+    for ch in s:
+        w = _char_cells(ch)
+        if acc + w > room:
+            break
+        out.append(ch)
+        acc += w
+    return "".join(out) + mark
+
+
+def _pad_cells(s, width):
+    """오른쪽을 공백으로 채워 **셀 폭** `width` 로 맞춘다(칸 정렬)."""
+    return s + " " * max(0, width - _cells(s))
+
+
 def _hangwrap(line, width):
     """긴 줄을 width(**표시 셀** 기준) 안으로 하드 줄바꿈하되, 줄 앞의 들여쓰기와
     목록 표지('NN.'/'NN)'·•·-·*·→·▷··)만큼 이어줄도 들여써 정렬을 보존한다(요청:
@@ -3074,32 +3106,56 @@ class ChooseBufferScreen(ModalScreen):
             self.dismiss(None)
 
 
+# 전역 검색 결과 판의 칸 색(pytmux-27 ③ · ⓞ 와 같은 문법 — 칸마다 다른 색).
+# 자리 표시 셋은 본문보다 흐리고, 셋끼리도 갈린다: 탭이 가장 진하고(먼저 읽는 칸)
+# 패널·줄로 갈수록 흐려진다. ⛔ 미리보기에는 색을 주지 않는다 — 그 칸은 스크롤백
+# 본문이고, 여기서 색을 얹으면 선택 줄(ListView 하이라이트) 위에서 대비가 무너진다.
+_SRES_LOC, _SRES_PANE, _SRES_LINE = "#8a8a8a", "#6f6f6f", "#5f8787"
+
+
 class SearchResultsScreen(ModalScreen):
-    """전역 검색 결과(pytmux-27 ①·②) — 열린 **모든 탭·패널**에서 찾은 줄의 목록.
+    """전역 검색 결과(pytmux-27 ①·②·③) — 열린 **모든 탭·패널**에서 찾은 줄의 목록.
 
     스크롤백 검색(`/`·n/N)과 갈리는 지점: 그쪽은 **이 패널 안에서 다음 히트로**
     옮겨 다니는 것이라 화면이 필요 없고, 이쪽은 어느 탭 어느 패널의 몇째 줄인지를
     **골라야** 하므로 목록이 있어야 한다.
 
     ⛔ **상한을 조용히 숨기지 않는다.** 서버는 결과 수(전체·패널당)에 상한을 두고,
-    걸리면 그 사실을 결과에 실어 보낸다 — 그 문장이 제목 줄에 그대로 뜬다. 스무 줄만
+    걸리면 그 사실을 결과에 실어 보낸다 — 그 문장이 판 안에 그대로 뜬다. 스무 줄만
     보고 "이게 전부"로 읽히면 그 상한은 거짓말이 된다(루트 CLAUDE.md 의 no silent caps).
 
     ②(원격 중계)가 그 규율을 한 겹 늘렸다: 목록은 이제 **상류들의 결과까지 합친**
     한 벌이라, 회신이 안 온 상류가 있으면 "저 서버엔 없구나"라는 거짓을 읽게 된다.
-    그래서 `hosts` 를 받아 **몇 곳 중 몇 곳이 답했고 어디가 왜 빠졌는지**를 제목 줄에
+    그래서 `hosts` 를 받아 **몇 곳 중 몇 곳이 답했고 어디가 왜 빠졌는지**를 함께
     적는다 — 빠진 곳이 없으면 그 문장도 없다.
+
+    ③(결과 판 다듬기)이 **칸**과 **기하**를 못박았고, 그 두 문장이 앉는 자리도 옮겼다 —
+    테두리 제목은 판 폭을 넘으면 Textual 이 **말없이** 자르기 때문이다(`notes_text`).
+    자세한 것은 아래 `_col_widths`·`notes_text`·CSS 주석.
 
     Enter/클릭 = 그 자리로, Esc = 닫기. dismiss 값은 고른 항목 dict(취소면 None) —
     **어디로 어떻게 가는지는 이 화면이 모른다**(호출부 `_open_search_results` 가 안다).
     """
+    # ⓗ(pytmux-58) 의 규칙을 그대로 쓴다: **판 기하는 내용에 안 따라간다.**
+    # 종전은 `height: auto; max-height: 80%` 라 결과 수에 따라 판이 커졌다 작아졌다
+    # 했다 — 같은 검색을 두 번 돌리면 목록 첫 줄이 화면의 **다른 자리**에서 뜬다.
+    # 이제 높이는 언제나 화면의 80% 이고, 결과가 모자라면 그 아래는 **빈 자리로
+    # 남는다**(ⓗ 의 `pad_rows` 와 같은 결). 넘치면 목록이 안에서 스크롤한다.
+    #
+    # 폭을 넓게 잡는 이유는 그대로다 — 좁으면 탭·패널 이름만 남고 정작 고르는 근거인
+    # 본문 미리보기가 통째로 잘린다.
     CSS = """
     SearchResultsScreen { align: center middle; }
-    /* 폭을 넓게 잡는다 — 좁으면 탭·패널 이름만 남고 정작 고르는 근거인 본문
-       미리보기가 통째로 잘린다. */
-    #sres { width: 90%; height: auto; max-height: 80%;
-            border: round $accent; background: $panel; }
+    #sresbox { width: 90%; height: 80%;
+               border: round $accent; background: $panel; padding: 0 1; }
+    #sreswarn { width: 100%; height: auto; color: $warning; }
+    #sres { width: 100%; height: 1fr; border: none; background: $panel; }
+    #sres ListItem Label { width: 1fr; }
     """
+
+    # 칸의 상한(셀 폭). 이름 하나가 길다고 미리보기를 통째로 밀어낼 수는 없다 —
+    # 고르는 근거는 **본문**이고 자리 표시는 그것을 찾아가는 이름표다.
+    _TAB_MAX, _PANE_MAX = 24, 16
 
     def __init__(self, msg):
         super().__init__()
@@ -3111,6 +3167,8 @@ class SearchResultsScreen(ModalScreen):
         self._cap = int(msg.get("cap") or 0)
         self._per_pane = int(msg.get("per_pane") or 0)
         self._hosts = [h for h in (msg.get("hosts") or []) if isinstance(h, dict)]
+        self._widths = None      # 칸 폭 캐시(_col_widths — 목록 전체로 한 번만 정한다)
+        self._hl = 0             # 커서가 놓인 줄(그 줄만 색을 스타일 계층에 맡긴다)
 
     # 상류가 결과에 못 낀 사유(serverremote 의 `state`) → 사람이 읽는 말. 모르는
     # 값이 오면(구/신 서버 조합) 그 값 그대로 보인다 — 조용히 "정상"으로 접지 않는다.
@@ -3149,49 +3207,196 @@ class SearchResultsScreen(ModalScreen):
                                   names=", ".join(miss))
         return out
 
-    def title_text(self) -> str:
-        """제목 줄 — 무엇을 몇 개 훑어 몇 건을 찾았나, 그리고 **잘렸나·빠졌나**."""
-        head = i18n.t("screen.search_all_title", q=self._query,
+    def headline_text(self) -> str:
+        """머리말 — 무엇을 몇 개 훑어 몇 건을 찾았나(짧다 — 잘려도 안전한 자리에만 쓴다).
+
+        ⛔ 상한·무응답 상류 같은 「잘리면 거짓말이 되는」 사실은 여기 안 싣는다
+        (`notes_text` 몫) — 테두리 제목처럼 폭이 좁으면 Textual 이 말없이 `…` 로
+        자르는 자리에 이 문자열을 쓰면 그 사실이 통째로 사라진다(no silent caps)."""
+        return i18n.t("screen.search_all_title", q=self._query,
                       n=len(self._items), panes=self._panes)
+
+    def notes_text(self) -> str:
+        """잘렸나·빠졌나 — 상한·무응답 상류. 할 말이 없으면 빈 문자열이다.
+
+        머리말과 갈라 둔 이유는 `headline_text` 독스트링 참조. 이 문자열은 **잘리지
+        않는 자리**(판 안)에 실어야 하고, 지금 그 자리를 새로 만드는 것은 컬럼 정렬
+        재작업(pytmux-229~231)과 함께 갈 일이라 여기서는 문자열만 낸다."""
+        parts = []
         if self._truncated:
-            head += " · " + i18n.t("screen.search_all_cut", cap=self._cap)
+            parts.append(i18n.t("screen.search_all_cut", cap=self._cap))
         if self._capped:
-            head += " · " + i18n.t("screen.search_all_pane_cut",
-                                   n=self._capped, per=self._per_pane)
+            parts.append(i18n.t("screen.search_all_pane_cut",
+                                n=self._capped, per=self._per_pane))
         hosts = self.hosts_text()
         if hosts:
-            head += " · " + hosts
-        return head
+            parts.append(hosts)
+        return " · ".join(parts)
 
-    def _row_text(self, it) -> Text:
-        """`탭번호:탭이름 · 패널제목 │ 본문` — 자리는 흐리게, 본문은 그대로.
+    def title_text(self) -> str:
+        """제목 줄 — 머리말 + 잘렸나·빠졌나 한 문장(로그·시험이 한 번에 보게 잇는다)."""
+        head = self.headline_text()
+        notes = self.notes_text()
+        return head + " · " + notes if notes else head
 
-        Rich Text 로 짓는다(마크업 문자열이 아니라) — 스크롤백 본문에는 `[`
-        가 흔하고, 마크업으로 해석되면 그 줄이 통째로 사라지거나 색이 샌다.
+    def title_text(self) -> str:
+        """머리말 + 경고를 이은 한 문장(로그·시험이 한 번에 보려고 쓴다).
+
+        화면에서는 둘이 **다른 자리**에 뜬다 — `headline_text`/`notes_text` 참조."""
+        notes = self.notes_text()
+        return self.headline_text() + (" · " + notes if notes else "")
+
+    def _tab_of(self, it) -> str:
+        """자리 표시의 첫 칸 — `탭번호:탭이름`.
 
         번호는 `gwin`(있으면) 우선이다 — 원격 히트에서 `win` 은 **그 상류의** 로컬
-        탭 번호(점프 좌표)이고, 사람이 보는 번호는 **우리 병합 탭바**의 것이어야
-        한다. 자리 표시는 탭바 규약을 따라 원격이면 분홍(§1.7-a REMOTE_PINK)이다."""
+        탭 번호(점프 좌표)이고, 사람이 보는 번호는 **우리 병합 탭바**의 것이어야 한다."""
         num = int(it.get("gwin", it.get("win", 0))) + 1
-        loc = f"{num}:{it.get('tab', '')}"
-        color = REMOTE_PINK if it.get("remote") else "#8a8a8a"
-        txt = Text(f"{loc} · {it.get('title', '')} │ ", style=Style(color=color))
-        txt.append(str(it.get("text", "")))
+        return f"{num}:{it.get('tab', '')}"
+
+    def _line_of(self, it) -> str:
+        """히트가 놓인 **절대 줄 번호**. 값이 없으면 빈 칸으로 둔다(0 으로 꾸미지 않는다)."""
+        try:
+            return str(int(it["line"]))
+        except (KeyError, TypeError, ValueError):
+            return ""
+
+    def _col_widths(self):
+        """칸 폭 셋(탭 · 패널 · 줄) — **목록 전체를 한 번 훑어** 정하고 다시 안 잰다.
+
+        ⓞ(pytmux-59)의 규칙이다. 줄마다 제 길이대로 쓰면 본문(=고르는 근거)이 시작하는
+        열이 줄마다 달라진다 — 종전 `탭 · 패널제목 │ 본문` 한 덩이가 정확히 그랬다.
+        폭은 ⛔ **글자 수가 아니라 셀 폭**으로 잰다(`_cells`): 탭 이름에 한글이 섞이는
+        것은 이 제품에서 예외가 아니라 기본값이다.
+
+        상한(`_TAB_MAX`·`_PANE_MAX`)에 걸리면 그 칸만 말줄임표로 접는다 — 이름 하나
+        때문에 미리보기가 밀려나는 것이 이 화면에서 가장 나쁜 일이다."""
+        if self._widths is None:
+            tab = min(self._TAB_MAX, max((_cells(self._tab_of(it))
+                                          for it in self._items), default=0))
+            pane = min(self._PANE_MAX, max((_cells(str(it.get("title") or ""))
+                                            for it in self._items), default=0))
+            line = max((len(self._line_of(it)) for it in self._items), default=0)
+            self._widths = (tab, pane, line)
+        return self._widths
+
+    def _row_text(self, it, width=None, hl=False) -> Text:
+        """한 줄 = 네 칸. `탭번호:탭이름  패널제목  줄 │ 미리보기`(pytmux-27 ③).
+
+        칸마다 색이 다르다(ⓞ 와 같은 문법) — 자리 표시 셋은 흐리게, **미리보기만**
+        본문색이다. 자리 표시의 색은 탭바 규약을 따라 원격이면 분홍(§1.7-a REMOTE_PINK).
+
+        ⛔ **커서가 놓인 줄(`hl`)에서는 그 색을 다 비운다.** ⓞ 가 못박은 검사가
+        "선택 줄 배경 위에서도 셋이 다 읽히는가"인데, 흐린 회색을 하이라이트 파랑 위에
+        얹으면 그 줄만 안 읽힌다 — 색은 스타일 계층(ListView 하이라이트)에 넘기고
+        이 줄에서는 정렬만 남긴다(알림 이력 판이 등급색에 대해 하는 것과 같다).
+        원격이라는 사실은 이 줄에서도 탭 이름의 `⇄` 로 남는다(탭바와 같은 표식).
+
+        줄 번호는 오른쪽 정렬이다(숫자 칸의 자리값을 맞춘다). `width` 를 주면 미리보기를
+        남은 폭에 맞춰 자른다 — ⛔ 안 자르면 긴 히트 한 줄이 Textual 에서 soft-wrap 해
+        그 항목만 두세 줄이 되고, 그 순간 판의 기하가 내용에 따라 흔들린다(ⓗ 가 금지하는 것).
+
+        Rich Text 로 짓는다(마크업 문자열이 아니라) — 스크롤백 본문에는 `[` 가 흔하고,
+        마크업으로 해석되면 그 줄이 통째로 사라지거나 색이 샌다."""
+        w_tab, w_pane, w_line = self._col_widths()
+
+        def sty(color):
+            return Style() if hl else Style(color=color)
+
+        # ⛔ `Text(s, style=…)` 가 아니라 **빈 Text 에 append** 다: 생성자의 style 은
+        # 그 Text **전체의 바탕색**이라 뒤에 붙이는 미리보기까지 물든다(원격 줄이
+        # 통째로 분홍이 됐다 — 화면으로 잡았다).
+        txt = Text()
+        txt.append(_pad_cells(_elide_cells(self._tab_of(it), w_tab), w_tab),
+                   style=sty(REMOTE_PINK if it.get("remote") else _SRES_LOC))
+        if w_pane:
+            txt.append("  " + _pad_cells(
+                _elide_cells(str(it.get("title") or ""), w_pane), w_pane),
+                style=sty(_SRES_PANE))
+        if w_line:
+            txt.append("  " + self._line_of(it).rjust(w_line),
+                       style=sty(_SRES_LINE))
+        txt.append(" │ ", style=sty(_SRES_LOC))
+        body = str(it.get("text", ""))
+        if width:
+            body = _elide_cells(body, width - _cells(txt.plain))
+        txt.append(body)
         return txt
 
-    def compose(self) -> ComposeResult:
-        rows = [ListItem(Label(self._row_text(it)), id=f"S{i}")
+    def _width(self):
+        """미리보기를 자르는 기준 폭 = 목록이 **실제로 글자를 그리는** 폭.
+
+        마운트 뒤에는 스크롤바를 뺀 실측값(`scrollable_content_region`)을 쓰고, 그 전
+        (테스트·compose 시점)에는 앱 폭에서 CSS 와 같은 비율로 어림한다. 둘 다 못 구하면
+        0 — 그때는 자르지 않는다(폭을 모르면서 자르면 멀쩡한 줄을 깎는다)."""
+        try:
+            w = self.query_one("#sres").scrollable_content_region.width
+        except Exception:
+            w = 0
+        if not w:
+            try:                              # 테두리 2 + 좌우 패딩 2 = 4
+                w = int(self.app.size.width * 0.9) - 4
+            except Exception:
+                return 0
+        return max(0, w)
+
+    def _rows(self):
+        width = self._width()
+        rows = [ListItem(Label(self._row_text(it, width, hl=(i == self._hl)),
+                               markup=False), id=f"S{i}")
                 for i, it in enumerate(self._items)]
-        if not rows:
-            rows = [ListItem(Label(i18n.t("screen.no_search_results")),
-                             id="Snone")]
-        lv = _CycleListView(*rows, id="sres")
-        lv.border_title = self.title_text()
-        lv.border_subtitle = i18n.t("screen.search_all_sub")
-        yield lv
+        return rows or [ListItem(Label(i18n.t("screen.no_search_results")),
+                                 id="Snone")]
+
+    def compose(self) -> ComposeResult:
+        # 테두리(제목·힌트)의 주인은 **판**이고 목록은 그 안에서 스크롤만 한다 —
+        # 종전엔 목록 자체가 판이라, 판 안에 다른 줄을 놓을 자리가 없었다.
+        with Vertical(id="sresbox") as box:
+            box.border_title = self.headline_text()
+            box.border_subtitle = i18n.t("screen.search_all_sub")
+            # 잘렸다·빠졌다는 **판 안**에 둔다(줄바꿈되는 자리 — notes_text 참조).
+            # 할 말이 없으면 그 줄도 없다(로컬만 쓰는 사람의 판을 안 늘린다).
+            notes = self.notes_text()
+            if notes:
+                yield Label(notes, id="sreswarn", markup=False)
+            yield _CycleListView(*self._rows(), id="sres")
 
     def on_mount(self):
         self.query_one(ListView).focus()
+        # 폭이 정해진 뒤(레이아웃 후) 실제 폭 기준으로 미리보기를 다시 자른다
+        # (NoticeHistoryScreen 과 같은 규약 — compose 시점엔 아직 크기가 없다).
+        self.call_after_refresh(self._refresh_rows)
+
+    def _refresh_rows(self, only=None):
+        """라벨을 **제자리에서** 갱신한다. 결과는 열 때 받은 스냅샷이라 항목 수가
+        변하지 않으므로 리스트를 지웠다 다시 채우지 않는다(`ListView.clear()` 는
+        비동기라 곧바로 append 하면 같은 id 가 겹쳐 터진다 — 이력 판에서 실측)."""
+        width = self._width()
+        try:
+            items = list(self.query_one(ListView).children)
+        except Exception:
+            return
+        for i, item in enumerate(items):
+            if i >= len(self._items) or (only is not None and i != only):
+                continue
+            try:
+                item.query_one(Label).update(
+                    self._row_text(self._items[i], width, hl=(i == self._hl)))
+            except Exception:
+                pass
+
+    def on_list_view_highlighted(self, event):
+        """커서가 옮겨 가면 **떠난 줄과 온 줄 둘만** 다시 그린다.
+
+        색을 비우는 줄이 바뀌었기 때문이다(`_row_text` 의 `hl`). 전부 다시 그리면
+        결과 200건에서 방향키 한 번이 200번의 갱신이 된다."""
+        new = event.list_view.index
+        if new is None or new == self._hl:
+            return          # ⛔ None 을 그대로 넣으면 `only=None` = **전부 다시 그리기**다
+        old, self._hl = self._hl, new
+        if old is not None:
+            self._refresh_rows(only=old)
+        self._refresh_rows(only=new)
 
     def _pick(self, item_id):
         if not item_id or item_id == "Snone":
@@ -3335,16 +3540,8 @@ class NoticeHistoryScreen(ModalScreen):
         body = self._text_of(e)
         avail = max(8, width - len(pre) - 2)
         if i not in self._expanded:
-            one = body.replace("\n", " ")
-            if sum(_char_cells(c) for c in one) > avail:
-                cut, acc = len(one), 0
-                for j, ch in enumerate(one):
-                    acc += _char_cells(ch)
-                    if acc > avail - 1:
-                        cut = j
-                        break
-                one = one[:cut] + "…"
-            return [pre + one]
+            # 자르는 규칙은 한 벌이다(`_elide_cells`) — 두 벌이면 판마다 갈린다.
+            return [pre + _elide_cells(body.replace("\n", " "), avail)]
         # 펼침: 첫 줄은 접두사와 함께, 이어지는 줄은 접두사 폭만큼 들여쓴다.
         out = []
         for para in body.split("\n"):

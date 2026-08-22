@@ -5,8 +5,19 @@
 # 실수로 AGPL 크레이트가 의존 그래프에 다시 들어오는 것을 막는다 — 사람이 눈으로
 # 확인하는 대신 cargo 에게 물어본다.
 #
-# 통과 조건: 의존 그래프의 **로컬(path) 크레이트**가 아래 허용 목록과 정확히 일치한다.
-# 외부 crates.io 의존은 이 검사 대상이 아니다(전부 허용적 라이선스로 확인된 것들).
+# 통과 조건은 둘이다:
+#
+#  ① 의존 그래프의 **로컬(path) 크레이트**가 아래 ALLOWED 와 정확히 일치한다(이 파일).
+#  ② **외부 의존**의 라이선스가 전부 허용 목록 안이고, 배포 이진 옆에 갈 저작권 고지
+#     (`THIRD-PARTY-NOTICES.md`)가 지금 의존 그래프와 같다
+#     (`third_party_notices.py --check` — 그 파일 머리말이 근거를 쥔다).
+#
+# ⛔ **②는 2026-08-17 에 생겼다**(검수 2026-08-09 B-7 · pytmux/pytmux-193). 그전까지 여기
+# 적혀 있던 *"외부 crates.io 의존은 이 검사 대상이 아니다(전부 허용적 라이선스로 확인된
+# 것들)"* 는 **아무도 다시 확인하지 않는 문장**이었다 — 사람이 한 번 세어 적어 둔 값이고,
+# 새 의존이 GPL 단독으로 들어와도 이 게이트는 초록이었다. 그리고 MIT·BSD·ISC·Zlib·
+# Apache-2.0 은 이진 재배포에도 고지 재현을 요구하는데 `client/build/` 의 배포 이진 셋
+# 옆에는 그 글이 **한 줄도** 없었다.
 #
 # 실패하면 PROVENANCE.md 를 읽고, 새 크레이트가 정말 자체 구현인지 확인한 뒤
 # 아래 ALLOWED 에 추가하고 PROVENANCE.md §2 표도 함께 갱신할 것.
@@ -100,4 +111,19 @@ if grep -rl "GNU AFFERO GENERAL PUBLIC LICENSE" . \
 fi
 
 [ "$rc" -eq 0 ] && echo "OK: 로컬 크레이트 $(echo "$FOUND" | wc -l | tr -d ' ')개, 전부 허용 목록 안"
+
+# ② 외부 의존 + 배포 고지. **여기서 멈추지 않는다** — 위가 떨어져도 이것을 재서 한 번에
+# 다 보여 준다(합본 게이트가 "한 스텝이 넘어져도 나머지를 돈다"로 사는 것과 같은 결).
+#
+# 판정을 파이썬에 두는 이유: 라이선스 식(`(MIT OR Apache-2.0) AND Unicode-DFS-2016`)을
+# 평가하고 크레이트 449개의 전문을 모아 비교하는 일이라 sh 로 적으면 그 자체가 결함
+# 원천이 된다. `build_release.sh` 가 `check_mirror.py` 를 부르는 것과 같은 자리다.
+PY="${PYTHON:-python3}"
+if ! command -v "$PY" >/dev/null 2>&1; then
+    echo "check_licenses: $PY 를 찾을 수 없다 — 외부 의존·배포 고지를 못 쟀다" >&2
+    echo "  → 못 쟀으면 통과가 아니다. PYTHON=<경로> 로 지정할 것" >&2
+    exit 2
+fi
+"$PY" scripts/third_party_notices.py --check || rc=$?
+
 exit "$rc"

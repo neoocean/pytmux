@@ -531,6 +531,9 @@ pub enum Prompt {
     /// 상태줄 색 이름. 빈 값이면 테마 그대로다.
     StatusBg,
     StatusFg,
+    /// 커서 색 이름(`pytmux/pytmux-161`). 상태줄 색과 **같은 표기**이고, 빈 값이면
+    /// 테마 그대로다.
+    CursorColor,
     /// `set <옵션> <값>` 한 줄.
     SetOption,
     /// `<이벤트> <명령>` 또는 `-u <이벤트>` — 이벤트 훅 걸기(`set-hook`).
@@ -699,6 +702,7 @@ impl Prompt {
             Prompt::StatusRight => "상태줄 오른쪽 (#{pane_title} · #h · %H:%M %Y-%m-%d):",
             Prompt::StatusBg => "상태줄 배경색 (예: blue · brightblack · 비우면 테마):",
             Prompt::StatusFg => "상태줄 글자색 (비우면 테마):",
+            Prompt::CursorColor => "커서 색 (예: blue · brightblack · #ff8800 · 비우면 테마):",
             Prompt::SetOption => "설정 (예: mouse off · prefix C-a):",
             // 물음에 **발화하는 이벤트 이름을 적는다** — 목록을 따로 열지 않고도
             // 무엇을 걸 수 있는지 보이게 하는 자리다.
@@ -786,6 +790,17 @@ pub struct Screens {
     /// 지금 떠 있는 플러그인 화면이 **목록인가**(아니면 글이다). 뷰가 열 때 정한다 —
     /// 스펙은 proto 가 들고 core 는 그것을 모른다(`MenuToggles` 와 같은 갈래).
     plugin_list: bool,
+    /// 그 판이 **다열**이면 `(열당 줄 수, 열 수)`, 아니면 `(0, 1)`(설계 §4.3 `panel`).
+    ///
+    /// # 왜 core 가 이 수를 드나
+    ///
+    /// **자리는 뷰가 재고 뜻은 여기서 정한다** — `PanelTarget` 과 같은 갈림이다. 한 열에
+    /// 몇 줄이 들어가는지는 그리는 쪽만 알지만(칸 예산), *"←→ 는 한 열을 건넌다"* 는
+    /// 손버릇이라 뷰마다 다시 적으면 그 순간 클라마다 갈린다.
+    ///
+    /// 뷰가 키를 먹기 **직전에** 넣는다 — 열 수는 창 크기와 함께 변하므로 열 때 한 번
+    /// 잡아 두면 리사이즈 뒤의 ←→ 가 엉뚱한 줄로 뛴다.
+    plugin_grid: (usize, usize),
     /// 서버가 부는 **플러그인 표면**(설계 Tier A). 뷰가 매 프레임 옮겨 담는다.
     ///
     /// 왜 화면 상태에 두나: 메뉴의 층·설정의 분류 이동이 **이 목록의 길이와 분류**에
@@ -1312,6 +1327,34 @@ impl Screens {
         // 그 갈림은 **스펙**에 있고 뷰가 열 때 알려 준다(core 는 스펙을 안 든다).
         if matches!(self.top(), Some(Screen::PluginView)) {
             if self.plugin_list {
+                // ★ **다열 판은 한 열이 한 묶음**이다(설계 §4.3 `panel` · pytmux-126).
+                //   정본 mdir 의 손 그대로 ←→ 가 한 열, PgUp/PgDn 이 한 판을 건넌다 —
+                //   열 채움이 세로 우선이라 ↑↓ 만으로도 전부 닿지만, 열이 셋이면 끝까지
+                //   가는 데 세 배가 걸린다.
+                //   ⛔ 위쪽 상한은 여기서 안 건다 — 줄 수를 아는 것은 스펙을 든 뷰이고
+                //      (`press_list` 도 같은 규약이다) 그리는 자리가 그 값을 자른다.
+                let (per_col, cols) = self.plugin_grid;
+                if cols > 1 && per_col > 0 {
+                    match key {
+                        Key::Left => {
+                            self.selected = self.selected.saturating_sub(per_col);
+                            return Some(ScreenKey::Consumed);
+                        }
+                        Key::Right => {
+                            self.selected += per_col;
+                            return Some(ScreenKey::Consumed);
+                        }
+                        Key::PageUp => {
+                            self.selected = self.selected.saturating_sub(per_col * cols);
+                            return Some(ScreenKey::Consumed);
+                        }
+                        Key::PageDown => {
+                            self.selected += per_col * cols;
+                            return Some(ScreenKey::Consumed);
+                        }
+                        _ => {}
+                    }
+                }
                 return Some(self.press_list(key));
             }
             return Some(match key {
@@ -1699,6 +1742,14 @@ impl Screens {
         if self.top() != Some(Screen::PluginView) {
             self.open(Screen::PluginView);
         }
+    }
+
+    /// 다열 판의 기하를 넣는다 — `(열당 줄 수, 열 수)`. 다열이 아니면 `(0, 1)`.
+    ///
+    /// ⛔ 여기서 커서를 안 건드린다. 창이 좁아져 열이 줄었다고 골라 둔 줄이 움직이면
+    /// 사용자는 리사이즈만 했는데 다른 것을 지우게 된다.
+    pub fn set_plugin_grid(&mut self, per_col: usize, cols: usize) {
+        self.plugin_grid = (per_col, cols.max(1));
     }
 
     /// 서버가 부는 플러그인 표면을 갈아 끼운다(뷰가 상태 변화 때 부른다).

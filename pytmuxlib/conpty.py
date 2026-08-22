@@ -10,11 +10,7 @@ carry 하므로 **raw 바이트만 받으면 Unix PTY 와 동일하게 무손상
 이 모듈은 ctypes 로 ConPTY API 를 직접 호출해 의사 콘솔을 소유하고, 입출력을 우리
 파이프로 직접 읽고 쓴다(winpty-rs/pywinpty 우회). 따라서 read 가 raw bytes 를 돌려주고
 (디코드 안 함), write 도 raw `WriteFile`(§1.1③ — 비-UTF-8 입력 무손상)이다. PseudoConsole
-3종(Create/Resize/Close)은 **pywinpty 동봉 `conpty.dll` 의 `Conpty`-접두 export**
-(ConptyCreatePseudoConsole 등)로 라우팅한다 — 이 OOB DLL 이 옆의 번들 `OpenConsole.exe` 를
-호스트로 띄워, 시스템 conhost 와 달리 init 핸드셰이크(`\x1b[c`·`\x1b[?9001h`)를 내보낸다
-(2026-06-11 실측: pywinpty 와 핸드셰이크 동일 = 호스트 패리티 달성). 번들 부재 시 시스템
-conhost(평문 export)로 폴백.
+3종(Create/Resize/Close)을 **어느 호스트로 라우팅하나**는 아래 §호스트 선택 한 곳이 쥔다.
 
 **2026-06-12: §1.1② 돌파 레시피 배선됨**(opt-in `PYTMUX_PTY_BACKEND=owned`, 라이브 검증 대기).
 winpty-rs(`andfoy/winpty-rs` `pty_impl.rs`)를 detached(콘솔-less = 데몬 동일) 조건에서 충실히
@@ -39,9 +35,7 @@ winpty-rs(`andfoy/winpty-rs` `pty_impl.rs`)를 detached(콘솔-less = 데몬 동
 
 서버 feed 경로(`vtparse.VTTokenizer`)는 영속 incremental decoder 로 바이트 경계를 carry 하므로
 **raw 바이트만 받으면 Unix PTY 와 동일하게 무손상**이다(read 가 디코드 안 함 = 손상 원점 회피).
-PseudoConsole 3종(Create/Resize/Close)은 pywinpty 동봉 `conpty.dll` 의 `Conpty`-접두 export
-로 라우팅한다(번들 OpenConsole 호스트 = 시스템 conhost 와 핸드셰이크 패리티). 번들 부재 시
-시스템 conhost 폴백.
+PseudoConsole 3종(Create/Resize/Close)을 어느 호스트로 보내나는 §호스트 선택이 쥔다.
 
 **잔여 갭(라이브 검증으로 판정)**: 비대화형 raw-writer 자식(`python -c "stdout.write × N"`)은
 레시피를 전부 복제해도 23B 스톨(자식은 완벽 attach 하나 conhost 가 VT diff 를 emit 안 함;
@@ -50,9 +44,28 @@ pywinpty 는 같은 자식을 스트리밍 = 양성대조). 단 패널이 실제
 Claude 패널 무손상 스트리밍 검증이 §1.1② 해결 판정의 결정타. 상세: docs/internal/HANDOFF.md §9,
 메모리 `pytmux-1-1-multibyte-winpty-corruption`.
 
+**§호스트 선택 — 기본은 «시스템 conhost» 다**(2026-08-22 뒤집음 · pytmux/pytmux-208 ·
+사람의 결정 2026-08-16). 판정은 `conpty_dll_pref()` **한 함수**이고, 실제로 무엇이 쓰였나는
+`CONPTY_DLL_SOURCE` 가 말한다. 되돌리는 스위치는 **`PYTMUX_CONPTY_DLL=bundled`** 하나다.
+- **왜 뒤집었나**: 제보(2026-08-10 · Windows 11)에서 패널의 Claude Code 배너가
+  `조조직직 보보안안` 처럼 **폭 2 글자마다 두 번** 나왔다. pytmux 격자 안에는 그 결함이
+  없다(상시 오라클 `tests/test_wide_char_no_duplication.py` 가 초록으로 그것을 잰다) —
+  남은 유력한 자리가 **번들 `OpenConsole.exe` 가 자기 텍스트 버퍼를 VT 로 재방출할 때
+  와이드 글자의 뒤 칸(trailing cell)을 안 건너뛰는 것**이다. 같은 번들 호스트가 이미
+  «일시 U+FFFD»로 upstream WON'T-FIX 판정을 받은 전력이 있다(HANDOFF §10-C).
+  ⇒ 호스트를 시스템 conhost 로 바꿔서 **제보가 사라지는지 재는 실험**이다.
+- ⛔ **이것은 「고쳤다」가 아니라 「재는 중」이다.** 판정은 Windows 박스에서 실제 Claude
+  패널을 띄워 그 배너를 보는 것이고, 겹침이 그대로면 자리는 격자 밖·호스트 밖이다.
+- ☠ **되돌려야 할 수 있는 값이 둘 있다**(둘 다 Windows 에서만 드러난다):
+  ⑴ **핸드셰이크** — 번들 OpenConsole 은 `\x1b[c`·`\x1b[?9001h`(win32-input-mode)를 먼저
+     내보내 pywinpty 와 **동일**했는데(2026-06-11 실측) 시스템 conhost 출력엔 그게 없다.
+  ⑵ **detached 스트리밍** — 2026-06-11 실측에서 시스템 conhost 는 콘솔-less 데몬에서
+     자식 출력을 우리 파이프로 못 흘렸다(초기 페인트 1회뿐). ⚠ 그 실측은 **레시피 ①
+     (숨은 콘솔, 2026-06-12)보다 앞선다** — ①이 그 조건을 없앴을 수 있지만 **안 재 봤다.**
+     증상은 「패널이 안 뜨고 조용하다」이고, 그때 처방은 `PYTMUX_CONPTY_DLL=bundled` 다.
+  ⇒ A/B 로 재는 길: `py scripts\\validate_conpty.py --dll system|bundled`([1][2][3]+겹침 계측).
+
 설계 메모(전부 데몬과 동일한 detached 조건 실측):
-- **호스트 패리티**: 번들 OpenConsole 출력이 `\x1b[c`·`\x1b[?9001h`(win32-input-mode)로 시작
-  = pywinpty 와 동일. 시스템 conhost 출력엔 그게 없다(평문 CreatePseudoConsole 위임).
 - 핸들 타입을 엄격히(`c_void_p`) 지정해 64비트 핸들 절단(흔한 ctypes×x64 함정)을 막는다.
 - conin 배선 주의: `_make_sync_pipe` 반환은 (우리단, conhost단). 뒤집으면 conhost 가 입력을
   못 읽어 자식(cmd)이 콘솔입력 EOF 로 즉시 종료한다(ping 처럼 stdin 안 읽는 자식은 생존).
@@ -119,8 +132,9 @@ _console_lock = threading.Lock()
 _console_ready = False
 
 # ── ConPTY 워밍 풀(docs/WINDOWS_STARTUP_PERF §6A) ──────────────────────────────
-# 새 탭 spawn 비용(~165–190ms)의 절반은 CreatePseudoConsole 이 번들 OpenConsole.exe
-# 호스트 프로세스를 띄우는 ~90–130ms 다(셸 attach=CreateProcessW 는 ~75ms). 이 호스트
+# 새 탭 spawn 비용(~165–190ms)의 절반은 CreatePseudoConsole 이 호스트 프로세스를 띄우는
+# ~90–130ms 다(셸 attach=CreateProcessW 는 ~75ms · 그 수치는 번들 OpenConsole.exe 를 띄우던
+# 때 쟀다 — 지금 기본인 시스템 conhost 에서는 **안 재 봤다**). 이 호스트
 # 생성은 **cwd/argv 무관**이라(셸 attach 때 cwd·argv 를 준다) 미리 만들어 둘 수 있다.
 # 풀은 셸을 아직 attach 하지 않은 _ConPty(의사콘솔만 준비)를 들고 있다가, 새 패널
 # 요청 시 그것을 꺼내 resize→spawn(cwd) 한다 → 새 탭 체감 ~90ms 로 절반. 적중 후
@@ -143,6 +157,54 @@ def conpty_supported() -> bool:
         return bool(getattr(k, "CreatePseudoConsole", None))
     except OSError:
         return False
+
+
+# ── 호스트 선택(§호스트 선택 · 판정은 아래 한 함수) ────────────────────────────
+# 기본값 상수는 여기 하나다. 뒤집을 일이 생기면 이 줄과 머리말 §호스트 선택만 고친다.
+CONPTY_DLL_DEFAULT = "system"
+
+
+def conpty_dll_pref(value: Optional[str] = None) -> str:
+    """`PYTMUX_CONPTY_DLL` 을 «어느 ConPTY 호스트를 띄울까»로 옮기는 **유일한 판정 자리**.
+
+    돌려주는 값은 둘 — `"bundled"`(번들 OpenConsole) · `"system"`(시스템 conhost).
+    `"bundled"`(별칭 `"openconsole"`)일 때만 번들이고, **그 밖의 모든 값**(미설정·빈값·
+    오타 포함)은 기본 = 시스템 conhost 다.
+
+    ⛔ **모르는 값을 「번들」로 읽지 않는다.** 기본이 뒤집힌 지금 그렇게 읽으면 오타 하나가
+    조용히 옛 기본으로 되돌아가고, 사람은 「시스템으로 돌렸다」고 믿은 채 실험 회차를
+    거꾸로 읽는다. 반대로 이 규칙이면 오타는 「안 되돌아갔다」로 드러난다.
+    ⚠ 이 함수는 **고른 것**을 말한다 — 실제로 무엇이 쓰였는지는 `CONPTY_DLL_SOURCE`
+    (Windows 에서만 선다)가 말한다. 번들을 골라도 DLL 이 없으면 system 으로 떨어진다.
+
+    value 를 주면 환경을 안 읽고 그 값을 판정한다(시험이 쓰는 길 · POSIX 에서도 돈다)."""
+    raw = os.environ.get("PYTMUX_CONPTY_DLL") if value is None else value
+    if (raw or "").strip().lower() in ("bundled", "openconsole"):
+        return "bundled"
+    return CONPTY_DLL_DEFAULT
+
+
+def doubled_wide_chars(sent: str, seen: str) -> list:
+    """«보낸 글»에는 없던 폭 2 글자의 연속 중복이 «받은 글»에 있으면 그 글자들을 돌려준다.
+
+    pytmux/pytmux-208 진단 전용 — 라이브 검증 하네스(`scripts/validate_conpty.py`)가
+    번들/시스템 두 호스트를 A/B 로 돌릴 때 쓴다. 제보 모양이 `조직` → `조조직직` 이라
+    판정은 «같은 글자가 자기 바로 뒤에 한 번 더 왔나»다.
+
+    ⛔ **「연속 중복」만 세면 안 된다** — `쓸쓸`·`감감무소식` 처럼 **원래 두 번인 우리말**이
+    걸린다. 그래서 보낸 글에 이미 그 중복이 있으면 판정에서 뺀다(그 오답이 왜 비싼지는
+    `tests/test_wide_char_no_duplication.py` 머리말 ②가 적는다).
+    ⚠ **0 은 「고쳤다」가 아니다** — 「이 페이로드에서는 안 겹쳤다」일 뿐이다. 제보 경로는
+    Claude Code 가 콘솔 API 로 그린 화면을 호스트가 VT 로 재방출하는 자리라, 이 함수가
+    보는 echo 왕복에서는 안 나올 수 있다."""
+    from .cellwidth import char_cells   # 지연 import(저수준 모듈이 상위 층을 안 끈다)
+    out = []
+    for ch in dict.fromkeys(sent):      # 보낸 글의 글자만 · 순서 유지 · 중복 제거
+        if char_cells(ch) != 2 or ch * 2 in sent:
+            continue
+        if ch * 2 in seen:
+            out.append(ch)
+    return out
 
 
 if IS_WINDOWS:
@@ -183,10 +245,13 @@ if IS_WINDOWS:
 
     _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-    # ── 번들 OpenConsole 경로(§1.1② 진짜 해결) ────────────────────────────────
+    # ── 번들 OpenConsole 경로(§1.1② 진짜 해결 · 지금은 **opt-in** = 되돌리는 스위치) ──
+    # ⚠ 2026-08-22 부터 기본이 아니다(머리말 §호스트 선택) — `PYTMUX_CONPTY_DLL=bundled`
+    # 로만 켠다. 아래 실측은 **그 스위치가 왜 남아 있나**의 근거다.
     # 시스템 conhost 의 CreatePseudoConsole 은 **콘솔-less 데몬**(서버=DETACHED_PROCESS)
     # 에서 자식의 지속 출력을 우리 파이프로 스트리밍하지 못한다(초기 페인트 1회뿐 —
-    # 2026-06-11 실측). 반면 pywinpty(winpty-rs)는 같은 detached 조건에서 정상인데, 그
+    # 2026-06-11 실측 · ☠ 그 회차는 숨은 콘솔 레시피 ①(2026-06-12)보다 **앞선다**).
+    # 반면 pywinpty(winpty-rs)는 같은 detached 조건에서 정상인데, 그
     # 차이는 winpty-rs 가 패키지에 **동봉한 MS ConPTY 재배포본 `conpty.dll`** 을 쓰고 그
     # CreatePseudoConsole 이 옆에 있는 **번들 `OpenConsole.exe`** 를 PTY host 로 띄우기
     # 때문이다(시스템 conhost 대신). 그래서 PseudoConsole 3종(Create/Resize/Close)을 이
@@ -213,12 +278,15 @@ if IS_WINDOWS:
         except Exception:
             return None
 
-    # PYTMUX_CONPTY_DLL=system 이면 강제로 시스템 conhost(A/B·디버그용). 기본은 번들 우선.
-    _conpty_src_pref = (os.environ.get("PYTMUX_CONPTY_DLL") or "").strip().lower()
-    _cpc = None if _conpty_src_pref == "system" else _load_bundled_conpty_dll()
+    # 어느 호스트를 띄울까는 `conpty_dll_pref()` **한 곳**이 정한다(기본 = 시스템 conhost ·
+    # 되돌리는 스위치 = PYTMUX_CONPTY_DLL=bundled). ⛔ 여기서 환경변수를 다시 읽지 마라 —
+    # 두 곳이 읽으면 갈린다.
+    _cpc = _load_bundled_conpty_dll() if conpty_dll_pref() == "bundled" else None
+    # ★ **고른 것이 아니라 «실제로 쓰는 것»** 이다 — bundled 를 골랐어도 DLL 이 없으면
+    # 여기서 system 으로 떨어진다. 실험 회차를 읽는 근거는 언제나 이 값이다.
     CONPTY_DLL_SOURCE = "bundled" if _cpc is not None else "system"
     if _cpc is None:
-        _cpc = _k32  # 번들 부재 시 시스템 conhost 로 폴백(detached 스트리밍은 안 되지만 안전망)
+        _cpc = _k32  # 시스템 conhost(평문 export) 경로
 
     # 핸들/포인터는 전부 c_void_p 로 — 미지정 시 c_int(32비트)로 절단돼 어떤 핸들도
     # 무효가 되는 ctypes×x64 함정을 차단한다.

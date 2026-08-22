@@ -78,21 +78,43 @@ fn every_palette_entry_is_opaque() {
     }
 }
 
+/// ☠ **열여섯 이름은 열여섯 색이라야 한다** — 이 팔레트가 지켜야 하는 하드 계약.
+///
+/// # 왜 짝 목록을 없앴나 (pytmux-187)
+///
+/// 종전 이름은 `bright_variants_differ_from_their_base` 였고, 재는 짝을 **손으로 적은
+/// 목록**으로 돌았다. 그 목록에 마젠타 한 줄이 **빠져 있었고**, 하필 `MAGENTA` 와
+/// `BR_MAGENTA` 가 같은 값이었다 — 즉 오라클은 계속 초록이었는데 그 색만 안 재고
+/// 있었다. 목록이 스스로 "일곱 짝만 잰다"고 말해 주지 않는 것이 이 부류의 전부다
+/// (테스트 주석은 "16줄짜리 복붙 표라 한 줄이 어긋나기 쉽다"고 적어 놓고, 정작 그
+/// 테스트가 같은 방식으로 한 줄을 흘렸다).
+///
+/// 그래서 짝짓기를 **없앴다**: 손으로 적을 목록이 없으면 거기서 한 줄이 샐 수 없다.
+/// 전수(`ALL_NAMED`)를 훑어 값이 겹치는지만 물으면 짝이 같은 경우를 포함해 **더 많이**
+/// 잡는다(예: `RED` 를 `BLUE` 자리에 복붙한 것도 여기서 운다). `ALL_NAMED` 자체가 한
+/// 줄을 두 번 적어도 여기서 걸린다 — 같은 색이 두 번 나오기 때문이다.
+///
+/// # 왜 "밝은 쪽이 더 밝은가"는 안 재나
+///
+/// 그건 계약이 아니라 배색 취향이다(Solarized 처럼 그렇지 않은 표가 흔하다). 지금 이
+/// 팔레트도 `BR_CYAN`(#0db9d7)이 `CYAN`(#7dcfff)보다 어둡다 — 재고 싶은 자리이지만
+/// **어느 팔레트를 쓸 것인가**가 정해지기 전에는 이 오라클이 답을 못 정한다(pytmux-187
+/// 이 사람에게 물어 둔 갈림길이다). 여기서는 "겹치면 안 된다"만 못박는다.
 #[test]
-fn bright_variants_differ_from_their_base() {
-    // 팔레트는 16줄짜리 복붙 표라 한 줄이 어긋나기 쉽다. 밝은 색이 기본색과 같으면
-    // 그 구분이 화면에서 통째로 사라지는데, 눈으로는 "좀 흐린가?" 정도로만 보인다.
-    for (base, bright) in [
-        (NamedColor::Black, NamedColor::BrightBlack),
-        (NamedColor::Red, NamedColor::BrightRed),
-        (NamedColor::Green, NamedColor::BrightGreen),
-        (NamedColor::Yellow, NamedColor::BrightYellow),
-        (NamedColor::Blue, NamedColor::BrightBlue),
-        (NamedColor::Cyan, NamedColor::BrightCyan),
-        (NamedColor::White, NamedColor::BrightWhite),
-    ] {
-        assert_ne!(named(base), named(bright), "{base:?} 와 {bright:?} 가 같다");
+fn the_sixteen_palette_names_are_sixteen_colors() {
+    let mut seen: std::collections::BTreeMap<(u8, u8, u8, u8), NamedColor> =
+        std::collections::BTreeMap::new();
+    for color in ALL_NAMED {
+        let c = named(color);
+        if let Some(prev) = seen.insert((c.r, c.g, c.b, c.a), color) {
+            panic!(
+                "{prev:?} 와 {color:?} 가 같은 값(#{:02x}{:02x}{:02x})이다 — \
+                 그 두 SGR 이 화면에서 한 색이 된다",
+                c.r, c.g, c.b
+            );
+        }
     }
+    assert_eq!(seen.len(), ALL_NAMED.len(), "전수를 다 훑지 않았다");
 }
 
 // ── 블록 구역(P4) ────────────────────────────────────────────────────────────
@@ -900,6 +922,157 @@ fn a_cursor_outside_the_pane_is_not_drawn() {
     }
     view.pump_headless();
     assert!(view.cursor_cell().is_none());
+}
+
+// ── 커서 모양·색·깜빡임(`pytmux/pytmux-161`) ─────────────────────────────────
+//
+// 제보는 "외곽선 네모 한 가지로 **고정**"이었다. 그래서 재는 것 셋이다:
+// ⑴ 설정한 모양·색이 그리는 쪽까지 **실제로 간다** ⑵ 채운 네모는 오버레이가 아니라
+// **캔버스가 반전으로** 낸다(덮어 칠하면 그 글자를 못 읽는다) ⑶ 깜빡임이 반주기마다
+// 뒤집히고 **껐을 때 켜진 채로 남는다**.
+//
+// ⛔ ⑵ 를 부정 단언("오버레이가 안 그린다")으로만 두면 아무 데서도 안 그려도 통과한다.
+//    `cursor_block_cell` 이 **어느 칸을 반전할지**를 직접 본다.
+
+#[test]
+fn the_configured_shape_and_color_reach_the_thing_that_draws_them() {
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(3, 2)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    // 기본은 종전 그대로 — 외곽선 네모 · 테마색(`None`).
+    let cur = view.cursor_cell().expect("기본에서도 커서는 그려진다");
+    assert_eq!(cur.style, crate::splitter::CursorStyle::Hollow);
+    assert_eq!(cur.color, None, "빈 색 이름은 테마 그대로다");
+
+    view.config.cursor_style = "bar".into();
+    view.config.cursor_color = "#ff8800".into();
+    let cur = view.cursor_cell().expect("모양을 바꿨다고 커서가 사라지면 안 된다");
+    assert_eq!(cur.style, crate::splitter::CursorStyle::Bar);
+    assert!(cur.color.is_some(), "설정한 색이 그리는 쪽까지 안 간다");
+}
+
+#[test]
+fn an_unknown_shape_still_draws_something() {
+    // 파서가 이미 어휘를 거르지만 설정 파일만이 이 값의 입구가 아니다(`set` 한 줄·
+    // 설정 화면). 어느 길로 들어와도 커서가 사라지는 일은 없어야 한다.
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(1, 1)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.config.cursor_style = "blcok".into();
+    let cur = view.cursor_cell().expect("모르는 낱말이 커서를 지웠다");
+    assert_eq!(cur.style, crate::splitter::CursorStyle::Hollow);
+}
+
+#[test]
+fn the_block_shape_is_drawn_by_the_canvas_not_by_the_overlay() {
+    // ★ 오버레이는 캔버스를 **다 그린 뒤에** 얹힌다 — 거기서 칠하면 커서가 놓인 글자를
+    //   못 읽는다. 그래서 채운 네모만 줄이 반전으로 낸다.
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(3, 2)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert_eq!(view.cursor_block_cell(), None, "외곽선은 줄이 반전할 일이 없다");
+
+    view.config.cursor_style = "block".into();
+    assert_eq!(view.cursor_block_cell(), Some((3, 2)), "반전할 칸을 줄에 안 알린다");
+    // 그리고 오버레이 쪽은 그 칸을 **안 칠한다**(모양으로 그 사실이 말해진다).
+    assert_eq!(
+        view.cursor_cell().map(|c| c.style),
+        Some(crate::splitter::CursorStyle::Block)
+    );
+}
+
+#[test]
+fn the_cursor_blinks_only_when_asked_and_comes_back_when_it_is_turned_off() {
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(1, 1)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    // 꺼져 있으면 아무리 재촉해도 안 뒤집힌다(종전 동작).
+    assert!(!view.tick_cursor_blink_for_test(true));
+    assert!(view.cursor_cell().is_some());
+
+    view.config.cursor_blink = true;
+    // 반주기가 아직 안 지났으면 그림이 안 바뀐다 — 30Hz 루프가 매 프레임 다시 그리면
+    // 커서 하나 때문에 화면 전체를 초당 서른 번 그린다.
+    assert!(!view.tick_cursor_blink_for_test(false), "주기 전에 뒤집혔다");
+    assert!(view.tick_cursor_blink_for_test(true), "반주기가 지났는데 안 뒤집힌다");
+    assert!(view.cursor_cell().is_none(), "「안 보임」 반주기인데 그린다");
+    assert!(view.tick_cursor_blink_for_test(true));
+    assert!(view.cursor_cell().is_some(), "다시 보이는 반주기로 안 돌아온다");
+
+    // ⛔ 「안 보임」에서 껐는데 그대로 굳으면 커서가 **영영** 사라진다 — 되돌릴 입구는
+    //    있어도, 커서 없는 화면에서 원인이 「깜빡임을 껐다」임을 알 길이 없다.
+    assert!(view.tick_cursor_blink_for_test(true));
+    assert!(view.cursor_cell().is_none(), "먼저 안 보이는 상태를 만들어야 뜻이 있다");
+    view.config.cursor_blink = false;
+    assert!(view.tick_cursor_blink_for_test(false), "껐는데 되살리지 않았다");
+    assert!(view.cursor_cell().is_some(), "깜빡임을 껐는데 커서가 안 돌아온다");
+}
+
+// ── 반전할 칸 떼어 내기(`isolate_cell`) ──────────────────────────────────────
+//
+// 순수 함수라 글꼴 없이 잰다. 여기가 틀리면 증상이 둘로 갈리는데 둘 다 조용하다 —
+// 런 전체가 뒤집히거나(커서가 줄 하나를 먹는다), 한글이 반으로 쪼개져 안 그려진다.
+
+#[test]
+fn the_cursor_cell_becomes_its_own_piece() {
+    let segs = SessionView::grid_segments("HELLO");
+    assert_eq!(segs, vec![("HELLO".to_string(), 5)]);
+    assert_eq!(
+        SessionView::isolate_cell(segs, 0, 2),
+        vec![("HE".to_string(), 2), ("L".to_string(), 1), ("LO".to_string(), 2)]
+    );
+}
+
+#[test]
+fn a_cell_at_either_end_does_not_make_an_empty_piece() {
+    // 빈 조각은 그릴 것이 없는 엘리먼트라 자리만 먹는다(그리고 자리표 셈을 흔든다).
+    let segs = SessionView::grid_segments("HELLO");
+    assert_eq!(
+        SessionView::isolate_cell(segs.clone(), 0, 0),
+        vec![("H".to_string(), 1), ("ELLO".to_string(), 4)]
+    );
+    assert_eq!(
+        SessionView::isolate_cell(segs, 0, 4),
+        vec![("HELL".to_string(), 4), ("O".to_string(), 1)]
+    );
+}
+
+#[test]
+fn a_two_cell_letter_is_never_cut_in_half() {
+    // ★ 한글은 두 칸을 먹는다. 칸 단위로 자르면 반쪽 글자가 나오는데 그건 그릴 수가
+    //   없다. 커서는 **글자**에 놓인다 — 두 번째 칸을 가리켜도 그 글자 하나가 뜯긴다.
+    //   (`grid_segments` 가 이미 글자마다 쪼개므로 여기서는 그대로 지나야 한다.)
+    let segs = SessionView::grid_segments("가나");
+    assert_eq!(segs, vec![("가".to_string(), 2), ("나".to_string(), 2)]);
+    for at in [2, 3] {
+        assert_eq!(SessionView::isolate_cell(segs.clone(), 0, at), segs);
+    }
+}
+
+#[test]
+fn a_run_without_the_cursor_is_left_alone() {
+    // 부르는 쪽이 "이 런에 커서가 있나"를 다시 세지 않게 하려는 계약이다.
+    let segs = SessionView::grid_segments("HELLO");
+    assert_eq!(SessionView::isolate_cell(segs.clone(), 10, 3), segs);
+    assert_eq!(SessionView::isolate_cell(segs.clone(), 0, 99), segs);
+}
+
+#[test]
+fn only_the_first_matching_cell_is_isolated() {
+    // 커서는 하나다 — 두 번 뜯으면 그 줄의 조각 수가 늘어 자리표 셈이 흔들린다.
+    let segs = vec![("AB".to_string(), 2), ("CD".to_string(), 2)];
+    assert_eq!(
+        SessionView::isolate_cell(segs, 0, 1),
+        vec![("A".to_string(), 1), ("B".to_string(), 1), ("CD".to_string(), 2)]
+    );
 }
 
 // ── 글자 크기 배율(§10-21ⓐ) ──────────────────────────────────────────────────
@@ -2770,6 +2943,22 @@ fn the_title_row_sits_above_everything_else() {
 /// 없으면 `PropagateToParent` 한 줄을 지워도 프레임은 그대로고 아무도 안 운다
 /// (이 크레이트가 이미 두 번 밟은 "배선이 통째로 빠짐"의 자리다).
 fn mouse_down_handled_at(y: f32, messages: Vec<ServerMessage>) -> bool {
+    mouse_down_handled_xy(WIN_W / 2., y, messages)
+}
+
+/// 헤드리스 창의 크기 — 아래 오라클들이 **같은 값을 본다**(x 를 오른쪽 끝에서 재려면 필요하다).
+const WIN_W: f32 = 800.;
+const WIN_H: f32 = 600.;
+
+/// ☠ **종전에는 x 를 한 번도 안 쟀다** — `mouse_down_handled_at` 이 x 를 창 가운데(400)로
+/// 박아 두고 y 만 움직였다. 그래서 **머리줄의 오른쪽 끝**(우리가 그린 창 버튼 셋이 앉는 자리)이
+/// 이 크레이트에서 한 번도 측정되지 않았다.
+///
+/// ⚠ 그 구멍은 맥에서는 안 보인다 — `titlebar::BUTTONS` 가 맥에서 **빈 배열**이라 그 상자에서는
+/// 잴 것 자체가 없다(그 상수의 주석이 같은 이유로 `reserved_width_for` 를 인자받게 만들었다).
+/// ⇒ pytmux/pytmux-155(Windows 에서 창이 안 끌린다)를 맥에서 조사한 회차가 「머리줄 누름을
+/// 안 먹는다」를 x=400 하나로 재고 넘어간 자리가 정확히 여기다.
+fn mouse_down_handled_xy(x: f32, y: f32, messages: Vec<ServerMessage>) -> bool {
     use warpui::platform::WindowStyle;
     use warpui::{EntityIdSet, Presenter, WindowInvalidation};
     use warpui_core::event::{Event, ModifiersState};
@@ -2790,11 +2979,11 @@ fn mouse_down_handled_at(y: f32, messages: Vec<ServerMessage>) -> bool {
         };
         app.update(move |ctx| {
             presenter.invalidate(invalidation, ctx);
-            let _ = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            let _ = presenter.build_scene(vec2f(WIN_W, WIN_H), 1., None, ctx);
             presenter
                 .dispatch_event(
                     Event::LeftMouseDown {
-                        position: vec2f(400., y),
+                        position: vec2f(x, y),
                         modifiers: ModifiersState::default(),
                         click_count: 1,
                         is_first_mouse: false,
@@ -2822,6 +3011,40 @@ fn a_press_on_the_title_row_is_left_for_the_window_to_drag() {
         mouse_down_handled_at(band + 40., vec![layout_one_pane()]),
         "캔버스 누름까지 창에게 넘겼다 — 판 클릭·드래그 선택이 죽는다"
     );
+}
+
+/// 머리줄을 **x 로 훑는다** — 끌 수 있는 자리와 창 버튼 자리를 갈라 잰다 (pytmux/pytmux-155).
+///
+/// ☠ 위 시험은 x=400 **한 점**만 잰다. 그래서 「머리줄이 안 끌린다」의 두 갈래
+/// ⑴ 띠 전체를 우리가 먹는다 ⑵ 버튼 자리만 먹는다(설계대로) 를 **구별하지 못한다.**
+/// 이 시험이 그 둘을 가른다.
+///
+/// ⚠ **갈래가 OS 마다 다르고, 이 시험은 도는 상자의 갈래만 잰다** — 맥은
+/// `titlebar::BUTTONS` 가 비어 있어 버튼 자리가 없고, Windows·Linux 는 오른쪽 끝에 셋이 앉는다.
+/// 그래서 단언을 `BUTTONS.is_empty()` 로 갈라 적는다(상수를 읽되 **그 갈래에서만** 단언한다).
+#[test]
+fn the_titlebar_is_draggable_across_its_width_except_on_our_window_buttons() {
+    let band = crate::titlebar::band_height(1.);
+    let y = band / 2.;
+    let lane = crate::titlebar::reserved_width_for(crate::titlebar::BUTTONS.len());
+
+    // ⑴ **왼쪽 여백과 가운데 제목은 창의 것이다.** 여기가 참이면 창이 한 픽셀도 안 움직인다.
+    for x in [2., 20., WIN_W / 4., WIN_W / 2., WIN_W - lane - 4.] {
+        assert!(
+            !mouse_down_handled_xy(x, y, vec![]),
+            "머리줄 x={x} 누름을 뷰가 먹었다 — 그 자리에서 창이 안 끌린다 (버튼 자리 폭 {lane})"
+        );
+    }
+
+    // ⑵ **창 버튼 자리는 우리 것이다** — 먹어야 그 자리가 드래그 영역에서 빠진다
+    //    (`render_titlebar` 의 ★: `on_click` 이라야 하는 이유가 그것이다).
+    if !crate::titlebar::BUTTONS.is_empty() {
+        let mid_of_last_slot = WIN_W - crate::titlebar::SLOT_W / 2.;
+        assert!(
+            mouse_down_handled_xy(mid_of_last_slot, y, vec![]),
+            "창 버튼(닫기) 자리의 누름을 뷰가 안 먹었다 — 누르면 창이 끌리고 버튼은 안 먹힌다"
+        );
+    }
 }
 
 #[test]
@@ -6163,7 +6386,11 @@ fn the_overlay_is_still_handed_the_picked_block() {
 
 #[test]
 fn the_row_still_asks_for_the_font_variant() {
-    let body = source_after("fn render_row(", 3000);
+    // ⚠ 창을 **함수 전체보다 넉넉히** 뜬다(`overlay_call` 과 같은 사정) — 좁게 잡으면
+    //   `render_row` 에 줄이 늘 때마다 관계없는 이 가드가 붉어진다. 실제로 커서 모양
+    //   설정(`pytmux/pytmux-161`)이 그 자리에 섰다: 함수가 4,302자로 자라 3,000 창
+    //   밖으로 `with_style` 이 밀려났다.
+    let body = source_after("fn render_row(", 6000);
     assert!(
         body.contains("font_properties(&style)"),
         "런의 글꼴 변형을 안 만든다 — 굵게·기울임이 조용히 사라진다"
@@ -6763,4 +6990,209 @@ fn the_canvas_takes_the_leftover_and_the_status_bar_stays_on_the_floor() {
         canvas < 100.,
         "캔버스가 위에서 밀려 내려왔다 — 빈 높이가 위로 갔다: {canvas}"
     );
+}
+
+// ── 판 폭은 내용을 안 따라간다 (pytmux-158) ─────────────────────────────────
+//
+// ⚠ **글자로는 이 결함을 못 잰다.** 시험 폰트는 빈 `Line` 을 돌려줘 글자 폭이 전부 0
+// 이다(위 「그리기 오라클」 절 머리말) — `:ncd` 에 아무리 긴 이름을 넣어도 여기서는 판이
+// 안 넓어진다. 그런데 결함의 자리는 글자가 아니라 **사슬**이다: 「줄 하나가 판보다 넓으면
+// 판이 그만큼 넓어진다」. 그 사슬은 폭을 **아는** 상자로 그대로 세울 수 있다.
+//
+// 그래서 아래 뷰가 판 안쪽을 같은 모양(가로 `Flex` 한 줄 → 세로 `Flex`)으로 짓고 그 줄에
+// 판보다 넓은 상자를 하나 넣은 다음, 바깥을 ⑴ 종전 방식(`ConstrainedBox::with_width`)
+// ⑵ 지금 방식(`PanelBox`)으로 각각 감싸 **그려진 면의 가로 폭**을 잰다.
+
+/// 이 오라클이 자기 면을 찾는 표식 — 배경색이 열쇠다(다른 데서 안 쓰는 값).
+const PROBE_FILL: ColorU = ColorU { r: 1, g: 2, b: 3, a: 0xff };
+/// 판 안쪽 폭. 실제 값(`panel_inner_width`)과 달라도 되는 이유: 재는 것은 「준 폭을
+/// 지키나」이지 그 폭이 얼마냐가 아니다.
+const PROBE_INNER: f32 = 300.;
+/// 줄 하나가 원하는 폭 — 판보다 **넓다**(긴 파일 이름의 자리).
+const PROBE_OVERFLOW: f32 = 900.;
+
+struct PanelWidthProbe {
+    /// 지금 방식(`PanelBox`)으로 감쌀까. 거짓이면 종전 방식이다.
+    pinned: bool,
+    /// 판 안의 줄 하나가 원하는 폭.
+    row: f32,
+}
+
+impl Entity for PanelWidthProbe {
+    type Event = ();
+}
+
+impl TypedActionView for PanelWidthProbe {
+    type Action = ();
+
+    fn handle_action(&mut self, _: &(), _: &mut ViewContext<Self>) {}
+}
+
+impl View for PanelWidthProbe {
+    fn ui_name() -> &'static str {
+        "PanelWidthProbe"
+    }
+
+    fn render(&self, _: &AppContext) -> Box<dyn Element> {
+        // 판 안의 «한 줄» — 실제 목록 줄과 같은 모양이다. 가로 `Flex` 는 자기 아이에게
+        // 가로 한도를 **무한대로** 주므로, 이 상자는 판보다 넓게 눕는다.
+        let row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_child(
+                ConstrainedBox::new(Empty::new().finish())
+                    .with_width(self.row)
+                    .with_height(10.)
+                    .finish(),
+            )
+            .finish();
+        let column = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_child(row)
+            .finish();
+        let body = if self.pinned {
+            Clipped::new(PanelBox::new(column, PROBE_INNER).finish()).finish()
+        } else {
+            // 종전 방식 — 한도를 **주기만** 하고 크기는 아이가 잰 값을 그대로 돌려준다.
+            ConstrainedBox::new(column).with_width(PROBE_INNER).finish()
+        };
+        // 여백 없는 상자 하나 — 그려진 면의 폭이 곧 안쪽 폭이다.
+        Container::new(body).with_background_color(PROBE_FILL).finish()
+    }
+}
+
+/// 위 뷰를 한 프레임 그려 **표식 면의 가로 폭**을 돌려준다.
+///
+/// 창을 넉넉히 크게 잡는다 — 창이 좁으면 무엇이 폭을 정했는지(판이냐 창이냐) 갈리지 않는다.
+fn probe_panel_width(pinned: bool, row: f32) -> f32 {
+    use warpui::platform::WindowStyle;
+    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
+    warpui::App::test((), move |mut app| async move {
+        let (window_id, _handle) =
+            app.add_window(WindowStyle::NotStealFocus, move |_| PanelWidthProbe { pinned, row });
+        let mut presenter = Presenter::new(window_id);
+        let mut updated = EntityIdSet::default();
+        updated.insert(app.root_view_id(window_id).unwrap());
+        let invalidation = WindowInvalidation {
+            updated,
+            ..Default::default()
+        };
+        app.update(move |ctx| {
+            presenter.invalidate(invalidation, ctx);
+            let scene = presenter.build_scene(vec2f(1600., 600.), 1., None, ctx);
+            scene
+                .layers()
+                .flat_map(|layer| layer.rects.iter())
+                .find(|r| matches!(r.background, warpui::elements::Fill::Solid(c) if c == PROBE_FILL))
+                .map(|r| r.bounds.width())
+                .expect("표식 면이 안 그려졌다 — 오라클이 아무것도 안 재고 있다")
+        })
+    })
+}
+
+#[test]
+fn the_probe_reproduces_the_old_panel_widening() {
+    // ★ **결함부터 재현한다.** 이 단언이 붉어지면 아래 단언들은 아무것도 증명하지 않는다
+    //   (빈 오라클로 「고쳤다」를 말하는 자리다).
+    let width = probe_panel_width(false, PROBE_OVERFLOW);
+    assert_eq!(
+        width, PROBE_OVERFLOW,
+        "종전 방식이 판을 안 넓혔다 — 오라클이 결함을 못 세우고 있다(잰 폭 {width})"
+    );
+}
+
+#[test]
+fn the_old_way_already_held_the_floor_only_the_ceiling_was_open() {
+    // ★ 결함의 **모양**을 정확히 적어 둔다. 종전 방식도 아래쪽 한도는 지켰다 — 세로
+    //   `Flex` 가 layout 끝에서 `size.x.max(constraint.min.x())` 를 하기 때문이다.
+    //   그래서 "짧을 때 좁아진다"가 아니라 **"길 때 넓어진다"** 한쪽만 결함이었다.
+    //   (이 줄이 없으면 다음 사람이 `PanelBox` 를 「최소 폭 주는 상자」로 오해한다.)
+    let narrow = probe_panel_width(false, PROBE_INNER / 3.);
+    assert_eq!(
+        narrow, PROBE_INNER,
+        "종전 방식이 아래쪽 한도도 안 지켰다 — 결함의 모양이 기록과 다르다(잰 폭 {narrow})"
+    );
+}
+
+#[test]
+fn the_panel_keeps_its_width_whatever_it_holds() {
+    // pytmux-158: `:ncd` 에서 긴 이름이 목록에 들어오면 판이 그만큼 넓어졌다. 판 폭은
+    // 화면이 정하는 값이고 내용은 못 정한다 — **길든 짧든** 같은 값이라야 한다.
+    for row in [PROBE_OVERFLOW, PROBE_INNER / 3.] {
+        let width = probe_panel_width(true, row);
+        assert_eq!(
+            width, PROBE_INNER,
+            "판 폭이 내용을 따라갔다 — 목록을 오르내릴 때마다 판이 흔들린다\
+             (줄 {row} → 판 {width})"
+        );
+    }
+}
+
+#[test]
+fn the_panel_width_is_said_in_exactly_one_place() {
+    // 안쪽 폭 = 바깥 폭 − (여백 + 테두리) × 2. 두 값을 각각 글자로 적으면 언젠가 갈린다.
+    for screen in [Screen::Tree, Screen::Commands, Screen::Buffers] {
+        assert_eq!(
+            SessionView::panel_inner_width(screen),
+            SessionView::panel_width(screen)
+                - 2. * (SessionView::PANEL_PAD + SessionView::PANEL_BORDER),
+            "{screen:?} 의 안쪽 폭이 바깥 폭에서 안 나온다"
+        );
+    }
+    assert!(
+        SessionView::panel_width(Screen::Commands) > SessionView::panel_width(Screen::Tree),
+        "팔레트가 더 넓어야 한다(이름+설명 한 줄을 눈으로 잇는다)"
+    );
+}
+
+#[test]
+fn the_panel_is_still_handed_to_the_box_that_pins_it() {
+    // ★ 위 오라클은 `PanelBox` 가 **제 일을 하나**만 잰다. 판이 그 상자를 안 지나면
+    //   화면은 종전대로 흔들리는데 시험은 전부 통과한다(호출 제거 뮤테이션).
+    let body = source_after("fn render_screen_panel(", 14000);
+    assert!(
+        body.contains("PanelBox::new(column.finish(), Self::panel_inner_width(screen))"),
+        "판이 `PanelBox` 를 안 지난다 — 폭이 다시 내용을 따라간다(pytmux-158)"
+    );
+    assert!(
+        body.contains("Clipped::new("),
+        "넘친 줄을 안 자른다 — 판 폭은 고정인데 글자가 판 밖으로 삐져나간다"
+    );
+}
+
+// ── 다열 판의 한 칸(설계 §4.3 `panel` · pytmux-126) ───────────────────────────
+
+#[test]
+fn a_panel_cell_pins_the_extra_column_to_the_right_edge() {
+    // 크기를 오른자리에 세우는 것이 요점이다 — 왼쪽에 붙이면 이름 길이에 따라 숫자가
+    // 들쭉날쭉해 **열끼리 비교가 안 된다**(정본 `_item_segment` 와 같은 짜임).
+    let cell = SessionView::panel_cell("a.txt", "3B", 16);
+    assert_eq!(proto::footer::width(&cell), 16, "칸이 폭에 안 맞는다: {cell:?}");
+    assert!(cell.starts_with("a.txt"), "{cell:?}");
+    assert!(cell.ends_with("3B"), "{cell:?}");
+}
+
+#[test]
+fn a_panel_cell_cuts_the_name_not_the_number() {
+    // 크기를 자르면 그 숫자가 **거짓**이 되지만, 이름은 잘려도 `…` 가 그 사실을 말한다.
+    let cell = SessionView::panel_cell("아주아주긴이름.txt", "12.3M", 14);
+    assert!(cell.ends_with("12.3M"), "숫자를 잘랐다: {cell:?}");
+    assert!(cell.contains('…'), "이름을 자르고도 표식이 없다: {cell:?}");
+    assert!(proto::footer::width(&cell) <= 14, "{cell:?}");
+}
+
+#[test]
+fn a_panel_cell_that_cannot_hold_both_keeps_the_name() {
+    // 자리가 없으면 **이름이 남는다** — 골라야 하는 화면에서 이름이 사라지면 그 줄은
+    // 아무것도 아니게 된다(크기는 커서 줄의 다른 자리에서도 볼 수 있다).
+    let cell = SessionView::panel_cell("a.txt", "1.5G", 5);
+    assert!(proto::footer::width(&cell) <= 5, "{cell:?}");
+    assert!(!cell.contains("1.5G"), "{cell:?}");
+}
+
+#[test]
+fn a_panel_cell_without_an_extra_column_is_just_the_name() {
+    // `..` 줄처럼 칸이 없는 것도 있다 — 그때 오른쪽에 빈 공백만 남기면 그만이다.
+    let cell = SessionView::panel_cell("..", "", 8);
+    assert_eq!(proto::footer::width(&cell), 8, "{cell:?}");
+    assert!(cell.starts_with(".."), "{cell:?}");
 }

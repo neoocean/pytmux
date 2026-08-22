@@ -148,6 +148,16 @@ jobs:
       - name: Restore exec bit
         run: chmod +x client/build/pytmux-gui-macos-arm64 client/build/pytmux-gui-linux-x64
 
+      # 고지를 이진 옆에 맞춰 둔다(pytmux-193). 굽는 잡도 `build_release.*` 안에서 같은
+      # 복사를 하지만 **그 결과는 아티팩트에 안 실린다**(아티팩트 경로가 이진 하나다) —
+      # 여기서 다시 하지 않으면 커밋되는 사본은 체크아웃 당시의 옛 파일이고, 새 이진과
+      # 짝이 안 맞는 고지가 배포 디렉터리에 남는다.
+      # ⚠ 정본은 `client/THIRD-PARTY-NOTICES.md` 한 벌이다 — 여기서 **짓지 않는다**
+      #   (짓는 자리를 둘로 두면 러너와 사람의 산출물이 갈린다. 낡았으면 커밋 게이트
+      #   `check_licenses.sh` 가 이미 울었다).
+      - name: Ship third-party notices next to the binaries
+        run: cp client/THIRD-PARTY-NOTICES.md client/build/THIRD-PARTY-NOTICES.md
+
       # 마지막 관문. build 잡에서 이미 쟀지만 그 뒤로 아티팩트가 왕복했다 —
       # **커밋 직전의 실물**을 한 번 더 잰다(재는 값이 싸고, 놓치면 되돌릴 수 없다).
       - name: Mirror hygiene gate

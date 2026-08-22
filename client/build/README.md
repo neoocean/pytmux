@@ -12,6 +12,19 @@
 | `pytmux-gui-macos-arm64` | macOS(Apple Silicon) GUI 릴리스 빌드 · Mach-O arm64 | `macos-latest` |
 | `pytmux-gui-linux-x64` | Linux(x86_64) GUI 릴리스 빌드 · ELF | `ubuntu-latest` |
 | `pytmux-gui-windows-x64.exe` | Windows(x86_64-pc-windows-msvc) GUI 릴리스 빌드 · PE32+ | `windows-latest` |
+| `THIRD-PARTY-NOTICES.md` | **이진 셋이 지고 있는 서드파티 저작권 고지** | 셋 다(같은 바이트) |
+
+★ **고지가 이진 옆에 있는 이유**(pytmux-193): MIT·BSD·ISC·Zlib·Apache-2.0 은 소스뿐
+아니라 **이진 재배포에도** 저작권 고지 재현을 요구한다 — 여기서 이진만 받아 간 사람
+손에 그 글이 닿아야 한다. 정본은 `client/THIRD-PARTY-NOTICES.md` 한 벌이고 이 파일은
+`build_release.{sh,ps1}` 이 이진과 **같은 순간에** 놓는 사본이다(러너 셋이 각자 복사해도
+같은 바이트다 — 생성기가 배포 트리플 전부의 합집합을 담아 상자와 무관하게 같은 파일을
+낸다). ⛔ **손으로 고치지 않는다** — 고치는 자리는 `client/scripts/third_party_notices.py`
+이고, 낡았는지는 커밋 게이트 `check_licenses.sh` 가 잰다.
+⚠ 이 사본이 옆의 이진보다 **새 의존 목록**을 담고 있을 수 있다 — 둘이 같은 순간에
+갱신되는 것은 릴리스 빌드 때이고, 그 사이에 `Cargo.lock` 이 움직이면 고지가 먼저 따라
+간다. 모자란 쪽으로는 안 어긋난다: 굽는 자리가 `--covers` 로 「이 이진의 크레이트가
+전부 고지 안에 있나」를 재고, 아니면 이진을 여기 안 넣는다.
 
 ⛔ **무엇이 지금 들어 있는지는 이 문서가 아니라 명령이 답한다**:
 

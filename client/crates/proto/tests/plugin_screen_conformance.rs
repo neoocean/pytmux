@@ -197,12 +197,14 @@ fn the_fixture_resolved_every_kind_slot() {
 fn the_selectable_bit_matches_what_each_kind_is_for() {
     for kind in fixture().kinds {
         let spec = proto::session::PluginScreen { kind: kind.clone(), ..Default::default() };
-        let expected = matches!(kind.as_str(), "list" | "table" | "form");
+        // ★ 다열 판(`panel`)도 **고르는 화면**이다 — 목록을 여러 열로 흘려 담은 것뿐이라
+        //   커서가 있고 `Enter` 에 뜻이 있다(pytmux-126).
+        let expected = matches!(kind.as_str(), "list" | "table" | "form" | "panel");
         assert_eq!(
             spec.is_selectable(),
             expected,
             "`{kind}` 의 고르기 비트가 뜻과 어긋난다 \
-             (목록·표·폼은 고르는 화면, 글·물음·확인은 아니다)"
+             (목록·표·폼·다열은 고르는 화면, 글·물음·확인은 아니다)"
         );
     }
 }

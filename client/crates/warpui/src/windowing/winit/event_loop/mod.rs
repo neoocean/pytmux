@@ -1619,6 +1619,24 @@ impl EventLoop {
             winit_window.update_drag_resize_state(window_state.last_cursor_position);
         }
 
+        // ☠ **「안 끌린다」는 갈래가 여섯인데 로그가 없으면 하나도 못 가른다**
+        //   (pytmux/pytmux-155). 그 이슈는 맥에서 정적으로 후보 셋을 세웠고 실기 답이 그
+        //   셋을 **전부 죽였다**(최대화 아님 · 장식 되살아남 아님 · 터치 아님). 그 뒤로
+        //   사람이 할 수 있는 일이 없었다 — 리사이즈 갈래와 이동 갈래가 보는 조건이 서로
+        //   다른데(전자는 `is_decorated`·`active_drag_resize_direction`, 후자는
+        //   `dispatch_result.handled`·`titlebar_height`) 어느 것이 막았는지 **밖에서 볼 길이
+        //   없다.** ⇒ 누름마다 양쪽 갈래의 조건을 한 줄로 찍는다.
+        // ⚠ `RUST_LOG=debug` 로만 켜진다 — 누를 때마다 나오는 줄이라 기본은 조용하다.
+        if let crate::event::Event::LeftMouseDown { position, .. } = event {
+            log::debug!(
+                "drag-155 누름 ({}, {}) touch={} {}",
+                position.x(),
+                position.y(),
+                window_state.last_touch_purpose.is_some(),
+                winit_window.drag_diag(),
+            );
+        }
+
         // Check if we should start a window drag-resize. If so, do that instead of
         // passing the event into warpui. Skip for touch events as drag_resize_window
         // doesn't work properly with touch input on Windows.
@@ -1627,6 +1645,7 @@ impl EventLoop {
             && winit_window.try_drag_resize()
             && window_state.last_touch_purpose.is_none()
         {
+            log::debug!("drag-155 리사이즈를 시작했다 — 여기서 돌려보낸다");
             // If we initiated a drag via the method
             // [`winit::window::Window::drag_resize_window`], we will not
             // receive a MouseInput event when the button is release, so we
@@ -1638,6 +1657,17 @@ impl EventLoop {
             .callbacks
             .for_window(winit_window)
             .dispatch_event(event.clone());
+        if let crate::event::Event::LeftMouseDown { position, .. } = event {
+            // ★ 이 한 줄이 「우리가 먹었나」를 가른다 — 맥 헤드리스 오라클은 `handled=false`
+            //   로 쟀지만 Windows 머리줄에는 **우리가 그린 창 버튼 셋**이 더 있어서 그 측정이
+            //   이 상자를 대신하지 못한다(그 이슈 ⓓ3 의 ⚠).
+            log::debug!(
+                "drag-155 handled={} (띠 {} · y {}) — 참이면 이동 갈래에 안 닿는다",
+                dispatch_result.handled,
+                winit_window.titlebar_height(),
+                position.y(),
+            );
+        }
 
         // If the app didn't handle the event, warpui might still want to do something
         // with it if it's a click within the "titlebar region" at the top.
@@ -1659,7 +1689,10 @@ impl EventLoop {
                     // drag_window doesn't work properly with touch input on Windows.
                     // We won't receive MouseInput::Released after drag_window.
                     match winit_window.drag_window() {
-                        Ok(_) => window_state.current_mouse_button_pressed = None,
+                        Ok(_) => {
+                            log::debug!("drag-155 drag_window() 가 Ok 를 냈다 — OS 가 끌기를 맡았다");
+                            window_state.current_mouse_button_pressed = None;
+                        }
                         Err(err) => {
                             report_error!(anyhow::Error::new(err).context("error dragging window"))
                         }

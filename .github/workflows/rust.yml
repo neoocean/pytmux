@@ -120,6 +120,10 @@ jobs:
 
       # MIT 경계(PROVENANCE.md). **빈 결과는 통과가 아니라 고장**이라 스크립트 자신이
       # 그 경우를 실패로 떨어뜨린다.
+      # ⚠ 2026-08-17(pytmux-193)부터 **외부 의존과 배포 고지**도 함께 잰다
+      # (`third_party_notices.py --check`). 그래서 이 스텝은 파이썬과 **레지스트리
+      # 소스**를 쓴다 — 라이선스 전문을 크레이트 소스에서 읽으므로 캐시가 비면
+      # `cargo metadata` 가 lock 의 패키지를 받아 온다(위 cargo 캐시가 그 값을 낸다).
       - name: License boundary gate
         run: bash scripts/check_licenses.sh
 

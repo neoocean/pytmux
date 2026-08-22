@@ -22,6 +22,13 @@ pub static EN: &[(&str, &str)] = &[
     (" ⏎", " ⏎"),
     (" ⏳ {label} {eta}s(입력=취소) ", " ⏳ {label} {eta}s (input=cancel) "),
     (" ⏳ 자동재개 {eta}s(입력=취소) ", " ⏳ auto-resume {eta}s (input=cancel) "),
+    // ⚠ **`mdir` 의 판 넷은 지금 두 벌이 있다.** 아래 셋(F10 없는 안내 · 빈 디렉터리 ·
+    //    항목 초과)이 지금 정본이 «실제로 보내는» 것이고, `F10 트리` 가 든 안내와
+    //    `… · {counts}` 판은 CL 71589·71578 이 냈다가 **CL 71673 이 되돌려 버린** 세상의
+    //    것이다(그 CL 이 낡은 워크스페이스에서 제출돼 둘을 덮었다). 그동안 픽스처가
+    //    낡은 채라 이 게이트는 «초록인 채로» 그 사실을 가리고 있었다.
+    //    ⛔ 옛 판을 지우지 마라 — pytmux-125 가 그 F-키를 되살리면 곧 다시 필요하다.
+    ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · Esc 닫기)", "(Enter open · . up · t tag · u tag all · c copy · m move · d delete · r rename · k new directory · v view · h hidden · p cd panel · Esc close)"),
     ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · F10 트리 · Esc 닫기)", "(Enter open · . up · t tag · u tag all · c copy · m move · d delete · r rename · k new directory · v view · h hidden · p cd panel · F10 tree · Esc close)"),
     ("(↑↓ 스크롤 · Esc 닫기)", "(↑↓ scroll · Esc close)"),
     ("(규칙이 없습니다 — a 로 지금 패널의 디렉토리를 추가합니다)", "(no rules — press a to add this pane's directory)"),
@@ -103,6 +110,7 @@ pub static EN: &[(&str, &str)] = &[
     ("복사 {n}건 · 실패 {f}건", "Copied {n} · {f} failed"),
     ("복사 — 대상 디렉터리 ({n}개)", "Copy — destination directory ({n})"),
     ("불러오는 중…", "Loading…"),
+    ("빈 디렉터리입니다", "Empty directory"),
     ("빈 디렉터리입니다 · {counts}", "Empty directory · {counts}"),
     ("사용량 갱신 중… (숨은 /usage, ~수초)", "Refreshing usage… (hidden /usage, ~a few s)"),
     ("사용량 조회 중… (숨은 /usage, ~수초)", "Querying usage… (hidden /usage, ~a few sec)"),
@@ -162,6 +170,7 @@ pub static EN: &[(&str, &str)] = &[
     ("프롬프트 단위 클리어 큐", "Per-prompt clear queue"),
     ("프롬프트 클리어 큐", "Prompt-clear queue"),
     ("프롬프트 히스토리", "Prompt history"),
+    ("항목이 너무 많아 일부만 보입니다", "Too many entries — showing only some"),
     ("한도 데이터 없음 — Claude 패널에서 /usage 실행 후 [u]로 갱신", "No limit data — run /usage in a Claude pane, then [u] to refresh"),
     ("한도 데이터 없음 — Claude 패널에서 /usage 실행 후 갱신", "No limit data — run /usage in a Claude pane to refresh"),
 ];

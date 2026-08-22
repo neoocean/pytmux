@@ -28,7 +28,7 @@ from . import (cellwidth, clientclip, clientnotices, clientrender, i18n, ipc,
                plugins, proc, version)
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_ARGHIST, COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS,
-    DEFAULT_STYLE, norm_sep,
+    ANSI_PALETTE_THEME, DEFAULT_STYLE, norm_sep,
     SETTINGS, SETTINGS_CATS,
     REMOTE_PINK, REMOTE_PINK_DIM,
     _BOX_BITS, _BOX_REV, _JAMO, _KEY_DIAG,
@@ -575,6 +575,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def __init__(self, sock_path: str):
             super().__init__()
+            # ★ **ANSI 색을 옮겨 적을 팔레트는 «표준»이다**(pytmux-205 · clientutil).
+            # Textual 기본값은 `ansi_theme_dark = MONOKAI` 라, 앱이 낸 ANSI 색이 그
+            # 테마의 hex 로 바뀌어 나간다 — 실측(2026-08-22): 패널의 `ESC[31m` 이
+            # `38;2;244;0;95`(#f4005f 자홍) · `ESC[90m` 이 `38;2;98;94;76`(#625e4c
+            # 올리브). 제보 화면의 그 두 색이 **정확히 이것**이다.
+            # ⛔ `ansi_color=True`(필터 끄기)로는 못 고친다 — 실측하면 색이 팔레트로
+            # 나가는 게 아니라 **통째로 빠진다**(`39;49`). 그래서 끄지 않고 **바꾼다**.
+            self.ansi_theme_dark = ANSI_PALETTE_THEME
+            self.ansi_theme_light = ANSI_PALETTE_THEME
             # §10-14: `NO_COLOR` 가 켜진 상자에서 Textual 의 Monochrome 필터가 렌더
             # 중 죽는다(상류 결함, upstream 미수정 — clientutil 참조). App.__init__ 이
             # 필터 목록을 만든 **직후** 안전판으로 갈아 끼운다. 그 변수가 없으면 무동작.

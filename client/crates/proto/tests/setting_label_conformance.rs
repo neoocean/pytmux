@@ -66,8 +66,19 @@ fn plugin_setting_keys() -> Vec<String> {
 /// ⚠ `font-scale` 만 사정이 다르다: 앞의 셋은 **정본에 그 줄이 있고 번역만 없는** 것인데,
 /// 이것은 정본에 **줄 자체가 없다**(GUI 만의 설정 — §10-21ⓐ. 정본의 글자 크기는 호스트
 /// 단말이 정한다). 그래서 이름의 출처가 우리인 것이 맞고, 갈림은 패리티 표에 선언한다.
-const NO_CANON_LABEL: &[&str] =
-    &["ambiguous-width", "font-scale", "win-mouse-motion", "window-size"];
+/// ⚠ 커서 넷(`cursor-*`)도 `font-scale` 과 같은 부류다: 정본에 **줄 자체가 없다**.
+/// 정본 클라의 커서는 **호스트 단말의 하드웨어 커서**라(파이썬은 `app.cursor_position`
+/// 으로 자리만 옮긴다) 모양·색·깜빡임을 저쪽이 가질 수가 없다(`pytmux/pytmux-161`).
+const NO_CANON_LABEL: &[&str] = &[
+    "ambiguous-width",
+    "font-scale",
+    "win-mouse-motion",
+    "window-size",
+    "cursor-style",
+    "cursor-color",
+    "cursor-blink",
+    "cursor-blink-interval",
+];
 
 #[test]
 fn every_setting_row_uses_the_canonical_korean_name() {

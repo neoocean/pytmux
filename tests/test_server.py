@@ -6333,9 +6333,9 @@ async def test_liveness_evicts_dead_client_and_regrows_session():
 async def test_session_size_window_size_modes():
     """window_size 규칙(smallest|latest|largest, tmux 동형): 두 클라(작은/큰)가 한
     세션을 미러링할 때 _session_size 가 규칙대로 공유 크기를 고른다.
-      smallest(기본) = min → 아무도 안 잘림(현행 동작 불변).
+      smallest       = min → 아무도 안 잘림.
       largest        = max.
-      latest         = last_active 가 가장 큰(마지막 조작) 클라 크기, 없으면 smallest.
+      latest(기본)   = last_active 가 가장 큰(마지막 조작) 클라 크기, 없으면 smallest.
     제보(2026-07-13): 작은 코-클라가 min 을 핀해 큰 원격 뷰가 레터박스로 남던
     문제의 opt-in 해법. 설정 라운드트립·순환 토글도 함께 검증."""
     from pytmuxlib.model import ClientConn
@@ -6357,8 +6357,15 @@ async def test_session_size_window_size_modes():
         big = _mk(200, 60)       # 큰 원격 뷰
         srv.clients[:] = [small, big]
 
-        # 기본은 smallest → min(작은 쪽)
-        assert srv.window_size == "smallest"
+        # 기본은 latest — 그런데 **아직 아무도 조작 전**(last_active 0)이라 smallest 로
+        # 폴백한다. ⛔ 이 (88,30) 을 「기본이 smallest 라서」로 읽지 마라 — 기본은
+        # 2026-08-17 사람의 결정으로 latest 다(pytmux/pytmux-186). 값이 같은 것은
+        # **폴백** 때문이고, 그 둘을 가르는 것이 바로 아래 두 줄이다.
+        assert srv.window_size == "latest"
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # smallest 를 손으로 골라도 같은 값이다(= 위는 폴백이었다).
+        srv.set_window_size("smallest")
         assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
 
         # largest → max(큰 쪽)
@@ -6385,6 +6392,61 @@ async def test_session_size_window_size_modes():
         assert srv.window_size == "smallest"
         srv.set_window_size("latest")
         assert srv._load_opts().get("window_size") == "latest"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_window_size_default_is_latest_but_attaching_does_not_grab_the_grid():
+    """기본 규칙은 **latest** 이고, **붙는 것만으로는** 공유 격자를 못 가져간다.
+
+    사람의 결정 2026-08-17(pytmux/pytmux-186 · 질문 pytmux/pytmux-272 ①의 «②안»):
+    기본을 `latest` 로만 바꾸고 **attach 는 지금대로 「조작」으로 안 센다** — 새 클라는
+    키를 한 번 치면 자기 크기를 가져온다.
+
+    ⛔ 이 시험이 지키는 것은 **둘 다**이지 한쪽이 아니다. 종전 기본(`smallest`)만 고치고
+    attach 를 조작으로 세면 그것은 사람이 **안 고른** ①안이 되고(붙는 순간 먼저 보고
+    있던 작은 클라가 crop 된다), 반대로 기본을 안 고치면 제보가 그대로 남는다.
+
+    ☠ **아래 (88,30) 셋은 서로 다른 이유로 같은 값이다** — ⑴ 아무도 조작 전이라 폴백 ·
+    ⑵ 작은 클라만 조작해서 · ⑶ 큰 클라가 «붙기만» 해서. 셋을 한 줄로 줄이면 이 결정의
+    어느 반쪽이 깨져도 시험은 초록이다.
+    """
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        class _W:
+            def write(self, b): pass
+            def close(self): pass
+            async def drain(self): pass
+
+        def _mk(cols, rows):
+            c = ClientConn(_W())
+            c.session = sess
+            c.cols, c.rows = cols, rows
+            return c
+
+        sess = srv.ensure_default_session(120, 50)
+        assert srv.window_size == "latest", "기본이 latest 가 아니다"
+
+        # ⑴ 작은 클라 혼자 · 아무 조작 전 → 폴백
+        small = _mk(88, 30)
+        srv.clients[:] = [small]
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # ⑵ 그 클라가 조작했다(키를 쳤다) → 그 크기가 최신이다
+        small.last_active = 100.0
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # ⑶ ★ 큰 클라가 **나중에 붙는다** — last_active 는 0 그대로다(attach 는 조작이
+        #    아니다). 격자는 안 넘어간다: 먼저 보고 있던 작은 클라가 안 잘린다.
+        big = _mk(200, 60)
+        srv.clients[:] = [small, big]
+        assert big.last_active == 0, "attach 가 조작으로 세어졌다 — 사람이 안 고른 ①안이다"
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # ⑷ 그 큰 클라가 키를 한 번 치면 그때 가져온다 — 이것이 제보가 바라던 결과다.
+        big.last_active = 200.0
+        assert srv._session_size(sess) == (200, 60), srv._session_size(sess)
     finally:
         await teardown(srv, task, sock)
 

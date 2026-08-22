@@ -7,7 +7,7 @@ use std::io::{BufReader, BufWriter};
 use std::time::Duration;
 
 use crate::endpoint::Endpoint;
-use crate::framing::{FrameError, read_frame, write_frame};
+use crate::framing::{FrameError, is_timeout, read_frame, write_frame};
 use crate::message::{Hello, MAX_FRAME, ServerMessage};
 use crate::transport::Stream;
 use crate::{compose, endpoint};
@@ -187,10 +187,14 @@ impl Connection {
     /// 다음 메시지. 아직 안 왔으면 `Ok(None)`, 서버가 닫았으면 `Err(Closed)`.
     ///
     /// 핸드셰이크가 끝난 뒤라 상한은 [`MAX_FRAME`] 이다.
+    ///
+    /// `Ok(None)` 은 **프레임을 아직 시작도 안 했다**는 뜻뿐이다. 프레임 도중의 타임아웃은
+    /// 여기까지 안 온다 — `read_frame` 이 그 자리에서 마저 채운다(pytmux-169). 그 구분이
+    /// 없으면 다시 부른 이 함수가 JSON 한복판을 길이 프리픽스로 읽는다.
     pub fn next_message(&mut self) -> Result<Option<ServerMessage>, FrameError> {
         match read_frame(&mut self.reader, MAX_FRAME) {
             Ok(value) => Ok(Some(serde_json::from_value(value)?)),
-            Err(FrameError::Io(e)) if is_would_block(&e) => Ok(None),
+            Err(FrameError::Io(e)) if is_timeout(&e) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -224,6 +228,10 @@ impl Connection {
     ///
     /// 실클라(`ServerLink`)는 이 함수를 안 쓴다 — 리더 스레드가 오는 대로 전부 큐에
     /// 넣으므로 같은 구멍이 없다. 고친 것은 **진단 경로**다.
+    ///
+    /// ⚠ `deadline` 은 **프레임 사이**에서만 잰다. 프레임을 반쯤 받은 채로 상대가 멎으면
+    /// `read_frame` 이 그 자리에서 최대 `PARTIAL_FRAME_PATIENCE` 만큼 더 기다린다 —
+    /// 반만 읽고 물러나면 스트림이 어긋나기 때문이다(pytmux-169 · `framing.rs` 머리말).
     pub fn first_frame(&mut self, deadline: Duration) -> Result<Frame, FrameError> {
         let start = std::time::Instant::now();
         let mut frame = Frame::default();
@@ -346,12 +354,6 @@ impl Frame {
     }
 }
 
-fn is_would_block(e: &std::io::Error) -> bool {
-    matches!(
-        e.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-    )
-}
 
 #[cfg(test)]
 mod tests {

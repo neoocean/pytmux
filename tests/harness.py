@@ -232,8 +232,28 @@ def cleanup(srv, endpoint):
                         # SIGKILL / Windows TerminateProcess).
                         p.pty.kill()
                         p.pty.close()
+                        # ⛔ SIGKILL 만 쏘고 안 거두면 좀비로 남는다 — 프로덕션 킬
+                        # 경로(servertree.py·serverpty.py)는 전부 kill 직후
+                        # reap(block=…)을 잇는다(serverpty.py:228 "SIGKILL 이므로
+                        # 블로킹 회수 안전"과 동형). 여기만 빠져 있었다: run.py 는
+                        # **한 프로세스**에서 수백 개 테스트를 돌리므로(§모듈 경계
+                        # 전역 누출 가드 주석 참조) 안 거둔 좀비가 스위트 내내
+                        # 프로세스 테이블에 쌓이고, 그 누적이 claude-code 플러그인의
+                        # 동기 `ps`/`lsof` 서브프로세스 호출(transcript.py
+                        # _default_ps_list/_default_open_jsonl — 이벤트 루프를
+                        # 직접 블록한다)을 점점 느리게 만들어 무관해 보이는 다른
+                        # 무거운 federation 테스트(test_remote_no_mixing_guards
+                        # 등)를 90초 타임아웃으로 떨어뜨렸다(pytmux/pytmux-220 실측:
+                        # 그 테스트를 매단 스레드가 바로 그 subprocess.communicate
+                        # select() 안에 있었다).
+                        p.pty.reap(block=True)
                     elif not IS_WINDOWS:
                         _killpg_not_self(p.child_pid)
+                        if isinstance(p.child_pid, int) and p.child_pid > 0:
+                            try:
+                                os.waitpid(p.child_pid, 0)
+                            except ChildProcessError:
+                                pass
                 except Exception:
                     pass
     if not ipc.is_tcp(endpoint):

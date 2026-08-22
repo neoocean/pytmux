@@ -64,6 +64,7 @@
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -123,6 +124,64 @@ def snapshot(dst):
     return out
 
 
+# 생성기 하나에 주는 시한(초). ⛔ **없으면 이 게이트는 매달릴 수 있다**(pytmux-194).
+#
+# 2026-08-09 실측: `gen_plugin_client_cmds.py` 가 할 일을 다 하고도 비-데몬 executor
+# 스레드 하나 때문에 안 죽어, 이 게이트가 **첫 생성기에서 47분**을 섰다. 그 위의 합본
+# 게이트는 시한도 진행 표시도 없었으니 화면은 0바이트였고, 사람은 "커밋 전 한 명령"을
+# 통째로 못 쓰게 됐다. 생성기는 정본을 import 해 JSON 을 찍는 자다 — 초 단위로 끝난다.
+# 넘으면 **그 생성기만** "깨졌다"로 적고 나머지를 계속 돈다(이 게이트의 기존 계약).
+#
+# 값(실측 2026-08-17): 이 게이트 한 회차가 95.1초이고 생성기가 열아홉이니 하나에 약
+# 5초다 — 60배를 뒀다. ★ 합본 게이트의 스텝 시한(600초)보다 **작아야** 값이 있다:
+# 작아야 여기가 먼저 울어 **어느 생성기가** 매달렸는지 이름을 남긴다(밖에서 죽이면
+# 그 이름이 없다 — 그날 사람이 `ps` 로 트리를 떠야 했던 이유가 그것이다).
+GEN_TIMEOUT = float(os.environ.get("PYTMUX_GEN_TIMEOUT") or 300)
+
+
+def run_generator(gen, pytmux):
+    """생성기 하나를 돌린다 — `(rc, 마지막 stderr)`.
+
+    ⚠ **손자까지 죽인다**(POSIX). `timeout` 만 걸면 죽는 것은 직접 자식뿐이고, 손자가
+    파이프를 쥐고 있으면 `communicate()` 가 여전히 안 돌아온다.
+    """
+    argv = ([sys.executable, gen, "--pytmux", pytmux]
+            if "--pytmux" in open(gen, encoding="utf-8").read()
+            else [sys.executable, gen])
+    # 생성기의 글자는 **양쪽 다** UTF-8 로 고정한다(실측 2026-08-01).
+    #  · 읽기(encoding): 안 주면 Windows 기본 디코더가 로케일이라 리더 스레드가 죽고,
+    #    **생성기가 깨졌을 때 보여 줄 stderr 를 잃는다**.
+    #  · 쓰기(PYTHONIOENCODING): 생성기 열아홉은 한글을 찍는데 stdout 이 파이프면
+    #    로케일로 인코딩해 UnicodeEncodeError 로 **죽는다** — rc != 0 이라 이 게이트는
+    #    그것을 "생성기가 깨졌다"로 보고했고, 합본 게이트에서 픽스처 스텝은 그래서 늘
+    #    빨간 줄이었다.
+    # 이 환경변수는 std 스트림에만 닿는다 — 생성기가 **쓰는 픽스처 파일**은 `open()`
+    # 이라 영향이 없다(게이트가 재는 것을 바꾸지 않는다).
+    proc = subprocess.Popen(
+        argv, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+        **({"start_new_session": True} if os.name != "nt" else {}),
+    )
+    try:
+        _out, err = proc.communicate(timeout=GEN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name != "nt":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:
+                proc.kill()
+        except OSError:
+            proc.kill()
+        try:
+            proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        return 1, (f"{GEN_TIMEOUT:.0f}초를 넘겨 죽였다 — 매달렸다"
+                   " (일이 끝나고도 안 죽는 비-데몬 스레드를 의심할 것 · pytmux-194)")
+    return proc.returncode, (err or "").strip()[-400:]
+
+
 def restore(tmp):
     """임시 사본에서 픽스처를 되돌린다. 게이트가 작업본을 바꾸면 그건 게이트가 아니다."""
     for rel in FIXTURE_DIRS:
@@ -157,25 +216,9 @@ def main():
         broken, stale, eol_only = [], [], set()
         try:
             for gen in gens:
-                proc = subprocess.run(
-                    [sys.executable, gen, "--pytmux", args.pytmux]
-                    if "--pytmux" in open(gen, encoding="utf-8").read()
-                    else [sys.executable, gen],
-                    # 생성기의 글자는 **양쪽 다** UTF-8 로 고정한다(실측 2026-08-01).
-                    #  · 읽기(encoding): 안 주면 Windows 기본 디코더가 로케일이라 리더
-                    #    스레드가 죽고, **생성기가 깨졌을 때 보여 줄 stderr 를 잃는다**.
-                    #  · 쓰기(PYTHONIOENCODING): 생성기 열아홉은 한글을 찍는데 stdout 이
-                    #    파이프면 로케일로 인코딩해 UnicodeEncodeError 로 **죽는다** —
-                    #    rc != 0 이라 이 게이트는 그것을 "생성기가 깨졌다"로 보고했고,
-                    #    합본 게이트에서 픽스처 스텝은 그래서 늘 빨간 줄이었다.
-                    # 이 환경변수는 std 스트림에만 닿는다 — 생성기가 **쓰는 픽스처 파일**은
-                    # `open()` 이라 영향이 없다(게이트가 재는 것을 바꾸지 않는다).
-                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-                    cwd=HERE, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
-                )
-                if proc.returncode != 0:
-                    broken.append((os.path.basename(gen), proc.stderr.strip()[-400:]))
+                rc, err = run_generator(gen, args.pytmux)
+                if rc != 0:
+                    broken.append((os.path.basename(gen), err))
                     continue
                 for rel, data in list(before.items()):
                     with open(os.path.join(HERE, rel), "rb") as fh:

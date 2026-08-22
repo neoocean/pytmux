@@ -248,6 +248,15 @@ pub static EN: &[(&str, &str)] = &[
     ("setting\u{0004}흐리게 세기", "Dim strength"),
     // GUI 만의 줄(§10-21ⓐ) — 정본에 짝이 없어 이름도 번역도 우리가 짓는다.
     ("setting\u{0004}글자 크기 배율", "Text size"),
+    // 커서 넷도 GUI 만의 줄이다(`pytmux/pytmux-161`) — 정본의 커서는 호스트 단말의 것이라
+    // 저쪽에 짝이 없다.
+    ("setting\u{0004}커서 모양", "Cursor shape"),
+    ("setting\u{0004}커서 색", "Cursor color"),
+    ("setting\u{0004}커서 깜빡임", "Cursor blink"),
+    ("setting\u{0004}커서 깜빡임 주기(ms)", "Cursor blink interval (ms)"),
+    // ⛔ 모양의 값(`hollow`·`block`·`underline`·`bar`)은 **안 옮긴다** — 설정 파일에
+    //   그 철자로 적는 기술 값이라, 옮기면 화면에서 본 낱말로는 파일을 못 쓴다
+    //   (`vi`·`pyte`·`native` 와 같은 규칙 · `SETTING_VALUE_LABELS` 머리말).
     ("setting\u{0004}상태줄 위치", "Status bar position"),
     ("setting\u{0004}원격 탭 제목", "Remote tab title"),
     ("setting\u{0004}언어", "Language"),
@@ -399,6 +408,10 @@ pub static EN: &[(&str, &str)] = &[
         "Status line background (e.g. blue · brightblack · empty for theme):",
     ),
     ("상태줄 글자색 (비우면 테마):", "Status line foreground (empty for theme):"),
+    (
+        "커서 색 (예: blue · brightblack · #ff8800 · 비우면 테마):",
+        "Cursor color (e.g. blue · brightblack · #ff8800 · empty for theme):",
+    ),
     ("설정 (예: mouse off · prefix C-a):", "Set option (e.g. mouse off · prefix C-a):"),
     (
         "훅 (client-attached · after-new-window · alert-bell) <명령> · 지우기 -u <이벤트>:",

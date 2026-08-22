@@ -37,9 +37,12 @@
 A 를 넣으면 격자에 `🔒🔒 이이 Claude는는 조조직직 보보안안 …` 이 나온다 — 제보 사진과
 글자 하나까지 같다. 즉 이 오라클은 **그 결함을 정확히 겨눈다.**
 
-⚠ **재는 자리는 서버 격자와 그 직렬화까지다.** 클라 합성(`clientio._composite`)·
-`clientwidgets.render_line`·Rust GUI 는 전부 연속칸("")을 **건너뛰는** 쪽이라 글자를 늘릴
-자리가 없고(#8571 §3 이 읽어서 확인), 그 세 곳은 앱·소켓·GPU 를 띄워야 해서 여기서 안 잰다.
+⚠ **재는 자리는 서버 격자와 그 직렬화 + 클라 합성·행 렌더까지다.** 종전에 여기 적혀
+있던 「클라 세 곳은 읽어서 확인했고 안 잰다」는 **2026-08-22 에 절반을 걷었다** — 읽는 것과
+재는 것은 다른 일이고, 이 이슈의 남은 가설(「자리는 pytmux 밖」)이 통째로 그 «읽음» 위에
+서 있었다. 지금은 `clientio._composite` 와 `clientwidgets.render_line` 을 **진짜 서버·진짜
+소켓·진짜 앱**으로 태워서 잰다(아래 ③). ⛔ Rust GUI 는 여전히 안 잰다 — GPU 가 필요하고,
+같은 연속칸 규약을 쓰는 별개 구현이라 `client/` 쪽 오라클이 따로 져야 한다.
 """
 import harness  # noqa: F401  (경로 설정)
 from pytmuxlib.clientutil import _char_cells
@@ -163,3 +166,65 @@ async def test_legitimately_repeated_wide_chars_are_kept():
     # 렌더 홉에만 들어와도 잡는다.
     p = _feed(["쓸쓸".encode("utf-8")])
     assert _pairs(_cells(p))[:2] == [("쓸", 2), ("쓸", 2)], _pairs(_cells(p))[:4]
+
+
+# ---- ③ 클라 홉도 잰다 (종전엔 «읽어서 확인» 이 전부였다) ----
+
+def _client_slots(app, pid, y=0):
+    """합성 캔버스에서 그 패널 행의 «글자 → 차지한 칸 수» 를 뽑는다.
+
+    ⛔ 캔버스 행 전체를 읽으면 옆 패널·테두리·상태줄이 섞인다 — 패널의 콘텐츠 상자
+    안만 본다. 연속칸("")은 앞 글자에 붙여 세는 것이 `_pairs` 와 같은 규약이다."""
+    pane = next(p for p in app.layout["panes"] if p["id"] == pid)
+    row = app.view._cells[pane["y"] + y]
+    return _pairs([ch for ch, _ in row[pane["x"]:pane["x"] + pane["w"]]])
+
+
+async def test_client_composite_and_render_line_do_not_duplicate():
+    """서버 격자에서 **화면 셀까지** 한 번에 — 폭 2 글자는 여기서도 두 칸 하나뿐이다.
+
+    ⛔ 이 시험이 왜 필요한가: 위 ①②는 서버의 `Pane.render` 까지만 잰다. 그 뒤로
+    `clientio._composite`(런 → 셀 격자)과 `clientwidgets.render_line`(셀 격자 → Strip)
+    두 홉이 더 있고, 둘 다 «연속칸을 건너뛴다» 는 같은 규약에 기대어 있다. 종전에는
+    그 둘을 **소스로 읽어서** 괜찮다고 적어 뒀는데(#8571 §3), 읽음은 회귀를 못 막는다 —
+    누가 `if ch == "": continue` 한 줄을 지우면 그 순간 pytmux 가 «자기 힘으로» 제보
+    그대로의 화면을 만든다. 이 이슈의 남은 가설이 「자리는 pytmux 밖」이라 그 한 줄이
+    사라지면 **가설 자체가 조용히 거짓이 된다.**
+
+    실물만 쓴다: 진짜 서버 소켓 · 진짜 클라 앱 · 서버가 실제로 실어 보내는 그 런
+    (`Pane.render` 의 산출물을 그대로 `screen` 메시지로 넣는다). 손으로 만든 런을
+    넣으면 직렬화가 뭘 보내는지를 시험이 다시 가정하게 돼, 한 질문을 두 술어로 묻는다.
+    """
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        pid = 7
+        cols = len(BANNER) * 2 + 4
+        # y=1: 행 0 은 탭바가 쥔다. 거기에 패널을 두면 탭바가 콘텐츠를 덮어써
+        # 이 시험이 «폭 2 중복» 이 아니라 «탭바가 덮었다» 를 재게 된다(실측으로 한 번
+        # 그렇게 붉었다 — 앞 여덟 칸이 `▀` 였다).
+        app.layout = {"panes": [{"id": pid, "x": 0, "y": 1, "w": cols, "h": 4,
+                                 "mouse": 0, "active": True}],
+                      "dividers": [], "active": pid,
+                      "cols": cols, "rows": 6}
+        # 서버가 실제로 내보내는 런을 그대로 태운다.
+        rows, cursor = _feed([BANNER.encode("utf-8")], cols=cols, rows=4).render(False)
+        app._dispatch({"t": "screen", "pane": pid, "rows": rows, "cursor": cursor})
+        app._composite()
+
+        got = _client_slots(app, pid)
+        want = [(ch, 2 if _wide(ch) else 1) for ch in BANNER]
+        assert got[:len(want)] == want, (
+            "합성 캔버스가 원문과 다르다 — 클라 홉이 폭 2 글자를 늘렸거나 줄였다\n"
+            f"원문: {want[:12]}\n캔버스: {got[:12]}")
+        assert {ch for ch, _ in got[len(want):]} <= {" "}, repr(got[len(want):][:8])
+
+        # 마지막 홉: 셀 격자 → Strip. 화면에 실제로 나가는 글자다.
+        strip = app.view.render_line(1)
+        text = "".join(seg.text for seg in strip._segments)
+        assert text.startswith(BANNER), (
+            f"render_line 이 낸 글자가 원문과 다르다\n{text[:60]!r}")
+        for ch in "이는조직보안정책에의해관리됩니다":
+            assert ch * 2 not in text, f"{ch!r} 가 잇달아 두 번 — {text[:80]!r}"
+
+    await _with_app(body, size=(len(BANNER) * 2 + 4, 8))

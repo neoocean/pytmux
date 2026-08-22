@@ -1030,3 +1030,71 @@ fn every_setting_row_reaches_something_that_reads_it() {
     assert!(SETTINGS.len() >= 30, "설정 표가 줄었다: {}", SETTINGS.len());
     assert!(!acted.is_empty(), "서버가 주인인 줄이 하나도 없다 — 측정이 낡았다");
 }
+
+// ── 커서 모양·색·깜빡임(`pytmux/pytmux-161`) ─────────────────────────────────
+//
+// 「닿기는 하나」는 위 `every_setting_row_reaches_something_that_reads_it` 가 넷 다
+// 이미 잰다(설정 화면 → 파일 → 파서 왕복). 여기서 재는 것은 그 축이 **못 보는 것**,
+// 곧 «잘못 적힌 값이 어떻게 접히나»다 — 그 판정이 없으면 오타 한 글자가 커서를
+// 화면에서 지우고, 그 실패는 조용하다.
+
+#[test]
+fn the_cursor_shape_is_read_from_the_config_file() {
+    for want in CURSOR_STYLES {
+        let config = Config::parse(&format!("set cursor-style {want}"));
+        assert_eq!(&config.cursor_style, want);
+    }
+}
+
+#[test]
+fn an_unknown_cursor_shape_falls_back_instead_of_erasing_the_cursor() {
+    // ⛔ 모르는 값을 그대로 담으면 그리는 쪽이 어느 모양도 못 골라 **아무것도 안
+    //    그린다**. 오타 하나로 커서가 사라지면 무엇이 잘못됐는지 알 길이 없다
+    //    (`remote-title`·`mode-keys` 와 같은 판정).
+    let config = Config::parse("set cursor-style blcok");
+    assert_eq!(config.cursor_style, CURSOR_STYLES[0]);
+    assert_eq!(config.cursor_style, Config::default().cursor_style);
+}
+
+#[test]
+fn the_cursor_defaults_keep_todays_screen() {
+    // ★ 이 이슈가 부탁한 것은 「고를 수 있게」이지 「기본을 바꿔라」가 아니다.
+    //   기본을 채운 네모로 옮기면 지금 쓰는 사람의 화면이 말없이 달라진다.
+    let config = Config::default();
+    assert_eq!(config.cursor_style, "hollow");
+    assert!(!config.cursor_blink, "기본은 안 깜빡인다(종전 동작)");
+    assert!(config.cursor_color.is_empty(), "빈 값 = 테마 그대로");
+}
+
+#[test]
+fn the_cursor_color_takes_the_same_notation_as_the_status_bar() {
+    // 자리마다 다른 표기를 받으면 한쪽에서 배운 것을 다른 쪽에서 못 쓴다. 표기를
+    // 아는 것은 푸는 쪽(`proto::status::color`)이므로 **글자 그대로** 담는다.
+    for text in ["blue", "brightblack", "#ff8800"] {
+        assert_eq!(Config::parse(&format!("set cursor-color {text}")).cursor_color, text);
+    }
+}
+
+#[test]
+fn the_blink_period_is_clamped_not_dropped() {
+    // 범위를 벗어난 값 때문에 설정 파일을 통째로 못 읽는 일은 없어야 한다
+    // (`inactive-dim-ratio` 와 같은 규칙).
+    assert_eq!(Config::parse("set cursor-blink-interval 1").cursor_blink_ms, 100);
+    assert_eq!(Config::parse("set cursor-blink-interval 99999").cursor_blink_ms, 2000);
+    assert_eq!(Config::parse("set cursor-blink-interval 250").cursor_blink_ms, 250);
+}
+
+#[test]
+fn the_blink_period_is_written_as_an_integer() {
+    // ⛔ `250.00` 은 파서가 `u16` 으로 못 읽어 **그 줄이 조용히 무시된다** — 증상은
+    //    "설정 화면에서 올렸는데 다음 기동에 되돌아 있다"다(`number_text` 머리말).
+    assert_eq!(number_text("cursor-blink-interval", 250.0), "250");
+    assert_eq!(
+        Config::parse(&format!(
+            "set cursor-blink-interval {}",
+            number_text("cursor-blink-interval", 250.0)
+        ))
+        .cursor_blink_ms,
+        250
+    );
+}

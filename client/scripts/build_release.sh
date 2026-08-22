@@ -89,9 +89,30 @@ if ! "$PY" "$REPO/scripts/check_mirror.py" --scan "$CLIENT/$BIN"; then
     exit 1
 fi
 
+# 방금 링크된 서드파티 크레이트가 **전부** 저작권 고지 안에 있나(pytmux-193).
+#
+# MIT·BSD·ISC·Zlib·Apache-2.0 은 이진 재배포에도 고지 재현을 요구한다 — 이진만 받아 간
+# 사람 손에 그 글이 닿아야 한다. 그래서 고지 파일이 이진 **옆에** 간다.
+#
+# ⛔ 여기서 재는 것은 「고지가 이 이진을 덮나」이지 「고지가 최신인가」가 아니다. 후자는
+# 커밋 게이트(`check_licenses.sh`)가 트리플 다섯을 다 펴서 잰다 — 그것을 굽는 자리에도
+# 걸면 러너 셋이 글자 한 벌의 동일성에 걸려 릴리스를 통째로 못 낸다.
+if ! "$PY" scripts/third_party_notices.py --covers; then
+    echo "build_release: 이 이진의 서드파티 고지가 모자라다 — build/ 에 넣지 않는다." >&2
+    exit 1
+fi
+
 cp "$BIN" "build/$OUT"
 # ⚠ `cp` 는 **대상이 이미 있으면 대상의 모드를 유지한다** — 갱신할 때마다 실행 권한이
 # 조용히 사라진다(실제로 그랬다: depot filetype 이 `binary` 라 받은 사람이 chmod 를 손으로
 # 해야 했다. 이제 `binary+x` 이고 git 도 100755 로 싣는다). 굽는 자리에서 못박는다.
 chmod +x "build/$OUT"
+
+# 고지를 이진 옆에 둔다. 정본은 `client/THIRD-PARTY-NOTICES.md` 한 벌이고 이것은 그
+# 사본이다 — 이진과 **같은 순간에** 놓이므로 배포 디렉터리 안에서 둘의 짝이 맞는다.
+# ⚠ 러너 셋이 각자 이 줄을 돌지만 같은 바이트를 복사한다(생성기가 트리플 다섯의
+# 합집합을 담아 상자와 무관하게 같은 파일을 낸다 — 그래서 서로의 커밋을 안 덮는다).
+cp THIRD-PARTY-NOTICES.md build/THIRD-PARTY-NOTICES.md
+
 echo "build_release: build/$OUT ($(wc -c < "build/$OUT" | tr -d ' ') bytes) — p4 edit/add 후 제출할 것"
+echo "build_release: build/THIRD-PARTY-NOTICES.md 도 함께 갱신했다 — 같이 제출할 것"

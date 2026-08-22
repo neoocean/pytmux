@@ -3,9 +3,16 @@
 **설계 SSOT 는 이 파일이 아니다.** 이 저장소는 이슈 트래커의 **M2** 프로젝트라 산문의
 원본이 트래커에 있다 — 노선·결정·티어·후속 계획 전문은 거기서 읽는다.
 
+설계 SSOT = 트래커 문서 **`pytmux/qa-system`**(판 이력은 `doc-history`).
+
+⛔ **읽는 법이 2026-08-15 에 바뀌었다** — 아래 셸 명령은 `ISSUE_PG`(postgres DSN)가 선
+머신에서만 뜨고, 없는 박스에서는 `DB 주소(DSN)가 없다` 로 죽는다. 어디서나 뜨는 길은
+웹 <http://100.79.188.26:8086/d/pytmux/qa-system> 과 MCP HTTP(`http://100.79.188.26:18787/` ·
+`doc_get {"id":"pytmux/qa-system"}`)다. 자세한 것은 루트 `CLAUDE.md` §LLM 작업 팁 ⛔ 문서 절.
+
 ```sh
-node ../issue/bin/issue.mjs doc-get pytmux/qa-system      # 설계 SSOT (전문)
-node ../issue/bin/issue.mjs doc-history pytmux/qa-system  # 판 이력
+node ../issue/bin/issue.mjs doc-get pytmux/qa-system      # 설계 SSOT (전문 · ISSUE_PG 필요)
+node ../issue/bin/issue.mjs doc-history pytmux/qa-system  # 판 이력 (같은 조건)
 ```
 
 여기 있는 것은 **손으로 치는 명령**뿐이다.
@@ -140,6 +147,7 @@ M2 에서는 러너가 저장소에 쓰지 않고 트래커의 `sync` 도 저장
 ```sh
 node ../issue/bin/issue.mjs run-list --project pytmux    # 회차 목록
 node ../issue/bin/issue.mjs run-get pytmux/<런 id>       # 결함 · 미검증 전문
+# ⚠ 둘 다 ISSUE_PG 가 선 머신에서만 뜬다 — 그 밖에서는 MCP(run_list · run_get)나 웹으로.
 ```
 
 ## 저절로 돈다 (⛔ 구축과 실행은 다른 사건이다)

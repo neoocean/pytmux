@@ -1,7 +1,8 @@
 # CLAUDE.md — pytmux 에이전트 온보딩
 
 > LLM/에이전트가 이 저장소에서 작업할 때 먼저 읽는 30초 안내(LLM 친화성 4-3).
-> 사람용 상세 문서는 **GitHub 위키**(매뉴얼·갤러리·플러그인·기능비교·기여)와 `docs/internal/`(p4 전용).
+> 사람용 상세 문서는 **GitHub 위키**(매뉴얼·갤러리·플러그인·기능비교·기여)와
+> **이슈 트래커**(내부 산문 — 저장소에는 없다. §LLM 작업 팁 ⛔ 문서 절).
 > **Rust 클라 전용 안내는 [`client/CLAUDE.md`](client/CLAUDE.md)** — 빌드·게이트·라이브
 > 하네스가 거기 있다. 아래 ⛔ 안전 규율은 **이 파일 한 벌**이 정본이고 클라 쪽은 참조만 한다.
 
@@ -11,7 +12,7 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 추적·리밋 자동 재개 + 원격 페더레이션(ssh) 포함.
 
 **두 언어 · 두 클라이언트가 한 트리에 산다**(트리 통합 2026-08-01 — 계획은
-`docs/internal/PYTMUX_CLIENT_MERGE_PLAN_2026-07-31.md`):
+트래커 문서 `pytmux/pytmux_client_merge_plan_2026-07-31`):
 
 | | 무엇 | 어디 |
 |---|---|---|
@@ -23,8 +24,18 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 정본이라는 뜻은 *무엇이 맞는가*의 권위라는 것이지 유일한 제품이라는 뜻이 아니다 — 새 조작
 표면은 **정본에 먼저** 들어가거나 같은 CL 에서 둘 다 들어간다.
 
+★★ **그 권위는 «있다» 가 아니라 «같게 군다» 까지다**(pytmux-185 · 2026-08-17). 정본에 같은
+기능이 있으면 **키 반응 · 취소 조건 · 포커스 이동**이 GUI 의 최소 요건이고, 그림은 그 위에
+GUI 의 것으로 얹는다(TUI 식 텍스트 위젯을 흉내내지 않는다). 허용되는 갈림은 셋뿐이다 —
+ⓐ 단말이 못 주는 키 ⓑ 픽셀 단위 그림 ⓒ OS 창 통합. **그 밖의 갈림은 결함으로 본다.**
+⛔ 절차는 사람이 지키는 체크리스트가 아니라 **게이트가 센다** —
+`client/crates/proto/tests/interaction.rs`(합본 게이트의 「상호작용 계약」 스텝)가 화면마다
+「제 것 아닌 키가 어떻게 되나」를 실제로 눌러 재고, **「못 쟀다」로는 새 화면이 못 지나간다.**
+계약 전문은 트래커 문서 `pytmux/gui_interaction_contract`(읽는 법 = §LLM 작업 팁 ⛔ 문서 절),
+손에 쥐는 절차는 [`client/CLAUDE.md`](client/CLAUDE.md) §새 표면을 더할 때의 계약.
+
 > ⚠ **Rust TUI 는 2026-08-01 에 지웠다**(사용자 결정 · 근거
-> `docs/internal/CLIENT_PRODUCT_SET_2026-08-01.md`). 같은 매체에 제품이 두 벌일 이유가
+> `pytmux/client_product_set_2026-08-01`). 같은 매체에 제품이 두 벌일 이유가
 > 없었다. 그 대가로 **Rust 쪽 기계 검증이 1714 → 1189 건으로 줄었다**(세션 뷰 행동
 > 오라클이 TUI 쪽에 많았다) — GUI 오라클을 늘리는 것이 그만큼 급해졌다.
 > `pytmux --native` 플래그도 함께 사라졌다(GUI 는 `pytmux-gui` 를 직접 실행한다).
@@ -135,7 +146,7 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     나오는 즉시 `reports/testrun.jsonl` 에 flush — 절단 여부와 **죽을 때 물려 있던
     테스트**를 이름으로 알려준다). 끄기 = `PYTMUX_TEST_REPORT=off`.
     배치가 도는 중에는 **그 배치가 import 할 파일을 편집하지 말 것**(다음 모듈 프로세스가
-    반쯤 고친 코드를 읽는다). 상세 = `docs/internal/LESSONS_2026-07-25.md`·`-25b.md`.
+    반쯤 고친 코드를 읽는다). 상세 = `pytmux/lessons_2026-07-25`·`-25b`.
   - ★ **완주했으면 트래커로 흘린다 — `python3 scripts/tracker_tests.py --ingest`**
     (2026-08-05 · `pytmux/pytmux-132`). 이 저장소는 **M2** 라 러너는 저장소에 쓰지 않고
     트래커의 `sync` 도 저장소를 안 읽는다 — 그 사이를 잇는 것은 이 명령뿐이고,
@@ -158,7 +169,7 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
     같은 침묵이 재발하면 **부하로 접지 말고** 리포트의 진행중 테스트 + `☠ 러너가
     <시그널> 로 종료됨` 줄부터 본다. 시그널을 계측할 땐 **SIGPIPE 를 건드리지 말 것**
     (파이썬 기본이 SIG_IGN 인데 핸들러를 달면 없던 죽음을 만든다 — 실제로 5/6 사망을
-    자초했다). 상세 = `docs/internal/LESSONS_2026-07-26.md`.
+    자초했다). 상세 = `pytmux/lessons_2026-07-26`.
   - macOS 헤드리스 러너는 일부 PTY 스위트를 인프라 레벨로 wedge → CI 매트릭스에서
     제외(로컬이 권위). 실 PTY·실 ConPTY(Windows)·실 Claude 패널은 driver 검증 불가.
     ★ **그 사각지대를 겨눈 층이 `qa/` 다**(아래).
@@ -170,7 +181,7 @@ Python/Textual 기반 tmux 유사 터미널 멀티플렉서. 단일 서버(데�
 잰다. 쓰는 법은 `qa/README.md`, **설계 SSOT 는 트래커**다(이 저장소는 M2):
 
 ```sh
-node ../issue/bin/issue.mjs doc-get pytmux/qa-system   # 노선·결정·티어·후속
+# 설계 SSOT = 트래커 문서 `pytmux/qa-system` (읽는 법 = §LLM 작업 팁 ⛔ 문서 절)
 python3 qa/run.py                                      # 한 바퀴 (실측 약 15초)
 python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르면 결함이 어디에도 안 들어간다
 ```
@@ -198,7 +209,7 @@ python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르�
   닿는다). 훅 계약은 `pytmuxlib/plugins/__init__.py` 의 `Registry` 한 곳에 모여 있다.
   ⚠ 오늘 클라 훅은 **파이썬/Textual 모양**(파이썬 객체를 주고받는다)이라 소켓을 못 건넌다 —
   Rust 클라에는 손으로 옮긴 것만 있다. 선언형으로 바꿔 한 벌이 세 클라에 뜨게 하는 계획이
-  `docs/internal/PYTMUX_CLIENT_MERGE_PLAN_2026-07-31.md` §7(M4)다.
+  트래커 문서 `pytmux/pytmux_client_merge_plan_2026-07-31` §7(M4)다.
 - **`client/` — Rust 클라 워크스페이스**(Cargo). `crates/base`(상태·키맵·
   명령, **UI 의존 없음** — 계층 게이트가 강제)·`_proto`(소켓 프로토콜, 서버와 동형)·
   `_tui`/`_gui`(뷰 두 벌)·`_claude`·`_clip` + `warpui`·`warpui_core`(상류 스냅샷, MIT
@@ -216,9 +227,12 @@ python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르�
   `base/src/keymap.rs`·`proto/src/{session,command}.rs`. 앵커는 `grep -n '^pub fn \|^fn \|^impl \|^#\[test\]'`.
   (`servermixin.py` 는 상단 **메서드 인덱스 주석**에 섹션→앵커 메서드명이 있다.) (`client.py` 는 믹스인 3모듈로
   분할돼 ~1.7천 줄이다 — `clientconn.py`·`clientcmd.py`·`clientio.py` 참조.)
-- **거대 문서 Read 주의**: `docs/internal/HANDOFF.md`(수백 KB)·`IMPROVEMENT_OPPORTUNITIES.md`
-  를 통째로 Read 하면 컨텍스트 예산을 소진한다. 루트 `MEMORY.md`(주제→파일→p4 CL 색인)로
-  먼저 관련 항목을 찾아 해당 파일만 본다.
+- **문서를 찾는 법**(저장소에는 산문이 없다 — 아래 ⛔): 주제로 훑을 때는 트래커의
+  `doc_search`·`doc_list {project:"pytmux"}`. 「무엇을 언제 왜 고쳤나」의 교훈 로그는
+  **`pytmux/memory`**(옛 루트 `MEMORY.md` · 주제→파일→p4 CL 색인)이고, 세션 메모 4편은
+  **`pytmux/memory-index`** 가 묶는다. ⚠ `pytmux/handoff`·`pytmux/improvement_opportunities`
+  는 수백 KB 라 통째로 받으면 컨텍스트 예산을 소진한다 — 먼저 `pytmux/memory` 로 항목을
+  찾고 그 문서만 연다.
 - **항목(제보·결함·할일)의 정본은 이슈트래커다**(이전 2026-08-03 · 단계 **M2**):
   `//woojinkim/scripts/issue` 가 권위이고 `docs/internal/qa/issues/pytmux-<번호>.md` 는
   **자동 생성 미러**다 — ⛔ **그 파일을 손으로 고치지 말 것**(다음 `sync` 가 드리프트로
@@ -229,29 +243,32 @@ python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르�
   HANDOFF §10-21·ARCHIVE §13-4 는 **색인 표**만
   두고 본문을 갖지 않는다 — ⛔ **핸드오프에 항목을 다시 적지 말 것**(사본이 둘이면 SSOT 가
   아니다).
-- ⛔ ★ **내부 문서 361편은 이제 저장소에 없다 — 링크 스텁만 있다**(2026-08-03 · 사용자 지시 ·
-  실측 2026-08-06 · 2.70M자). `docs/internal/**/*.md` 를 열면 **제목 + 트래커 링크**뿐이다.
+- ⛔ ★ **내부 산문은 저장소에 없다 — 스텁조차 없앴다**(2026-08-20 · `issue/issue-113` ④⑤ ·
+  CL 72996). 종전에는 `docs/internal/**/*.md` 가 「제목 + 트래커 링크」인 **링크 스텁 365편**
+  이었는데, 진입점 한 편이 같은 말을 하면 그 365편은 잡음이라 지웠다. 함께 트래커로 옮긴
+  루트 `MEMORY.md`·`memory/*.md` 6편도 저장소에서 사라졌다(전문은 DB 에 있다 · 왕복 확인).
+  남은 `.md` 는 **진입점 · README · 이슈 미러(`docs/internal/qa/issues/`) · 벤치마크 데이터**뿐이다.
+  ★ **옛 경로 → 슬러그는 기계적이다**(366/366 실측): `docs/internal/A/B/NAME.md` →
+  `pytmux/a-b-name` — `docs/internal/` 을 떼고 `/` 를 `-` 로 바꾸고 전부 소문자.
+  예: `docs/internal/LESSONS_2026-07-26.md` → `pytmux/lessons_2026-07-26` ·
+  `docs/internal/client/reports/2026-08-03-alt-tab.md` → `pytmux/client-reports-2026-08-03-alt-tab`.
+  ⇒ **소스 주석에 남아 있는 옛 경로는 이 규칙으로 읽는다.** 주석 100여 곳을 일괄 치환하지
+  않았다 — 규칙 한 줄이 더 싸고, 치환은 코드 파일을 전부 건드려 게이트를 태운다.
   전문을 읽는 곳:
-  - 웹 — <http://100.79.188.26:8086/d/pytmux/<slug>>(각 스텁이 자기 링크를 갖고 있다)
-  - 셸 — `node ../issue/bin/issue.mjs doc-get pytmux/<slug>`(전문 · **자르지 않는다**) ·
-    판 이력·비교는 `doc-history`·`doc-diff`. **웹이 안 떠도 이쪽은 뜬다** — 웹을 거치지 않고
-    같은 DB 를 직접 읽는다(읽기는 MCP 로 안 나간다).
-  ⛔ **예전에 여기 「오프라인 — 저널 JSONL 을 P4 로 받아 `issue rebuild` 가 복원한다」고 적혀
-  있던 것은 틀렸다**(2026-08-05 · 트래커 `issue/issue-75` · p4 70444 · 70536). 그 파일들은
-  **depot 에서 지워졌고**(delete change 70446) `.p4ignore` 가 `data/` 를 예외 없이 전부
-  제외하므로 그 경로를 `p4 sync` 해도 **아무것도 안 온다**. 저널 쓰기는 은퇴했고
-  (`ISSUE_JOURNAL_ON=1` 로만 되살아난다) `rebuild` 는 이제 **옆에 있는 옛 DB 를 이월**한다 —
-  ⛔ **저널은 복구원이 아니다.**
-  ⚠ `scripts/issue/data/issues.db` 가 **없는 머신**이면(그 파일도 `.p4ignore` 다) 위 셸 명령도
-  못 뜬다. 그때 세우는 길은 depot 에 4시간마다 저절로 남는 스냅샷이다 —
-  `p4 sync //woojinkim/scripts/issue/snapshots/issues.sql` 뒤
-  `node bin/issue.mjs restore snapshots/issues.sql`(옆에 `data/restored-*.db` 가 생기고,
-  제자리를 갈아 끼우는 것은 사람이 한다). 파일 타입이 `text+S64` 라 **되돌릴 수 있는 범위는
-  약 10.7일**이다.
-  **새 글·수정은 트래커에서** 하고 `issue mirror --project pytmux --write` 로 스텁을 갱신한다 —
-  스텁 파일을 손으로 고치면 다음 미러가 되돌린다. `benchmark/` 2451편은 데이터라 대상 밖이다.
-  ⚠ 루트 `CLAUDE.md`·`client/CLAUDE.md` 는 **스텁이 아니다**(문서 루트 밖) — 여기 ⛔ 안전
-  규율은 저장소 안에 그대로 남는다.
+  - 웹 — <http://100.79.188.26:8086/d/pytmux/<slug>>
+  - MCP HTTP — `http://100.79.188.26:18787/` 에 JSON-RPC 를 친다(`method: "tools/call"` ·
+    `{"name":"doc_get","arguments":{"id":"pytmux/<slug>"}}`). **DB 자격증명이 필요 없고**
+    어느 박스에서나 뜬다. 이슈는 칸 이름이 다르다 — `issue_get {"gid":"pytmux/pytmux-113"}`.
+  - ⛔ 셸 `node ../issue/bin/issue.mjs doc-get …` 은 **`ISSUE_PG` 가 선 머신에서만** 뜬다.
+    postgres 이관(2026-08-15) 뒤로 그 값이 없는 박스에서는 `DB 주소(DSN)가 없다` 로 죽는다
+    (2026-08-19 실측 · 이 Windows 박스). 예전에 여기 「웹이 안 떠도 이쪽은 뜬다」고 적혀
+    있던 문장은 그래서 **틀렸다**.
+  **새 글·수정은 트래커에서** 한다 — `doc_create`·`doc_update`. ⛔ 저장소에 `.md` 를 만들면
+  `sync` 가 「저장소에만 있다」는 드리프트로 신고하고 담지 않는다. `benchmark/` 2451편은
+  데이터라 대상 밖이다.
+  ⚠ 루트 `CLAUDE.md`·`client/CLAUDE.md`·`README.md`·`client/PROVENANCE.md` 는 **문서가 아니다**
+  (진입점과 라이선스 경계 기록 — 뒤엣것은 `.gitignore` 우산 밖이라 공개 미러가 읽는 표면이다).
+  여기 ⛔ 안전 규율은 저장소 안에 그대로 남는다.
 - **동적 합성 메서드**: `Server` 의 일부 메서드(`set_autoresume`·`_scan_claude` 등)는
   `server.py` 에 없고 런타임에 플러그인 믹스인(`plugins/claude-code/servermixin.py`)으로
   합성된다. jump-to-def 가 안 닿으면 그 파일을 grep 한다(server.py 의 `class Server` 위
@@ -271,8 +288,9 @@ python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르�
 - **서버와 세 클라가 한 CL 이다**(트리 통합 2026-08-01). `client/` 는 같은 depot 경로
   `//woojinkim/scripts/pytmux/...` 안이고 같은 게이트를 탄다 — 프로토콜을 건드리면 서버와
   소비자 셋이 **같은 CL 안에** 들어간다(종전에는 두 트리라 반쪽 CL 이 정상이었고, 하나를
-  되돌리면 반쪽만 되돌아갔다). 슬라이스 리포트는 **`docs/internal/client/reports/`** 에
-  쓴다(§10-17 로 이사 — 실 캡처라 미러 제외. 종전 `client/docs/reports/` 는 비었다).
+  되돌리면 반쪽만 되돌아갔다). 슬라이스 리포트는 **트래커 문서**로 쓴다
+  (`doc_create` · 슬러그 `client-reports-<날짜>-<이름>`). 종전 자리 `docs/internal/client/reports/`
+  는 2026-08-20 에 비웠다(issue/issue-113 ⑤).
 - **표면이 움직이면 세 소비자가 같이 깨진다**(트리 통합 M3 §6.2): `clientutil` 의
   명령·설정·키 표나 `servercmd._CMD_TABLE` 을 건드리면 `tests/test_surface_ledger.py`
   가 먼저 운다 — 클라 픽스처가 낡았다는 뜻이다. 순서는

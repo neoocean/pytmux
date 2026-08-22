@@ -833,8 +833,8 @@ class _CommandMixin:
         elif c in ("window-size", "winsize"):
             # window-size [smallest|latest|largest] — 다중 클라 미러링 시 세션 공유
             # 격자 크기 규칙(tmux window-size 동형). 인자 없으면 순환 토글(서버가 반전).
-            #   smallest(기본)=가장 작은 뷰어에 맞춤(아무도 안 잘림).
-            #   latest=마지막 조작 클라 크기. largest=가장 큰 클라.
+            #   smallest=가장 작은 뷰어에 맞춤(아무도 안 잘림).
+            #   latest(기본)=마지막 조작 클라 크기. largest=가장 큰 클라.
             # latest/largest 는 작은 코-뷰어가 crop 됨. 서버가 opts.json 영속·재미러링.
             val = (args[0].lower() if args else "")
             if val and val not in ("smallest", "latest", "largest"):

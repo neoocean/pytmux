@@ -38,14 +38,17 @@ use proto::session::Severity;
 use proto::{LinkEvent, Selection, ServerLink, ServerMessage, SessionState};
 use warpui::color::ColorU;
 use warpui::elements::{
-    Align, Border, ConstrainedBox, Container, CrossAxisAlignment, DispatchEventResult, Empty,
-    EventHandler, Expanded, Flex, Hoverable, MainAxisSize, MouseStateHandle, ParentElement, Rect,
-    Stack, Text,
+    Align, Border, Clipped, ConstrainedBox, Container, CrossAxisAlignment, DispatchEventResult,
+    Empty, EventHandler, Expanded, Flex, Hoverable, MainAxisSize, MouseStateHandle, ParentElement,
+    Point, Rect, Stack, Text,
 };
 use warpui::fonts::{FamilyId, Properties, Style as FontStyle, Weight};
+use warpui::geometry::vector::{Vector2F, vec2f};
 use warpui::{
-    AppContext, Element, Entity, SingletonEntity as _, TypedActionView, View, ViewContext,
+    AfterLayoutContext, AppContext, Element, Entity, EventContext, LayoutContext, PaintContext,
+    SingletonEntity as _, SizeConstraint, TypedActionView, View, ViewContext,
 };
+use warpui_core::event::DispatchedEvent;
 
 use crate::{mono_font, theme, titlebar};
 
@@ -81,7 +84,23 @@ mod palette {
     pub const BR_GREEN: ColorU = c(0xb9, 0xf2, 0x7c);
     pub const BR_YELLOW: ColorU = c(0xff, 0x9e, 0x64);
     pub const BR_BLUE: ColorU = c(0x7d, 0xa6, 0xff);
-    pub const BR_MAGENTA: ColorU = c(0xbb, 0x9a, 0xf7);
+    /// ☠ **`MAGENTA` 와 같은 값이면 안 된다**(pytmux-187).
+    ///
+    /// tokyonight 의 터미널 표는 밝은 마젠타를 마젠타와 **같은 값**으로 둔다. 편집기
+    /// 배색에서는 아무 문제가 없지만 여기는 터미널이라 그 한 줄이 **SGR 35 와 95 를 한
+    /// 색으로 붙인다** — 밝은 쪽으로 강조한 글자가 강조 전과 똑같이 그려지고, 화면에서는
+    /// "색이 좀 안 맞나?" 정도로만 보인다. 정본(TUI)은 호스트 단말의 표를 쓰므로 그 둘이
+    /// 갈리고, 그래서 **같은 바이트가 두 클라에서 다른 그림**이 된다.
+    ///
+    /// 값은 지어낸 것이 아니라 [`MAGENTA`] 를 흰 쪽으로 섞어 **한 단 올린 것**이다 —
+    /// 이 표에서 다섯 짝(검정·빨강·초록·파랑·흰색)이 그 모양이다. 채도를 올리는 쪽(더
+    /// 진한 보라)은 안 골랐다: 이 색은 이미 HSV 의 V 가 0.97 이라 더 밝게 하는 길이 흰
+    /// 쪽뿐이고, 채도를 올리면 밝은 쪽이 도리어 어두워져 "밝게"라는 뜻과 반대가 된다.
+    ///
+    /// ⚠ 나머지 두 짝은 그 모양이 **아니다** — 밝은 노랑(`BR_YELLOW`)은 주황 쪽으로
+    /// 색상이 돌고 밝은 청록(`BR_CYAN`)은 도리어 어둡다. 둘 다 값이 겹치지는 않아서
+    /// 여기서는 안 건드렸다(어느 팔레트를 쓸 것인가가 pytmux-187 에 걸려 있다).
+    pub const BR_MAGENTA: ColorU = c(0xd7, 0xb6, 0xff);
     pub const BR_CYAN: ColorU = c(0x0d, 0xb9, 0xd7);
     pub const BR_WHITE: ColorU = c(0xc0, 0xca, 0xf5);
 }
@@ -333,6 +352,13 @@ pub struct SessionView {
     tab_drag_over: Option<usize>,
     /// 상태줄을 마지막으로 다시 그린 시각(`status-interval`).
     last_status: Instant,
+    /// 커서 깜빡임을 마지막으로 뒤집은 시각(`cursor-blink-interval`).
+    last_blink: Instant,
+    /// 지금 깜빡임이 **보이는 반주기**인가(`pytmux/pytmux-161`).
+    ///
+    /// ⛔ 깜빡임을 껐을 때도 이 값은 `true` 여야 한다 — 「안 보임」에서 껐다고 커서가
+    /// 영영 사라지면 되돌릴 입구가 없다(`tick_cursor_blink` 가 그 자리를 지킨다).
+    blink_on: bool,
     /// 입력기 배지(`한`/`EN`) — OS 에 물어본 값. 모르면 `None`(배지를 안 그린다).
     ime_badge: Option<&'static str>,
     /// **조합 중인** 글자(`ㅎ`→`하`→`한`). 비어 있으면 조합 중이 아니다.
@@ -562,6 +588,8 @@ impl SessionView {
             tab_drag: None,
             tab_drag_over: None,
             last_status: Instant::now(),
+            last_blink: Instant::now(),
+            blink_on: true,
             ime_badge: None,
             preedit: String::new(),
             last_ime: Instant::now(),
@@ -945,6 +973,13 @@ impl SessionView {
             self.pending.push(Outgoing::Command(Command::PluginAction { id, act, row, input }));
             return true;
         }
+        // ★ 다열 판(설계 §4.3 `panel`)의 ←→·PgUp/PgDn 은 **열/판 단위**다. 그 기하는
+        //   칸 예산이 정하므로 그리는 쪽만 알고, 뜻은 core 가 든다(`set_plugin_grid`).
+        //   ⚠ **열 때가 아니라 여기서** 넣는다 — 창이 바뀌면 열당 줄 수가 함께 바뀐다.
+        if self.screens.top() == Some(Screen::PluginView) {
+            let (per_col, cols) = self.panel_grid();
+            self.screens.set_plugin_grid(per_col, cols);
+        }
         if let Some(outcome) = self.screens.press(key, mods) {
             // 고른 것을 **뷰가 해석한다** — core 는 목록의 내용을 모른다(그 경계 덕에
             // 목록 화면이 늘어도 core 는 그대로다).
@@ -1274,6 +1309,27 @@ impl SessionView {
     #[cfg(test)]
     pub(crate) fn apply_action_for_test(&mut self, action: Action) -> bool {
         self.apply_action(action)
+    }
+
+    /// 깜빡임 한 틱(`pytmux/pytmux-161`). `expired` 면 **반주기가 지난 것으로 치고** 부른다.
+    ///
+    /// # 왜 시계를 밀어 주나
+    ///
+    /// 진짜로 기다리면 시험이 최소 100ms 를 태우고, 그 시험은 **부하에 진다**(이 저장소가
+    /// 벽시계 시험으로 이미 겪은 자리다). 재는 것은 「시간이 얼마나 흘렀나」가 아니라
+    /// 「반주기가 지나면 뒤집히나 · 껐을 때 되살아나나」라, 시각은 밖에서 정하는 것이 맞다
+    /// (`report_ime` 가 OS 를 밖으로 뺀 것과 같은 규율).
+    #[cfg(test)]
+    pub(crate) fn tick_cursor_blink_for_test(&mut self, expired: bool) -> bool {
+        self.last_blink = if expired {
+            Instant::now()
+                - std::time::Duration::from_millis(self.config.cursor_blink_ms as u64 + 1)
+        } else {
+            // ⛔ 「아직 안 지났다」도 **세운다**. 안 세우면 앞 호출이 남긴 시각을 물려받아
+            //    시험이 자기 앞줄에 진다(실측: 껐을 때의 틱이 시계를 뒤로 민 채로 뒀다).
+            Instant::now()
+        };
+        self.tick_cursor_blink()
     }
 
     fn apply_action(&mut self, action: Action) -> bool {
@@ -2875,7 +2931,38 @@ impl SessionView {
         // 시절의 손이고, 지금은 새 `plugin_cells` 프레임이 곧 "다시 그려라"다 —
         // 지금 화면 갱신과 같은 길이라 클라에 따로 시계를 둘 이유가 없다.
         dirty |= self.tick_flash();
+        dirty |= self.tick_cursor_blink();
         dirty | self.tick_status()
+    }
+
+    /// 커서 깜빡임을 반주기마다 뒤집는다(`cursor-blink` · `pytmux/pytmux-161`).
+    /// 화면이 달라지면 `true`.
+    ///
+    /// # 왜 꺼져 있을 때도 할 일이 있나
+    ///
+    /// 「안 보임」 반주기에서 사람이 깜빡임을 끄면 그 상태가 그대로 굳어 **커서가
+    /// 영영 사라진다** — 되돌릴 입구(설정 화면)는 있지만, 커서가 없는 화면에서 그
+    /// 원인이 「깜빡임을 껐다」임을 알아낼 방법이 없다. 그래서 꺼져 있으면 언제나
+    /// 보이는 쪽으로 되돌린다.
+    ///
+    /// # 왜 매 프레임이 아니라 반주기인가
+    ///
+    /// `tick_status` 와 같은 값이다 — `true` 를 돌려주면 화면 전체를 다시 그린다.
+    /// 30Hz 로 뒤집으면 커서 하나 때문에 초당 서른 번 그리게 된다.
+    fn tick_cursor_blink(&mut self) -> bool {
+        if !self.config.cursor_blink {
+            return !std::mem::replace(&mut self.blink_on, true);
+        }
+        // `max(1)` 은 0 을 막는 것이 아니라(파서가 100 아래를 안 받는다) **다음 사람이
+        // 그 하한을 낮췄을 때** 여기가 0 나눗셈 없는 무한 루프가 되지 않게 하는 것이다.
+        let period =
+            std::time::Duration::from_millis(self.config.cursor_blink_ms.max(1) as u64);
+        if self.last_blink.elapsed() < period {
+            return false;
+        }
+        self.last_blink = Instant::now();
+        self.blink_on = !self.blink_on;
+        true
     }
 
     /// 상태줄을 `status-interval` 초마다 다시 그린다.
@@ -3353,6 +3440,42 @@ impl SessionView {
     #[cfg(test)]
     pub(crate) fn pad_rows_count_for_test(&self, drawn: usize, budget: usize) -> usize {
         drawn + budget.saturating_sub(drawn)
+    }
+
+    /// 다열 판의 한 칸 — 이름은 왼쪽, 부가 칸은 **오른쪽 끝**에(정본 `_item_segment`).
+    ///
+    /// 크기를 오른자리에 세우는 이유는 읽기다: 왼쪽에 붙이면 이름 길이에 따라 숫자가
+    /// 들쭉날쭉해 열끼리 비교가 안 된다. 자리가 모자라면 **이름을 자른다** — 크기를
+    /// 자르면 그 숫자가 거짓이 되지만 이름은 잘려도 `…` 가 그 사실을 말한다.
+    fn panel_cell(label: &str, extra: &str, cells: usize) -> String {
+        let want = footer::width(extra);
+        if want + 2 > cells {
+            return footer::elide(label, cells);
+        }
+        let room = cells - want - 1;
+        let name = footer::elide(label, room);
+        let pad = room.saturating_sub(footer::width(&name));
+        format!("{name}{} {extra}", " ".repeat(pad))
+    }
+
+    /// 다열 판의 기하 — `(열당 줄 수, 열 수)`. 다열 판이 아니면 `(0, 1)`.
+    ///
+    /// 열 수를 푸는 산술은 **proto 가 든다**(`PluginScreen::column_count`) — 여기서 다시
+    /// 적으면 커서가 건너뛰는 폭과 그려지는 열 수가 갈릴 수 있고, 그 어긋남은 "←를
+    /// 눌렀는데 엉뚱한 줄로 뛴다"로 보인다.
+    ///
+    /// 머리·꼬리줄도 판의 줄을 먹는다 — 안 빼면 그만큼 판이 아래로 넘친다(글 판이
+    /// 구역 선을 예산에 세는 것과 같은 규율).
+    fn panel_grid(&self) -> (usize, usize) {
+        let Some(spec) = self.state.plugin_screen() else {
+            return (0, 1);
+        };
+        if spec.kind != "panel" {
+            return (0, 1);
+        }
+        let cols = spec.column_count(Self::PANEL_COLS);
+        let lines = usize::from(!spec.head.is_empty()) + usize::from(!spec.foot.is_empty());
+        (self.panel_budget().saturating_sub(lines).max(1), cols)
     }
 
     fn pad_rows(&self, column: Flex, drawn: usize, budget: usize) -> Flex {
@@ -4861,6 +4984,80 @@ impl SessionView {
                     ));
                 }
             }
+            // ★ **다열 판**(설계 §4.3 · pytmux-126). 표와 같은 자료(`rows`)를 여러 열로
+            //   흘려 담고 위아래에 스펙이 준 한 줄씩을 둔다 — 정본 `mdir` 의 모양이다.
+            //
+            //   ⛔ 표와 합치지 않는다: 표는 **칸의 세로줄이 맞아야 읽히는** 화면이고
+            //      다열은 **한 화면에 몇 개가 보이나**가 요점이라, 같은 자료를 놓고도
+            //      폭 예산을 정반대로 쓴다(표는 칸에, 다열은 열 수에).
+            "panel" => {
+                let (per_col, cols) = self.panel_grid();
+                let per = per_col * cols;
+                let selected = self.screens.selected().min(spec.rows.len().saturating_sub(1));
+                // 스크롤은 **판 단위**다 — 정본 Mdir 의 도스 감각 그대로(부드러운 스크롤이
+                // 없다). 한 줄씩 밀면 열 경계가 매 줄 바뀌어 눈이 자리를 잃는다.
+                let start = if per > 0 { selected / per * per } else { 0 };
+                if !spec.head.is_empty() {
+                    column = column.with_child(self.mono_row(
+                        &footer::elide(&spec.say_head(), Self::PANEL_COLS),
+                        13.,
+                        palette::CYAN,
+                    ));
+                }
+                // 한 열이 쓸 칸. 열 사이 한 칸은 구분에 준다(정본은 `│` 를 긋는다).
+                let cell_cols = (Self::PANEL_COLS / cols).saturating_sub(1).max(1);
+                let cell_px = self.cell_px.get().map(|(w, _)| w * cell_cols as f32);
+                let mut grid = Flex::row()
+                    .with_main_axis_size(MainAxisSize::Min)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                    .with_spacing(8.);
+                for c in 0..cols {
+                    let mut col = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Start);
+                    for r in 0..per_col {
+                        // 채움은 **세로 우선**이다(정본과 같은 차례) — 가로로 채우면
+                        // 같은 디렉터리가 두 클라에서 다른 순서로 보인다.
+                        let row = start + c * per_col + r;
+                        let Some(item) = spec.rows.get(row) else {
+                            // 빈 자리도 **줄을 먹는다** — 안 채우면 열마다 높이가 달라져
+                            // 판 아래의 꼬리줄이 들썩인다.
+                            col = col.with_child(self.text(" ", 13., palette::DIM));
+                            continue;
+                        };
+                        let fg = proto::rowtag::color(&item.tag)
+                            .map_or(palette::FG, |c| to_gui_color(&c));
+                        // 부가 칸은 **첫 것만** 오른쪽에 붙인다(정본은 좁은 열에서 크기만
+                        // 보이고 시각은 열이 넓을 때만 붙인다). 칸은 플러그인이 적은
+                        // 말이라 우리 로케일로 읽는다(`say_cols`).
+                        let extra = item.say_cols().into_iter().next().unwrap_or_default();
+                        let text = Self::panel_cell(&item.say_label(), &extra, cell_cols);
+                        let boxed = Container::new(self.mono_row(&text, 13., fg))
+                            .with_uniform_padding(1.);
+                        let cell = if row == selected {
+                            boxed.with_background_color(palette::SELECTED_BG).finish()
+                        } else {
+                            boxed.finish()
+                        };
+                        col = col.with_child(self.clickable_panel(
+                            row,
+                            base::PanelTarget::Row(row),
+                            cell,
+                        ));
+                    }
+                    let col = col.finish();
+                    grid = grid.with_child(match cell_px {
+                        Some(w) => ConstrainedBox::new(col).with_width(w).finish(),
+                        None => col,
+                    });
+                }
+                column = column.with_child(grid.finish());
+                if !spec.foot.is_empty() {
+                    column = column.with_child(self.mono_row(
+                        &footer::elide(&spec.say_foot(), Self::PANEL_COLS),
+                        13.,
+                        palette::DIM,
+                    ));
+                }
+            }
             // 폼은 **줄마다 값**이 붙은 목록이다. 값을 바꾸는 길은 `Enter`(그 줄의 액션)
             // 하나로 두고, 무엇을 물을지는 플러그인이 다음 스펙(`prompt`)으로 정한다 —
             // 값 편집 규칙을 스펙에 담기 시작하면 스펙이 화면마다 늘어난다(설계 §10).
@@ -5575,6 +5772,10 @@ impl SessionView {
             set_titles_string: self.config.set_titles_string.clone(),
             inactive_dim_ratio: self.config.inactive_dim_ratio,
             font_scale: self.config.font_scale,
+            cursor_style: self.config.cursor_style.clone(),
+            cursor_color: self.config.cursor_color.clone(),
+            cursor_blink: self.config.cursor_blink,
+            cursor_blink_ms: self.config.cursor_blink_ms,
             mode_keys: self.config.mode_keys.clone(),
             status_left: self.config.status_left.clone(),
             status_right: self.config.status_right.clone(),
@@ -6531,8 +6732,9 @@ impl SessionView {
             Prompt::DisplayMessage | Prompt::DefaultPath | Prompt::ClaudeCommand | Prompt::SetOption
             | Prompt::SendKeys | Prompt::BindKey | Prompt::UnbindKey
             | Prompt::RunShell | Prompt::IfShell | Prompt::DisplayPopup => None,
-            // 상태줄 넷은 **설정 파일**이 주인이라 서버에 시킬 일이 없다.
-            Prompt::StatusLeft | Prompt::StatusRight | Prompt::StatusBg | Prompt::StatusFg => None,
+            // 상태줄 넷과 커서 색은 **설정 파일**이 주인이라 서버에 시킬 일이 없다.
+            Prompt::StatusLeft | Prompt::StatusRight | Prompt::StatusBg | Prompt::StatusFg
+            | Prompt::CursorColor => None,
             // 훅도 클라 안에서 끝난다(`base::hooks`).
             Prompt::SetHook => None,
             Prompt::SetPrefix => None,
@@ -6967,6 +7169,24 @@ impl SessionView {
     /// 창 가장자리 여백(렌더의 `with_uniform_padding`). 이 값만 우리가 정한 것이라 안다.
     const PAD: f32 = 8.;
 
+    /// 판 안쪽 여백과 테두리 두께(px). **폭 셈이 이 둘을 뺀다**(`panel_inner_width`) —
+    /// 글자로 두 번 적으면 안쪽 폭과 바깥 폭이 조용히 갈린다(pytmux-158).
+    const PANEL_PAD: f32 = 14.;
+    const PANEL_BORDER: f32 = 1.;
+
+    /// 판의 바깥 폭(px). **화면이 정하고 내용은 못 정한다.**
+    ///
+    /// 팔레트가 넓은 이유는 목록이 넓어야 읽히기 때문이다(이름+설명 한 줄을 눈으로
+    /// 잇는다). 나머지는 좁게 둔다 — 창 끝까지 퍼지면 칸 사이가 벌어진다.
+    fn panel_width(screen: Screen) -> f32 {
+        if screen == Screen::Commands { 900. } else { 760. }
+    }
+
+    /// 판 **안쪽**(여백·테두리를 뺀) 폭 — 줄 하나가 실제로 쓸 수 있는 자리.
+    fn panel_inner_width(screen: Screen) -> f32 {
+        Self::panel_width(screen) - 2. * (Self::PANEL_PAD + Self::PANEL_BORDER)
+    }
+
     /// 이벤트의 픽셀 좌표를 셀 좌표로. 자리표가 아직 없으면 `None`.
     fn cell_from_event(
         evt: &warpui::presenter::EventContext<'_>,
@@ -7130,11 +7350,28 @@ impl SessionView {
                 .with_border(Border::top(1.).with_border_color(theme::BORDER))
                 .finish(),
         );
-        let panel = Container::new(column.finish())
+        // ★ **판 폭을 못박는 자리는 여기 하나다**(§10-21 ⓗ·ⓢ·ⓥ·ⓐ2·ⓚ2 · pytmux-158).
+        //
+        //   `PanelBox` 가 «잰 값이 아니라 정한 값»을 돌려주므로 판 폭이 내용에서 완전히
+        //   떨어진다. `Clipped` 는 그 폭을 넘겨 그린 글자를 판 밖으로 안 내보낸다 —
+        //   줄이는 것은 각 줄의 `elide` 몫이고 이건 **마지막 그물**이다.
+        //   ⛔ 종전에는 판 바깥에 `ConstrainedBox::with_width` 하나였는데 그것으로는
+        //   **아래쪽 한도만** 지켜졌다(왜인지는 `PanelBox` 의 머리말). 그래서 긴 줄
+        //   하나가 판을 그만큼 넓혔다.
+        //   ⚠ 작성창은 예외다 — 아래에서 `Expanded` 로 **전폭**을 받는다.
+        let body = if screen == Screen::Compose {
+            column.finish()
+        } else {
+            Clipped::new(
+                PanelBox::new(column.finish(), Self::panel_inner_width(screen)).finish(),
+            )
+            .finish()
+        };
+        let panel = Container::new(body)
             .with_background_color(theme::ELEV)
-            .with_uniform_padding(14.)
+            .with_uniform_padding(Self::PANEL_PAD)
             .with_corner_radius(theme::PANEL_RADIUS)
-            .with_border(Border::all(1.).with_border_color(theme::BORDER))
+            .with_border(Border::all(Self::PANEL_BORDER).with_border_color(theme::BORDER))
             .with_drop_shadow(theme::panel_shadow())
             .finish();
         // ★ 판이 **어디에 서는지는 core 가 정한다**(`Screen::anchor` — 정본 CSS `align`
@@ -7157,18 +7394,11 @@ impl SessionView {
                 .finish();
             return Align::new(wide).bottom_center().finish();
         }
-        // 팔레트는 목록이 넓어야 읽히고(이름+설명 한 줄), 나머지는 좁게 둔다 — 목록이
-        // 창 끝까지 퍼지면 이름과 설명 사이가 벌어져 한 줄을 눈으로 잇기 어렵다.
-        // ★ **크기를 내용에서 뗀다**(§10-21 ⓗ·ⓢ·ⓥ·ⓐ2·ⓚ2).
-        //
-        // 종전에는 `with_max_width` 라 **상한만** 있었고 그 아래로는 내용이 정했다 —
-        // 줄이 짧으면 판이 좁아지고, 굴리면 그때 보이는 가장 긴 줄을 따라 폭이 출렁였다.
-        // 이제 **폭을 못박는다**: 같은 판은 언제 열어도 같은 크기다.
-        //
-        // 팔레트가 넓은 이유는 종전과 같다(이름+설명 한 줄을 눈으로 잇는다).
-        let width = if screen == Screen::Commands { 900. } else { 760. };
-        let boxed = ConstrainedBox::new(panel).with_width(width).finish();
-        let aligned = Align::new(boxed);
+        // 폭은 위에서 이미 못박혔다(`panel_width` · `PanelBox`) — 여기서는 자리만 잡는다.
+        // ⛔ 여기에 `ConstrainedBox::with_width` 를 다시 얹지 말 것: 폭을 말하는 자리가
+        //    둘이 되고, 둘 중 **아무 일도 안 하는 쪽**이 판을 정하는 것처럼 읽힌다
+        //    (그 오독이 pytmux-158 이었다).
+        let aligned = Align::new(panel);
         match anchor {
             Anchor::Bottom => aligned.bottom_center().finish(),
             Anchor::Top => aligned.top_center().finish(),
@@ -7467,6 +7697,62 @@ impl SessionView {
         out
     }
 
+    /// `at` 칸에 놓인 **글자 하나**를 자기 조각으로 떼어 낸다(`pytmux/pytmux-161`).
+    ///
+    /// `base` 는 첫 조각이 시작하는 칸 번호다. `at` 이 이 조각들 밖이면 **그대로**
+    /// 돌려준다 — 커서가 없는 런에서도 부를 수 있게 하려는 것이고, 그래야 부르는 쪽에
+    /// "이 런에 커서가 있나"를 다시 세는 코드가 안 생긴다.
+    ///
+    /// # 왜 칸이 아니라 글자를 떼나
+    ///
+    /// 한글은 두 칸을 먹는다. 칸 단위로 자르면 그 글자를 반으로 쪼개게 되는데, 반쪽
+    /// 글자는 그릴 수가 없다. 터미널도 같은 판정이다 — 커서는 **글자**에 놓인다.
+    ///
+    /// # 왜 폭이 안 밀리나
+    ///
+    /// ASCII 조각의 자연폭이 `칸수 × 칸너비`라는 전제([`grid_segments`] 머리말) 위에서,
+    /// 한 조각을 셋으로 쪼개도 폭의 합은 같다. ASCII 가 아닌 글자는 애초에 한 글자가
+    /// 한 조각이라 쪼갤 것이 없다.
+    fn isolate_cell(
+        segments: Vec<(String, usize)>,
+        base: usize,
+        at: usize,
+    ) -> Vec<(String, usize)> {
+        let mut out: Vec<(String, usize)> = Vec::with_capacity(segments.len() + 2);
+        let mut col = base;
+        let mut done = false;
+        for (piece, cells) in segments {
+            // 이미 뗐거나 이 조각 밖이면 그대로. 한 글자짜리도 더 쪼갤 것이 없다.
+            if done || at < col || at >= col + cells || piece.chars().count() <= 1 {
+                col += cells;
+                out.push((piece, cells));
+                continue;
+            }
+            let mut before = String::new();
+            let mut before_cells = 0usize;
+            let mut chars = piece.chars().peekable();
+            while let Some(ch) = chars.next() {
+                let w = proto::compose::char_cells(ch).max(1);
+                if col + before_cells + w > at {
+                    if !before.is_empty() {
+                        out.push((std::mem::take(&mut before), before_cells));
+                    }
+                    out.push((ch.to_string(), w));
+                    let rest: String = chars.collect();
+                    if !rest.is_empty() {
+                        out.push((rest, cells - before_cells - w));
+                    }
+                    done = true;
+                    break;
+                }
+                before.push(ch);
+                before_cells += w;
+            }
+            col += cells;
+        }
+        out
+    }
+
     /// 이 칸을 **글자 대신 선**으로 그리나 — `render_row` 가 그 칸을 비울지 정할 때 쓴다.
     ///
     /// [`frame_segments`](Self::frame_segments) 와 **같은 판정**이라야 한다: 한쪽만 바뀌면
@@ -7548,8 +7834,15 @@ impl SessionView {
     ///
     /// 판이 열려 있는 동안 키는 그 판의 것이다(core 규칙). 그때 패널 커서를 그리면
     /// "여기 치면 들어간다"는 거짓말이 된다.
+    /// # 깜빡임의 「안 보임」 반주기에도 안 그린다 (`pytmux/pytmux-161`)
+    ///
+    /// 판정을 **여기 한 곳**에 두는 값: 커서를 그리는 자리가 둘이다(오버레이의 선,
+    /// 캔버스의 반전 칸). 각자 깜빡임을 보면 두 모양이 엇갈려 깜빡인다.
     fn cursor_cell(&self) -> Option<crate::splitter::Cursor> {
         if self.screens.top().is_some() {
+            return None;
+        }
+        if !self.blink_on {
             return None;
         }
         let pane = self.state.active_pane()?;
@@ -7561,7 +7854,38 @@ impl SessionView {
         if cx >= w || cy >= h {
             return None;
         }
-        Some(crate::splitter::Cursor { x: px + cx, y: py + cy })
+        Some(crate::splitter::Cursor {
+            x: px + cx,
+            y: py + cy,
+            style: Self::cursor_style(&self.config.cursor_style),
+            // 모르는 색 이름이면 `None` = 테마 그대로다(`status-bg` 와 같은 규칙).
+            color: proto::status::color(&self.config.cursor_color).map(convert),
+        })
+    }
+
+    /// 설정 낱말 → 그리는 쪽의 모양. 모르는 낱말은 **기본값**이다.
+    ///
+    /// 파서(`Config::parse`)가 이미 어휘를 거르지만 여기서 또 접는 이유: 설정 파일만이
+    /// 이 값의 유일한 입구가 아니다(`set cursor-style …` 한 줄·설정 화면). 어느 길로
+    /// 들어와도 화면에서 커서가 사라지는 일은 없어야 한다.
+    fn cursor_style(name: &str) -> crate::splitter::CursorStyle {
+        use crate::splitter::CursorStyle;
+        match name {
+            "block" => CursorStyle::Block,
+            "underline" => CursorStyle::Underline,
+            "bar" => CursorStyle::Bar,
+            _ => CursorStyle::Hollow,
+        }
+    }
+
+    /// 캔버스가 **반전해 그릴** 커서 칸(`cursor-style block` 일 때만 · 캔버스 좌표).
+    ///
+    /// 오버레이가 그 모양을 못 그리는 사정은 `splitter::SplitterOverlay::paint_cursor`
+    /// 의 머리말에 있다 — 다 그린 위에 칠하면 그 칸의 글자가 덮인다.
+    fn cursor_block_cell(&self) -> Option<(u16, u16)> {
+        let cursor = self.cursor_cell()?;
+        (cursor.style == crate::splitter::CursorStyle::Block)
+            .then_some((cursor.x, cursor.y))
     }
 
     /// 캔버스 한 줄. 같은 스타일끼리 묶인 런을 가로로 잇는다.
@@ -7611,12 +7935,19 @@ impl SessionView {
         runs: Vec<(String, CellStyle)>,
         frame: &std::collections::BTreeSet<(u16, u16)>,
         blocks: &std::collections::BTreeSet<(u16, u16)>,
+        cursor_x: Option<u16>,
         probed: &mut bool,
     ) -> Box<dyn Element> {
         let mut row = Flex::row().with_main_axis_size(MainAxisSize::Min);
         let cell_w = self.cell_px.get().map(|(w, _)| w);
+        let cursor_color = proto::status::color(&self.config.cursor_color)
+            .map(convert)
+            .unwrap_or(crate::theme::FOCUS);
         let mut cx = 0usize;
         for (text, style) in runs {
+            // 이 런이 시작하는 칸 — 아래에서 커서 칸을 찾을 때 쓴다(`cx` 는 곧 런 전체를
+            // 훑고 지나간다).
+            let run_x0 = cx;
             // ★ 크롬의 경계 문자와 블록 문자는 **글자로 안 그린다** — 오버레이가 그 칸을
             //   실제 선(2026-07-31 사용자 지시)·사각형(§10-21ⓘ)으로 그린다. 자리를 비우는
             //   것이지 지우는 것이 아니다: 둘 다 한 칸짜리라 공백으로 바꿔도 그 줄의 폭이
@@ -7632,7 +7963,27 @@ impl SessionView {
             }
             let (fg, bg) = colors(&style);
             let props = font_properties(&style);
-            for (piece, cells) in Self::grid_segments(&text2) {
+            // ★ 채운 네모 커서(`cursor-style block`)는 그 **칸을 반전**해 그린다
+            //   (`pytmux/pytmux-161`). 오버레이가 위에서 칠하면 그 글자를 덮으므로,
+            //   터미널이 하는 대로 여기서 색만 뒤집는다 — 글자는 그대로 읽힌다.
+            //   반전할 칸은 자기 조각으로 떼어 낸다(안 떼면 그 런 전체가 뒤집힌다).
+            let mut segments = Self::grid_segments(&text2);
+            if let Some(at) = cursor_x {
+                segments = Self::isolate_cell(segments, run_x0, at as usize);
+            }
+            let mut seg_x = run_x0;
+            for (piece, cells) in segments {
+                let inverted = cursor_x
+                    .is_some_and(|at| seg_x <= at as usize && (at as usize) < seg_x + cells);
+                seg_x += cells;
+                // 반전 칸의 글자색은 **바탕색**이다 — SGR 반전(`colors`)과 같은 규칙이라
+                // 두 자리가 갈리지 않는다. 그 칸에 앱이 칠한 배경이 있으면 그 색이 글자가
+                // 된다(없으면 캔버스 바탕).
+                let (fg, bg) = if inverted {
+                    (bg.unwrap_or(palette::BG), Some(cursor_color))
+                } else {
+                    (fg, bg)
+                };
                 // 이 조각 안에서 자리표를 붙일 ASCII 글자의 위치(없으면 안 붙인다).
                 let mark = (!*probed)
                     .then(|| {
@@ -7720,12 +8071,18 @@ impl View for SessionView {
                 let blocks = Self::block_cells(&canvas);
                 let block_at: std::collections::BTreeSet<(u16, u16)> =
                     blocks.iter().map(|b| (b.x, b.y)).collect();
+                // 채운 네모 커서는 **줄이 그린다**(`pytmux/pytmux-161`) — 오버레이가
+                // 위에서 칠하면 그 칸의 글자가 덮인다. 여기서 한 번만 묻는다: 줄마다
+                // 다시 물으면 같은 판정을 행 수만큼 돌린다(위 `frame`·`blocks` 와 같은
+                // 규율).
+                let cursor_cell = self.cursor_block_cell();
                 for y in 0..height {
                     rows = rows.with_child(self.render_row(
                         y,
                         canvas.row_runs(y),
                         &frame,
                         &block_at,
+                        cursor_cell.filter(|(_, cy)| *cy as usize == y).map(|(cx, _)| cx),
                         &mut probed,
                     ));
                 }
@@ -8206,6 +8563,99 @@ impl TypedActionView for SessionView {
 #[cfg(test)]
 #[path = "session_view_tests.rs"]
 mod tests;
+
+/// 판의 **가로 크기를 못박는** 상자 — 안이 무엇을 그리든 이 상자의 폭은 준 값이다.
+///
+/// # 왜 `ConstrainedBox` 로는 안 되나 (pytmux-158)
+///
+/// `ConstrainedBox::with_width` 는 이름과 달리 폭을 **정하지 않는다**. 아이에게
+/// `min = max = 폭` 을 **주기만** 하고, 돌려주는 크기는 `self.child.layout(..)` 이 잰
+/// 값 그대로다 — 아이가 그 한도를 지킬 때만 폭이 그 값이 된다. 그런데 판 사슬의 두
+/// 마디가 안 지킨다:
+///
+/// - [`Container`] 는 `아이 크기 + 여백` 을 그대로 돌려준다(자기 `constraint` 를 안 본다).
+/// - 가로 [`Flex`] 는 **자기 아이들에게 가로 최대를 무한대로** 준다
+///   (`SizeConstraint::child_constraint_along_axis`) — 그래서 줄이 `Flex::row` 로
+///   지어져 있으면 그 안의 글자는 한도를 아예 못 받고 자연 폭으로 눕는다. 그 합은
+///   `constrain_horizontal_bounds_to_parent` 를 안 켠 이상 잘리지도 않는다.
+///
+/// 그래서 **아래쪽 한도(최소 폭)만 지켜졌다** — 세로 `Flex` 는 마지막에
+/// `size.x = size.x.max(constraint.min.x())` 를 하기 때문이다. 위쪽은 열려 있어서
+/// 긴 줄 하나가 판을 그만큼 넓혔다: `:ncd` 에서 `C:\` 만 있을 때는 좁고
+/// `Microsoft Mouse and Keyboard Center` 가 목록에 들어오면 넓어졌다.
+///
+/// # 그래서 이 상자가 하는 일
+///
+/// **잰 값이 아니라 정한 값을 돌려준다**(`layout` 의 마지막 줄). 아이에게는 가로만 꽉
+/// 조인 한도를 내려보내므로 한도를 지키는 아이([`Text`] 가 그렇다 — 스스로 잘라 준다)는
+/// 그 안에서 알아서 줄고, 안 지키는 아이가 넘겨 그린 것은 [`Clipped`] 가 판 밖으로
+/// 안 내보낸다.
+///
+/// ⚠ **세로는 안 건드린다.** 판 높이는 줄 수가 정하고 그 수는 `panel_budget` 이 이미
+/// 화면 높이로 잰다 — 여기서 또 정하면 두 곳이 같은 것을 말하게 된다.
+struct PanelBox {
+    child: Box<dyn Element>,
+    width: f32,
+    size: Option<Vector2F>,
+    origin: Option<Point>,
+}
+
+impl PanelBox {
+    fn new(child: Box<dyn Element>, width: f32) -> Self {
+        Self { child, width, size: None, origin: None }
+    }
+}
+
+impl Element for PanelBox {
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        ctx: &mut LayoutContext,
+        app: &AppContext,
+    ) -> Vector2F {
+        // 가로만 꽉 조이고 세로는 부모 것 그대로 내려보낸다.
+        let inner = SizeConstraint::new(
+            vec2f(self.width, constraint.min.y()),
+            vec2f(self.width, constraint.max.y()),
+        );
+        let child = self.child.layout(inner, ctx, app);
+        // ⛔ 이 한 줄이 이 상자의 전부다 — 아이가 얼마나 넓든 폭은 우리가 정한 값이다.
+        let size = vec2f(self.width, child.y());
+        self.size = Some(size);
+        size
+    }
+
+    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &AppContext) {
+        self.child.after_layout(ctx, app);
+    }
+
+    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
+        self.origin = Some(Point::from_vec2f(origin, ctx.scene.z_index()));
+        self.child.paint(origin, ctx, app);
+    }
+
+    fn size(&self) -> Option<Vector2F> {
+        self.size
+    }
+
+    fn origin(&self) -> Option<Point> {
+        self.origin
+    }
+
+    fn dispatch_event(
+        &mut self,
+        event: &DispatchedEvent,
+        ctx: &mut EventContext,
+        app: &AppContext,
+    ) -> bool {
+        self.child.dispatch_event(event, ctx, app)
+    }
+
+    #[cfg(test)]
+    fn debug_text_content(&self) -> Option<String> {
+        self.child.debug_text_content()
+    }
+}
 
 /// 스레드에서 돌린 셸 명령의 결과.
 struct ShellOutcome {

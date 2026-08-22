@@ -1080,6 +1080,38 @@ impl Window {
             .unwrap_or(false)
     }
 
+    /// 창 끌기·가장자리 리사이즈 갈래가 **어느 조건에서 갈렸나** — 한 줄로 찍는다
+    /// (pytmux/pytmux-155).
+    ///
+    /// ☠ 이 자리가 왜 필요한가: 두 갈래의 조건이 `event_loop` 와 이 파일에 나뉘어 있고
+    /// 그중 셋(`active_drag_resize_direction` · `is_maximized` · 논리 창 크기)은 `inner`
+    /// 안에 있어 **바깥에서 볼 길이 없었다.** 그래서 「안 끌린다」를 만난 사람이 할 수 있는
+    /// 일이 코드를 읽는 것뿐이었고, 맥에서 정적으로 읽어 세운 후보 셋이 실기에서 전부
+    /// 죽었다(그 이슈의 답 셋 · 2026-08-10).
+    ///
+    /// ⛔ **읽기만 한다** — `try_drag_resize()` 는 부르면 실제로 리사이즈를 «시작»하므로
+    /// 진단에 쓸 수 없다. 여기서는 그것이 보는 값(`active_drag_resize_direction`)을 그대로 낸다.
+    /// ⚠ 기본으로 안 찍힌다(`log::debug!` · `RUST_LOG=debug` 로 켠다) — 누를 때마다 나오는 줄이다.
+    pub fn drag_diag(&self) -> String {
+        let inner = self.inner.borrow();
+        let Some(inner) = inner.as_ref() else {
+            return "창이 없다(inner=None)".to_string();
+        };
+        let scale = inner.window.scale_factor();
+        let size = inner.physical_size().to_logical::<f32>(scale);
+        format!(
+            "decorated={} maximized={} resize_dir={:?} titlebar_h={} size={}x{} scale={} margin={}",
+            inner.window.is_decorated(),
+            inner.window.is_maximized(),
+            inner.active_drag_resize_direction,
+            self.titlebar_height.get(),
+            size.width,
+            size.height,
+            scale,
+            DRAG_RESIZE_MARGIN,
+        )
+    }
+
     /// Requests user attention. If the window is in focus, this is a noop.
     pub fn request_user_attention(&self) {
         // Determine which level of user attention urgency to request from the OS.

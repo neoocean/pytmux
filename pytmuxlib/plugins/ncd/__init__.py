@@ -273,8 +273,11 @@ class _NcdPlugin:
 
     @staticmethod
     def _norm(path):
-        import os
-        return os.path.normcase(os.path.normpath(path)) if path else ""
+        # ⚠ **`os.path` 가 아니라 `server._pathmod`** — 이 서버가 곧 그 경로들의 OS 라
+        # 실제 Windows 에서는 둘이 같지만, 시험은 다른 OS 에서 Windows 판정을 검증하려고
+        # `server._pathmod` 만 갈아 끼운다(같은 관례를 `_list_dirs`·`_drive_roots` 도 쓴다).
+        from .server import _pathmod as pm
+        return pm.normcase(pm.normpath(path)) if path else ""
 
     def _kids(self, mine, path):
         """`path` 의 하위 디렉터리(한 번 읽으면 그 클라 보관함에 남는다).
@@ -312,14 +315,14 @@ class _NcdPlugin:
         Windows 에서 **드라이브의 현재 디렉터리**라는 전혀 다른 곳이다. 그렇게 하면
         트리의 뿌리가 엉뚱한 자리를 가리켜 사슬이 통째로 끊긴다(실측: 8단 사슬이
         한 단만 펼쳐졌다)."""
-        import os
-        parent = os.path.dirname(path) or path
+        from .server import _pathmod as pm
+        parent = pm.dirname(path) or path
         return parent
 
     def _chain(self, path):
         """뿌리 → `path` 의 조상 사슬(그 경로 자신 포함)."""
-        import os
-        out, cur = [], os.path.abspath(path)
+        from .server import _pathmod as pm
+        out, cur = [], pm.abspath(path)
         while True:
             out.append(cur)
             parent = self._parent(cur)
@@ -333,10 +336,34 @@ class _NcdPlugin:
         """열 때의 트리 — 뿌리부터 셸이 서 있는 자리까지 **펼쳐 둔다**(정본과 같다).
 
         그래야 창이 뜨자마자 지금 어디에 있는지가 보이고, 위아래 형제로 바로 옮길 수 있다.
+
+        # Windows — 뿌리가 여럿이다 (pytmux-160·pytmux-238)
+
+        드라이브 나열 로직(`server._drive_roots`)은 있었는데 이 화면은 그것을 안 탔다 —
+        `_chain` 이 셸이 서 있는 드라이브 하나만 뿌리로 삼아 `C:\` 만 보이고 `D:\` 로
+        옮겨갈 항목이 트리에 없었다. 여기서는 합성 최상위(빈 문자열 키 · 화면에 줄로
+        안 뜬다)를 두고 그 자식으로 드라이브 목록을 실어 드라이브들을 형제로 만든다
+        (서버측 `_build_chain` 과 같은 모양이지만, 사슬 위 디렉터리의 형제 상한
+        (`_kids`/`_MAX_KIDS`)을 그대로 타야 하므로 여기서 따로 짠다 — `_build_chain` 은
+        그 상한을 모른다).
         """
+        from .server import _drive_roots
         cwd = mine.get("cwd") or mine.get("path")
         chain = self._chain(cwd)
-        mine["root"] = chain[0]
+        drives = _drive_roots()
+        if drives:
+            canon = next((d for d in drives if self._norm(d) == self._norm(chain[0])), None)
+            # 지금 서 있는 드라이브가 목록에서 빠졌으면(subst·매핑 경합) 보강한다 —
+            # 안 그러면 그 드라이브로 가는 형제 줄이 아예 없어 사슬이 끊긴다.
+            tops = list(drives) if canon is not None else drives + [chain[0]]
+            if canon is not None:
+                chain = [canon] + chain[1:]      # 사슬 머리 = 드라이브 정본 표기
+            mine["root"] = ""
+            mine["drives"] = [self._norm(d) for d in tops]
+            mine.setdefault("kids", {})[""] = sorted(tops, key=self._norm)
+        else:
+            mine["root"] = chain[0]
+            mine["drives"] = []
         # 사슬 위의 노드는 전부 펼친다(마지막 = cwd 도 — 그 안이 보여야 한다).
         mine["open"] = [self._norm(p) for p in chain]
         for p in chain:
@@ -355,34 +382,57 @@ class _NcdPlugin:
 
     def _rows(self, mine, path, depth, out):
         """펼쳐진 것만 따라 내려가며 줄을 만든다(정본 `_flatten` 과 같은 차례)."""
-        import os
+        from .server import _pathmod as pm
         if len(out) >= self._MAX_ROWS:
             return
         opened = set(mine.get("open") or [])
-        kids = self._kids(mine, path)
+        cache = mine.get("kids") or {}
         cwd = self._norm(mine.get("cwd"))
         me = self._norm(path)
+        drives = set(mine.get("drives") or ())
+        if me in drives and me not in cache:
+            # ⛔ **드라이브는 펼치기 전엔 안 읽는다** — 연결 안 된 네트워크·광학 드라이브
+            #   하나가 있으면 잎 판정 하나 때문에 화면이 멎는다(정본도 펼칠 때 읽는다).
+            #   그래도 **열 수 있는 줄**로는 보여야 한다 — 안 읽었다고 잎으로 그리면
+            #   거짓말이다(pytmux-239).
+            kids = []
+            expandable = True
+        else:
+            kids = self._kids(mine, path)
+            expandable = bool(kids)
         out.append({
             "key": path,
             # 이름은 **자료 그대로**다 — 들여쓰기를 글자로 섞으면 타이핑 찾기·복사가
             # 그 공백을 물고 간다(그래서 깊이를 따로 싣는다).
-            "label": os.path.basename(path.rstrip(os.sep)) or path,
+            "label": pm.basename(path.rstrip("/\\")) or path,
             "cols": [],
             "depth": depth,
             # 접힘과 **잎**은 다르다 — 빈 디렉터리에 눌러도 안 열리는 화살표를 안 붙인다.
-            "expand": ("open" if me in opened else "shut") if kids else "",
-            "tag": "cwd" if me == cwd else "dir",
+            "expand": ("open" if me in opened else "shut") if expandable else "",
+            # 뜻이 없는 줄은 이름을 안 단다 — "dir" 은 mdir 시그니처 붉은색과 묶여
+            # 있어(rowtag.py TAGS) ncd 자기 팔레트에 없는 색을 강제로 입힌다.
+            "tag": "cwd" if me == cwd else "",
         })
         if me in opened:
+            if not kids:
+                kids = self._kids(mine, path)
             for kid in kids:
                 self._rows(mine, kid, depth + 1, out)
 
     def _tree_spec(self, mine):
         """지금 트리의 스펙(순수 fs — executor 에서 돈다)."""
-        import os
-        root = mine.get("root") or os.path.abspath(os.sep)
+        from .server import _pathmod as pm
+        root = mine.get("root")
+        if root is None:
+            root = pm.abspath(pm.sep)
         rows = []
-        self._rows(mine, root, 0, rows)
+        if mine.get("drives"):
+            # 합성 최상위(빈 문자열)는 화면에 줄로 안 뜬다 — 그 자식(드라이브들)이
+            # 곧바로 깊이 0 의 형제로 보인다.
+            for kid in self._kids(mine, root):
+                self._rows(mine, kid, 0, rows)
+        else:
+            self._rows(mine, root, 0, rows)
         over = len(rows) >= self._MAX_ROWS or bool(mine.get("cut"))
         # 커서는 **셸이 서 있는 줄**에 둔다 — 열자마자 지금 자리가 골라져 있어야
         # `Enter` 한 번이 뜻을 갖는다.

@@ -1274,3 +1274,53 @@ fn only_the_irreversible_confirms_are_marked_dangerous() {
     screens.confirm(Prompt::KillPane);
     assert!(!screens.confirm_is_dangerous(), "물음을 바꿨는데 위험 표시가 남았다");
 }
+
+// ── 다열 판의 손(설계 §4.3 `panel` · pytmux-126) ──────────────────────────────
+
+#[test]
+fn a_multi_column_plugin_panel_moves_a_whole_column_sideways() {
+    // 정본 mdir 의 손 그대로다 — 채움이 세로 우선이라 ←→ 는 «열당 줄 수»만큼 뛴다.
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    screens.set_plugin_grid(10, 3);
+    screens.select_row(0);
+
+    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 10, "→ 가 한 열을 안 건넜다");
+    assert_eq!(screens.press(Key::Down, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 11, "↓ 는 여전히 한 줄이다");
+    assert_eq!(screens.press(Key::PageDown, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 41, "PgDn 이 한 판(열당 줄 수 × 열 수)을 안 건넜다");
+    assert_eq!(screens.press(Key::PageUp, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 11);
+    assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 1);
+    // 맨 앞에서 더 왼쪽은 **판을 안 닫는다** — 0 에서 멈춘다(위로 넘치지 않는다).
+    assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 0);
+    assert_eq!(screens.top(), Some(Screen::PluginView), "←가 판을 닫았다");
+}
+
+#[test]
+fn a_single_column_plugin_list_keeps_the_old_meaning_of_left_and_right() {
+    // ⛔ 한 열이면 ←→ 는 **종전대로 판을 닫는다**. 여기서 갈래를 넓히면 목록 화면마다
+    //    손이 달라지고, 그 차이는 스펙에 안 적혀 있어 아무도 못 본다.
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    screens.set_plugin_grid(10, 1);
+    screens.select_row(3);
+    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::Closed));
+    assert_eq!(screens.top(), None);
+}
+
+#[test]
+fn a_panel_that_never_got_its_geometry_still_behaves_like_a_list() {
+    // 뷰가 기하를 안 넣었으면(옛 뷰·글 화면) `(0, 0)` 이다 — 0 으로 나누거나 제자리에
+    // 멈추는 대신 **종전 목록 그대로** 굴러야 한다.
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    screens.select_row(2);
+    assert_eq!(screens.press(Key::Down, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 3);
+    assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::Closed));
+}

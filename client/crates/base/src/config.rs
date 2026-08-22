@@ -156,7 +156,55 @@ pub struct Config {
     /// 줄로 조용히 넘긴다(`keymap.load_config` 의 if/elif 는 모르는 옵션을 버린다 —
     /// 확인함). 이 갈림은 패리티 표에 **`iv`** 로 선언한다.
     pub font_scale: f32,
+    /// 커서의 **모양**([`CURSOR_STYLES`] 중 하나 · 기본 `hollow`).
+    ///
+    /// # 왜 설정이 필요했나 (제보 2026-08-08 · `pytmux/pytmux-161`)
+    ///
+    /// 종전에는 외곽선 네모 하나로 **박혀** 있었다 — 모양도 색도 깜빡임도 고를 수
+    /// 없었다. 정본 터미널 다수가 주는 선택지라 없으면 기능 격차다.
+    ///
+    /// # 왜 기본이 `block` 이 아닌가
+    ///
+    /// 다른 터미널의 기본은 채운 네모지만, **여기서 기본을 바꾸면 지금 쓰는 사람의
+    /// 화면이 말없이 달라진다.** 이 이슈가 부탁한 것은 「고를 수 있게」이지 「기본을
+    /// 바꿔라」가 아니므로 종전 모양을 기본으로 남기고 나머지를 옵트인으로 둔다.
+    pub cursor_style: String,
+    /// 커서 **색**. 빈 값이면 테마(포커스색)다.
+    ///
+    /// 표기는 상태줄 색(`status-bg`·`status-fg`)과 **같은 것**을 쓴다(`blue` ·
+    /// `brightblack` · `#rrggbb` — `proto::status::color`). 자리마다 다른 표기를 받으면
+    /// 사용자가 한쪽에서 배운 것을 다른 쪽에서 못 쓴다.
+    pub cursor_color: String,
+    /// 커서가 **깜빡이나**(기본 꺼짐 — 종전 동작).
+    pub cursor_blink: bool,
+    /// 깜빡임 반주기(밀리초 · [`CURSOR_BLINK_LO`]~[`CURSOR_BLINK_HI`], 기본 500).
+    ///
+    /// ⚠ **반주기다** — 이 시간마다 보임/안 보임이 뒤집힌다(한 바퀴는 그 두 배).
+    /// 단말 관례(`cursor blink rate`)가 그쪽이고, 「500ms 커서」라고 하면 보통 초당
+    /// 한 번 깜빡이는 것을 뜻한다.
+    pub cursor_blink_ms: u16,
 }
+
+/// 커서 모양의 어휘. **첫 값이 기본**이다(종전 동작 = 외곽선 네모).
+///
+/// - `hollow` — 외곽선 네모. 글자를 하나도 안 가린다.
+/// - `block` — 채운 네모. 그 칸을 **반전**해 그린다(글자는 배경색으로 남는다) —
+///   덮어 칠하면 커서가 놓인 글자를 못 읽는데, 그건 "커서가 보여야 한다"의 답이 아니다.
+/// - `underline` — 칸 아래 밑줄.
+/// - `bar` — 칸 왼쪽 세로선.
+///
+/// 표를 한 곳에 두는 이유는 [`REMOTE_TITLES`] 와 같다 — 파싱하는 자리와 설정 화면이
+/// 각자 어휘를 적으면 화면에 없는 값을 파일로는 넣을 수 있게 된다.
+pub static CURSOR_STYLES: &[&str] = &["hollow", "block", "underline", "bar"];
+
+/// 깜빡임 반주기의 아래·위 끝과 한 걸음(밀리초).
+///
+/// 아래를 100ms 로 막는 이유: 그보다 빠르면 깜빡임이 아니라 **떨림**이고, 광과민성이
+/// 있는 사람에게 위험한 대역(3~55Hz)으로 들어간다. 위를 2초로 막는 이유는 반대다 —
+/// 그보다 느리면 "깜빡이는 중"인지 "멈춘 것"인지 사람이 못 가른다.
+pub const CURSOR_BLINK_LO: f32 = 100.;
+pub const CURSOR_BLINK_HI: f32 = 2000.;
+pub const CURSOR_BLINK_STEP: f32 = 100.;
 
 /// 글자 배율의 아래·위 끝과 한 걸음.
 ///
@@ -218,6 +266,10 @@ impl Default for Config {
             hooks: crate::hooks::Hooks::default(),
             lang: String::new(),
             font_scale: 1.0,
+            cursor_style: CURSOR_STYLES[0].to_owned(),
+            cursor_color: String::new(),
+            cursor_blink: false,
+            cursor_blink_ms: 500,
         }
     }
 }
@@ -458,6 +510,29 @@ impl Config {
                         config.font_scale = scale.clamp(FONT_SCALE_LO, FONT_SCALE_HI);
                     }
                 }
+                // 모르는 모양은 **버린다**(기본 `hollow` 로 남는다) — 오타 하나로
+                // 커서가 사라지면 무엇이 잘못됐는지 알 수 없다(`remote-title` 과 같은
+                // 판정이다).
+                "cursor-style" => {
+                    if CURSOR_STYLES.contains(&value) {
+                        config.cursor_style = value.to_owned();
+                    }
+                }
+                // 색 이름은 **그대로 받는다** — 무엇이 유효한 이름인지는 푸는 쪽
+                // (`proto::status::color`)이 알고, 모르는 이름이면 테마 그대로다
+                // (`status-bg` 와 같은 규칙).
+                "cursor-color" => config.cursor_color = value.to_owned(),
+                "cursor-blink" => config.cursor_blink = on_off(value),
+                // ⚠ `u16` 이 아니라 `u32` 로 읽고 **자른다**. `u16` 으로 읽으면
+                //   `99999` 같은 값이 파싱에서 죽어 그 줄이 통째로 무시되는데, 그건
+                //   "너무 큰 값"이 아니라 "안 적은 것"과 같은 결과라 사용자가 무엇이
+                //   잘못됐는지 알 수 없다(범위 밖은 자른다 — 이 파일의 규칙).
+                "cursor-blink-interval" => {
+                    if let Ok(n) = value.parse::<u32>() {
+                        config.cursor_blink_ms =
+                            n.clamp(CURSOR_BLINK_LO as u32, CURSOR_BLINK_HI as u32) as u16;
+                    }
+                }
                 _ => {}
             }
         }
@@ -563,6 +638,11 @@ pub struct SettingValues {
     pub inactive_dim_ratio: f32,
     /// 앱 전체 글자 배율(설정 파일 — GUI 만의 줄, §10-21ⓐ).
     pub font_scale: f32,
+    /// 커서 모양·색·깜빡임(설정 파일 — GUI 만의 넷, `pytmux/pytmux-161`).
+    pub cursor_style: String,
+    pub cursor_color: String,
+    pub cursor_blink: bool,
+    pub cursor_blink_ms: u16,
     pub mode_keys: String,
     pub mouse_drag_threshold: u16,
     pub ambiguous_width: String,
@@ -606,6 +686,12 @@ impl Default for SettingValues {
             set_titles_string: String::new(),
             inactive_dim_ratio: 0.0,
             font_scale: 1.0,
+            // 모양은 **빈 값으로 두지 않는다** — 설정 화면의 값 칸이 비면 `?` 로 보이고,
+            // 그건 "모르는 값"과 구분되지 않는다(`Config::default` 와 같은 기본값).
+            cursor_style: CURSOR_STYLES[0].to_owned(),
+            cursor_color: String::new(),
+            cursor_blink: false,
+            cursor_blink_ms: 500,
             mode_keys: String::new(),
             mouse_drag_threshold: 1,
             ambiguous_width: String::new(),
@@ -652,6 +738,34 @@ pub const SETTINGS: &[Setting] = &[
             lo: FONT_SCALE_LO,
             hi: FONT_SCALE_HI,
             step: FONT_SCALE_STEP,
+        },
+    },
+    // ★ **GUI 만의 넷이다**(`pytmux/pytmux-161`) — 정본의 커서는 **호스트 단말의
+    //   하드웨어 커서**라 모양·색·깜빡임을 그 단말이 정한다(파이썬 클라는 자리만
+    //   `app.cursor_position` 으로 옮긴다). `font-scale` 과 같은 부류라, 갈림은
+    //   `category_conformance` 의 `SETTINGS_OURS` 에 사유와 함께 선언한다.
+    Setting {
+        key: "cursor-style",
+        cat: "표시",
+        kind: SettingKind::ConfigEnum(CURSOR_STYLES),
+    },
+    Setting {
+        key: "cursor-color",
+        cat: "표시",
+        kind: SettingKind::Text(Prompt::CursorColor),
+    },
+    Setting {
+        key: "cursor-blink",
+        cat: "표시",
+        kind: SettingKind::ConfigToggle,
+    },
+    Setting {
+        key: "cursor-blink-interval",
+        cat: "표시",
+        kind: SettingKind::Number {
+            lo: CURSOR_BLINK_LO,
+            hi: CURSOR_BLINK_HI,
+            step: CURSOR_BLINK_STEP,
         },
     },
     Setting {
@@ -933,6 +1047,11 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("inactive-dim-ratio", "흐리게 세기"),
     // 정본에 이 줄이 없다(GUI 만의 설정) → `NO_CANON_LABEL` 에 사유와 함께 적어 뒀다.
     ("font-scale", "글자 크기 배율"),
+    // 정본에 짝이 있을 수 없는 넷(호스트 단말이 커서를 그린다) → `NO_CANON_LABEL`.
+    ("cursor-style", "커서 모양"),
+    ("cursor-color", "커서 색"),
+    ("cursor-blink", "커서 깜빡임"),
+    ("cursor-blink-interval", "커서 깜빡임 주기(ms)"),
     ("status-position", "상태줄 위치"),
     ("remote-title", "원격 탭 제목"),
     ("language", "언어"),
@@ -1126,6 +1245,11 @@ impl Setting {
             "inactive-dim-ratio" => format!("{:.2}", values.inactive_dim_ratio),
             // 배율은 한 자리면 충분하다(걸음이 0.1) — `1.00` 은 자릿수만 늘어 읽기 나쁘다.
             "font-scale" => format!("{:.1}×", values.font_scale),
+            "cursor-style" => values.cursor_style.clone(),
+            // 빈 값은 "안 정했다" = 테마 그대로다(`status-bg` 와 같은 자리).
+            "cursor-color" => theme_or(&values.cursor_color),
+            "cursor-blink" => on(values.cursor_blink),
+            "cursor-blink-interval" => values.cursor_blink_ms.to_string(),
             // 링크 줄은 값이 없다 — `…` 로 "여기서 다른 화면이 열린다"를 알린다.
             "list-keys" | "plugins" => "…".to_string(),
             // 값의 주인은 런타임 로케일이다 — 서버도 `SettingValues` 도 모른다.
@@ -1300,6 +1424,10 @@ pub fn flip_config(key: &str, now: &Config) -> Option<(Config, std::io::Result<P
             next.set_titles = !now.set_titles;
             next.set_titles
         }
+        "cursor-blink" => {
+            next.cursor_blink = !now.cursor_blink;
+            next.cursor_blink
+        }
         _ => return None,
     };
     let written = Config::write_option(key, if value { "on" } else { "off" });
@@ -1316,7 +1444,10 @@ pub fn flip_config(key: &str, now: &Config) -> Option<(Config, std::io::Result<P
 /// 한 벌 더 적어야** 하고, 두 벌이 되는 순간 이 게이트는 자기 사본을 재게 된다
 /// (`every_setting_row_reaches_something_that_reads_it` 이 실제로 그 자리에 섰다).
 pub fn number_text(key: &str, value: f32) -> String {
-    if matches!(key, "mouse-drag-threshold" | "status-interval") {
+    if matches!(
+        key,
+        "mouse-drag-threshold" | "status-interval" | "cursor-blink-interval"
+    ) {
         format!("{}", value as i64)
     } else {
         format!("{value:.2}")
@@ -1335,6 +1466,9 @@ pub fn set_number(
         "font-scale" => next.font_scale = value.clamp(FONT_SCALE_LO, FONT_SCALE_HI),
         "mouse-drag-threshold" => next.mouse_drag_threshold = value.clamp(1.0, 20.0) as u16,
         "status-interval" => next.status_interval = value.clamp(1.0, 60.0) as u16,
+        "cursor-blink-interval" => {
+            next.cursor_blink_ms = value.clamp(CURSOR_BLINK_LO, CURSOR_BLINK_HI) as u16
+        }
         _ => return None,
     }
     Some((next, Config::write_option(key, &number_text(key, value))))
@@ -1392,6 +1526,8 @@ pub fn set_config(
         "status-right" => next.status_right = value.to_owned(),
         "status-bg" => next.status_bg = value.to_owned(),
         "status-fg" => next.status_fg = value.to_owned(),
+        "cursor-style" => next.cursor_style = value.to_owned(),
+        "cursor-color" => next.cursor_color = value.to_owned(),
         _ => return None,
     }
     Some((next, Config::write_option(key, value)))

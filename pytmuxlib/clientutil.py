@@ -11,6 +11,7 @@ import sys
 from functools import lru_cache
 
 from rich.style import Style
+from rich.terminal_theme import DEFAULT_TERMINAL_THEME, TerminalTheme
 
 from . import i18n, proc
 from .cellwidth import char_cells
@@ -565,6 +566,34 @@ def remote_title_display(name: str, remote: bool, mode: str) -> str:
         head, sep, tail = rest.partition(":")
         return tail if sep else rest
     return name
+
+
+# ── 앱이 낸 **ANSI 색**(SGR 30–37·90–97)을 hex 로 옮길 때 쓰는 팔레트 (pytmux-205) ──
+#
+# 화면에 나가는 것은 결국 truecolor 라 「빨강」을 어떤 hex 로 적을지 누군가는 정해야 한다
+# (Textual 의 `ANSIToTruecolor` 필터가 그 자리다 · `App.ansi_theme_*`). 그 기본값이
+# **Rich MONOKAI** 인데, 그 테마의 ANSI 표는 보통 터미널과 많이 다르다 — 실측(2026-08-22):
+# 빨강(1·9) `#f4005f` · 밝은검정(8) `#625e4c`. 그래서 패널 앱이 `ESC[31m` 을 내면 화면에는
+# **자홍**이, `ESC[90m` 을 내면 **올리브**가 찍혔다(제보 pytmux-205 의 그 두 색이 정확히 이것).
+#
+# 그래서 표준 팔레트(xterm/VGA 기본 16색)로 바꾼다. ⛔ 새 표를 손으로 적지 않는다 —
+# Rich 의 `DEFAULT_TERMINAL_THEME` 이 이미 그 값이고, **이 저장소의 다른 자리도 이미 그것을
+# 쓰고 있다**: `_darken_style`·`_dim_inactive_style` 의 `Color.get_truecolor()` 는 테마를
+# 안 주므로 Rich 기본값 = 이 표를 쓴다. 종전에는 그래서 같은 ANSI 색이 **그리는 자리(MONOKAI)와
+# 어둡게 하는 자리(표준)에서 서로 다른 색**이었다 — 이 상수가 그 둘을 한 표로 모은다.
+#
+# ⚠ 기본 전경/배경(ColorType.DEFAULT)만은 Rich 기본값(검정 글자·흰 배경)을 안 쓴다 —
+# 그것을 쓰면 「기본색」이 어두운 화면에서 검정으로 찍힌다. 이 앱의 테마 폴백을 그대로 쓴다.
+# ★ 더 옳은 것은 **호스트 터미널에 실제 팔레트를 물어보는 것**(OSC 4)이고 그 기계는 이미
+#   있다(`launcher` 의 XTVERSION in-band 프로브) — 별건이라 여기서 안 한다.
+# ⚠ `Palette` 는 슬라이스를 안 받는다(`__getitem__` 이 번호 하나만 받는다) — 번호로 집는다.
+_ANSI_STD = [tuple(DEFAULT_TERMINAL_THEME.ansi_colors[i]) for i in range(16)]
+ANSI_PALETTE_THEME = TerminalTheme(
+    (0x12, 0x12, 0x12),               # 배경 = _THEME_FALLBACK["background"]
+    (0xE0, 0xE0, 0xE0),               # 전경 = _THEME_FALLBACK["foreground"]
+    _ANSI_STD[:8],                    # 0–7  표준
+    _ANSI_STD[8:],                    # 8–15 밝은 쪽
+)
 
 
 # p4v-tui 와 동일한 textual-dark 테마 색을 따른다(없으면 폴백).

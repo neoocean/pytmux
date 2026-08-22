@@ -68,3 +68,65 @@ async def test_the_gate_covers_both_trees():
     cwds = {os.path.basename(s.cwd) for s in check_all.steps()}
     assert "client" in cwds, "Rust 클라를 안 돈다"
     assert "pytmux" in cwds, "정본(서버·파이썬)을 안 돈다"
+
+
+async def test_every_step_has_a_deadline():
+    """스텝마다 **시한**이 있어야 한다(pytmux-194).
+
+    시한 없는 스텝의 침묵은 "아직 도는 중"과 구분이 안 된다 — 실제로 첫 스텝이 47분을
+    매달렸고 화면은 0바이트였다. 사람은 기다리다 Ctrl-C 를 치고, 그 CL 은 관문을 안
+    지나고 나간다.
+    """
+    for step in check_all.steps():
+        secs = check_all.step_timeout(step)
+        assert secs and secs > 0, f"{step.name} 에 시한이 없다"
+
+
+async def test_a_hanging_step_is_killed_with_its_grandchildren():
+    """매달린 스텝을 **손자까지** 걷고 FAIL 로 적는가.
+
+    이 시험이 손자를 보는 이유가 사고의 모양 그대로다: 그날 매달린 것은 자식
+    (`check_fixtures.py`)이 아니라 **손자**(`gen_plugin_client_cmds.py`)였다. 자식만
+    죽이면 손자가 파이프의 쓰기 끝을 쥐고 있어 `communicate()` 가 여전히 안 돌아온다 —
+    시한을 걸어 놓고도 매달리는, 가장 나쁜 모양이다.
+    """
+    import tempfile
+    import time
+
+    if os.name == "nt":
+        return          # `start_new_session` 이 POSIX 전용이라 이 상자에선 못 잰다
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pidfile = os.path.join(tmp, "grandchild.pid")
+        child = (
+            "import os, subprocess, sys, time\n"
+            "subprocess.Popen([sys.executable, '-c',\n"
+            "  \"import os,sys,time; open(sys.argv[1],'w').write(str(os.getpid()));\"\n"
+            "  \"time.sleep(300)\", %r])\n"
+            "sys.stdout.write('시작했다\\n'); sys.stdout.flush()\n"
+            "time.sleep(300)\n" % pidfile
+        )
+        step = check_all.Step("매달림", [sys.executable, "-c", child],
+                              os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "매달린 스텝을 걷는지 잰다")
+        started = time.monotonic()
+        out, verdict, _secs = check_all.run(step, dict(os.environ), timeout=2.0)
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 30, f"시한이 안 먹었다 — {elapsed:.1f}초 매달렸다"
+        assert verdict and "시한" in verdict, f"매달림을 FAIL 로 안 적었다: {verdict!r}"
+        # 어디까지 갔나가 남아야 한다 — 그날 사람이 `ps` 로 트리를 떠야 알아낸 그것.
+        assert "시작했다" in out, "죽이기 전 출력을 안 건졌다"
+
+        for _ in range(100):                     # 손자가 죽었나 (최대 10초)
+            if not os.path.exists(pidfile):
+                time.sleep(0.1)
+                continue
+            pid = int(open(pidfile).read().strip() or 0)
+            try:
+                os.kill(pid, 0)
+            except (ProcessLookupError, PermissionError):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("손자가 살아남았다 — 프로세스 그룹째 안 걷었다")

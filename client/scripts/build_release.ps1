@@ -43,6 +43,21 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "build_release: 갓 구운 이진에 이 상자의 경로가 남았다 — build\ 에 넣지 않는다. remap 이 안 먹었다(CARGO_HOME 확인)."
 }
 
+# 방금 링크된 서드파티 크레이트가 **전부** 저작권 고지 안에 있나(pytmux-193). 근거는
+# `build_release.sh` 의 같은 자리에 적었다 — 요지: 이진만 받아 간 사람 손에 고지가
+# 닿아야 하고, 여기서 재는 것은 「이 이진을 덮나」이지 「고지가 최신인가」가 아니다.
+& $py (Join-Path $client "scripts\third_party_notices.py") --covers
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "build_release: 이 이진의 서드파티 고지가 모자라다 — build\ 에 넣지 않는다."
+}
+
 Copy-Item $bin (Join-Path $client "build\$out") -Force
 $size = (Get-Item (Join-Path $client "build\$out")).Length
+
+# 고지를 이진 옆에 둔다(sh 쪽과 같다 — 정본은 client\THIRD-PARTY-NOTICES.md 한 벌).
+# ⚠ 줄바꿈 이음(백틱)을 안 쓴다 — 뒤에 공백 하나만 붙어도 그 줄이 조용히 끊긴다.
+$notices = Join-Path $client "THIRD-PARTY-NOTICES.md"
+Copy-Item $notices (Join-Path $client "build\THIRD-PARTY-NOTICES.md") -Force
+
 Write-Host "build_release: build\$out ($size bytes) — p4 edit/add 후 제출할 것"
+Write-Host "build_release: build\THIRD-PARTY-NOTICES.md 도 함께 갱신했다 — 같이 제출할 것"

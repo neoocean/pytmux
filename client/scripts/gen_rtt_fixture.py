@@ -88,8 +88,12 @@ def graph_data(hist, thr=0.4, width=48, height=5):
     if not hist or width == 0 or height == 0:
         return None
 
-    from clientconn._RestartVersionMixin import _RTT_WINDOW
-    span = _RTT_WINDOW
+    # ⛔ 클래스는 모듈이 아니다 — `from clientconn._RestartVersionMixin import …` 는
+    #   어느 트리에서도 안 도는 줄이었고(`ModuleNotFoundError: clientconn`), 그것 하나가
+    #   **합본 게이트의 첫 스텝을 통째로 FAIL** 로 만들고 있었다. 값의 주인도 그 클래스가
+    #   아니라 `_NetReconnectMixin` 이다(위 §Stub 이 이미 그렇게 읽는다 — 한 파일 안에서
+    #   같은 값을 두 술어로 물던 자리다).
+    span = clientconn._NetReconnectMixin._RTT_WINDOW
 
     buckets = [None] * width
     raw = []

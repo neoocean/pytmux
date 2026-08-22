@@ -22,6 +22,10 @@
   실패로 본다.
 - **한 스텝이 넘어져도 나머지를 돈다.** 첫 실패에서 멈추면 "고칠 것이 몇 개인가"를 못
   본다 — 한 번 돌려 전부 보는 것이 이 파일의 값이다.
+- **매달림도 실패다.** 스텝마다 시한이 있고(`STEP_TIMEOUT`) 넘으면 손자까지 걷어 FAIL
+  로 적는다. 그리고 스텝 이름은 **시작할 때** 찍는다 — 시한도 진행 표시도 없던 시절에
+  이 게이트가 첫 스텝에서 47분 동안 0바이트였고, 그때 침묵은 "아직 도는 중"과 구분이
+  안 됐다(pytmux-194).
 
 # 순서
 
@@ -33,6 +37,7 @@ import locale
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -55,6 +60,45 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(encoding="utf-8", errors="backslashreplace")
     except (AttributeError, ValueError):
         pass
+
+
+# 한 스텝이 이보다 오래 끌면 **매달린 것**으로 본다(pytmux-194).
+#
+# 왜 이 자리에 시한이 있어야 하나: 2026-08-09 에 첫 스텝(픽스처 신선도)이 손자
+# 프로세스의 비-데몬 스레드 때문에 **47분 동안 0바이트**로 매달렸다. 게이트에 시한이
+# 없으면 그 침묵은 "아직 도는 중"과 구분이 안 되고, 사람은 기다리다 Ctrl-C 를 친다 —
+# 그 CL 은 관문을 안 지나고 나간다. **침묵이 초록으로 읽히면 안 된다**는 이 저장소의
+# 규율이 여기서는 "침묵이 무한대기면 안 된다"다.
+#
+# 값은 이 상자의 실측(2026-08-17 · `--fast` 한 회차)에 **여섯 배**를 뒀다: 픽스처
+# 신선도 95.1s · 계층 게이트 96.4s · 라이선스 경계 18.2s · 패리티 래칫 53.4s · 미러
+# 위생 75.9s.
+# ⚠ **라이선스 경계는 그날 늦게 늘었다**(pytmux-193): 외부 의존과 배포 고지를 함께 재면서
+# 26.7s 가 됐고, 다른 cargo 가 패키지 캐시 잠금을 쥐고 있으면 **146s** 까지 갔다(실측).
+# 그래도 시한을 안 줄인 이유는 아래와 같다 — 잴 것이 늘어난 스텝에 촘촘한 시한을 물리면
+# 그 스텝이 **제 손으로 거짓 빨강**을 만든다.
+# ⛔ 빡빡하게 잡지 않는 이유가 있다 — 이 상자는 러너와 세션이 **동시에**
+# 전량 스위트를 돌리는 자리라(부하로 벽시계 시험이 붉는 것이 기록돼 있다) 시한이
+# 촘촘하면 게이트가 **제 손으로 거짓 빨강**을 만든다. 47분을 10분으로 줄이는 것이 이
+# 시한의 값이고, 100초를 120초로 줄이는 것은 아니다.
+#
+# ⚠ 넘으면 그 스텝만 FAIL 로 적고 **나머지를 계속 돈다** — 이미 "한 스텝이 넘어져도
+# 나머지를 돈다"가 이 파일의 계약이다. `PYTMUX_STEP_TIMEOUT` 로 덮을 수 있다(0 이면
+# 시한 없음 — 아주 느린 상자에서 디버깅할 때).
+STEP_TIMEOUT = 600.0
+SLOW_STEP_TIMEOUT = 3600.0
+
+
+def step_timeout(step):
+    """이 스텝에 줄 시한(초). `None` 이면 안 잰다."""
+    override = os.environ.get("PYTMUX_STEP_TIMEOUT")
+    if override:
+        try:
+            secs = float(override)
+        except ValueError:
+            secs = 0.0
+        return secs if secs > 0 else None
+    return SLOW_STEP_TIMEOUT if step.slow else STEP_TIMEOUT
 
 
 class Step:
@@ -219,13 +263,22 @@ def steps():
         ),
         Step(
             "라이선스 경계", [bash or "bash", os.path.join("scripts", "check_licenses.sh")], CLIENT,
-            "MIT 경계 — 의존 그래프의 로컬 크레이트가 허용 목록과 정확히 같은가",
+            "MIT 경계 — 로컬 크레이트가 허용 목록과 같은가 + 외부 의존의 라이선스와"
+            " 배포 이진의 저작권 고지(pytmux-193)",
             check=rc_verdict, needs=lambda: no_bash,
         ),
         Step(
             "패리티 래칫",
             ["cargo", "test", "-p", "proto", "--test", "parity"], CLIENT,
             "정본 표면을 덮은 수가 **의도 없이** 움직이지 않았나",
+            check=cargo_verdict,
+            needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
+        ),
+        Step(
+            "상호작용 계약",
+            ["cargo", "test", "-p", "proto", "--test", "interaction"], CLIENT,
+            "새 판이 «정본과 같게 구나»를 재고 들어왔나(pytmux-185 — 있는 것과 같게 구는"
+            " 것은 다른 질문이다)",
             check=cargo_verdict,
             needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
         ),
@@ -288,14 +341,55 @@ def decode(raw):
     return raw.decode("utf-8", "backslashreplace")
 
 
-def run(step, env):
+def _kill_tree(proc):
+    """자식**과 그 손자**를 죽인다 — pytmux-194 가 가르친 자리.
+
+    `subprocess` 의 `timeout` 은 **직접 자식**만 죽인다. 그런데 매달렸던 것은 손자였다
+    (`check_fixtures.py` → `gen_plugin_client_cmds.py`). 자식만 죽이면 손자가 그대로
+    살아 파이프의 쓰기 끝을 쥐고, `communicate()` 는 **여전히 안 돌아온다** — 시한을
+    걸어 놓고도 매달리는, 가장 나쁜 모양이다.
+
+    그래서 POSIX 에서는 자식을 **새 세션**으로 띄우고(위 `run`) 프로세스 그룹째 죽인다.
+    ⚠ Windows 에는 이 수단이 없어 직접 자식만 죽인다(`start_new_session` 이 POSIX
+    전용이다). 그 상자에서는 시한이 손자까지는 못 미친다 — 안 되는 것을 되는 척하지
+    않는다.
+    """
+    try:
+        if os.name != "nt":
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        else:
+            proc.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()
+
+
+def run(step, env, timeout=None):
     started = time.monotonic()
     try:
         # **바이트로 받아 우리가 디코딩한다**(`text=True` 를 안 쓴다) — 아래 `decode` 주석.
-        proc = subprocess.run(step.argv, cwd=step.cwd, env=env, capture_output=True)
+        # POSIX 에서는 **새 세션**으로 띄운다 — 시한이 넘었을 때 손자까지 걷으려면
+        # 프로세스 그룹이 필요하다(`_kill_tree`).
+        proc = subprocess.Popen(
+            step.argv, cwd=step.cwd, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            **({"start_new_session": True} if os.name != "nt" else {}),
+        )
     except FileNotFoundError as exc:
         return None, f"실행할 수 없다: {exc}", time.monotonic() - started
-    out = decode(proc.stdout) + decode(proc.stderr)
+    try:
+        raw_out, raw_err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        # 죽인 뒤 남은 출력을 마저 받는다 — 시한에 걸린 스텝일수록 **어디까지 갔나**가
+        # 유일한 단서다(그날 사람이 `ps` 로 트리를 떠야 알아낸 그것).
+        try:
+            raw_out, raw_err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            raw_out = raw_err = b""
+        out = decode(raw_out) + decode(raw_err)
+        secs = time.monotonic() - started
+        return out, f"시한 {timeout:.0f}초를 넘겨 죽였다 — 매달렸다(출력 {len(out)}자)", secs
+    out = decode(raw_out) + decode(raw_err)
     verdict = (step.check or rc_verdict)(out, proc.returncode)
     return out, verdict, time.monotonic() - started
 
@@ -366,17 +460,26 @@ def main():
 
     env = child_env()   # 자식이 물려받을 것은 전부 저기 한 곳에서 온다(위 함수 머리말).
 
-    print(f"합본 게이트 — {len(todo)}단계" + (" (--fast)" if args.fast else ""))
+    print(f"합본 게이트 — {len(todo)}단계" + (" (--fast)" if args.fast else ""), flush=True)
     failures, skipped = [], []
     for step in todo:
         reason = step.needs()
         if reason:
             skipped.append((step.name, reason))
-            print(f"  … {step.name:<14} SKIP  ({reason})")
+            print(f"  … {step.name:<14} SKIP  ({reason})", flush=True)
             continue
-        out, verdict, secs = run(step, env)
+        # ★ **시작할 때 찍는다**(pytmux-194). 종전에는 끝나야 한 줄이 났고, 파이프로
+        #   받으면 버퍼링까지 겹쳐 **파일 크기가 0바이트**였다 — 어느 스텝에서 막혔는지
+        #   알아내려고 `ps` 로 프로세스 트리를 떠야 했다.
+        # ⛔ 터미널일 때만 제자리 갱신(`\r`)하는 재주는 안 부린다 — 그러면 사람이 보는
+        #   것과 파일에 남는 것이 달라지고, 이 게이트의 로그는 대개 파일로 읽힌다.
+        secs_cap = step_timeout(step)
+        print(f"  ..  {step.name:<14} 도는 중"
+              + ("" if secs_cap is None else f" (시한 {secs_cap:.0f}초)"), flush=True)
+        out, verdict, secs = run(step, env, timeout=secs_cap)
         mark = "OK  " if verdict is None else "FAIL"
-        print(f"  {mark} {step.name:<14} {secs:6.1f}s" + ("" if verdict is None else f"  — {verdict}"))
+        print(f"  {mark} {step.name:<14} {secs:6.1f}s"
+              + ("" if verdict is None else f"  — {verdict}"), flush=True)
         if verdict is not None:
             failures.append((step.name, verdict, out))
 
