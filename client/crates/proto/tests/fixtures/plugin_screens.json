@@ -11,8 +11,8 @@
   "sites": {
     "confirm": [
       "pytmuxlib/plugins/claude-name-sync/screenspec.py:183",
-      "pytmuxlib/plugins/mdir/__init__.py:781",
-      "pytmuxlib/plugins/mdir/__init__.py:817"
+      "pytmuxlib/plugins/mdir/__init__.py:786",
+      "pytmuxlib/plugins/mdir/__init__.py:822"
     ],
     "form": [
       "pytmuxlib/plugins/claude-code/screenspec.py:231"
@@ -27,18 +27,18 @@
       "pytmuxlib/plugins/p4-show-submitted-changelists/__init__.py:209"
     ],
     "panel": [
-      "pytmuxlib/plugins/mdir/__init__.py:645"
+      "pytmuxlib/plugins/mdir/__init__.py:650"
     ],
     "prompt": [
       "pytmuxlib/plugins/claude-code/screenspec.py:176",
       "pytmuxlib/plugins/claude-name-sync/screenspec.py:164",
       "pytmuxlib/plugins/claude-name-sync/screenspec.py:173",
       "pytmuxlib/plugins/claude-name-sync/screenspec.py:200",
-      "pytmuxlib/plugins/mdir/__init__.py:496",
-      "pytmuxlib/plugins/mdir/__init__.py:756",
-      "pytmuxlib/plugins/mdir/__init__.py:764",
-      "pytmuxlib/plugins/mdir/__init__.py:768",
-      "pytmuxlib/plugins/mdir/__init__.py:774"
+      "pytmuxlib/plugins/mdir/__init__.py:501",
+      "pytmuxlib/plugins/mdir/__init__.py:761",
+      "pytmuxlib/plugins/mdir/__init__.py:769",
+      "pytmuxlib/plugins/mdir/__init__.py:773",
+      "pytmuxlib/plugins/mdir/__init__.py:779"
     ],
     "table": [
       "pytmuxlib/plugins/claude-code/screenspec.py:406",
@@ -47,7 +47,7 @@
     "text": [
       "pytmuxlib/plugins/claude-code/__init__.py:1801",
       "pytmuxlib/plugins/claude-code/screenspec.py:363",
-      "pytmuxlib/plugins/mdir/__init__.py:717",
+      "pytmuxlib/plugins/mdir/__init__.py:722",
       "pytmuxlib/plugins/p4-show-submitted-changelists/__init__.py:229"
     ]
   },

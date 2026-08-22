@@ -30,7 +30,7 @@
     "이진 파일이라 안 보입니다": "Binary file — not shown",
     "<드라이브>": "<DRIVE>",
     "빈 디렉터리입니다": "Empty directory",
-    "(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · Esc 닫기)": "(Enter open · . up · t tag · u tag all · c copy · m move · d delete · r rename · k new directory · v view · h hidden · p cd panel · Esc close)",
+    "(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · F10 트리 · Esc 닫기)": "(Enter open · . up · t tag · u tag all · c copy · m move · d delete · r rename · k new directory · v view · h hidden · p cd panel · F10 tree · Esc close)",
     "파일 마스크 (예: *.txt *.md · 빈 값이면 해제)": "File mask (e.g. *.txt *.md · empty clears)",
     "대상을 안 적었습니다": "No destination was given",
     "대상이 없습니다": "Nothing to work on",
