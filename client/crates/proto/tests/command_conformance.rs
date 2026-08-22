@@ -209,6 +209,10 @@ fn only_the_two_known_commands_skip_the_full_resync() {
             // 재동기할 화면이 없다.
             ("save_layout", "handled"),
             ("save_tab_layout", "handled"),
+            // 회신이 **화면이 아니라 결과 목록**이다(`{"t":"search_results"}`) — 요청
+            // 클라에게만 가고 세션 상태를 안 바꾼다(pytmux-27). 결과 판이 그 목록을
+            // 그리고, 고른 항목은 `search_goto`(FULL)로 다시 물어 점프한다.
+            ("search_all", "handled"),
             ("set_buffer", "handled"),
             // 핸들러가 **새 status 를 전 클라에 방송**한다(`_cmd_set_plugin_enabled`) —
             // 화면 갱신은 그 status 가 한다. 관리 화면은 그래서 낙관적으로 안 고친다.

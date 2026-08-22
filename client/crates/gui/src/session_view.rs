@@ -488,6 +488,11 @@ pub struct SessionView {
     remote: RemoteTranscripts,
     /// 마지막으로 파일을 들여다본 시각.
     last_look: Instant,
+    /// 전역 검색 회신을 기다리고 있나(pytmux-27 · 정본 `_want_search_all` 과 같은
+    /// 게이트). `search_all` 을 보낼 때 켜고, `search_results` 가 오면(기다리던
+    /// 회신이든 아니든) 끈다 — 뒤늦거나 남의 요청의 회신을 결과 판으로 착각해
+    /// 열지 않기 위해서다.
+    awaiting_search_all: bool,
 }
 
 /// 팔레트 한 줄의 정체 — 코어 표의 자리이거나 플러그인이 기여한 자리다(설계 Tier A).
@@ -626,6 +631,7 @@ impl SessionView {
             // 붙자마자 한 번 본다 — 첫 프레임에 이미 대화가 있으면 빈 구역을 보일
             // 이유가 없다.
             last_look: Instant::now() - CLAUDE_POLL,
+            awaiting_search_all: false,
         }
     }
 
@@ -1012,6 +1018,10 @@ impl SessionView {
                 // 플러그인이 준 목록에서 골랐다 — **그 줄의 뜻**을 되돌려준다(P4).
                 ScreenKey::Chosen(row) if screen_before == Some(Screen::PluginView) => {
                     self.plugin_view_chosen(row);
+                }
+                // 전역 검색 결과에서 골랐다(pytmux-27) — 그 탭·패널·줄로 뛴다.
+                ScreenKey::Chosen(row) if screen_before == Some(Screen::SearchResults) => {
+                    self.search_result_chosen(row);
                 }
                 ScreenKey::Chosen(row) if screen_before == Some(Screen::Menu) => {
                     // ★ 메뉴에서 고른 것도 **키로 누른 것과 같은 길**을 탄다 — 그래야
@@ -1422,6 +1432,12 @@ impl SessionView {
                 self.mode.enter_scroll();
                 self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
                 self.screens.ask(Prompt::SearchScrollback, "");
+                return true;
+            }
+            // 전역 검색(pytmux-27). `SearchScrollback` 과 갈리는 자리 — 이건 스크롤
+            // 모드로 안 들어간다(결과 판이 따로 열리고, 점프할 때 그때 스크롤 모드다).
+            Action::SearchAll => {
+                self.screens.ask(Prompt::SearchAll, "");
                 return true;
             }
             Action::ShowCommands => {
@@ -3143,6 +3159,8 @@ impl SessionView {
                         let was_status = matches!(other, ServerMessage::Status(_));
                         let was_restart_check =
                             matches!(other, ServerMessage::RestartCheck { .. });
+                        let was_search_results =
+                            matches!(other, ServerMessage::SearchResults(_));
                         let changed = self.state.apply(other);
                         // ★ 플러그인 표면을 화면 상태에 실어 준다(설계 Tier A · P2).
                         //   키 처리(메뉴 층·설정 분류 이동)와 그리기가 **같은 목록**을
@@ -3150,6 +3168,14 @@ impl SessionView {
                         //   되고 그건 눈으로 못 찾는다.
                         if was_status {
                             self.screens.set_plugins(self.state.plugin_surface().clone());
+                        }
+                        // 전역 검색 결과(pytmux-27) — **기다리던 회신일 때만** 연다
+                        // (정본 `_want_search_all` 과 같은 게이트). 뒤늦거나 남의
+                        // 요청의 회신이면 상태만 갈아 끼워지고 화면은 그대로다.
+                        if was_search_results && self.awaiting_search_all {
+                            self.awaiting_search_all = false;
+                            self.screens.open(Screen::SearchResults);
+                            self.screens.select_row(0);
                         }
                         if let Some(is_list) = opened {
                             // ★ 물음·확인은 **이 클라가 이미 잘하는 일**이다(입력 이력·
@@ -5111,6 +5137,74 @@ impl SessionView {
         column
     }
 
+    /// 전역 검색 결과(pytmux-27) — 탭·패널·줄·미리보기 4열. 정본 `SearchResultsScreen`
+    /// 과 같은 자료를 GUI 관례(픽셀 폭 칸 — `render_plugin_view` 의 "table" 모양과
+    /// 같은 짜임)로 그린다. 상한·무응답 상류 안내는 **판 안**에 둔다(테두리 제목은
+    /// 넘치면 조용히 잘려 no-silent-caps 를 어긴다).
+    fn render_search_results(&self, column: Flex) -> Flex {
+        let Some(sr) = self.state.search_results() else {
+            return column;
+        };
+        let mut column = column;
+        let notes = sr.notes();
+        if !notes.is_empty() {
+            column = column.with_child(self.text(notes, 12., palette::DIM));
+        }
+        if sr.items.is_empty() {
+            return column.with_child(self.text(t("검색 결과가 없다"), 13., palette::DIM));
+        }
+        let budget = self.panel_budget();
+        let selected = self.screens.selected().min(sr.items.len() - 1);
+        let start = (selected + 1).saturating_sub(budget);
+        for (row, item) in sr.items.iter().enumerate().skip(start).take(budget) {
+            // 원격 히트는 정본과 같은 색으로 갈린다(`REMOTE_PINK`).
+            let tab_fg = if item.remote { REMOTE_PINK } else { palette::DIM };
+            let line = Flex::row()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(8.)
+                .with_child(
+                    ConstrainedBox::new(self.text(
+                        footer::elide(&format!("{}:{}", item.win + 1, item.tab), 24),
+                        12.,
+                        tab_fg,
+                    ))
+                    .with_width(180.)
+                    .finish(),
+                )
+                .with_child(
+                    ConstrainedBox::new(self.text(
+                        footer::elide(&item.title, 16),
+                        12.,
+                        palette::DIM,
+                    ))
+                    .with_width(120.)
+                    .finish(),
+                )
+                .with_child(
+                    ConstrainedBox::new(self.text(
+                        if item.line >= 0 { item.line.to_string() } else { String::new() },
+                        12.,
+                        palette::DIM,
+                    ))
+                    .with_width(48.)
+                    .finish(),
+                )
+                .with_child(self.text(item.text.clone(), 13., palette::FG));
+            let boxed = Container::new(line.finish()).with_uniform_padding(1.);
+            column = column.with_child(self.clickable_panel(
+                row,
+                base::PanelTarget::Row(row),
+                if row == selected {
+                    boxed.with_background_color(palette::SELECTED_BG).finish()
+                } else {
+                    boxed.finish()
+                },
+            ));
+        }
+        column
+    }
+
     /// 플러그인이 물은 것에 답했다(`prompt` 의 글 · `confirm` 의 예). 취소면 `None` 이고
     /// 그때는 **아무 일도 안 일어난다** — 되돌릴 수 없는 것 앞의 규칙 그대로다.
     fn answer_plugin_ask(&mut self, answer: Option<String>) {
@@ -5145,6 +5239,31 @@ impl SessionView {
         let id = spec.id.clone();
         let input = spec.rows.get(row).map(|r| r.key.clone());
         self.pending.push(Outgoing::Command(Command::PluginAction { id, act, row, input }));
+    }
+
+    /// 검색 결과 한 줄을 골랐다 — 그 자리로 `search_goto` 를 보낸다(pytmux-27).
+    ///
+    /// `route` 는 해석하지 않고 그 항목이 실어 온 그대로 되돌린다 — 좌표계를 아는 건
+    /// 서버 하나다(로컬이면 빈 배열, 원격 히트면 서버가 캐스케이드로 릴레이한다).
+    /// 점프 뒤에는 스크롤 모드다(정본 `_prompt_done` 의 `mode = "scroll"` 과 같은 자리 —
+    /// 뛴 자리는 라이브 하단 밖이라, 평소 모드로 돌아오면 방향키가 패널로 가 버린다).
+    fn search_result_chosen(&mut self, row: usize) {
+        let Some(sr) = self.state.search_results() else { return };
+        let Some(item) = sr.items.get(row) else { return };
+        // `query` 는 이 결과판을 만든 검색어다(항목의 미리보기 글이 아니다) — 서버가
+        // 점프 시점에 그 줄이 스크롤백 상한에서 밀려났으면 **같은 쿼리로 근처를
+        // 재탐색**해 자리를 되찾는다(`search_all_hit_line`).
+        let cmd = Command::SearchGoto {
+            wid: item.wid,
+            win: item.win,
+            pane: item.pane,
+            line: item.line,
+            route: item.route.clone(),
+            query: sr.query.clone(),
+        };
+        self.pending.push(Outgoing::Command(cmd));
+        self.mode.enter_scroll();
+        self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
     }
 
     /// 팔레트 필터 한 벌 — **이름 또는 설명**으로 거른다(정본과 같은 규칙).
@@ -6622,6 +6741,12 @@ impl SessionView {
         } else if prompt == Prompt::SetPrefix {
             self.apply_prefix_answer(&answer);
         } else if let Some(command) = Self::answered(prompt, &answer) {
+            // 이 회신을 기다리고 있다는 표식(정본 `_want_search_all` 과 같은 게이트) —
+            // 뒤늦거나(이전 검색의 느린 상류 회신) 남의 요청의 회신을 결과 판으로
+            // 착각해 열지 않으려는 것이다. 끄는 자리는 그 메시지를 받는 곳(§apply).
+            if matches!(command, Command::SearchAll { .. }) {
+                self.awaiting_search_all = true;
+            }
             self.pending.push(Outgoing::Command(command));
         }
     }
@@ -6759,6 +6884,11 @@ impl SessionView {
                 query: Some(answer.to_owned()),
                 down: false,
             }),
+            // 빈 대답은 검색이 아니다(정본도 값이 있어야 보낸다). `awaiting_search_all`
+            // 는 이 명령을 실제로 큐에 넣는 호출부(§`Action::SearchAll` 처리)가 켠다 —
+            // 여기서는 명령 모양만 짓는다.
+            Prompt::SearchAll => (!answer.is_empty())
+                .then(|| Command::SearchAll { query: answer.to_owned() }),
         }
     }
 
@@ -7260,7 +7390,14 @@ impl SessionView {
         let spec_title = (screen == Screen::PluginView)
             .then(|| self.state.plugin_screen().map(|s| s.say_title()))
             .flatten()
-            .filter(|t| !t.is_empty());
+            .filter(|t| !t.is_empty())
+            // 검색 결과의 진짜 제목은 **회신이 준다**(쿼리+건수 — 정본 `headline_text()`).
+            // 상한·무응답 상류는 여기 안 싣는다 — 판 안(`notes()`)의 몫이다.
+            .or_else(|| {
+                (screen == Screen::SearchResults)
+                    .then(|| self.state.search_results().map(|sr| sr.headline()))
+                    .flatten()
+            });
         let title = self.screens.confirm_title().unwrap_or(screen.title());
         header = header.with_child(match spec_title {
             Some(t) => self.text(t, 14., palette::FG),
@@ -7302,6 +7439,7 @@ impl SessionView {
             Screen::Settings => self.render_settings(column),
             Screen::Plugins => self.render_plugins(column),
             Screen::PluginView => self.render_plugin_view(column),
+            Screen::SearchResults => self.render_search_results(column),
             Screen::Menu => self.render_menu(column),
             Screen::Notices => self.render_notices(column),
             Screen::Summary => self.render_summary(column),

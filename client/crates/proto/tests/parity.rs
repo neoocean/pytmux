@@ -239,10 +239,8 @@ static ESC_KEYS: &[Item] = &[
     i("e_e", Done, "esc e — 패널에 ESC"),
     i("e_esc", Done, "명령 모드에서 두 번째 ESC 가 패널로 간다"),
     // esc f — 열린 **모든 탭·패널**의 스크롤백을 한 번에 훑어 결과 목록을 띄우고 그
-    // 자리로 점프한다(pytmux-27 ①, 2026-08-05 에 정본에만 들어갔다). GUI 는 서버
-    // 명령(`search_all`/`search_goto`)도 결과 화면도 아직 없다 — `SearchResultsScreen`
-    // 줄과 짝이다.
-    i("e_f", Missing, ""),
+    // 자리로 점프한다(pytmux-27). `SearchResultsScreen` 줄과 짝이다.
+    i("e_f", Done, "esc f — 전역 검색 물음(`search_all`)을 연다 · 메뉴 search_all 과 같은 자리"),
     i("e_help", Done, "esc ? — 키 도움말 화면"),
     i(
         "e_ins",
@@ -360,7 +358,7 @@ static SCREENS: &[Item] = &[
     i(
         "MenuScreen",
         Done,
-        "정본 줄 전부(파이썬 순서) — search 는 G9t 에서 서버 `search` 로 배선. 2026-08-05 에 정본이 더한 search_all 만 빠져 있다(SearchResultsScreen 줄과 짝)",
+        "정본 줄 전부(파이썬 순서) — search 는 G9t 에서 서버 `search` 로, search_all 은 pytmux-27 에서 서버 `search_all` 로 배선",
     ),
     i("MergeRemoteTabScreen", Done, "같은 호스트의 다른 원격 탭 · h/v 로 방향"),
     i("NoticeHistoryScreen", Done, "등급 기호·색 · 새것이 위 · 상한 200"),
@@ -370,9 +368,9 @@ static SCREENS: &[Item] = &[
         Done,
         "한 줄 입력·확정·취소 + 인자 이력 후보(파이썬 arghist 와 같은 파일·같은 버킷 — ↑↓ 고르고 Tab 채움). 명령 이름 완성은 팔레트가 그 자리다",
     ),
-    // 전역 검색 결과 판(pytmux-27 ①) — 탭·패널·줄 미리보기 목록에서 Enter 로 그
+    // 전역 검색 결과 판(pytmux-27) — 탭·패널·줄 미리보기 목록에서 Enter 로 그
     // 자리(탭+패널+스크롤)로 뛴다. 여는 길은 `esc f` 와 컨텍스트 메뉴 `search_all`.
-    i("SearchResultsScreen", Missing, ""),
+    i("SearchResultsScreen", Done, "탭·패널·줄·미리보기 4열 · Enter 로 search_goto"),
     i("SettingsScreen", Done, "범주별 목록 — 파이썬 34줄 전부 대응(마지막 남았던 language 까지)"),
     i(
         "TabSwitcherScreen",
@@ -412,9 +410,9 @@ static TABLES_ONLY: &[&[Item]] = &[COMMANDS, PREFIX_KEYS, ESC_KEYS, SETTINGS, SC
 static SCORE: &[(&str, usize, usize)] = &[
     ("commands", 88, 0),
     ("prefix_keys", 32, 0),
-    ("esc_keys", 18, 0),
+    ("esc_keys", 19, 0),
     ("settings", 38, 0),
-    ("screens", 17, 0),
+    ("screens", 18, 0),
 ];
 
 /// 픽스처의 명령 전부가 팔레트에 실려 있는가 — `commands`/`list-commands` 의 Done 을

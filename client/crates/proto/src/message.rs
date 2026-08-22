@@ -215,6 +215,12 @@ pub enum ServerMessage {
     /// **무엇을 어디에 쓸지**를 런으로 준다 — 로직은 플러그인 한 벌로 남는다.
     #[serde(rename = "plugin_cells")]
     PluginCells(crate::session::PluginCells),
+    /// 전역 검색(`search_all`) 회신 — 모든 로컬 탭·패널(+원격 중계)의 히트 목록
+    /// (pytmux-27). 요청한 클라만 봐야 하므로(서버 `search_all` 은 HANDLED) 이 메시지가
+    /// 왔다고 곧장 화면을 열지 않는다 — 뒤늦거나 남의 요청의 회신을 걸러야 한다
+    /// (정본 `_want_search_all` 과 같은 게이트, 여는 판단은 뷰의 몫이다).
+    #[serde(rename = "search_results")]
+    SearchResults(crate::session::SearchResults),
     #[serde(rename = "ok")]
     Ok(serde_json::Value),
     #[serde(rename = "pong")]
@@ -244,6 +250,7 @@ impl ServerMessage {
             Self::PluginScreen(_) => "plugin_screen",
             Self::PluginScreenClose { .. } => "plugin_screen_close",
             Self::PluginCells(_) => "plugin_cells",
+            Self::SearchResults(_) => "search_results",
             Self::Blocks { .. } => "blocks",
             Self::Selection { .. } => "selection",
             Self::Claude { .. } => "claude",

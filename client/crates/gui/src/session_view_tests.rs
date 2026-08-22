@@ -3783,6 +3783,12 @@ fn every_action_does_something_in_this_view() {
 static NOT_OPENED_BY_AN_ACTION: &[(&str, &str)] = &[
     ("MergeRemote", "원격 탭 **목록이 와야** 고를 것이 있다(서버 회신이 연다)"),
     ("PluginView", "플러그인이 준 스펙(`plugin_screen`)이 연다"),
+    (
+        "SearchResults",
+        "`Action::SearchAll` 은 **물음**(`Prompt::SearchAll`)만 연다 — 결과 판은 \
+         `search_results` 회신이 오고 그 회신을 기다리고 있을 때만 연다(pytmux-27, \
+         정본 `_want_search_all` 과 같은 게이트)",
+    ),
     ("ShellOutput", "`run-shell` 의 **결과가 온 뒤에** 열린다"),
 ];
 

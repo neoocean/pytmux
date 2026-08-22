@@ -58,6 +58,7 @@ fn all_screens() -> Vec<Screen> {
         Screen::InfoTabs,
         Screen::Compose,
         Screen::Settings,
+        Screen::SearchResults,
     ];
     // 변형을 빠뜨리면 이 화면은 아래 검사를 한 번도 안 받는다(`keymap` 의 액션 전수와
     // 같은 장치). 숫자를 박는 대신 **중복 없음 + 개수**로 잡는다.
@@ -169,12 +170,6 @@ fn every_canon_screen_is_claimed_or_excused() {
         // 정본은 설정 값 입력을 별도 모달로 띄우지만 우리는 **같은 Prompt 화면**을 쓴다
         // (패리티 표 `_SettingInputScreen` 행과 같은 판정). 그래서 우리 쪽 앵커는 하나뿐이다.
         ("_SettingInputScreen", "우리는 설정 값 입력도 Prompt 화면 하나로 받는다"),
-        // 전역 검색 결과 판(pytmux-27 ①, 2026-08-05). **못 맡는 것이 아니라 아직
-        // 없는 것**이다 — 서버 명령(`search_all`/`search_goto`)도 결과 화면도 정본에만
-        // 들어갔다. 그 부채는 패리티 표가 든다(`parity.rs` 의 `SearchResultsScreen`·
-        // `e_f` = Missing). 여기서 지우면 "정본에 없는 화면"이 되어 격차가 사라진 것처럼
-        // 보이므로 이유를 달아 남긴다.
-        ("SearchResultsScreen", "정본 선행 — GUI 에 아직 결과 판이 없다(패리티 표 Missing)"),
     ];
     let fx = fixture();
     let claimed: Vec<&str> = all_screens().iter().filter_map(|s| s.canon_class()).collect();

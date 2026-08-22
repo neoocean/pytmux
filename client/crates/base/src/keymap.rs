@@ -354,6 +354,11 @@ pub enum Action {
     /// 한다(스크롤백이 거기 있다). 물음이 닫히면 스크롤 모드다(뷰가 지킨다 —
     /// 파이썬 `_prompt_done` 의 `mode = "scroll"` 과 같은 자리).
     SearchScrollback,
+    /// 전역 검색 물음을 연다(`esc f`·메뉴 search_all — pytmux-27). 열려 있는 모든
+    /// 로컬+원격 탭·패널을 훑는다 — [`Action::SearchScrollback`] 은 활성 패널
+    /// 하나 안에서 다음 히트로 넘어가는 것뿐이라 다른 화면·다른 서버 명령이다.
+    /// 대답은 서버 `search_all` 로 가고, 회신(결과 목록)이 오면 결과 화면이 열린다.
+    SearchAll,
     /// 지난 검색을 반복한다(스크롤 모드 `n`/`N`). `down` 이면 아래(최근) 방향.
     /// 검색어는 서버가 기억한다(`Pane.search_query`) — 클라가 다시 실을 것이 없다.
     SearchAgain { down: bool },
@@ -536,6 +541,7 @@ impl Action {
             Action::EnterScroll => "스크롤",
             Action::ToggleScroll => "스크롤 모드 토글",
             Action::SearchScrollback => "스크롤백 검색",
+            Action::SearchAll => "모든 탭·패널 검색",
             Action::SearchAgain { down: false } => "검색 반복 ↑",
             Action::SearchAgain { down: true } => "검색 반복 ↓",
             Action::JumpPrompt { up: true } => "이전 프롬프트로",
@@ -619,6 +625,8 @@ pub static BINDINGS: &[Binding] = &[
     b("c", Action::NewClaudeTab, false),
     b("p", Action::SplitTopBottom, false),
     b("shift-P", Action::TogglePin, false),
+    // 파이썬 클라의 `esc f`(e_f)와 같은 글자다(pytmux-27). 전역 검색 물음을 연다.
+    b("f", Action::SearchAll, false),
     // 명령 모드 안에서 vim·less 에게 ESC 를 주는 길. 그냥 `ESC` 는 모드에서 나가는 키다.
     b("e", Action::SendEscape, false),
     b("`", Action::SendBacktick, false),
@@ -771,6 +779,7 @@ pub static MENU: &[MenuEntry] = &[
     me("select_layout", "레이아웃 프리셋…", Action::ShowLayouts),
     me("next_layout", "다음 레이아웃 프리셋", Action::CycleLayout),
     me("search", "스크롤백 검색", Action::SearchScrollback),
+    me("search_all", "모든 탭·패널 검색", Action::SearchAll),
     me("kill_pane", "패널 삭제 ✕", Action::KillPane),
     me("sync", "입력 동기화 토글", Action::ToggleSync),
     me("autoresume", "토큰리밋 자동재개 토글", Action::ToggleAutoresume),
@@ -876,6 +885,7 @@ pub static MENU_TOPLEVEL: &[MenuTop] = &[
     MenuTop::Group("tab"),
     MenuTop::Separator,
     MenuTop::Item("search"),
+    MenuTop::Item("search_all"),
     MenuTop::Item("command"),
     MenuTop::Item("settings"),
     MenuTop::Item("mouse_help"),
@@ -1769,10 +1779,11 @@ fn variant_index(action: Action) -> usize {
         Action::FontScale { .. } => 106,
         Action::FontScaleReset => 107,
         Action::ToggleFullscreen => 112,
+        Action::SearchAll => 115,
     }
 }
 
-const ACTION_COUNT: usize = 115;
+const ACTION_COUNT: usize = 116;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1893,6 +1904,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::SetLang("ko"),
         Action::TogglePromptClear,
         Action::SearchScrollback,
+        Action::SearchAll,
         Action::SearchAgain { down: false },
         Action::FontScale { up: true },
         Action::FontScaleReset,

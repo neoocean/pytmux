@@ -270,12 +270,22 @@ static CONTRACTS: &[Contract] = &[
         Allowed(Ground::NativeOnly),
         "블록·Claude 요약 판 — 정본에 짝이 없다(§10-21ⓓ)",
     ),
+    c(
+        Screen::SearchResults,
+        Closes,
+        Defect("pytmux-273"),
+        "전역 검색 결과(pytmux-27). 정본 `SearchResultsScreen.on_key`(clientscreens.py \
+         3408~3410)는 `escape` 만 먹고(`event.stop()`) 그 밖의 키는 `ListView` 기본 \
+         처리로 흘러 **아무 일도 안 한다**(판이 그대로 있다). 우리는 `press_list` 의 \
+         `_ => close_top()` 한 팔이라 **아무 키나 닫는다** — Confirm·Notices·Version \
+         등과 같은 뿌리(pytmux-273)",
+    ),
 ];
 
 /// 지금 점수. **양방향 래칫**이다 — 늘어도 줄어도 여기를 고쳐야 한다(`parity.rs` 규칙 2).
 ///
 /// `(같다, 허용된 갈림, 결함, 못 쟀다)`.
-static SCORE: (usize, usize, usize, usize) = (1, 2, 10, 10);
+static SCORE: (usize, usize, usize, usize) = (1, 2, 11, 10);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4).
 ///
@@ -336,7 +346,8 @@ fn opened(screen: Screen) -> Screens {
         | Screen::Plugins
         | Screen::Hooks
         | Screen::Settings
-        | Screen::Summary => screens.open(screen),
+        | Screen::Summary
+        | Screen::SearchResults => screens.open(screen),
     }
     assert_eq!(
         screens.top(),

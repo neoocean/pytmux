@@ -247,4 +247,16 @@ pub static EN: &[(&str, &str)] = &[
     ("활동 모니터링 [on|off]", "Activity monitoring [on|off]"),
     ("활성 패널에 ESC 전달 (Shift+ESC 안 먹는 터미널용 — bind-key 로 전용 키에 바인딩)", "Send ESC to active pane (for terminals where Shift+ESC fails — bind to a key with bind-key)"),
     ("훅 목록 보기", "Show hook list"),
+    // ── session.rs — SearchResults(pytmux-27, 정본 clientscreens.SearchResultsScreen 과 같은 문구) ──
+    (
+        "전역 검색 «{q}» — {n}건 · 패널 {panes}개",
+        "Search all «{q}» — {n} hits · {panes} panes",
+    ),
+    (
+        "상한 {cap}건에서 잘렸다(검색어를 좁힐 것)",
+        "cut at the {cap} cap (narrow the query)",
+    ),
+    ("패널 {n}개는 {per}건까지만 실었다", "{n} pane(s) capped at {per}"),
+    ("원격 {ok}/{total}곳", "remote {ok}/{total}"),
+    ("빠진 곳 — {names}", "missing — {names}"),
 ];

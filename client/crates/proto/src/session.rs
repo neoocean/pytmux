@@ -1022,6 +1022,141 @@ pub struct SpanHit {
     pub x1: u16,
 }
 
+/// 전역 검색(`search_all`) 히트 한 줄(pytmux-27). 정본 `_search_scan_pane` /
+/// `remote_search_merge` 가 만드는 항목과 같은 모양이다.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct SearchHit {
+    /// 전역(=병합) 탭 index. **점프에 쓰지 않는다** — 표시 번호일 뿐이다(원격이면
+    /// 서버의 병합 순서라 로컬 `win` 과 다를 수 있다).
+    #[serde(default)]
+    pub win: usize,
+    /// 그 탭의 안정 id. 로컬 히트에만 실린다.
+    #[serde(default)]
+    pub wid: Option<i64>,
+    pub tab: String,
+    /// 그 패널 id. 로컬 히트에만 실린다(원격은 `route` 끝에서 상류가 안다).
+    #[serde(default)]
+    pub pane: i64,
+    #[serde(default)]
+    pub title: String,
+    /// 찾은 절대 행(검색 당시 스냅샷 — 서버가 점프할 때 다시 맞춘다).
+    #[serde(default)]
+    pub line: i64,
+    pub text: String,
+    /// 원격 히트인가(표시색이 갈린다 — `REMOTE_PINK`).
+    #[serde(default)]
+    pub remote: bool,
+    /// 점프에 실어 그대로 돌려줄 홉 경로. 로컬 히트는 비어 있다 — 이 클라는 안을
+    /// 안 풀고 왕복만 시킨다(좌표계를 아는 건 서버 하나).
+    #[serde(default)]
+    pub route: Vec<String>,
+}
+
+/// 원격 중계가 응답한(또는 못한) 상류 하나(`remote_search_merge` 의 `hosts`).
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct SearchHost {
+    pub host: String,
+    /// `ok`/`timeout`/`down`/`skipped`/`hops`.
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub n: u32,
+}
+
+/// `search_all` 전체 회신(pytmux-27). 상한·누락 상류는 **본문에** 적는다(테두리
+/// 제목은 넘치면 조용히 잘려 no-silent-caps 를 어긴다 — 정본 `notes_text()` 와 같은 자리).
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct SearchResults {
+    #[serde(default)]
+    pub items: Vec<SearchHit>,
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub capped_panes: u32,
+    #[serde(default)]
+    pub panes: u32,
+    #[serde(default)]
+    pub cap: u32,
+    #[serde(default)]
+    pub per_pane: u32,
+    #[serde(default)]
+    pub hosts: Vec<SearchHost>,
+}
+
+impl SearchResults {
+    /// 머리말 — 무엇을 몇 개 훑어 몇 건을 찾았나(정본 `headline_text()`와 같은 문구).
+    /// **짧다 — 잘려도 안전한 자리에만 쓴다.** 상한·무응답 상류 같은 「잘리면
+    /// 거짓말이 되는」 사실은 [`Self::notes`] 쪽이다(테두리 제목처럼 폭이 좁으면
+    /// 조용히 잘리는 자리에 그 사실을 쓰면 no-silent-caps 를 어긴다).
+    pub fn headline(&self) -> String {
+        base::i18n::tf(
+            "전역 검색 «{q}» — {n}건 · 패널 {panes}개",
+            &[
+                ("q", self.query.as_str()),
+                ("n", &self.items.len().to_string()),
+                ("panes", &self.panes.to_string()),
+            ],
+        )
+    }
+
+    /// 잘렸나·빠졌나 — 상한·무응답 상류(정본 `notes_text()`). 할 말이 없으면 빈 문자열.
+    pub fn notes(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.truncated {
+            parts.push(base::i18n::tf(
+                "상한 {cap}건에서 잘렸다(검색어를 좁힐 것)",
+                &[("cap", &self.cap.to_string())],
+            ));
+        }
+        if self.capped_panes > 0 {
+            parts.push(base::i18n::tf(
+                "패널 {n}개는 {per}건까지만 실었다",
+                &[("n", &self.capped_panes.to_string()), ("per", &self.per_pane.to_string())],
+            ));
+        }
+        let hosts = self.hosts_summary();
+        if !hosts.is_empty() {
+            parts.push(hosts);
+        }
+        parts.join(" · ")
+    }
+
+    /// 원격 팬아웃 요약(pytmux-27 ②) — 몇 곳이 답했나, 빠진 곳은 무슨 사유인가.
+    /// 원격이 하나도 없으면 빈 문자열이다(로컬만 쓰는 사람의 안내를 안 늘린다).
+    fn hosts_summary(&self) -> String {
+        if self.hosts.is_empty() {
+            return String::new();
+        }
+        let ok = self.hosts.iter().filter(|h| h.state == "ok").count();
+        let mut out = base::i18n::tf(
+            "원격 {ok}/{total}곳",
+            &[("ok", &ok.to_string()), ("total", &self.hosts.len().to_string())],
+        );
+        let miss: Vec<String> = self
+            .hosts
+            .iter()
+            .filter(|h| h.state != "ok")
+            .map(|h| {
+                let why = match h.state.as_str() {
+                    "timeout" => "무응답",
+                    "down" => "끊김",
+                    "skipped" => "건너뜀",
+                    "hops" => "홉 상한",
+                    other => other,
+                };
+                format!("{}({})", h.host, why)
+            })
+            .collect();
+        if !miss.is_empty() {
+            out.push_str(" · ");
+            out.push_str(&base::i18n::tf("빠진 곳 — {names}", &[("names", &miss.join(", "))]));
+        }
+        out
+    }
+}
+
 /// 서버 세션의 현재 모습.
 #[derive(Debug, Default, Clone)]
 pub struct SessionState {
@@ -1098,6 +1233,10 @@ pub struct SessionState {
     /// 서버가 준 셀 기여(설계 Tier B · P3). 시계가 여기로 온다 — **우리가 그리지
     /// 않는다.** 로직(어느 폰트·어디에 중앙 정렬)이 플러그인 한 벌로 남는다.
     plugin_cells: PluginCells,
+    /// 마지막 전역 검색(`search_all`) 회신(pytmux-27). **새 회신이 오면 통째로
+    /// 갈아 끼운다** — 플러그인 화면처럼 스택으로 쌓지 않는다(전역 검색은 상세로
+    /// 들어가는 화면이 없어 되짚을 이전 판이 없다).
+    search_results: Option<SearchResults>,
     /// 서버가 알려 준 세션 이름(`status.session`). 상태줄 `#S` 가 쓴다.
     session: String,
     /// **켠 사실**만 우리 것이다 — `{오버레이 이름: 켠 패널 집합}`.
@@ -1195,6 +1334,13 @@ impl SessionState {
                 let changed = cells != self.plugin_cells;
                 self.plugin_cells = cells;
                 changed
+            }
+            // ★ 화면을 여는 판단은 **여기서 안 한다** — 뒤늦거나 남의 요청의 회신을
+            // 걸러야 하고(정본 `_want_search_all`), 그 게이트는 서버로 무엇을 보냈는지
+            // 아는 뷰의 몫이다(플러그인 화면과 갈리는 자리 — 저건 서버가 흐름을 정한다).
+            ServerMessage::SearchResults(sr) => {
+                self.search_results = Some(sr);
+                true
             }
             ServerMessage::PluginScreenClose { id } => {
                 let before = self.plugin_screens.len();
@@ -1410,6 +1556,11 @@ impl SessionState {
     /// 지금 그릴 플러그인 화면(없으면 `None`).
     pub fn plugin_screen(&self) -> Option<&PluginScreen> {
         self.plugin_screens.last()
+    }
+
+    /// 마지막 전역 검색 회신(없으면 아직 안 물은 것).
+    pub fn search_results(&self) -> Option<&SearchResults> {
+        self.search_results.as_ref()
     }
 
     /// 한 판 물러난다 — 상세에서 `Esc` 를 누르면 **방금 보던 목록**으로 돌아간다.

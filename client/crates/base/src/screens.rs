@@ -132,6 +132,12 @@ pub enum Screen {
     /// 영향을 주지 않으므로, 화면에서 빼고 별도 명령어나 메뉴로 접근하게 한다."*
     /// 훑는 용도의 요약이 화면의 주인공(패널)을 밀어내던 자리다.
     Summary,
+    /// 전역 검색 결과(파이썬 `SearchResultsScreen` · `search_all` 회신 — pytmux-27).
+    ///
+    /// 목록형이다 — 탭·패널·줄·미리보기 한 줄이 히트 하나. `Enter` 로 고르면 그 탭·
+    /// 패널·스크롤로 뛴다(`search_goto`). 상한·누락 상류 안내는 **판 안**에 둔다(테두리
+    /// 제목은 넘치면 조용히 잘려 no-silent-caps 를 어긴다 — 정본 `notes_text()` 와 같은 자리).
+    SearchResults,
 }
 
 impl Screen {
@@ -170,6 +176,7 @@ impl Screen {
                 Screen::Compose => 20,
                 Screen::Settings => 21,
                 Screen::Summary => 22,
+                Screen::SearchResults => 23,
             }
         }
         const ALL: &[Screen] = &[
@@ -196,6 +203,7 @@ impl Screen {
             Screen::Compose,
             Screen::Settings,
             Screen::Summary,
+            Screen::SearchResults,
         ];
         // 중복·자리 어긋남은 여기서 잡는다(빠짐은 위 match 가 이미 막았다).
         debug_assert!(
@@ -236,6 +244,9 @@ impl Screen {
             Screen::InfoTabs => "상태",
             // §10-21ⓓ — 종전 화면 아래 구역의 머리줄이 하던 말을 판 제목이 한다.
             Screen::Summary => "블록 · Claude 요약",
+            // 진짜 제목(쿼리+건수)은 **회신이 준다** — 이건 회신 오기 전·못 받았을
+            // 때의 폴백이다(PluginView 와 같은 자리).
+            Screen::SearchResults => "전역 검색",
         })
     }
 
@@ -298,7 +309,9 @@ impl Screen {
             | Screen::PluginView
             | Screen::Settings
             // 요약은 **훑는 판**이다 — 목록이라 고르러 여는 판과 같은 자리가 맞다.
-            | Screen::Summary => Anchor::Middle,
+            | Screen::Summary
+            // 검색 결과도 **고르러 여는 판**이다(목록 → Enter 로 그 자리로).
+            | Screen::SearchResults => Anchor::Middle,
         }
     }
 
@@ -392,6 +405,7 @@ impl Screen {
             Screen::Settings => "SettingsScreen",
             // 정본에 짝이 없다 — Claude 플랜 전문·거부 사유는 네이티브가 만든 판이다.
             Screen::ClaudeDetail => return None,
+            Screen::SearchResults => "SearchResultsScreen",
         })
     }
 
@@ -432,6 +446,8 @@ impl Screen {
             }
             Screen::InfoTabs => "(←→ 탭 · ↑↓ 스크롤 · Esc 닫기)",
             Screen::Summary => "(아무 키나 닫기 · ↑↓ 스크롤)",
+            // 진짜 안내(상한·누락 상류)는 회신이 준다 — 이건 회신 오기 전의 폴백.
+            Screen::SearchResults => "(↑↓ 고르기 · Enter 이동 · Esc 취소)",
         })
     }
 
@@ -573,6 +589,8 @@ pub enum Prompt {
     RemoteDetach,
     /// 스크롤백에서 찾을 글(`search` — 스크롤 모드 `/`). 위(과거) 방향부터 찾는다.
     SearchScrollback,
+    /// 모든 로컬+원격 탭·패널에서 찾을 글(`search_all` — `esc f`·메뉴 · pytmux-27).
+    SearchAll,
     /// **마지막 로컬 탭**을 닫는다 — 이걸 닫으면 서버가 통째로 끝난다.
     KillTabLast,
     /// 마지막 로컬 탭인데 **원격 탭도 열려 있다** — 그 보기까지 끊긴다.
@@ -729,6 +747,8 @@ impl Prompt {
             Prompt::RemoteDetach => "뗄 상자 (host · 비우면 전부):",
             // 파이썬 `search.prompt_up` 과 같은 문구 — ↑ 는 "위(과거)부터"라는 뜻이다.
             Prompt::SearchScrollback => "search ↑ (이전 방향)",
+            // 파이썬 `search.all_prompt` 과 같은 문구.
+            Prompt::SearchAll => "모든 탭·패널 검색",
         })
     }
 }
@@ -1169,6 +1189,7 @@ impl Screens {
                 | Screen::Menu
                 | Screen::Layouts
                 | Screen::MergeRemote
+                | Screen::SearchResults
         )
     }
 

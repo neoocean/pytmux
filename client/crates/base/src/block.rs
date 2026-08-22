@@ -286,6 +286,7 @@ impl BlockList {
             | Action::SetLang(_)
             | Action::TogglePromptClear
             | Action::SearchScrollback
+            | Action::SearchAll
             | Action::SearchAgain { .. }
             | Action::Reconnect
             | Action::ToggleFullscreen

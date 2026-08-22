@@ -116,4 +116,6 @@ pub static EN: &[(&str, &str)] = &[
         "이 화면 모양({kind})은 이 클라에서 아직 못 그립니다 — 터미널 클라(pytmux)에서 쓰세요",
         "This screen kind ({kind}) cannot be drawn in this client yet — use the terminal client (pytmux)",
     ),
+    // ── session_view.rs — render_search_results(pytmux-27) ──
+    ("검색 결과가 없다", "No search results"),
 ];

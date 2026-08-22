@@ -368,6 +368,23 @@ pub enum Command {
     /// (`jump_prompt` 와 같은 이유), 서버가 맞은 줄로 스크롤을 옮겨 새 프레임을
     /// 민다. `query` 가 없으면 지난 검색어의 반복이다(파이썬 `n`/`N`).
     Search { query: Option<String>, down: bool },
+    /// 전역 검색(`search_all` · esc `f`·메뉴 — pytmux-27). 열려 있는 **모든** 로컬
+    /// 탭·패널(+원격 중계)의 스크롤백을 훑는다 — `Search` 는 활성 패널 하나 안에서
+    /// 다음 히트로 넘어가는 것뿐이라 다른 명령이다. 회신은 `search_results`
+    /// (disposition `HANDLED` — 요청 클라에게만 온다, 남의 화면에 안 뜬다).
+    SearchAll { query: String },
+    /// 검색 결과 한 줄이 가리키는 자리로 뛴다(`search_goto`). 로컬(`route` 비어
+    /// 있음)이면 요청 클라가 곧바로 그 탭·패널·스크롤을 본다(disposition `FULL`).
+    /// 원격 히트(`route` 있음)는 서버가 캐스케이드로 릴레이한다 — 이 클라는 `route`
+    /// 를 해석하지 않고 받은 그대로 되돌려 보낸다(좌표계를 아는 건 서버 하나).
+    SearchGoto {
+        wid: Option<i64>,
+        win: usize,
+        pane: i64,
+        line: i64,
+        route: Vec<String>,
+        query: String,
+    },
     /// 출력 캡처(REC) 토글(`set_capture` — rec 서버 플러그인 소유). 값을 안 실으면
     /// 반전이다(파이썬 `[c]` 와 같다). 플러그인이 없으면 서버가 조용히 무시한다.
     SetCapture,
@@ -513,6 +530,8 @@ impl Command {
             Command::SetAutoresume => "set_autoresume",
             Command::SetPromptClear => "set_prompt_clear",
             Command::Search { .. } => "search",
+            Command::SearchAll { .. } => "search_all",
+            Command::SearchGoto { .. } => "search_goto",
             Command::SetCapture => "set_capture",
         }
     }
@@ -640,6 +659,18 @@ impl Command {
                     None => json!({ "direction": direction }),
                     Some(q) => json!({ "query": q, "direction": direction }),
                 }
+            }
+            Command::SearchAll { query } => json!({ "query": query }),
+            // `wid` 는 **있을 때만** 싣는다(`SelectWindow` 와 같은 규칙 — 구서버 호환).
+            // `route` 는 로컬 히트면 빈 배열 그대로 보낸다(서버가 빈 배열=로컬로 읽는다).
+            Command::SearchGoto { wid, win, pane, line, route, query } => {
+                let mut value = json!({
+                    "win": win, "pane": pane, "line": line, "route": route, "query": query,
+                });
+                if let Some(wid) = wid {
+                    value["wid"] = json!(wid);
+                }
+                value
             }
             Command::SwapTab { index } => json!({ "index": index }),
             Command::MoveTab { index, to } => json!({ "index": index, "to": to }),
@@ -816,6 +847,15 @@ impl Command {
             Command::SetPromptClear,
             Command::Search { query: None, down: false },
             Command::SetCapture,
+            Command::SearchAll { query: "에러".into() },
+            Command::SearchGoto {
+                wid: Some(7),
+                win: 0,
+                pane: 3,
+                line: 120,
+                route: vec![],
+                query: "에러".into(),
+            },
             // ★ 아래 셋은 **오래 빠져 있었다** — `VARIANT_COUNT` 가 안 따라 올라가서
             // (67) 색인 67·68 이 검사 범위 밖으로 나갔고, 그래서 "all() 에 넣는 것까지
             // 강제한다"던 가드가 조용히 이 셋을 안 봤다(실측 2026-08-02i · P7).
@@ -1216,6 +1256,8 @@ mod tests {
             Command::SetPromptClear => 62,
             Command::Search { .. } => 63,
             Command::SetCapture => 64,
+            Command::SearchAll { .. } => 71,
+            Command::SearchGoto { .. } => 72,
             // 플러그인 액션은 **이름이 곧 명령**이라 변형 하나에 여러 이름이 실린다 —
             // 자리는 하나면 충분하다(이 표는 "변형을 빠짐없이 훑었나"를 재는 것이다).
             Command::PluginToggle { .. } => 65,
@@ -1225,7 +1267,7 @@ mod tests {
     }
 
     /// `variant_index` 가 돌려주는 값의 가짓수. 변형을 늘리면 여기도 늘려야 한다.
-    const VARIANT_COUNT: usize = 71;
+    const VARIANT_COUNT: usize = 73;
 
     #[test]
     fn all_covers_every_variant() {
@@ -1705,6 +1747,9 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         Action::SearchAgain { down } => Some(Command::Search { query: None, down }),
         // 물음을 여는 쪽 — 대답이 명령이 된다(`apply_answer`). 여기서 낼 것이 없다.
         Action::SearchScrollback => None,
+        // 이 액션도 화면(물음)을 여는 것이라 명령이 아니다 — `SearchAll` 명령은
+        // 그 물음이 대답을 받은 뒤에야 나간다(§apply_answer 의 `answered()`).
+        Action::SearchAll => None,
         // 로케일은 per-user 라 서버가 알 일이 없다(파이썬도 서버 opts 를 안 건드린다).
         // 적용·영속은 뷰가 한다(`base::i18n`).
         Action::SetLang(_) => None,
