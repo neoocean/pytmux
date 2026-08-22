@@ -19,6 +19,7 @@ import traceback
 # 스위트 위생 헬퍼(같은 디렉터리). os·tempfile 밖의 것을 안 물어서 아래 startup
 # 백스톱이 무장하기 전에 import 해도 매달릴 자리가 없다.
 import hermetic
+import workspace_guard
 
 faulthandler.enable()   # 세그폴트/치명 신호 시 전 스레드 트레이스백 덤프
 
@@ -461,6 +462,27 @@ def report_summary(path, out=print):
 def main(argv):
     if argv and argv[0] in ("--report", "-r"):
         return report_summary(argv[1] if len(argv) > 1 else _report_path())
+    # ☠ **시험을 돌리기 전에** 워크스페이스가 depot 과 몰래 어긋나 있는지 먼저 잰다
+    # (pytmux/pytmux-227) — 안 그러면 닷새를 depot 이 아닌 코드로 초록불을 켤 수 있다.
+    # rc=2 로 구분한다(1=시험 실패, 2=애초에 잴 수 없었다) — 요약줄을 안 찍으므로
+    # `check_all.py` 의 `python_suite_verdict` 가 "절단됐다"로 옳게 잡는다.
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _suspects = workspace_guard.find_suspects(_root)
+    if _suspects:
+        print("=" * 50, file=sys.stderr)
+        print("✗ 워크스페이스 바이트가 depot 과 어긋나 있다 — 시험을 안 돌린다"
+              " (pytmux/pytmux-227 패턴: git HEAD 와는 같은데 depot 과 다르다)",
+              file=sys.stderr)
+        for f in _suspects[:20]:
+            print(f"    {f}", file=sys.stderr)
+        if len(_suspects) > 20:
+            print(f"    … 외 {len(_suspects) - 20}개", file=sys.stderr)
+        print("  이 상태로 돈 시험은 depot 이 아닌 코드를 잰다. 먼저 방향을 확인할 것:", file=sys.stderr)
+        print("  `p4 diff <파일>` 로 실제 차이를 본 뒤, 워크스페이스가 낡았으면 "
+              "`p4 sync -f`, 진짜 미제출 새 내용이면 `p4 edit`+submit.", file=sys.stderr)
+        print("  급하면 PYTMUX_SKIP_WORKSPACE_GUARD=1 로 우회할 수 있다(비권장).",
+              file=sys.stderr)
+        return 2
     # 모듈 로드 단계의 startup 백스톱(위)을 거둔다 — 이제부터 per-test _arm 이 관리한다
     # (modname 별 import·테스트마다 재무장). discover 가 빈 경우에도 stray 타이머가
     # 성공 실행을 90초 뒤 종료시키지 않게 명시적으로 끈다.
