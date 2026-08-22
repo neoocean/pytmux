@@ -309,16 +309,26 @@ def measure_existence():
     return drifts, []
 
 
-def measure_drift():
+def measure_drift(pre_push=False):
     """미러 빚 전량 → `(drifts, wip, unmeasured)`.
 
     ⛔ **기준선 신선도는 여기서 안 본다** — 부르는 쪽이 `measure_freshness()` 로 먼저 재고,
        낡았으면 이 함수를 **아예 부르지 않는다**(낡은 기준선의 목록은 정보가 아니라 소음이다).
-    """
+
+    `pre_push=True` 면 `git-unpushed-commits` 갈래를 안 잰다(issue/pytmux-267) — `git push`
+    직전에는 **지금 밀려는 그 커밋**이 언제나 `origin/main..HEAD` 에 잡혀 이 갈래가 항상
+    참이 된다(`origin/main` 은 push 가 끝나야 움직인다). 그러니 이 갈래는 훅의 판정에
+    못 쓴다 — 훅이 실제로 재야 하는 것은 **밀고 나면 내용·존재가 맞는가**(아래 나머지
+    갈래들)이지 **지금 안 밀렸나**(언제나 참인 동어반복)가 아니다. 훅이 아닌 자리
+    (예: 사람이 직접 상태를 보는 `check_all.py`)에서는 여전히 잰다 — "제출만 하고 밀기를
+    잊었다" 를 잡는 유일한 신호라 완전히 없애면 안 된다."""
     drifts, unmeasured = [], []
 
-    rc, unpushed = run(["git", "log", "--oneline", "origin/main..HEAD"])
-    unpushed = [ln for ln in unpushed.splitlines() if ln.strip()] if not rc else []
+    if not pre_push:
+        rc, unpushed = run(["git", "log", "--oneline", "origin/main..HEAD"])
+        unpushed = [ln for ln in unpushed.splitlines() if ln.strip()] if not rc else []
+    else:
+        unpushed = []
     if unpushed:
         drifts.append(_drift(
             "git-unpushed-commits", "git 미푸시 커밋", "p4 만 게시된 상태일 수 있다",
@@ -385,7 +395,7 @@ def check_existence(out=print):
     return len(drifts)
 
 
-def check_mirror(out=print, remote=True):
+def check_mirror(out=print, remote=True, pre_push=False):
     # ── git 클론인가 (없으면 잴 것 자체가 없다 — check_all 은 이 스텝을 SKIP 한다) ──
     rc, head = run(["git", "rev-parse", "HEAD"])
     if rc:
@@ -406,7 +416,7 @@ def check_mirror(out=print, remote=True):
         return RC_STALE
 
     # ── 양방향 드리프트 + 존재 드리프트 ──────────────────────────────────────
-    drifts, wip, dunmeasured = measure_drift()
+    drifts, wip, dunmeasured = measure_drift(pre_push=pre_push)
     for d in drifts:
         render_drift(d, out=out, limit=10 if d["kind"] == "git-unpushed-commits" else 20)
     if wip:
@@ -421,7 +431,10 @@ def check_mirror(out=print, remote=True):
     if dunmeasured or unmeasured:
         out("· 미러 드리프트는 못 찾았지만 **못 잰 항목이 있다** — 초록으로 읽지 말 것")
         return RC_STALE
-    out("✓ p4↔git 미러 일치(미푸시 커밋 없음, 내용·존재 드리프트 없음)")
+    if pre_push:
+        out("✓ p4↔git 미러 일치(내용·존재 드리프트 없음 — push 직전이라 미푸시 커밋은 안 쟀다)")
+    else:
+        out("✓ p4↔git 미러 일치(미푸시 커밋 없음, 내용·존재 드리프트 없음)")
     return 0
 
 
@@ -431,10 +444,13 @@ def main(argv=None):
     ap.add_argument("--cl", help="이 CL 이 내 파일만 담았는지 검사(부정 게이트)")
     ap.add_argument("--no-remote", action="store_true",
                     help="git fetch 생략(오프라인) — 기준선 신선도는 '못 쟀다'로 남는다")
+    ap.add_argument("--pre-push", action="store_true",
+                    help="git-unpushed-commits 갈래를 안 잰다(issue/pytmux-267) — "
+                         "pre-push 훅 전용. push 직전엔 그 갈래가 언제나 참인 동어반복이다")
     a = ap.parse_args(argv)
     if a.cl:
         return check_cl(a.cl)
-    return check_mirror(remote=not a.no_remote)
+    return check_mirror(remote=not a.no_remote, pre_push=a.pre_push)
 
 
 if __name__ == "__main__":

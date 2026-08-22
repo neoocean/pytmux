@@ -2,9 +2,13 @@
 # git push 직전에 publish_check.py 를 실행한다 — 미러 드리프트를 방지한다(pytmux-153).
 # git 설정에서 hooksPath = .githooks 로 지정되면 자동 실행된다.
 # 실패하면 push 가 중단된다.
+#
+# --pre-push 를 준다(issue/pytmux-267) — git-unpushed-commits 갈래는 pre-push 시점에
+# origin/main 이 아직 안 움직여 "지금 밀려는 그 커밋"이 언제나 잡히는 동어반복이라,
+# 이 자리에서는 안 잰다. 내용·존재 드리프트(진짜 재야 할 것)는 그대로 잰다.
 
 set -e
 
 echo "⏳ 미러 드리프트 검사 중..."
-python3 scripts/publish_check.py
+python3 scripts/publish_check.py --pre-push
 echo "✓ 미러 드리프트 검사 통과"
