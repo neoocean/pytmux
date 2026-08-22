@@ -3422,6 +3422,11 @@ impl SessionView {
     /// 네이티브 토글 그림(N5) — 켜짐이면 손잡이가 오른쪽·ACTIVE 바탕, 꺼짐이면
     /// 왼쪽·HOVER 바탕. **그림일 뿐**이다 — 값을 바꾸는 길은 종전 그대로(Enter/Space
     /// 키·`flip_config`)이고, 여기는 상태를 눈으로 옮긴다.
+    ///
+    /// ★ **테두리를 항상 그린다**(pytmux-180) — `theme::ACTIVE` 는 `palette::SELECTED_BG`
+    /// (행 선택 배경)와 비트 단위로 같은 값이라, 행이 선택된 채 켜진 토글은 트랙 배경이
+    /// 행 배경에 파묻혀 알약의 경계가 사라진다. 두 색을 갈라 세우는 대신(다른 화면에서도
+    /// 쓰는 상수라 영향 범위가 넓다) 트랙 테두리로 배경과 무관하게 경계를 확보한다.
     fn toggle(&self, on: bool) -> Box<dyn Element> {
         let knob = Rect::new()
             .with_background_color(if on { palette::FG } else { palette::DIM })
@@ -3436,6 +3441,7 @@ impl SessionView {
         Container::new(inner)
             .with_background_color(if on { theme::ACTIVE } else { theme::HOVER })
             .with_corner_radius(theme::PILL_RADIUS)
+            .with_border(Border::all(1.).with_border_color(theme::BORDER))
             .with_horizontal_padding(2.)
             .finish()
     }
@@ -4932,7 +4938,6 @@ impl SessionView {
                 }
             }
             "text" => {
-                let scroll = self.screens.scroll();
                 let mut drawn = 0usize;
                 // 본문도 **이 클라의 로케일로**(`say_text`) — 이 판에 산문이 오기
                 // 시작했다(원격 제어). 자료(한도 막대)는 카탈로그에 없어 그대로 지난다.
@@ -4942,6 +4947,13 @@ impl SessionView {
                 //   정한다 — 정본은 같은 자리를 선문자로 긋는다(테두리와 같은 갈림).
                 //   그 선도 **한 줄을 먹는다**: 예산을 안 세면 판이 아래로 넘친다.
                 let body = Self::join_sections(&spec.say_sections());
+                // ★ **스크롤 상한**(pytmux-184) — `press()` 의 `Key::Down`/`PageDown` 은
+                // 줄 수를 몰라 무조건 증가만 시킨다(그 자리는 core 라 이 스펙의 줄 수를
+                // 모른다 — `press_list` 와 같은 경계). 여기서 그려지는 줄 수를 아는
+                // 뷰가 상한을 매긴다 — 안 매기면 `scroll` 이 총 줄 수를 넘겨
+                // `skip(scroll)` 이 빈 이터레이터가 되고 판이 통째로 빈다.
+                let max_scroll = body.lines().count().saturating_sub(budget);
+                let scroll = self.screens.scroll().min(max_scroll);
                 for line in body.lines().skip(scroll).take(budget) {
                     if line == Self::SECTION_MARK {
                         drawn += 1;
@@ -5095,6 +5107,16 @@ impl SessionView {
                     // 규칙 — `PluginRow::say_cols`). 여기만 `cols` 를 날로 쓰던 동안
                     // 설정 판의 `끔`·`완료마다` 가 영어 사용자에게 한국어로 떴다.
                     let value = item.say_cols().into_iter().next().unwrap_or_default();
+                    // ★ 켜기/끄기 값은 네이티브 토글 그림으로(pytmux-182 ⑵) — 서버가
+                    // 켬/끔 값을 로케일 불문 고정 기호로 낸다(`screenspec.py`
+                    // `pscreen.spec_on_mark`/`_off_mark` = "●"/"○"). 클릭 대상은 그대로
+                    // 행 전체(`PanelTarget::Row` — "고르고 곧장 Enter") 이므로 그림만
+                    // 바꿔도 동작은 안 갈린다. 셋 이상(순환값)은 그림이 없어 글자로 남는다.
+                    let value_widget: Box<dyn Element> = match value.as_str() {
+                        "●" => self.toggle(true),
+                        "○" => self.toggle(false),
+                        _ => self.text(value, 13., palette::CYAN),
+                    };
                     let line = Flex::row()
                         .with_main_axis_size(MainAxisSize::Min)
                         .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -5109,7 +5131,7 @@ impl SessionView {
                             .with_width(196.)
                             .finish(),
                         )
-                        .with_child(self.text(value, 13., palette::CYAN));
+                        .with_child(value_widget);
                     let boxed = Container::new(line.finish()).with_uniform_padding(1.);
                     column = column.with_child(self.clickable_panel(
                         row,
@@ -6923,18 +6945,53 @@ impl SessionView {
                     Container::new(label).with_uniform_padding(1.).finish()
                 });
             }
-            // 커서 자리를 `_` 로 보인다 — 빈 줄만 있으면 입력을 받는 중인지 알 수 없다.
+            // 커서를 **실제 위치**에 그린다(pytmux-174) — 종전엔 `_` 를 언제나 끝에
+            // 붙였는데, 이제 `Left`/`Home`/`Shift+…` 로 중간에서 편집할 수 있으니 커서도
+            // 따라가야 한다. 선택 범위가 있으면 그 구간을 배경으로 칠한다.
             // 입력기 배지는 이 줄의 오른쪽 끝(pytmux-14).
-            column = column.with_child(self.input_line(self.text(
-                format!("> {}_", self.screens.typed()),
-                14.,
-                palette::CYAN,
-            )));
+            column = column.with_child(self.input_line(self.prompt_input_row()));
         }
         if screen == Screen::Confirm {
             column = column.with_child(self.confirm_buttons());
         }
         column
+    }
+
+    /// 한 줄 입력의 `"> "` 줄 — 커서를 **실제 글자 위치**에 세우고, 선택 범위가 있으면
+    /// 그 구간의 배경을 칠한다(pytmux-174). `core` 는 글자 인덱스만 들고 있고, 그것을
+    /// 세 조각(앞·[선택]·뒤)으로 잘라 그리는 것은 뷰의 일이다.
+    fn prompt_input_row(&self) -> Box<dyn Element> {
+        let chars: Vec<char> = self.screens.typed().chars().collect();
+        let slice = |a: usize, b: usize| -> String { chars[a..b].iter().collect::<String>() };
+        let mut row = Flex::row().with_main_axis_size(MainAxisSize::Min);
+        row = row.with_child(self.text("> ", 14., palette::CYAN));
+        match self.screens.prompt_selection() {
+            Some((s, e)) => {
+                if s > 0 {
+                    row = row.with_child(self.text(slice(0, s), 14., palette::CYAN));
+                }
+                row = row.with_child(
+                    Container::new(self.text(slice(s, e), 14., palette::CYAN))
+                        .with_background_color(palette::SELECTED_BG)
+                        .finish(),
+                );
+                if e < chars.len() {
+                    row = row.with_child(self.text(slice(e, chars.len()), 14., palette::CYAN));
+                }
+            }
+            None => {
+                let cursor = self.screens.prompt_cursor().min(chars.len());
+                if cursor > 0 {
+                    row = row.with_child(self.text(slice(0, cursor), 14., palette::CYAN));
+                }
+                // 정본의 커서 자리 표식과 같은 뜻이다 — 종전엔 이 글자가 늘 끝에 있었다.
+                row = row.with_child(self.text("│", 14., palette::FG));
+                if cursor < chars.len() {
+                    row = row.with_child(self.text(slice(cursor, chars.len()), 14., palette::CYAN));
+                }
+            }
+        }
+        row.finish()
     }
 
     /// 확인 화면의 버튼 줄(정본과 같은 자리) — 고른 쪽을 강조한다.

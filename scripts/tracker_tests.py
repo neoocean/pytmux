@@ -165,6 +165,21 @@ def to_tracker(cases, summary):
     return out, counts
 
 
+def scope_of(start):
+    """이 회차가 전량인지 부분인지(pytmux-233). `start` 줄의 `argv` 가 근거다 —
+
+    `tests/run.py` 는 리포트 첫 줄에 자기 인자를 그대로 적는다(`discover()` 의
+    `if not names or mod in names`): `argv` 가 비면 **전량**이고, 무엇이든 들어 있으면
+    그 부분집합이다. `--report`/`-r` 은 아예 다른 갈래로 빠져 리포트를 안 쓰므로 여기
+    안 온다.
+
+    ⛔ **`start` 줄이 없는 옛 리포트에는 근거가 없다** — 그때는 짐작하지 말고 `None`
+    (트래커가 `scope=NULL` 로 눕힌다)."""
+    if start is None:
+        return None
+    return "full" if not start.get("argv") else "partial"
+
+
 def run_identity(path, start):
     """`(run_id, started_at)`. 리포트가 시각을 말하면 그것, 아니면 파일 mtime."""
     ts = (start or {}).get("ts")
@@ -208,6 +223,7 @@ def main(argv=None):
         cases, summary, start = read_report(path)
         tracker_cases, counts = to_tracker(cases, summary)
         run_id, started_at = run_identity(path, start)
+        scope = scope_of(start)
     except Refused as e:
         print(f"✗ 안 담는다: {e}")
         return 2
@@ -221,7 +237,8 @@ def main(argv=None):
     order = ("pass", "flaky", "fail", "timeout", "skip")
     parts = [f"{st}={counts[st]}" for st in order if st in counts]
     print(f"리포트 {os.path.relpath(path, ROOT)} → {os.path.relpath(args.out, ROOT)}")
-    print(f"  런 {run_id} ({started_at}) · 스위트 {args.suite} · " + ", ".join(parts))
+    print(f"  런 {run_id} ({started_at}) · 스위트 {args.suite} · 범위 {scope or '모름'} · "
+          + ", ".join(parts))
     if not args.ingest:
         print("  (담지 않았다 — `--ingest` 를 준다)")
         return 0
@@ -234,6 +251,8 @@ def main(argv=None):
     cmd = [shutil.which("node"), cli, "ingest-tests", "--project", "pytmux",
            "--run", os.path.abspath(args.out), "--suite", args.suite,
            "--run-id", run_id, "--started-at", started_at]
+    if scope:
+        cmd += ["--scope", scope]
     if args.build:
         cmd += ["--build", args.build]
     if args.cl:

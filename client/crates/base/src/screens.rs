@@ -14,8 +14,13 @@
 //!
 //! 1. **열려 있으면 모든 키를 먹는다.** 화면 뒤 패널로 새는 키가 있으면 사용자는 자기가
 //!    무엇을 조작하고 있는지 알 수 없다.
-//! 2. **방향키는 화면의 것, 나머지는 닫는다.** 파이썬 클라의 `InfoScreen` 과 같은 규약이다
-//!    — 읽는 화면에서 아무 키나 누르면 닫히는 편이 "닫는 키를 외우는" 것보다 낫다.
+//! 2. **모르는 키는 삼킨다 — 아무 일도 안 한다.** ⚠ 2026-08-17(pytmux-273)까지는 여기가
+//!    "방향키는 화면의 것, 나머지는 닫는다"였다 — 파이썬 클라의 `InfoScreen` 규약을 **모든
+//!    화면의 기본값**으로 잘못 옮긴 것이다. 정본에서 "아무 키나 닫는다"를 실제로 갖는
+//!    화면은 `InfoScreen` 계열(`Keys`·`Version`·`ShellOutput`·`RestartCheck`·`Hooks`)
+//!    **하나뿐**이고, 그 다섯은 여전히 그렇게 군다(`press` 안에서 명시적으로 남겨 뒀다).
+//!    그 밖의 화면(목록·확인·플러그인 판 등)은 정의된 키가 아니면 삼킨다 — 관계없는 키를
+//!    눌렀다고 판이 조용히 사라지면 사용자는 자기가 뭘 잃었는지 모른다.
 //! 3. **캔버스 크기는 안 건드린다.** 화면은 덮을 뿐이라 서버에 알린 격자가 그대로다
 //!    (건드리면 서버 재배치가 따라오고, 닫을 때 화면이 한 번 더 출렁인다).
 
@@ -75,7 +80,8 @@ pub enum Screen {
     MergeRemote,
     /// 레이아웃 프리셋 목록(`select-layout`). 고르면 바로 적용된다.
     Layouts,
-    /// 지나간 알림들(`:notice-history`). **읽는 화면**이라 아무 키나 닫는다.
+    /// 지나간 알림들(`:notice-history`). 읽는 화면이지만 **`InfoScreen` 이 아니다** —
+    /// 정본 `NoticeHistoryScreen` 은 `escape` 만 닫고 그 밖의 키는 삼킨다(pytmux-273 ②).
     ///
     /// 왜 필요한가: 알림은 상태줄에서 한 줄만, 그것도 다음 알림이 오면 사라진다.
     /// remote-attach 실패처럼 **놓치면 왜 안 됐는지 알 수 없는** 것이 그 줄로 온다.
@@ -764,6 +770,12 @@ pub struct Screens {
     asking: Option<Prompt>,
     /// 입력 화면에 지금까지 친 글자.
     typed: String,
+    /// 입력 화면의 커서(글자 인덱스, pytmux-174) — 정본 Textual `Input` 처럼 중간에서
+    /// 편집할 수 있어야 한다. `typed` 가 바뀌면 끝으로 옮긴다(새로 열거나 후보를 채울 때).
+    prompt_cursor: usize,
+    /// 커서와 짝을 이루는 선택 범위의 반대쪽 끝(글자 인덱스). `None` 이면 선택 없음
+    /// (`Shift+`좌우/Home/End 로 생기고, 방향키만 누르면 풀린다).
+    prompt_sel_anchor: Option<usize>,
     /// 확인 화면에서 고른 버튼([`CONFIRM_YES`]/[`CONFIRM_NO`]). 열 때마다 '아니오'다.
     confirm_pick: usize,
     /// 물음의 **인자 이력 후보**(최근-우선 전체 목록 — 파이썬 arghist).
@@ -870,6 +882,23 @@ impl Screens {
     /// 입력 화면에 지금까지 친 글자(**줄 통째** — 이름과 인자를 다 담는다).
     pub fn typed(&self) -> &str {
         &self.typed
+    }
+
+    /// 입력 화면의 커서 위치(글자 인덱스, pytmux-174) — 뷰가 그 자리에 커서를 그린다.
+    pub fn prompt_cursor(&self) -> usize {
+        self.prompt_cursor
+    }
+
+    /// 입력 화면의 선택 범위 — 정렬된 `(시작, 끝)` 글자 인덱스. 없으면(또는 폭이
+    /// 0이면) `None` — 뷰가 그 범위만 배경을 칠한다.
+    pub fn prompt_selection(&self) -> Option<(usize, usize)> {
+        self.prompt_sel_anchor
+            .map(|a| if a <= self.prompt_cursor { (a, self.prompt_cursor) } else { (self.prompt_cursor, a) })
+            .filter(|(s, e)| s != e)
+    }
+
+    fn prompt_chars(&self) -> Vec<char> {
+        self.typed.chars().collect()
     }
 
     /// 친 줄의 **이름 쪽**(첫 공백 앞) — 팔레트가 거를 때 쓴다(pytmux-7).
@@ -1003,6 +1032,10 @@ impl Screens {
         self.open(Screen::Prompt);
         self.asking = Some(prompt);
         self.typed = seed.to_owned();
+        // 커서는 **끝**에서 시작한다(정본 Textual `Input` 과 같다) — 이름을 고치는
+        // 사람은 대개 뒤에 이어 치거나 지운다.
+        self.prompt_cursor = self.typed.chars().count();
+        self.prompt_sel_anchor = None;
         // 앞선 확인 화면의 상세를 **버린다**. 물음 판도 상세를 그리므로(`render_prompt`),
         // 안 버리면 "이 탭을 닫으면 …" 같은 붉은 경고가 엉뚱한 물음 위에 남는다.
         self.detail.clear();
@@ -1031,6 +1064,8 @@ impl Screens {
         self.open(Screen::Prompt);
         self.asking = Some(prompt);
         self.typed = seed.to_owned();
+        self.prompt_cursor = self.typed.chars().count();
+        self.prompt_sel_anchor = None;
         self.prompt_history = Some(history);
         self.prompt_pick = None;
     }
@@ -1267,6 +1302,8 @@ impl Screens {
         self.selected = 0;
         self.asking = None;
         self.typed.clear();
+        self.prompt_cursor = 0;
+        self.prompt_sel_anchor = None;
         self.menu_group = None;
         self.detail.clear();
         self.stack.pop().is_some()
@@ -1395,10 +1432,15 @@ impl Screens {
                     self.scroll += PAGE;
                     ScreenKey::Consumed
                 }
-                _ => {
+                Key::Escape => {
                     self.close_top();
                     ScreenKey::Closed
                 }
+                // 정본에 이 규약을 갖는 화면은 `InfoScreen` 하나뿐이다(pytmux-273) —
+                // 이 판(플러그인이 준 읽기 전용 화면, 예: usage 팝업)은 그 계열이 아니라
+                // 모르는 키를 **삼킨다**(아무 일도 안 함). 관계없는 키를 눌렀다고 판이
+                // 조용히 사라지면 사용자가 무엇을 잃었는지 모른다.
+                _ => ScreenKey::Consumed,
             });
         }
         // 설정·플러그인은 목록형이지만 `Enter` 가 화면을 안 닫는다(위 참조).
@@ -1426,6 +1468,50 @@ impl Screens {
                 self.scroll += PAGE;
                 Some(ScreenKey::Consumed)
             }
+            // 정본 `InfoScreen._NAV_KEYS` 는 up/down/pageup/pagedown 과 **함께
+            // home/end 를 먹는다**(pytmux-273 ①) — 우리는 그 넷만 받아 home/end 가
+            // `_` 로 떨어져 판을 닫고 있었다. 닿는 화면: Keys·Version·ShellOutput·
+            // RestartCheck·Hooks(전부 `canon_class` 가 InfoScreen).
+            Key::Home
+                if matches!(
+                    self.top(),
+                    Some(
+                        Screen::Keys
+                            | Screen::Version
+                            | Screen::ShellOutput
+                            | Screen::RestartCheck
+                            | Screen::Hooks
+                    )
+                ) =>
+            {
+                self.scroll = 0;
+                Some(ScreenKey::Consumed)
+            }
+            Key::End
+                if matches!(
+                    self.top(),
+                    Some(
+                        Screen::Keys
+                            | Screen::Version
+                            | Screen::ShellOutput
+                            | Screen::RestartCheck
+                            | Screen::Hooks
+                    )
+                ) =>
+            {
+                // 총 줄 수를 core 는 모른다(뷰가 그린다·`PageDown` 과 같은 경계) — 큰 값을
+                // 넣어 두면 `skip()` 이 나머지를 전부 건너뛰어 사실상 "끝"이 된다.
+                self.scroll = usize::MAX / 2;
+                Some(ScreenKey::Consumed)
+            }
+            Key::Escape => {
+                self.close_top();
+                Some(ScreenKey::Closed)
+            }
+            // `Notices` 는 정본 `NoticeHistoryScreen` 처럼 **아무 키나 안 닫는다**
+            // (pytmux-273 ②) — `escape`(위에서 처리) 만 닫고, 그 밖은 삼킨다.
+            _ if matches!(self.top(), Some(Screen::Notices)) => Some(ScreenKey::Consumed),
+            // 나머지(InfoScreen 계열 등)는 정본 그대로 아무 키나 닫는다(규칙 2).
             _ => {
                 self.close_top();
                 Some(ScreenKey::Closed)
@@ -1589,10 +1675,14 @@ impl Screens {
                 self.close_top();
                 ScreenKey::Chosen(picked)
             }
-            _ => {
+            Key::Escape => {
                 self.close_top();
                 ScreenKey::Closed
             }
+            // 목록형 화면은 정본 `InfoScreen` 계열이 아니다(pytmux-181·273) — 관계없는
+            // 키(문자 키·좌우·PageUp/Down 등)를 눌렀다고 조용히 닫히면 사용자가 의도치
+            // 않게 화면을 잃는다. 정의된 키가 아니면 **삼킨다**.
+            _ => ScreenKey::Consumed,
         }
     }
 }
@@ -1924,6 +2014,86 @@ impl Screens {
     }
 }
 
+// 두벌식 자모 → QWERTY 영문(정본 `pytmuxlib/clientutil.py` `_JAMO` 와 동형, pytmux-176).
+fn jamo_to_qwerty_char(j: char) -> Option<char> {
+    Some(match j {
+        'ㅂ' => 'q', 'ㅈ' => 'w', 'ㄷ' => 'e', 'ㄱ' => 'r', 'ㅅ' => 't',
+        'ㅛ' => 'y', 'ㅕ' => 'u', 'ㅑ' => 'i', 'ㅐ' => 'o', 'ㅔ' => 'p',
+        'ㅁ' => 'a', 'ㄴ' => 's', 'ㅇ' => 'd', 'ㄹ' => 'f', 'ㅎ' => 'g',
+        'ㅗ' => 'h', 'ㅓ' => 'j', 'ㅏ' => 'k', 'ㅣ' => 'l', 'ㅋ' => 'z',
+        'ㅌ' => 'x', 'ㅊ' => 'c', 'ㅍ' => 'v', 'ㅠ' => 'b', 'ㅜ' => 'n',
+        'ㅡ' => 'm',
+        // 시프트(쌍자음/이중모음) → 대문자 영문
+        'ㅃ' => 'Q', 'ㅉ' => 'W', 'ㄸ' => 'E', 'ㄲ' => 'R', 'ㅆ' => 'T',
+        'ㅒ' => 'O', 'ㅖ' => 'P',
+        _ => return None,
+    })
+}
+
+// 복합 자모(겹받침·이중모음) → 그것을 만드는 두벌식 낱자 시퀀스(정본 `_COMPOUND_JAMO`).
+fn compound_jamo_parts(j: char) -> Option<[char; 2]> {
+    Some(match j {
+        'ㅘ' => ['ㅗ', 'ㅏ'], 'ㅙ' => ['ㅗ', 'ㅐ'], 'ㅚ' => ['ㅗ', 'ㅣ'],
+        'ㅝ' => ['ㅜ', 'ㅓ'], 'ㅞ' => ['ㅜ', 'ㅔ'], 'ㅟ' => ['ㅜ', 'ㅣ'],
+        'ㅢ' => ['ㅡ', 'ㅣ'],
+        'ㄳ' => ['ㄱ', 'ㅅ'], 'ㄵ' => ['ㄴ', 'ㅈ'], 'ㄶ' => ['ㄴ', 'ㅎ'],
+        'ㄺ' => ['ㄹ', 'ㄱ'], 'ㄻ' => ['ㄹ', 'ㅁ'], 'ㄼ' => ['ㄹ', 'ㅂ'],
+        'ㄽ' => ['ㄹ', 'ㅅ'], 'ㄾ' => ['ㄹ', 'ㅌ'], 'ㄿ' => ['ㄹ', 'ㅍ'],
+        'ㅀ' => ['ㄹ', 'ㅎ'], 'ㅄ' => ['ㅂ', 'ㅅ'],
+        _ => return None,
+    })
+}
+
+fn jamo_to_q(j: char, out: &mut String) {
+    if let Some(parts) = compound_jamo_parts(j) {
+        for p in parts {
+            out.push(jamo_to_qwerty_char(p).unwrap_or(p));
+        }
+    } else {
+        out.push(jamo_to_qwerty_char(j).unwrap_or(j));
+    }
+}
+
+const HANGUL_CHO: [char; 19] = [
+    'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ',
+    'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
+];
+const HANGUL_JUNG: [char; 21] = [
+    'ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅘ',
+    'ㅙ', 'ㅚ', 'ㅛ', 'ㅜ', 'ㅝ', 'ㅞ', 'ㅟ', 'ㅠ', 'ㅡ', 'ㅢ', 'ㅣ',
+];
+// 0 번째는 종성 없음(정본 `_JONG` 의 `_` 자리).
+const HANGUL_JONG: [Option<char>; 28] = [
+    None, Some('ㄱ'), Some('ㄲ'), Some('ㄳ'), Some('ㄴ'), Some('ㄵ'), Some('ㄶ'),
+    Some('ㄷ'), Some('ㄹ'), Some('ㄺ'), Some('ㄻ'), Some('ㄼ'), Some('ㄽ'), Some('ㄾ'),
+    Some('ㄿ'), Some('ㅀ'), Some('ㅁ'), Some('ㅂ'), Some('ㅄ'), Some('ㅅ'), Some('ㅆ'),
+    Some('ㅇ'), Some('ㅈ'), Some('ㅊ'), Some('ㅋ'), Some('ㅌ'), Some('ㅍ'), Some('ㅎ'),
+];
+
+/// 한글(두벌식 IME 로 잘못 입력된 영문)을 QWERTY 영문으로 되돌린다 — 정본
+/// `pytmuxlib/clientutil.py` `hangul_to_qwerty` 와 동형(pytmux-176). 완성형 음절은
+/// 초/중/종성으로 분해, 낱자/복합자모는 표로 변환. 비-한글은 그대로 둔다.
+fn hangul_to_qwerty(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        let o = ch as u32;
+        if (0xAC00..=0xD7A3).contains(&o) {
+            let s = o - 0xAC00;
+            let (cho, jung, jong) = (s / 588, (s / 28) % 21, s % 28);
+            jamo_to_q(HANGUL_CHO[cho as usize], &mut out);
+            jamo_to_q(HANGUL_JUNG[jung as usize], &mut out);
+            if let Some(j) = HANGUL_JONG[jong as usize] {
+                jamo_to_q(j, &mut out);
+            }
+        } else if jamo_to_qwerty_char(ch).is_some() || compound_jamo_parts(ch).is_some() {
+            jamo_to_q(ch, &mut out);
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 impl Screens {
     /// 한 줄 입력의 키. 글자는 쌓고, `Enter` 는 확정, `Esc` 는 취소다.
     fn press_prompt(&mut self, key: Key) -> ScreenKey {
@@ -1946,6 +2116,8 @@ impl Screens {
                     let pick = self.prompt_pick.unwrap_or(0);
                     if let Some(text) = self.prompt_matches().get(pick) {
                         self.typed = (*text).to_owned();
+                        self.prompt_cursor = self.typed.chars().count();
+                        self.prompt_sel_anchor = None;
                     }
                     self.prompt_pick = None;
                     return ScreenKey::Consumed;
@@ -1955,14 +2127,74 @@ impl Screens {
         }
         match key {
             Key::Char(c) => {
-                self.typed.push(c);
+                let mut chars = self.prompt_chars();
+                if let Some((s, e)) = self.prompt_selection() {
+                    chars.splice(s..e, std::iter::once(c));
+                    self.prompt_cursor = s + 1;
+                } else {
+                    chars.insert(self.prompt_cursor.min(chars.len()), c);
+                    self.prompt_cursor += 1;
+                }
+                self.typed = chars.into_iter().collect();
+                self.prompt_sel_anchor = None;
                 // 글자가 바뀌면 좁혀진 목록도 바뀐다 — 낡은 선택을 버린다.
                 self.prompt_pick = None;
                 ScreenKey::Consumed
             }
             Key::Backspace => {
-                self.typed.pop();
+                let mut chars = self.prompt_chars();
+                if let Some((s, e)) = self.prompt_selection() {
+                    chars.splice(s..e, std::iter::empty());
+                    self.prompt_cursor = s;
+                } else if self.prompt_cursor > 0 && self.prompt_cursor <= chars.len() {
+                    chars.remove(self.prompt_cursor - 1);
+                    self.prompt_cursor -= 1;
+                }
+                self.typed = chars.into_iter().collect();
+                self.prompt_sel_anchor = None;
                 self.prompt_pick = None;
+                ScreenKey::Consumed
+            }
+            // 커서 이동 넷 + Shift 짝(선택, pytmux-174) — 정본 Textual `Input` 이 이미
+            // 하는 편집이다. 방향키만 누르면 선택이 풀린다(정본과 같다).
+            Key::Left => {
+                self.prompt_cursor = self.prompt_cursor.saturating_sub(1);
+                self.prompt_sel_anchor = None;
+                ScreenKey::Consumed
+            }
+            Key::Right => {
+                self.prompt_cursor = (self.prompt_cursor + 1).min(self.prompt_chars().len());
+                self.prompt_sel_anchor = None;
+                ScreenKey::Consumed
+            }
+            Key::Home => {
+                self.prompt_cursor = 0;
+                self.prompt_sel_anchor = None;
+                ScreenKey::Consumed
+            }
+            Key::End => {
+                self.prompt_cursor = self.prompt_chars().len();
+                self.prompt_sel_anchor = None;
+                ScreenKey::Consumed
+            }
+            Key::ShiftLeft => {
+                self.prompt_sel_anchor.get_or_insert(self.prompt_cursor);
+                self.prompt_cursor = self.prompt_cursor.saturating_sub(1);
+                ScreenKey::Consumed
+            }
+            Key::ShiftRight => {
+                self.prompt_sel_anchor.get_or_insert(self.prompt_cursor);
+                self.prompt_cursor = (self.prompt_cursor + 1).min(self.prompt_chars().len());
+                ScreenKey::Consumed
+            }
+            Key::ShiftHome => {
+                self.prompt_sel_anchor.get_or_insert(self.prompt_cursor);
+                self.prompt_cursor = 0;
+                ScreenKey::Consumed
+            }
+            Key::ShiftEnd => {
+                self.prompt_sel_anchor.get_or_insert(self.prompt_cursor);
+                self.prompt_cursor = self.prompt_chars().len();
                 ScreenKey::Consumed
             }
             Key::Enter => {
@@ -1975,12 +2207,15 @@ impl Screens {
                     None => ScreenKey::Closed,
                 }
             }
-            // 그 외(Esc 포함)는 취소. **친 글자는 버린다** — 반쯤 친 이름이 남아 있다가
-            // 다음에 열 때 튀어나오면 사용자가 자기가 뭘 하는지 모른다.
-            _ => {
+            Key::Escape => {
+                // **친 글자는 버린다** — 반쯤 친 이름이 남아 있다가 다음에 열 때
+                // 튀어나오면 사용자가 자기가 뭘 하는지 모른다.
                 self.close_top();
                 ScreenKey::Closed
             }
+            // 그 밖의 키(pytmux-174·273)는 삼킨다 — 정본 `Input` 위젯도 모르는 키에
+            // 아무 일도 안 한다. 편집 중 화면이 조용히 사라지는 쪽이 훨씬 나쁘다.
+            _ => ScreenKey::Consumed,
         }
     }
 
@@ -1995,6 +2230,18 @@ impl Screens {
         match key {
             Key::Char(c) => {
                 self.typed.push(c);
+                // 팔레트는 이미 고정 ':' 프리픽스를 화면에 그리고 있다(정본
+                // `on_input_changed`, pytmux-175) — 맨 앞에서부터 이어지는 ':' 는
+                // 버리고(중간에 친 ':' 는 보존) 필터에 반영한다.
+                if self.typed.starts_with(':') {
+                    self.typed = self.typed.trim_start_matches(':').to_owned();
+                }
+                // 한글 IME 를 켠 채 명령 이름을 치면 자모/음절이 그대로 들어온다
+                // (pytmux-176) — 정본 `hangul_to_qwerty` 와 동치인 변환으로 되돌린다.
+                // 공백이 섞이면(=인자 구간) 건드리지 않아 한글 인자는 보존된다.
+                if !self.typed.contains(' ') {
+                    self.typed = hangul_to_qwerty(&self.typed);
+                }
                 self.selected = 0;
                 self.rehome_palette_tab();
                 ScreenKey::Consumed
@@ -2063,10 +2310,19 @@ impl Screens {
             self.confirm_pick = 1 - self.confirm_pick;
             return ScreenKey::Consumed;
         }
-        let yes = match key {
-            Key::Char('y') | Key::Char('Y') => true,
-            Key::Enter => self.confirm_pick == CONFIRM_YES,
-            _ => false,
+        // 정본 `ConfirmScreen.on_key` 는 `escape`·`y/Y`·`n/N`·`enter`·`left/right/tab`
+        // 만 먹는다(pytmux-273 ③) — 그 밖의 키는 갈래가 없어 화면이 그대로 남는다.
+        // ⚠ 종전에는 이 다섯 밖의 모든 키가 "아니오"로 닫혔다: 위험 자체는 낮지만
+        // (둘 다 '예'로는 안 간다), 되돌릴 수 없는 것 앞에서 오타 하나로 물음이
+        // 사라지면 사용자는 자기가 무엇을 답했는지 모른다.
+        let close_as = match key {
+            Key::Char('y') | Key::Char('Y') => Some(true),
+            Key::Char('n') | Key::Char('N') | Key::Escape => Some(false),
+            Key::Enter => Some(self.confirm_pick == CONFIRM_YES),
+            _ => None,
+        };
+        let Some(yes) = close_as else {
+            return ScreenKey::Consumed;
         };
         let asked = self.asking;
         self.close_top();

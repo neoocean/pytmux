@@ -119,10 +119,11 @@ static CONTRACTS: &[Contract] = &[
     c(
         Screen::Keys,
         Closes,
-        Defect("pytmux-273"),
-        "읽는 판(키 도움말). 「아무 키나 닫기」까지는 정본 `InfoScreen` 과 같은데 \
-         **`Home`·`End` 가 갈렸다** — 정본은 그 둘로 커서를 맨 위/아래로 옮기고(`_NAV_KEYS`) \
-         우리는 그 둘로도 판을 닫는다",
+        Same("clientscreens.py InfoScreen._NAV_KEYS 직접 대조 — up/down/pageup/pagedown \
+         과 함께 home/end 를 먹는다. `Screens::press` 의 InfoScreen 계열 분기가 이제 \
+         Home→맨 위, End→맨 아래를 처리하고 그 밖의 키는 여전히 닫는다(pytmux-273 ①)"),
+        "읽는 판(키 도움말). 「아무 키나 닫기」는 정본 `InfoScreen` 과 같고, **`Home`·`End`도 \
+         이제 커서를 옮긴다**(고쳐졌다 — 종전엔 이 둘도 판을 닫았다)",
     ),
     c(
         Screen::ClaudeDetail,
@@ -132,83 +133,95 @@ static CONTRACTS: &[Contract] = &[
     ),
     c(
         Screen::Tabs,
-        Closes,
+        Stays,
         Unmeasured,
         "탭 스위처. 정본 `TabSwitcherScreen` 이 «제 것 아닌 키» 를 어떻게 하는지 안 쟀다 — \
-         `press_list` 를 지나므로 pytmux-181 이 참이면 이 줄도 같이 움직인다",
+         `press_list` 를 지나므로 pytmux-181 수정으로 **F5 는 이제 삼킨다**(종전 Closes)",
     ),
     c(
         Screen::Tree,
-        Closes,
+        Stays,
         Unmeasured,
-        "세션·탭·패널 개요. 정본 `ChooseTreeScreen` 쪽을 안 쟀다(같은 `press_list`)",
+        "세션·탭·패널 개요. 정본 `ChooseTreeScreen` 쪽을 안 쟀다(같은 `press_list`, \
+         pytmux-181 수정으로 F5 는 이제 삼킨다)",
     ),
     c(
         Screen::Buffers,
-        Closes,
+        Stays,
         Unmeasured,
-        "페이스트 버퍼 목록. 정본 `ChooseBufferScreen` 쪽을 안 쟀다(같은 `press_list`)",
+        "페이스트 버퍼 목록. 정본 `ChooseBufferScreen` 쪽을 안 쟀다(같은 `press_list`, \
+         pytmux-181 수정으로 F5 는 이제 삼킨다)",
     ),
     c(
         Screen::Prompt,
-        Closes,
-        Defect("pytmux-174"),
-        "한 줄 입력. `Home`·`End`·`←→`·`Shift+` 선택 키가 편집이 아니라 **취소**로 간다 — \
-         정본은 그 키로 커서를 옮긴다(`press_prompt` 의 `_ =>` 한 팔)",
+        Stays,
+        Same("clientscreens.py Input 위젯 직접 대조 — 정의 안 된 키(Home/End/←→/Shift+ \
+         선택 포함)에 아무 일도 안 한다. `press_prompt` 에 커서·선택 상태를 얹어 그 넷을 \
+         실제 편집으로 배선했다(pytmux-174)"),
+        "한 줄 입력. `Home`·`End`·`←→`·`Shift+` 선택 키가 이제 **편집**(커서 이동·선택)이다 \
+         — 종전엔 취소로 갔다",
     ),
     c(
         Screen::Confirm,
-        Closes,
-        Defect("pytmux-273"),
-        "예/아니오. 기본이 '아니오'인 것은 정본과 같은데, **모르는 키에서 갈렸다** — \
-         정본 `ConfirmScreen.on_key` 는 esc·y/n·Enter·←→·Tab 만 먹고 그 밖의 키에는 \
-         **아무 일도 안 한다**(판이 그대로 있다). 우리는 그것을 '아니오'로 확정하고 닫는다",
+        Stays,
+        Same("clientscreens.py ConfirmScreen.on_key 직접 대조 — esc·y/n·Enter·←→·Tab \
+         밖의 키는 갈래가 없어 아무 일도 안 한다. `press_confirm` 을 그 다섯 갈래 + \
+         기본 무시로 다시 짰다(pytmux-273 ③)"),
+        "예/아니오. 기본이 '아니오'인 것도, **모르는 키를 무시하는 것도** 이제 정본과 같다 \
+         — 종전엔 모르는 키가 전부 '아니오'로 닫혔다",
     ),
     c(
         Screen::Commands,
         Closes,
         Defect("pytmux-175"),
-        "명령 팔레트. 닫기 자체는 정본과 같아 보이나, **글자를 받는 방식**이 갈렸다 — \
-         맨 앞 `:` 를 정본은 버리고 우리는 넣는다(pytmux-175) · 한글 자모를 정본은 \
-         QWERTY 로 되돌리고 우리는 안 되돌린다(pytmux-176)",
+        "명령 팔레트. 닫기 자체(F5 등 진짜 제 것 아닌 키)는 이 축 밖이라 안 쟀다 — \
+         **글자를 받는 방식**은 고쳤다: 맨 앞 `:` 를 이제 버리고(pytmux-175) 한글 자모를 \
+         QWERTY 로 되돌린다(pytmux-176, 둘 다 `screens_tests.rs` 오라클 참조)",
     ),
     c(
         Screen::Version,
         Closes,
-        Defect("pytmux-273"),
-        "읽는 판(서버·클라 판) — `Keys` 와 같은 `InfoScreen` 이라 `Home`·`End` 가 같이 갈렸다",
+        Same("clientscreens.py InfoScreen._NAV_KEYS 직접 대조 — `Keys` 와 같은 \
+         `InfoScreen`. Home/End 를 커서 이동으로 배선했다(pytmux-273 ①)"),
+        "읽는 판(서버·클라 판) — `Keys` 와 같은 `InfoScreen`, `Home`·`End` 도 이제 맞다",
     ),
     c(
         Screen::ShellOutput,
         Closes,
-        Defect("pytmux-273"),
-        "읽는 판(`run-shell` 결과) — 같은 `InfoScreen`(`Home`·`End`)",
+        Same("clientscreens.py InfoScreen._NAV_KEYS 직접 대조(같은 InfoScreen 계열, \
+         pytmux-273 ①)"),
+        "읽는 판(`run-shell` 결과) — 같은 `InfoScreen`, `Home`·`End` 도 이제 맞다",
     ),
     c(
         Screen::RestartCheck,
         Closes,
-        Defect("pytmux-273"),
-        "읽는 판(재시작 점검) — 같은 `InfoScreen`(`Home`·`End`)",
+        Same("clientscreens.py InfoScreen._NAV_KEYS 직접 대조(같은 InfoScreen 계열, \
+         pytmux-273 ①)"),
+        "읽는 판(재시작 점검) — 같은 `InfoScreen`, `Home`·`End` 도 이제 맞다",
     ),
     c(
         Screen::MergeRemote,
-        Closes,
+        Stays,
         Unmeasured,
-        "원격 탭 합치기. `h`/`v` 는 우리 것이 맞는데(정본과 같다) 나머지 키는 안 쟀다",
+        "원격 탭 합치기. `h`/`v` 는 우리 것이 맞는데(정본과 같다) 나머지 키는 안 쟀다 — \
+         `h`/`v` 밖은 `press_list` 를 지나 F5 는 이제 삼킨다(pytmux-181)",
     ),
     c(
         Screen::Layouts,
-        Closes,
+        Stays,
         Unmeasured,
-        "레이아웃 프리셋. 정본 `ChooseLayoutScreen` 쪽을 안 쟀다(같은 `press_list`)",
+        "레이아웃 프리셋. 정본 `ChooseLayoutScreen` 쪽을 안 쟀다(같은 `press_list`, \
+         pytmux-181 수정으로 F5 는 이제 삼킨다)",
     ),
     c(
         Screen::Notices,
-        Closes,
-        Defect("pytmux-273"),
-        "지나간 알림. **읽는 판이 아니었다** — 정본 `NoticeHistoryScreen` 은 `Esc`·`c`(전문 \
-         복사)만 먹고 그 밖의 키를 **무시하며** `Enter` 로 전문을 펼친다(설계 G3). 우리는 \
-         아무 키나 닫고 `c`·`Enter` 가 없다",
+        Stays,
+        Same("clientscreens.py NoticeHistoryScreen.on_key 직접 대조 — `Esc`·`c` 만 먹고 \
+         그 밖의 키는 무시한다(이 축이 재는 F5 도 그 «그 밖»이다). `Screens::press` 의 \
+         Notices 분기를 Esc 만 닫게 고쳤다(pytmux-273 ②)"),
+        "지나간 알림. F5 같은 제 것 아닌 키는 이제 정본처럼 무시한다(고쳐졌다 — 종전엔 \
+         아무 키나 닫았다). ⚠ `c`(전문 복사)·`Enter`(펼치기)는 **아직 없다** — 그 둘은 \
+         이 축(닫기 여부) 밖의 별도 기능 공백으로 남는다",
     ),
     c(
         Screen::Menu,
@@ -224,12 +237,14 @@ static CONTRACTS: &[Contract] = &[
     ),
     c(
         Screen::PluginView,
-        Closes,
-        Defect("pytmux-181"),
-        "플러그인이 준 판(`mdir`·`claude-settings`). 목록·폼(`is_list`)에서 힌트에 적힌 \
-         셋 말고 **아무 키나** 닫는다 — 기대는 «Esc 로만 닫힌다»다(`press_list` 의 `_ =>` \
-         한 팔). ★ 같은 변형의 **글 판**(`kind:\"text\"` · usage limit)에는 스크롤 상한이 \
-         없어 내용 끝을 넘어 빈 화면까지 간다 — pytmux-184 ⑵",
+        Stays,
+        Same("clientscreens.py 목록/폼 화면(Textual ListView/OptionList) 직접 대조 — \
+         정의 안 된 키에 아무 일도 안 한다. `press_list` 를 Esc 만 닫게, 그 밖은 삼키게 \
+         고쳤다(pytmux-181)"),
+        "플러그인이 준 판(`mdir`·`claude-settings`). 목록·폼(`is_list`)에서 이제 \
+         **Esc 로만 닫힌다** — 종전엔 아무 키나 닫았다. ★ 같은 변형의 **글 판**\
+         (`kind:\"text\"` · usage limit)의 스크롤 상한도 고쳤다 — 렌더 쪽에서 내용 \
+         줄 수로 자른다(pytmux-184 ⑵)",
     ),
     c(
         Screen::Options,
@@ -240,8 +255,9 @@ static CONTRACTS: &[Contract] = &[
     c(
         Screen::Hooks,
         Closes,
-        Defect("pytmux-273"),
-        "읽는 판(걸어 둔 훅) — 같은 `InfoScreen`(`Home`·`End`)",
+        Same("clientscreens.py InfoScreen._NAV_KEYS 직접 대조(같은 InfoScreen 계열, \
+         pytmux-273 ①)"),
+        "읽는 판(걸어 둔 훅) — 같은 `InfoScreen`, `Home`·`End` 도 이제 맞다",
     ),
     c(
         Screen::InfoTabs,
@@ -272,20 +288,21 @@ static CONTRACTS: &[Contract] = &[
     ),
     c(
         Screen::SearchResults,
-        Closes,
-        Defect("pytmux-273"),
+        Stays,
+        Same("clientscreens.py SearchResultsScreen.on_key(3408~3410) 직접 대조 — \
+         `escape` 만 먹고(`event.stop()`) 그 밖은 `ListView` 기본 처리로 흘러 아무 일도 \
+         안 한다. `press_list` 를 고쳐 이 판도 같이 움직였다(pytmux-181·273)"),
         "전역 검색 결과(pytmux-27). 정본 `SearchResultsScreen.on_key`(clientscreens.py \
          3408~3410)는 `escape` 만 먹고(`event.stop()`) 그 밖의 키는 `ListView` 기본 \
-         처리로 흘러 **아무 일도 안 한다**(판이 그대로 있다). 우리는 `press_list` 의 \
-         `_ => close_top()` 한 팔이라 **아무 키나 닫는다** — Confirm·Notices·Version \
-         등과 같은 뿌리(pytmux-273)",
+         처리로 흘러 **아무 일도 안 한다**(판이 그대로 있다) — `press_list` 수정으로 \
+         우리도 이제 같다(종전엔 아무 키나 닫았다)",
     ),
 ];
 
 /// 지금 점수. **양방향 래칫**이다 — 늘어도 줄어도 여기를 고쳐야 한다(`parity.rs` 규칙 2).
 ///
 /// `(같다, 허용된 갈림, 결함, 못 쟀다)`.
-static SCORE: (usize, usize, usize, usize) = (1, 2, 11, 10);
+static SCORE: (usize, usize, usize, usize) = (11, 2, 1, 10);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4).
 ///

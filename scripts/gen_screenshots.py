@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import getpass as _getpass
 import os
+import re
 import socket as _socket
 import sys
 import tempfile
@@ -50,6 +51,12 @@ with open(os.path.join(_SHOT_ZDOTDIR, ".zshrc"), "w", encoding="utf-8") as _f:
 os.environ["ZDOTDIR"] = _SHOT_ZDOTDIR
 # bash 폴백(SHELL=bash 환경)도 동일 프롬프트로.
 os.environ["PS1"] = r"user@host \W \$ "
+# ⛔ 촬영은 언제나 색이 있는 판이어야 한다(pytmux-266) — `NO_COLOR` 가 걸린 셸(에이전트
+# 세션이 흔히 그렇다)에서 돌리면 Textual/Rich 가 그 값을 존중해 컷을 통째로 휘도
+# 그레이스케일로 굽는다. 생성기는 rc=0 으로 끝나고 SVG 도 멀쩡히 나와 눈으로 색을
+# 확인하지 않으면 못 잡는다 — 이 저장소를 고치는 손이 대개 에이전트 셸이라 "그림 다시
+# 떠라"는 회차는 기본적으로 이 함정을 밟는다. 촬영 프로세스 한정으로 걷는다.
+os.environ.pop("NO_COLOR", None)
 
 OUT_DIR = os.path.join(_UNIT, "docs", "internal", "image")
 SIZE = (90, 26)
@@ -1126,6 +1133,37 @@ def _is_blank(svg_path):
         return True
 
 
+_HEX_COLOR_RE_FOR_GRAY_CHECK = re.compile(r"#([0-9a-fA-F]{6})\b")
+
+# Rich 가 **모든** 터미널 SVG 껍데기에 항상 박는 macOS 신호등 원 셋(창 장식 — 콘텐츠가
+# 아니다). ⛔ 이 셋을 빼지 않으면 `_is_colorless` 가 무의미해진다 — 진짜 NO_COLOR 로
+# 무너진 컷도 이 셋만은 그대로 컬러라서(2026-08-17 실측), 빼지 않은 술어는 "컬러 있음"을
+# 오판해 매번 통과시킨다(거짓 초록의 원인 그 자체).
+_SVG_CHROME_COLORS = {"ff5f57", "febc2e", "28c840"}
+
+
+def _is_colorless(svg_path):
+    """컷이 통째로 무채색(회색조)으로 구워졌는지(pytmux-266).
+
+    `NO_COLOR` 가 걸린 셸에서 돌리면 Textual/Rich 가 색을 버려 rc=0·SVG 도 멀쩡히
+    나오는 채로 그림만 흑백이 된다 — `_is_blank` 처럼 크기로는 못 잡는다(빈 프레임이
+    아니다). **창 장식 셋을 뺀 뒤** SVG 안의 6자리 hex 색 중 R=G=B 가 아닌 것이 하나라도
+    있으면 컬러다. 진짜 무채색 컷은 본문 색이 전부 명도값(`#656565` 류)으로 무너져
+    창 장식 셋 말고는 이 술어가 하나도 안 걸린다."""
+    try:
+        with open(svg_path, encoding="utf-8") as f:
+            svg = f.read()
+    except OSError:
+        return True
+    for hexcode in _HEX_COLOR_RE_FOR_GRAY_CHECK.findall(svg):
+        if hexcode.lower() in _SVG_CHROME_COLORS:
+            continue
+        r, g, b = hexcode[0:2], hexcode[2:4], hexcode[4:6]
+        if r != g or g != b:
+            return False
+    return True
+
+
 import html as _html
 import re as _re
 
@@ -1655,14 +1693,22 @@ async def shoot(name, desc, drive, retries=4, size=SIZE):
         try:
             await _one_shot(name, desc, drive, path, size)
             blank = _is_blank(path)
+            colorless = not blank and _is_colorless(path)
         except Exception as e:  # noqa: BLE001  라이브 장면의 일시 오류(예: 529)도 재시도
             print(f"  … {name} 오류({type(e).__name__}: {e}), 재시도 {attempt}/{retries}")
             continue
-        if not blank:
+        if not blank and not colorless:
             print(f"  ✓ {name}.svg  — {desc}")
             return path
+        if colorless:
+            # 재시도해도 안 낫는다(NO_COLOR 는 프로세스 전체 상태다) — 그래도 같은
+            # 자리에서 같은 판정으로 여러 번 실패를 찍어 「거짓 초록」을 막는다
+            # (pytmux-266, `_is_blank` 와 같은 급의 사고).
+            print(f"  … {name} 무채색(NO_COLOR?), 재시도 {attempt}/{retries}")
+            continue
         print(f"  … {name} 빈 프레임, 재시도 {attempt}/{retries}")
-    print(f"  ✗ {name}.svg  — {retries}회 실패")
+    reason = "무채색" if _is_colorless(path) and not _is_blank(path) else "빈 프레임"
+    print(f"  ✗ {name}.svg  — {retries}회 실패({reason})")
     return path
 
 

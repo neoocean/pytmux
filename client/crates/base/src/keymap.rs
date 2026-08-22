@@ -658,6 +658,11 @@ pub static BINDINGS: &[Binding] = &[
     // (그전에는 이 두 줄을 적어도 영영 안 찾아졌다).
     b("ctrl-up", Action::JumpPrompt { up: true }, false),
     b("ctrl-down", Action::JumpPrompt { up: false }, false),
+    // OS 관례(Cmd/Ctrl+,)를 좇은 신규 단축키다(pytmux-178) — 정본 TUI 에도 없어 패리티
+    // 대상이 아니다. `Esc` 프리픽스를 타는 이유: 이 표(BINDINGS)는 ESC 모드 전용이고,
+    // pty 로 가는 평상시 입력을 가로채는 자리가 따로 없다 — 진짜 전역(프리픽스 없는)
+    // Ctrl+, 는 그 가로채는 층 자체를 새로 내는 더 큰 일이라 이번엔 손대지 않았다.
+    b("ctrl-,", Action::ShowSettings, false),
     // 파이썬 클라의 `esc Insert`(e_ins)와 같은 키다. `shift-delete` 는 Insert 키가 없는
     // 맥 자판용 **동형 별칭**이고, 파이썬도 둘 다 받는다(그쪽에서도 esc 모드의
     // shift+delete 는 달리 쓰이지 않아 무해하다).

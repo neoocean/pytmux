@@ -366,8 +366,13 @@ fn a_committed_string_reaches_the_open_panel() {
 }
 
 #[test]
-fn korean_typed_into_the_palette_lands_in_the_filter() {
+fn korean_typed_into_the_palette_lands_in_the_filter_as_qwerty() {
     // 순수 판정만 재면 배선이 빠져도 통과한다 — **실제로 필터에 쌓이는지**를 본다.
+    //
+    // ⚠ 종전엔 확정 글자가 배선은 타되 **변환 없이 그대로** 쌓였다(`typed() == "한글"`) —
+    // IME 를 켠 채 영문 명령을 치면 자모가 그대로 필터에 들어가 검색이 안 됐다
+    // (pytmux-176). 이제 `press_palette` 가 정본 `hangul_to_qwerty` 와 동치인 변환을
+    // 거친다 — "한글" 은 두벌식으로 h-a-n-g-e-u-l 자리라 "gksrmf" 가 된다.
     let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
     let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
     for msg in three_tabs() {
@@ -378,7 +383,7 @@ fn korean_typed_into_the_palette_lands_in_the_filter() {
     view.handle_key(Key::Char(':'), Mods::NONE);
     assert_eq!(view.screens.top(), Some(Screen::Commands), "팔레트가 안 열렸다");
     assert!(view.handle_typed("한글"), "확정 글자를 아무도 안 받았다");
-    assert_eq!(view.screens.typed(), "한글", "필터에 안 쌓였다");
+    assert_eq!(view.screens.typed(), "gksrmf", "한글 자모가 QWERTY 로 안 돌아왔다");
 }
 
 #[test]
@@ -4005,16 +4010,51 @@ fn a_letter_key_the_spec_declares_becomes_that_plugin_action() {
     assert_eq!(action["input"], "/home/me/src", "고른 줄의 뜻이 안 실렸다: {action:?}");
 }
 
+fn claude_settings_form_screen() -> ServerMessage {
+    // 서버가 켬/끔을 로케일 불문 고정 기호로 낸다(`screenspec.py` `pscreen.spec_on_mark`
+    // /`_off_mark` = "●"/"○") — 순환값(예: 반복 알림 초)은 숫자 그대로 남는다.
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-settings", "kind": "form",
+        "title": "Claude settings", "hint": "",
+        "rows": [
+            {"key": "autoresume", "label": "자동재개", "cols": ["●"]},
+            {"key": "prompt_clear", "label": "프롬프트 자동비움", "cols": ["○"]},
+            {"key": "repeat_alert", "label": "반복 알림", "cols": ["5"]}
+        ],
+        "selected": 0, "note": "", "keys": {"enter": "toggle"}
+    }))
+    .unwrap()
+}
+
 #[test]
-fn a_letter_the_spec_does_not_declare_still_closes_the_panel() {
-    // 표에 없는 글자까지 먹으면 판을 **닫을 길이 없어진다**.
+fn on_off_form_values_draw_as_a_native_toggle_not_the_raw_glyph() {
+    // pytmux-182 ⑵ — 값이 그냥 글자로 찍히던 자리를 네이티브 토글 그림으로 바꿨다.
+    // 켜짐/꺼짐 둘 다 "●"/"○" 원문 글자로는 더 이상 안 그려져야 한다(그림으로 바뀌었다는
+    // 뜻) — 반면 순환값("5")은 종전대로 글자로 남는다.
+    let painted = painted_after(vec![layout_one_pane(), claude_settings_form_screen()], &[]);
+    assert!(painted_contains(&painted, "자동재개"), "이름조차 안 그려졌다: {painted:?}");
+    assert!(
+        !painted_contains(&painted, "●") && !painted_contains(&painted, "○"),
+        "켬/끔이 그림이 아니라 아직 글자로 그려진다: {painted:?}"
+    );
+    assert!(
+        painted_contains(&painted, "5"),
+        "순환값(글자여야 한다)이 사라졌다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_letter_the_spec_does_not_declare_is_ignored_not_a_close() {
+    // ⚠ 종전엔 표에 없는 글자가 판을 닫았다(`press_list` 의 `_ => close_top()`) — 정본
+    // 목록 화면(Textual ListView/OptionList)은 모르는 키에 아무 일도 안 하고 `Esc` 만
+    // 닫는다(pytmux-181·273). 판이 그대로 있는지를 본다.
     let painted = painted_after(
         vec![layout_one_pane(), ncd_list_screen()],
         &[(Key::Char('q'), Mods::NONE)],
     );
     assert!(
-        !painted_contains(&painted, "디렉터리 — /home/me"),
-        "표에 없는 글자인데 판이 안 닫혔다: {painted:?}"
+        painted_contains(&painted, "디렉터리 — /home/me"),
+        "표에 없는 글자가 판을 닫았다: {painted:?}"
     );
 }
 

@@ -302,12 +302,12 @@ fn enter_follows_the_picked_button_and_the_pick_starts_on_no() {
 }
 
 #[test]
-fn anything_else_on_a_confirm_means_no() {
-    // ★ 기본이 '아니오'다. 이 화면은 되돌릴 수 없는 것 앞에 서므로, 헷갈려서 아무 키나
-    // 눌렀을 때 일어나는 일이 **아무 일도 안 남**이어야 한다.
-    // `Tab` 은 여기 없다 — 이제 **버튼 사이를 오간다**(정본과 같다). 화면을 닫지 않는
-    // 키는 위 목록에 두면 안 된다.
-    for key in [Key::Char('n'), Key::Escape, Key::Char('x')] {
+fn explicit_no_keys_close_a_confirm_as_no() {
+    // ★ 기본이 '아니오'다 — `escape`·`n`/`N` 은 정본 `ConfirmScreen.on_key` 가 실제로
+    // 먹는 닫는 키다(pytmux-273 ③).
+    // `Tab` 은 여기 없다 — **버튼 사이를 오간다**(정본과 같다). 화면을 닫지 않는 키는
+    // 위 목록에 두면 안 된다.
+    for key in [Key::Char('n'), Key::Char('N'), Key::Escape] {
         let mut screens = Screens::new();
         screens.confirm(Prompt::KillPane);
         assert_eq!(screens.press(key, Mods::NONE), Some(ScreenKey::Closed), "{key:?}");
@@ -318,6 +318,18 @@ fn anything_else_on_a_confirm_means_no() {
     screens.confirm(Prompt::KillPane);
     assert_eq!(screens.press(Key::Tab, Mods::NONE), Some(ScreenKey::Consumed));
     assert!(screens.is_open(), "Tab 이 확인 화면을 닫았다");
+}
+
+#[test]
+fn an_unrelated_key_on_a_confirm_does_nothing(){
+    // ⚠ 종전에는 이 다섯(escape·y/Y·n/N·enter·left/right/tab) 밖의 모든 키가 "아니오"로
+    // 닫혔다(pytmux-273 ③) — 정본 `ConfirmScreen.on_key` 는 그 다섯 밖의 키에 갈래가
+    // 없어 화면이 그대로 남는다. 되돌릴 수 없는 것 앞에서 오타 하나로 물음이 사라지면
+    // 사용자는 자기가 무엇을 답했는지 모른다.
+    let mut screens = Screens::new();
+    screens.confirm(Prompt::KillPane);
+    assert_eq!(screens.press(Key::Char('x'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert!(screens.is_open(), "관계없는 키가 확인 화면을 닫았다");
 }
 
 #[test]
@@ -1014,13 +1026,17 @@ fn the_prompt_history_narrows_picks_and_fills() {
 }
 
 #[test]
-fn a_prompt_without_history_keeps_the_old_key_behavior() {
-    // 이력이 없으면(빈 목록) ↑↓·Tab 은 종전 팔로 떨어진다 — 물음이 닫히는 키였다.
+fn a_prompt_without_history_ignores_up_instead_of_closing() {
+    // 이력이 없으면(빈 목록) ↑↓·Tab 은 이력 갈래를 안 타고 기본 팔로 떨어진다.
+    // ⚠ 종전에는 그 기본 팔이 "정의된 키가 아니면 닫기"라 ↑ 가 물음을 닫았다
+    // (pytmux-174·273) — 정본 `Input` 은 모르는 키에 아무 일도 안 한다. 편집 중
+    // 화면이 조용히 사라지는 쪽이 훨씬 나쁘다.
     let mut screens = Screens::new();
     screens.ask(Prompt::RenameTab, "이름");
     screens.set_prompt_history(Vec::new());
     let out = screens.press(Key::Up, Mods::NONE);
-    assert_eq!(out, Some(ScreenKey::Closed), "이력 없는 물음의 ↑ 가 달라졌다");
+    assert_eq!(out, Some(ScreenKey::Consumed), "이력 없는 물음의 ↑ 가 화면을 닫혔다");
+    assert!(screens.is_open());
 }
 
 // ── 곁일 셋(2026-07-31) ────────────────────────────────────────────────────────
@@ -1302,15 +1318,18 @@ fn a_multi_column_plugin_panel_moves_a_whole_column_sideways() {
 }
 
 #[test]
-fn a_single_column_plugin_list_keeps_the_old_meaning_of_left_and_right() {
-    // ⛔ 한 열이면 ←→ 는 **종전대로 판을 닫는다**. 여기서 갈래를 넓히면 목록 화면마다
-    //    손이 달라지고, 그 차이는 스펙에 안 적혀 있어 아무도 못 본다.
+fn a_single_column_plugin_list_ignores_left_and_right() {
+    // 한 열이면 ←→ 는 이 목록의 정의된 키가 아니다. ⚠ 종전에는 목록형 화면 전체가
+    // `InfoScreen` 의 "아무 키나 닫기"를 기본값으로 물려받아 여기서도 판을 닫았다
+    // (pytmux-181·273) — 정본의 목록 화면(Textual `ListView`/`OptionList`)은 정의 안 된
+    // 키에 아무 일도 안 하고, `Esc` 만 닫는다.
     let mut screens = Screens::new();
     screens.open_plugin_view(true);
     screens.set_plugin_grid(10, 1);
     screens.select_row(3);
-    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::Closed));
-    assert_eq!(screens.top(), None);
+    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.top(), Some(Screen::PluginView), "→가 판을 닫았다");
+    assert_eq!(screens.selected(), 3, "→가 선택을 옮겼다");
 }
 
 #[test]
@@ -1322,5 +1341,7 @@ fn a_panel_that_never_got_its_geometry_still_behaves_like_a_list() {
     screens.select_row(2);
     assert_eq!(screens.press(Key::Down, Mods::NONE), Some(ScreenKey::Consumed));
     assert_eq!(screens.selected(), 3);
-    assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::Closed));
+    // ←는 이 목록의 키가 아니다(pytmux-181) — 삼킨다, 닫지 않는다.
+    assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.top(), Some(Screen::PluginView));
 }
