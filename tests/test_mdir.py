@@ -1162,7 +1162,8 @@ async def test_both_clients_count_the_same_directory_the_same_way():
     """★ **호출부 오라클** — 규칙이 한 벌이어도 한쪽이 안 부르면 수가 갈린다.
 
     같은 디렉터리를 정본 화면과 화면 스펙에 각각 보이고, 정본의 집계줄과 스펙의
-    `note` 가 **글자 단위로 같은지** 잰다. 어느 한쪽이 자기 셈을 다시 갖는 순간
+    `foot`(집계줄 — `note` 는 실패·빈 목록 전용이라 평상시엔 비어 있다)가
+    **글자 단위로 같은지** 잰다. 어느 한쪽이 자기 셈을 다시 갖는 순간
     (또는 스펙이 그 줄을 아예 안 실으면) 여기가 운다.
     """
     import os
@@ -1197,15 +1198,15 @@ async def test_both_clients_count_the_same_directory_the_same_way():
             shutil.disk_usage = lambda _p: _Du
             try:
                 spec = PLUGIN._spec({"path": td, "tags": []}, 0, "")
-                assert view._line_counts(200).text.strip() == spec["note"], (
-                    view._line_counts(200).text, spec["note"])
+                assert view._line_counts(200).text.strip() == spec["foot"], (
+                    view._line_counts(200).text, spec["foot"])
                 # 태그를 걸어도 같다 — 열쇠만 다르다(정본은 이름, 스펙은 절대경로).
                 view._tags.add("a.txt")
                 tagged = PLUGIN._spec(
                     {"path": td, "tags": [os.path.join(td, "a.txt")]}, 0, "")
-                assert "Sel 1 (5)" in tagged["note"], tagged["note"]
-                assert view._line_counts(200).text.strip() == tagged["note"], (
-                    view._line_counts(200).text, tagged["note"])
+                assert "Sel 1 (5)" in tagged["foot"], tagged["foot"]
+                assert view._line_counts(200).text.strip() == tagged["foot"], (
+                    view._line_counts(200).text, tagged["foot"])
             finally:
                 shutil.disk_usage = real
         await _with_app(body)
