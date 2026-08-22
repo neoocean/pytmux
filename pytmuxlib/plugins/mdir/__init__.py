@@ -42,7 +42,7 @@ i18n.register({
         "mdir.title_mask": "파일 관리자 — {path}  [{mask}]",
         "mdir.hint": ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · "
                       "d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · "
-                      "Esc 닫기)"),
+                      "F10 트리 · Esc 닫기)"),
         # 줄의 **칸**으로 나가는 표식(이름은 자료라 번역 대상이 아니다).
         "mdir.parent": "<상위>",
         "mdir.drive": "<드라이브>",
@@ -96,7 +96,7 @@ i18n.register({
         "mdir.title_mask": "File manager — {path}  [{mask}]",
         "mdir.hint": ("(Enter open · . up · t tag · u tag all · c copy · m move · "
                       "d delete · r rename · k new directory · v view · h hidden · "
-                      "p cd panel · Esc close)"),
+                      "p cd panel · F10 tree · Esc close)"),
         "mdir.parent": "<UP>",
         "mdir.drive": "<DRIVE>",
         "mdir.read_fail": "Read failed: {err}",
@@ -172,6 +172,11 @@ _SCREEN_KEYS = {
     "alt-0": "cols-0", "alt-1": "cols-1", "alt-2": "cols-2",
     "alt-3": "cols-3", "alt-4": "cols-4", "alt-5": "cols-5",
     "alt-6": "cols-6",
+    # ★ F-키도 정본과 같은 표다(pytmux-125·pytmux-236) — 정본 화면(`screen.py::on_key`)의
+    #   F2/F3/F4/F5/F6/F7/F8/F10 을 그대로 옮겼다. 글자 짝은 대체가 아니라 별칭이라
+    #   그대로 둔다(노트북 자판에서 F-키는 Fn 조합이라 한 손을 없애면 기능이 사라진다).
+    "f2": "rename", "f3": "view", "f4": "cd", "f5": "copy", "f6": "move",
+    "f7": "mkdir", "f8": "delete", "f10": "tree",
 }
 
 def _reason(code) -> str:
@@ -517,7 +522,7 @@ class _MdirPlugin:
             if path:
                 self._send_to_pane(server, sess, _cd_command(path))
             return {"t": "plugin_screen_close", "id": "mdir"}
-        if do == "f10":
+        if do == "tree":
             # 디렉터리 트리(ncd) 팝업을 띄운다. 트리에서 선택하면 mdir 이 그 디렉터리를
             # 보인다(패널은 cd 명령으로 이동 — pytmux-207).
             ncd_state = req.get("state", {}).setdefault("ncd", {})
