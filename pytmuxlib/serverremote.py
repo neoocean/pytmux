@@ -415,7 +415,12 @@ def _nest_local_endpoint(dest: str) -> bool:
     """NEST 자동 승격 dest 가 같은 머신 직결 endpoint 인가(unix 소켓 경로, 또는
     loopback tcp). 임의 원격 `tcp:host:port` 는 False — 이런 dest 의 endpoint 직결은
     금지하고(NEW-1: 위조/조작된 _ssh_dest 의 tcp:원격호스트 직결로 임의 아웃바운드 +
-    키 MITM 차단) ssh 호스트 경로(S2 가드)로만 해석한다."""
+    키 MITM 차단) ssh 호스트 경로(S2 가드)로만 해석한다.
+
+    ⚠ **이름 있는 loopback(`tcp:A@127.0.0.1:…`)도 False 다** — 여기서만 문자열을 직접
+    쪼개므로 `A@127.0.0.1` 이 통째로 호스트로 읽힌다. 그대로 둔다: NEST 자동 승격은
+    fail-closed 가 맞고, 이름 있는 엔드포인트를 이 경로로 열 이유가 아직 없다
+    (지금 이름을 쓰는 것은 테스트 하네스뿐이다 · pytmux/pytmux-152)."""
     if dest.startswith("/"):
         return True
     if dest.startswith("tcp:"):
@@ -688,10 +693,14 @@ class ServerRemoteMixin:
             self._log_error(f"remote_attach({name})")
             return False
         except (OSError, ConnectionError, asyncio.TimeoutError,
-                asyncio.LimitOverrunError) as e:
+                asyncio.LimitOverrunError, ValueError) as e:
             # OS/네트워크 예외 메시지는 키가 없다(대개 영어) — 원문 그대로 detail 로.
             # LimitOverrunError: stdio-proxy 첫 줄이 개행 없이 64KiB 를 넘으면(고장난
             # 원격) readline 이 던진다 — _remote_transport 가 proc 정리 후 재전파(H4).
+            # ValueError: `endpoint` 는 **클라가 준 문자열**이고 `ipc.parse_endpoint`
+            # 가 잘못된 모양(`tcp:host:abc` · 규칙 밖 이름)에 그걸 던진다 — 잡아서
+            # 「이 attach 가 실패했다」로 접는다. 안 잡으면 남의 오타 하나가 서버
+            # 커맨드 루프의 예외로 새어 error.log 에 트레이스백만 남았다.
             self._set_err(None, str(e) or type(e).__name__)
             self._log_error(f"remote_attach({name})")
             return False
@@ -1147,7 +1156,9 @@ class ServerRemoteMixin:
                     # 우리가 물어본 전역 검색의 회신(pytmux-27 ② · 토큰이 문자열이면
                     # 우리 것, int 면 뷰어 라우팅용 id(client)다). 팬아웃이 받아
                     # 로컬 결과와 **합쳐서 한 벌로** 내보내므로 여기서 흘리지 않는다.
-                    self._remote_search_reply(msg)
+                    # ⛔ `link` 를 함께 넘긴다 — 대기표의 주인이 이 링크인지 저쪽에서
+                    # 본다(B-1: 토큰은 전역 순번이라 이웃이 짐작할 수 있다).
+                    self._remote_search_reply(link, msg)
                     continue
                 # §4.1: 요청 클라 식별자가 echo 돼 왔으면(request_token_log 회신) 그
                 # 클라에게만 전달한다 — 같은 호스트를 보는 다른 다운스트림 클라에
@@ -1675,20 +1686,38 @@ class ServerRemoteMixin:
     _REMOTE_SEARCH_MAX_HOPS = 4
 
     def _search_waiters(self) -> dict:
-        """{토큰: Future} — 상류 회신을 기다리는 팬아웃. 지연 초기화(_remotes_dict 결)."""
+        """{토큰: (link, Future)} — 상류 회신을 기다리는 팬아웃. 지연 초기화(_remotes_dict 결).
+
+        ⛔ **링크를 함께 쥔다.** 토큰만 쥐면 그것이 곧 「이 대기표를 채울 자격」이 되는데,
+        토큰은 서버 전역 순번(`sa:N`)이라 **다음 값이 뻔하다**(검수 2026-08-09 B-1)."""
         d = getattr(self, "_search_wait", None)
         if d is None:
             d = self._search_wait = {}
         return d
 
-    def _remote_search_reply(self, msg: dict) -> None:
+    def _remote_search_reply(self, link: RemoteLink, msg: dict) -> None:
         """상류의 `search_results` 를 기다리던 팬아웃에 건넨다(**릴레이하지 않는다**).
 
         ⛔ 이 프레임을 보는 클라에 그냥 흘리면 안 된다 — 물어본 것은 우리지 클라가
         아니고, 클라가 받아야 하는 것은 로컬 + 전 상류를 **합친 한 벌**이다. 조각을
-        먼저 보내면 결과 판이 상류 수만큼 열린다."""
-        fut = self._search_waiters().pop(msg.get("_req_token"), None)
-        if fut is not None and not fut.done():
+        먼저 보내면 결과 판이 상류 수만큼 열린다.
+
+        ⛔ **물어본 그 링크에서 온 것만 받는다**(검수 2026-08-09 B-1). 토큰만 보고
+        열어 주면 침해된 상류 하나가 이웃 순번을 짐작해 **다른 상류의 대기표**를
+        채운다 — 그 줄은 화면에 `⇄남의호스트:탭` 으로 뜨고(위조), 진짜 회신은 뒤늦게
+        와서 대기표가 없어 버려지는데 `hosts` 는 그 호스트가 「답했다」고 적는다.
+        실측(A→B·C · C 침해): B 이름표를 단 C 의 줄이 목록에 실렸고 B 의 진짜 줄은
+        사라졌으며 `hosts` 는 `B: ok n=1` 이었다.
+        ⚠ 남의 토큰이면 **대기표를 지우지 않는다** — 지우면 위조가 실패해도 정직한
+        상류의 회신 자리가 없어져 「가로채기 대신 지우기」로 바뀔 뿐이다."""
+        entry = self._search_waiters().get(msg.get("_req_token"))
+        if entry is None:
+            return
+        want, fut = entry
+        if want is not link:
+            return
+        self._search_waiters().pop(msg.get("_req_token"), None)
+        if not fut.done():
             fut.set_result(msg)
 
     async def _remote_search_ask(self, link: RemoteLink, query: str,
@@ -1697,12 +1726,15 @@ class ServerRemoteMixin:
 
         토큰은 **문자열**(`sa:N`)로 짓는다: 뷰어 라우팅용 `_req_token` 은 `id(client)`
         = int 라, 타입만으로 "내가 물어본 것"과 "클라가 물어본 것"이 갈린다
-        (_remote_reader 의 가로채기 조건)."""
+        (_remote_reader 의 가로채기 조건).
+
+        ⛔ **토큰은 라우팅 키이지 자격이 아니다** — 순번이라 짐작 가능하므로 대기표에
+        `link` 를 함께 넣어 `_remote_search_reply` 가 신원을 본다(B-1)."""
         seq = getattr(self, "_search_tok_seq", 0) + 1
         self._search_tok_seq = seq
         tok = f"sa:{seq}"
         fut = self.loop.create_future()
-        self._search_waiters()[tok] = fut
+        self._search_waiters()[tok] = (link, fut)
         try:
             try:
                 await self._link_write(link, {
@@ -1783,6 +1815,14 @@ class ServerRemoteMixin:
             return
         hosts = out.setdefault("hosts", [])
         # 홉 상한: 고리(A→B→A)에서 팬아웃이 영원히 번지지 않게 여기서 멈춘다.
+        # ⛔ **음수를 먼저 접는다**(검수 2026-08-09 B-2). `hops` 는 와이어에서 오고
+        # `_int` 는 음수를 안 조인다 — `hops=-2**40` 한 값이면 상한까지 가는 데 1조
+        # 홉이라 이 방어가 없는 것과 같다. 홉마다 상류가 **전 패널의 스크롤백을
+        # 훑으므로** 그 되풀이는 싸지 않다(고리 하나면 두 서버가 서로를 영원히 훑는다).
+        # 상한을 지키는 자리가 상한이 사는 자리다 — `search_all_panes` 가 `limit` 에
+        # 대해 하는 것과 같은 규율이고, 호출부마다 조이면 한 곳이 빠진다.
+        hops = max(0, hops if isinstance(hops, int) and not isinstance(hops, bool)
+                   else 0)
         if hops >= self._REMOTE_SEARCH_MAX_HOPS:
             out["hops_capped"] = True
             hosts.extend({"host": link.host, "state": "hops", "n": 0}

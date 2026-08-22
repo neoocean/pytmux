@@ -189,13 +189,24 @@ class Server(*_SERVER_BASES):
         self.coalesce_repaints = bool(_opts.get("coalesce_repaints", True))
         # 다중 클라이언트가 한 세션을 미러링할 때 공유 격자 크기를 정하는 규칙
         # (tmux window-size 와 동형, _session_size). opts.json 영속.
-        #   smallest(기본) = min(모든 클라) — 가장 작은 뷰어에 맞춰 아무도 안 잘림(현행).
-        #   latest         = 마지막으로 조작된(입력·마우스·스크롤·리사이즈) 클라 크기.
+        #   smallest       = min(모든 클라) — 가장 작은 뷰어에 맞춰 아무도 안 잘림.
+        #   latest(기본)   = 마지막으로 조작된(입력·마우스·스크롤·리사이즈) 클라 크기.
         #   largest        = max(모든 클라).
         # latest/largest 는 작은 코-뷰어가 공유 격자를 다 못 담아 우/하단이 **잘린다**
         # (레터박스 아님) — 단일 공유 native 격자의 물리적 한계, tmux 와 동일 트레이드오프.
-        _ws = str(_opts.get("window_size", "smallest")).strip().lower()
-        self.window_size = _ws if _ws in _WINDOW_SIZE_MODES else "smallest"
+        #
+        # ★ **기본이 latest 인 것은 사람의 결정이다**(2026-08-17 · pytmux/pytmux-186 ·
+        #   질문 pytmux/pytmux-272 ①의 ②안). 종전 기본은 `smallest` 였고 그것도 사람이
+        #   고른 값이었는데(2026-07-13 · 기존 동작 불변 · opt-in), 그 값이 제보를 낳았다 —
+        #   큰 클라가 **나중에** 붙으면 공유 격자가 먼저 붙어 있던 작은 클라에 묶여 큰 쪽이
+        #   제 창을 영영 다 못 쓴다(pytmux-186 의 그림 둘이 그 상태다).
+        # ⛔ **그렇다고 attach 를 「조작」으로 세지는 않는다** — 그것은 같은 질문의 ①안이고
+        #   사람이 **안** 골랐다. 붙는 순간 격자를 뺏으면 먼저 보고 있던 작은 클라가 그
+        #   순간 잘린다(crop · 레터박스 아님). 새 클라는 **키를 한 번 치면** 가져온다.
+        #   세는 자리는 `serverio` 의 입력·스크롤·리사이즈 셋 그대로다(`model.ClientConn
+        #   .last_active`) — 늘리려면 그 결정부터 다시 받아야 한다.
+        _ws = str(_opts.get("window_size", "latest")).strip().lower()
+        self.window_size = _ws if _ws in _WINDOW_SIZE_MODES else "latest"
         # VT 파서 백엔드 opt(레거시): M4b(2026-07-18)에 pyte 완전 은퇴로 파서는 native
         # 단일화됐다. 이 opt 는 상위 배선 호환을 위해 보존하되 값과 무관하게 native
         # 토크나이저(vtparse.VTTokenizer)만 쓴다("pyte" 선택은 native 로 수렴).
@@ -968,16 +979,17 @@ class Server(*_SERVER_BASES):
 
     def _session_size(self, sess: Session):
         """세션 공유 격자 크기(미러링). window_size 규칙에 따라 결정한다(tmux 동형):
-          smallest(기본) = min(모든 클라) — 가장 작은 뷰어에 맞춰 아무도 안 잘림.
+          smallest       = min(모든 클라) — 가장 작은 뷰어에 맞춰 아무도 안 잘림.
           largest        = max(모든 클라).
-          latest         = 마지막으로 조작된(last_active 최대) 클라 크기. 아직 아무
-                           조작도 없으면(모두 0) smallest 로 폴백.
+          latest(기본)   = 마지막으로 조작된(last_active 최대) 클라 크기. 아직 아무
+                           조작도 없으면(모두 0) smallest 로 폴백 — **attach 는 조작이
+                           아니다**(사람의 결정 · 위 `__init__` 의 window_size 주석).
         latest/largest 에선 작은 코-뷰어가 공유 격자를 다 못 담아 우/하단이 잘린다
         (클라측 _composite 은 vw<W 라 레터박스 없이 crop). MIN 클램프는 공통."""
         cs = [c for c in self.clients if c.session is sess]
         if not cs:
             return 80, 24
-        mode = getattr(self, "window_size", "smallest")
+        mode = getattr(self, "window_size", "latest")
         if mode == "largest":
             cols = max(c.cols for c in cs)
             rows = max(c.rows for c in cs)
@@ -988,7 +1000,7 @@ class Server(*_SERVER_BASES):
                 rows = min(c.rows for c in cs)
             else:
                 cols, rows = act.cols, act.rows
-        else:                                     # smallest(기본)
+        else:                                     # smallest
             cols = min(c.cols for c in cs)
             rows = min(c.rows for c in cs)
         return (max(MIN_W, cols), max(MIN_H, rows))

@@ -412,7 +412,7 @@ class Registry:
         """Tier C — **선언형 화면 스펙**(설계 PLUGIN_COMPAT_TEXTUAL_GUI §4.3 · P4).
 
         네이티브 클라(pytmux-gui)는 파이썬을 못 읽어 플러그인의 Textual 화면을 띄울 수
-        없다. 그래서 플러그인이 **무엇을 그릴지**를 자료로 돌려주고, 클라는 목록/글 두
+        없다. 그래서 플러그인이 **무엇을 그릴지**를 자료로 돌려주고, 클라는 정해진 몇
         모양만 그릴 줄 알면 된다 — 플러그인 코드는 한 벌로 남는다.
 
         `req` 는 두 모양뿐이다:
@@ -420,8 +420,15 @@ class Registry:
         - 화면 안 동작 — `{"id": <화면 id>, "do": <액션 이름>, "row": n, "input": …}`
 
         돌려줄 것(첫 플러그인의 값을 쓴다 · 내 것이 아니면 `None`):
-        - `{"t": "plugin_screen", "id", "kind": "list"|"text", "title", "hint", …}`
+        - `{"t": "plugin_screen", "id", "kind", "title", "hint", …}`
+          ⛔ **`kind` 목록을 여기 다시 적지 않는다** — 종전에 적혀 있던
+          `"list"|"text"` 는 실측 여섯일 때까지도 그대로여서, 글로 적힌 계약이 **코드가
+          내는 값과 갈린 채** 오래 남았다(`client/scripts/gen_plugin_screens.py` 머리말).
+          지금 무엇이 나가는지는 그 생성기가 소스에서 전수로 세어 픽스처에 적고,
+          어휘의 뜻은 설계 §4.3 이 쥔다.
         - `{"t": "plugin_screen_close", "id"}`
+        - `{"t": "plugin_reopen", "name": <다른 화면 이름>}` — **남의 화면으로 넘긴다**
+          (아래 `_reopen`). mdir 의 `F10`(트리 → ncd)이 그 첫 자리다.
         - awaitable(느린 일은 executor 로 — `handle_server_request` 와 같은 규약)
 
         **정본 클라는 이 훅을 안 쓴다**(자기 프로세스에서 화면을 직접 띄운다). 그래서
@@ -433,8 +440,51 @@ class Registry:
             if fn is not None:
                 resp = fn(server, sess, req)
                 if resp is not None:
+                    if isinstance(resp, dict) and resp.get("t") == "plugin_reopen":
+                        return self._reopen(server, sess, req, resp)
                     return resp
         return None
+
+    def _reopen(self, server, sess, req, ask):
+        """한 화면이 **남의 화면**으로 넘긴다(pytmux-125 — mdir 의 `F10` = ncd 트리).
+
+        # 왜 서버가 넘기나 (클라가 `plugin_open` 을 보내는 길이 아니라)
+
+        설계 §4.3 이 정한 계약이 *"행동은 서버(=플러그인)가 정하고 클라는 몇 번째
+        줄에서 무슨 키인지만 말한다"* 다. 키에 화면 **이름**을 실어 보내면 그 순간
+        클라가 *"이 값은 액션인가 화면인가"* 를 가르게 되고, 플러그인이 흐름을 바꿀
+        때마다 클라를 고쳐야 한다. 그래서 키는 여전히 액션 하나로 나가고, 그것을
+        받은 플러그인이 여기에 대고 *"저 화면을 내 대신 열어 달라"* 고 말한다.
+
+        # 왜 플러그인끼리 직접 안 부르나
+
+        `import` 로 이으면 **delete-to-disable** 이 깨진다 — ncd 디렉터리를 지우는
+        순간 mdir 이 통째로 죽는다. 정본도 같은 이유로 이름으로만 잇는다(mdir 의
+        `getattr(self.app, "request_nc_list", None)`). 여기서도 넘기는 것은 **이름
+        하나**이고, 아무도 그 이름을 안 집으면 정본과 같은 결과가 된다: 아무 일도
+        안 일어나되 **조용하지는 않다**(설계 §8-5).
+
+        ⛔ 한 번만 넘긴다 — 넘겨받은 화면이 또 넘기면 두 플러그인이 서로를 부르며
+        영영 도는 자리가 생긴다(그 순간 서버는 단일 루프라 통째로 멎는다).
+        """
+        name = str(ask.get("name") or "")
+        opened = {"do": "open", "name": name,
+                  "args": list(ask.get("args") or []),
+                  "state": req.get("state")}
+        for p in self.plugins:
+            fn = getattr(p, "plugin_screen", None)
+            if fn is None:
+                continue
+            resp = fn(server, sess, opened)
+            if resp is not None and not (
+                    isinstance(resp, dict) and resp.get("t") == "plugin_reopen"):
+                return resp
+        # 아무도 안 집었다 — **왜 아무 일도 안 나는지**를 그 자리에서 말한다. 위로
+        # `None` 을 올리면 서버의 알림이 *부른 쪽*(mdir)의 이름을 대서, 없는 것이
+        # ncd 인데 mdir 을 탓하는 문장이 된다.
+        return {"t": "notice", "sev": "warn",
+                "key": "msg.plugin_screen_missing", "kw": {"name": name},
+                "text": f"{name}: 이 플러그인은 화면 스펙을 제공하지 않습니다"}
 
     def plugin_cells(self, server, sess, req) -> list:
         """Tier B — **셀 기여**(설계 §4.2 · P3).

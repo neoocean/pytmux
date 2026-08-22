@@ -6,6 +6,7 @@ import os
 from harness import (make_app, server_only, teardown, wait_mounted,
                      wait_until)
 from pytmuxlib import plugins
+from textual.widgets import Input, ListView
 
 
 async def _with_app(coro, size=(100, 30)):
@@ -136,6 +137,10 @@ async def test_plugin_manager_popup_toggle_sends_cmd():
         app.push_screen(PluginManagerScreen())
         scr = await wait_mounted(pilot, "PluginManagerScreen", child="#plgbox")
         assert scr.__class__.__name__ == "PluginManagerScreen"
+        # 목록 채우기는 on_mount 가 asyncio.create_task 로 미루므로, 채워지기
+        # 전에 Space 를 누르면 highlighted_child 가 없어 토글이 조용히 안 먹는다.
+        lv = scr.query_one(ListView)
+        await wait_until(pilot, lambda: lv.highlighted_child is not None)
         # 첫 항목(활성) 위에서 Space → set_plugin_enabled(on=False) 전송.
         await pilot.press("space")
         await wait_until(pilot, lambda: bool(sent))
@@ -183,4 +188,44 @@ async def test_plugin_manager_click_outside_closes():
         await wait_until(pilot, lambda: app.screen_stack[-1] is not scr)
         assert app.screen_stack[-1] is not scr, "바깥 클릭은 팝업을 닫는다"
         assert ev_out.stopped
+    await _with_app(body)
+
+
+async def test_plugin_manager_typing_filters_list():
+    """플러그인 목록에 타이핑 찾기 — 글자를 치면 플러그인 이름으로 필터링."""
+    from pytmuxlib.clientscreens import PluginManagerScreen
+
+    async def body(app, pilot, srv):
+        app.push_screen(PluginManagerScreen())
+        scr = await wait_mounted(pilot, "PluginManagerScreen", child="#plgbox")
+        lv = scr.query_one("#plglist", ListView)
+        search_input = scr.query_one("#plgsearch", Input)
+        await wait_until(pilot, lambda: len(lv.children) > 0)
+
+        # 초기: 모든 플러그인 표시
+        initial_count = len(lv.children)
+        assert initial_count > 1, "최소 2개 이상 플러그인 있어야 함"
+
+        # 'c' 입력 → clock, claude 등 c로 시작하는 플러그인만 필터링
+        await pilot.press("c")
+        await wait_until(pilot, lambda: search_input.value == "c")
+        filtered_count = len(lv.children)
+        assert filtered_count < initial_count, f"필터링 후 줄어야 함: {filtered_count} < {initial_count}"
+
+        # 다시 'l' 입력 → clock 정도만 남음
+        await pilot.press("l")
+        await wait_until(pilot, lambda: search_input.value == "cl")
+        more_filtered = len(lv.children)
+        assert more_filtered <= filtered_count, f"더 필터링되어야 함: {more_filtered} <= {filtered_count}"
+
+        # Backspace → 'c' 로 돌아감
+        await pilot.press("backspace")
+        await wait_until(pilot, lambda: search_input.value == "c")
+        back_count = len(lv.children)
+        assert back_count == filtered_count, f"Backspace 후 이전 상태로: {back_count} == {filtered_count}"
+
+        # Escape → 창 닫힘
+        await pilot.press("escape")
+        await wait_until(pilot, lambda: app.screen_stack[-1] is not scr)
+        assert app.screen_stack[-1] is not scr, "Escape 로 팝업 닫혀야 함"
     await _with_app(body)

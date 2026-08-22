@@ -455,6 +455,12 @@ class _CommandMixin:
             self.send_cmd("kill_pane")
         elif c in ("new-tab", "newt", "new-window", "neww"):
             self.send_cmd("new_window")
+        elif c in ("new-claude-tab", "new-claude-window"):
+            # `esc c` 와 같은 자리(pytmux-137). path 를 박아 보내는 이유도 같다 —
+            # 이 명령의 값은 「지금 디렉토리에서 바로 붙는다」라 default-path 를
+            # 안 따른다.
+            self.send_cmd("new_window", path="current",
+                          cmd=getattr(self, "claude_command", "claude"))
         elif c in ("kill-tab", "killt", "kill-window", "killw"):
             # 원격 탭이면 kill_window(서버가 §1.7-c 거부) 대신 그 탭 하나만 분리한다
             # ([x]/esc x 와 동일 라우팅, confirm_kill_tab 참조). 활성 원격 탭의 병합
@@ -827,8 +833,8 @@ class _CommandMixin:
         elif c in ("window-size", "winsize"):
             # window-size [smallest|latest|largest] — 다중 클라 미러링 시 세션 공유
             # 격자 크기 규칙(tmux window-size 동형). 인자 없으면 순환 토글(서버가 반전).
-            #   smallest(기본)=가장 작은 뷰어에 맞춤(아무도 안 잘림).
-            #   latest=마지막 조작 클라 크기. largest=가장 큰 클라.
+            #   smallest=가장 작은 뷰어에 맞춤(아무도 안 잘림).
+            #   latest(기본)=마지막 조작 클라 크기. largest=가장 큰 클라.
             # latest/largest 는 작은 코-뷰어가 crop 됨. 서버가 opts.json 영속·재미러링.
             val = (args[0].lower() if args else "")
             if val and val not in ("smallest", "latest", "largest"):

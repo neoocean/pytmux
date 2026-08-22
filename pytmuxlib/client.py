@@ -28,7 +28,7 @@ from . import (cellwidth, clientclip, clientnotices, clientrender, i18n, ipc,
                plugins, proc, version)
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_ARGHIST, COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS,
-    DEFAULT_STYLE, norm_sep,
+    ANSI_PALETTE_THEME, DEFAULT_STYLE, norm_sep,
     SETTINGS, SETTINGS_CATS,
     REMOTE_PINK, REMOTE_PINK_DIM,
     _BOX_BITS, _BOX_REV, _JAMO, _KEY_DIAG,
@@ -575,6 +575,15 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def __init__(self, sock_path: str):
             super().__init__()
+            # ★ **ANSI 색을 옮겨 적을 팔레트는 «표준»이다**(pytmux-205 · clientutil).
+            # Textual 기본값은 `ansi_theme_dark = MONOKAI` 라, 앱이 낸 ANSI 색이 그
+            # 테마의 hex 로 바뀌어 나간다 — 실측(2026-08-22): 패널의 `ESC[31m` 이
+            # `38;2;244;0;95`(#f4005f 자홍) · `ESC[90m` 이 `38;2;98;94;76`(#625e4c
+            # 올리브). 제보 화면의 그 두 색이 **정확히 이것**이다.
+            # ⛔ `ansi_color=True`(필터 끄기)로는 못 고친다 — 실측하면 색이 팔레트로
+            # 나가는 게 아니라 **통째로 빠진다**(`39;49`). 그래서 끄지 않고 **바꾼다**.
+            self.ansi_theme_dark = ANSI_PALETTE_THEME
+            self.ansi_theme_light = ANSI_PALETTE_THEME
             # §10-14: `NO_COLOR` 가 켜진 상자에서 Textual 의 Monochrome 필터가 렌더
             # 중 죽는다(상류 결함, upstream 미수정 — clientutil 참조). App.__init__ 이
             # 필터 목록을 만든 **직후** 안전판으로 갈아 끼운다. 그 변수가 없으면 무동작.
@@ -814,6 +823,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self.hooks = config.get("hooks", {})
             # 새 탭/패널 시작 디렉토리(current/home/<경로>). :settings 에서 변경 가능.
             self.default_path = config.get("default_path", "current")
+            # `esc c`(Claude Code 탭)가 새 탭에서 실행할 명령(pytmux-137). 경로·플래그가
+            # 사람마다 다르므로 하드코딩하지 않는다 — 비우면 그냥 셸 탭이 열린다.
+            self.claude_command = config.get("claude_command", "claude")
             # :settings 가 config-scoped 설정을 되쓸 대상 파일(load_config 와 같은
             # 탐색 순서; 없으면 ~/.config/pytmux/config 를 생성 경로로).
             self._config_path = config_path_for_write()
@@ -1723,6 +1735,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.request_tree()
             elif key == "new_window":
                 self.send_cmd("new_window")
+            elif key == "new_claude_window":
+                self._run_command("new-claude-tab")
             elif key == "rename_window":
                 cur = self._active_window_name()
                 self.open_prompt("rename_window", cur or "rename-tab",
@@ -1972,6 +1986,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 새 탭/패널 시작 디렉토리(current/home/<경로>). 기존엔 config 로딩
                 # 전용이라 런타임 set 이 무시됐다 — :settings 에서 바꿀 수 있게 보강.
                 self.default_path = val.strip()
+            elif name in ("claude-command", "claude_command"):
+                # `esc c` 가 새 탭에서 실행할 명령(pytmux-137).
+                self.claude_command = val.strip()
 
         def apply_setting(self, desc, value):
             """:settings 화면의 한 설정을 런타임 적용 + 영속한다(흩어진 적용 로직을
@@ -2036,6 +2053,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return textual_key_to_tmux(self.prefix_key) or self.prefix_key
             if key == "default-path":
                 return getattr(self, "default_path", "current")
+            if key in ("claude-command", "claude_command"):
+                return getattr(self, "claude_command", "claude")
             if key == "set-titles":
                 return "on" if self.set_titles else "off"
             if key == "status-interval":
@@ -2105,6 +2124,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.status.right_fmt = cfg["status_right"]
             self.set_tab_bar_always(cfg.get("tab_bar_always", True))
             self.default_path = cfg.get("default_path", "current")
+            self.claude_command = cfg.get("claude_command", "claude")
             self.status.refresh()
 
         def _active_window_name(self):

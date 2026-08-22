@@ -192,6 +192,59 @@ async def test_the_server_stops_resending_the_same_picture():
         await teardown(srv, task, sock)
 
 
+async def test_the_runs_follow_a_resize_without_waiting_for_the_period():
+    """**창이 커지면 런도 그 프레임에 따라간다** — 주기를 기다리지 않는다(pytmux-164).
+
+    런은 패널 사각형에서 나온다(입력기 배지의 x = 활성 패널 오른쪽 끝 - 글자 폭).
+    그런데 캐시를 **시각만으로** 무르면, 리사이즈 뒤 최대 1초 동안 새 격자 위에
+    **옛 폭으로 잰 배지**가 얹힌다 — 화면 나머지는 이미 새 크기라, 배지 하나만
+    엉뚱한 자리에 떠 있다가 뛰는 것으로 보인다(Windows 이진 첫 화면 제보).
+
+    시각·오버레이·사실은 이미 캐시를 무는데(`_cmd_plugin_overlay`·`_cmd_client_fact`
+    가 `_cells_at = 0.0`) **기하만 빠져 있었다.** 리사이즈 자리마다 그 한 줄을 더
+    적는 길도 있었지만(분할·닫기·줌·탭 전환·원격 크기…), 하나만 빠져도 같은 증상이
+    조용히 돌아온다 — 그래서 재료 자체를 캐시 키에 넣는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        # 클라의 창 크기 = 세션 공유 격자(_session_size). 리사이즈를 이 값으로 흉내낸다
+        # (실제 경로도 `client.cols` 를 갈아 끼우는 것이 전부다 — serverio 의 `resize`).
+        # (이 서버는 이 테스트의 것이라 인스턴스 속성으로 덮는다 — 프로덕션 전역을
+        #  안 건드리므로 `harness.patched` 의 누수 가드가 볼 것이 없다.)
+        size = [80, 24]
+        srv._session_size = lambda s: tuple(size)
+
+        class _C:
+            def __init__(self):
+                # 입력기 배지 = 오른쪽 끝에 붙는 유일한 런이라 자리 이동을 그대로 잰다.
+                self.plugin_state = {"facts": {"ime": "EN"}}
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        c = _C()
+        assert srv._plugin_cells_frame(c, sess, win, 100.0) is not None
+        narrow = [r["x"] for r in c._cells_runs]
+        assert narrow, "배지가 아예 안 그려졌다 — 이 오라클이 잴 것이 없다"
+
+        size[:] = [200, 24]                    # 창을 넓혔다(같은 초 안에)
+        srv._plugin_cells_frame(c, sess, win, 100.2)
+        wide = [r["x"] for r in c._cells_runs]
+        assert wide != narrow, (
+            f"리사이즈했는데 런이 옛 자리에 남았다: {narrow} → {wide}")
+        # 새 폭의 **오른쪽 끝**에 붙었나 — "움직이긴 했다"로는 부족하다(절반만 따라가는
+        # 고침도 위 단언을 통과한다). 경계는 서버가 지금 아는 패널 사각형에서 가져온다 —
+        # 여기 숫자를 손으로 적으면 테두리 옵션 하나에 이 오라클이 거짓으로 운다.
+        from pytmuxlib.cellwidth import char_cells
+        right = {p.id: x + w
+                 for p, (x, _y, w, _h) in srv._client_pane_rects(sess, win)}
+        run = c._cells_runs[0]
+        assert run["x"] + sum(char_cells(ch) for ch in run["text"]) \
+            == right[win.active_pane.id], (run, right)
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_a_remote_view_does_not_get_a_local_clock_on_top_of_it():
     """원격 보기(§1.7) 중에는 화면이 **업스트림 것**이다 — 그 위에 이 서버의 시계를
     얹으면 남의 화면에 없는 것이 그려진다. 들고 있던 그림이 남지 않게 지우개는

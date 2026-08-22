@@ -21,6 +21,21 @@
 ⛔ 미커버·SKIP·미판정이 하나라도 있으면 초록이 아니다. "서버 없으면 `exit 0`" 관행을
    계승하지 않기로 한 것이 이 표다.
 
+## 커버리지 원장 (`pytmux/pytmux-145`)
+
+`T1-commands` 가 도는 런은 **안 지나 본 명령**을 함께 센다 — 결함 목록만 보면 그것이
+안 보인다(미커버는 조용하다). 원장은 리포트의 「커버리지 원장」 절에 **숫자로** 뜨고,
+회계는 셋으로 갈린다: 지남 / **미커버**(지나는 시나리오가 있었는데 안 지남 → 결함) /
+**미검증**(지나는 시나리오가 아직 없음 → 건너뜀 · rc 3). 자세한 것은 `qa/ledger.py`.
+
+## 저장소 위생 — 미러 빚 (`pytmux/pytmux-153`)
+
+전 시나리오를 도는 런은 **제품이 아닌 것**도 하나 잰다: p4↔git 미러가 벌어졌는가
+(`qa/repo.py` → `scripts/publish_check.py`). 검사는 원래 있었지만 **사람이 안 돌리면 아무
+일도 안 일어나서** 같은 빚이 두 번 열렸다 — 야간 런에 붙이면 빚이 트래커의 이슈가 된다.
+⛔ 기준선(git HEAD · p4 have)이 낡았으면 **드리프트를 한 건도 안 만든다** — 낡은 기준선의
+목록은 남의 게시다. 부분 런(`--scenario`·`--tier`)에서는 안 잰다(원장과 같은 규칙).
+
 ## 결함은 어디로 가나
 
 `findings.json` 하나를 굽고 끝난다. 흡수는 **나중에·언제든·여러 번** 트래커가 한다
@@ -40,9 +55,10 @@ import time
 if __package__ in (None, ""):                    # `python3 qa/run.py` 로 부를 때
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from qa import oracles, scenarios                                   # noqa: E402
+from qa import oracles, repo, scenarios                             # noqa: E402
 from qa.env import ROOT, HomeSlot, Refused, new_run_id, stamp       # noqa: E402
 from qa.findings import Finding, Run, Skipped, render_report, write_findings  # noqa: E402
+from qa.ledger import LEDGER_SCENARIO, Ledger                       # noqa: E402
 from qa.session import EnvBroken, Session                           # noqa: E402
 
 OUT_ROOT = os.path.join(ROOT, "qa", "out")
@@ -92,11 +108,15 @@ class _Step:
 class Ctx:
     """시나리오가 보는 세상. 여기 없는 것은 시나리오가 못 만진다(블랙박스 유지)."""
 
-    def __init__(self, slot: HomeSlot, session: Session, scenario: str, seed: int):
+    def __init__(self, slot: HomeSlot, session: Session, scenario: str, seed: int,
+                 run_dir: str = ""):
         self.slot = slot
         self.session = session
         self.scenario = scenario
         self.seed = seed
+        #: 런 산출물 자리. ★ **그림 증거는 슬롯이 아니라 여기 남긴다**(T3) — 슬롯은 런이
+        #: 끝나면 지워지므로 거기 두면 결함이 가리키는 그림이 판정 직후 사라진다.
+        self.run_dir = run_dir
         self.rng = random.Random(seed)            # 결정론 우선 — 시드는 리포트에 남는다
         self.current = "env-up"                   # 지금 열려 있는 스텝(결함 귀속용)
         self.findings: list[Finding] = []
@@ -113,10 +133,15 @@ class Ctx:
             title=title, expected=expected, actual=actual, step=self.current, **kw))
 
 
-def run_scenario(mod, slot: HomeSlot, seed: int) -> Ctx:
-    """시나리오 하나를 끝까지 돌린다. 스택은 시나리오마다 새로 세운다(교차 오염 금지)."""
-    session = Session(slot)
-    ctx = Ctx(slot, session, mod.NAME, seed)
+def run_scenario(mod, slot: HomeSlot, seed: int, ledger: Ledger | None = None,
+                 run_dir: str = "") -> Ctx:
+    """시나리오 하나를 끝까지 돌린다. 스택은 시나리오마다 새로 세운다(교차 오염 금지).
+
+    ⚠ **원장만은 런 전체가 한 벌이다** — 시나리오마다 새로 세우면 T0 이 지난 명령을
+    T1 의 원장이 못 보고, 같은 명령이 두 번 미커버로 신고된다.
+    """
+    session = Session(slot, ledger=ledger)
+    ctx = Ctx(slot, session, mod.NAME, seed, run_dir=run_dir)
     session.start()
     try:
         mod.run(ctx)
@@ -142,10 +167,14 @@ def bake(args) -> tuple[int, str]:
     st = stamp()
     run = Run(runId=run_id, seed=seed, scenarios=[m.NAME for m in mods], **st)
     run_dir = os.path.join(OUT_ROOT, run_id)
+    # ⚠ 산출물 자리를 **돌기 전에** 만든다 — 시나리오가 그림 증거를 여기 남긴다(T3).
+    os.makedirs(run_dir, exist_ok=True)
 
     findings: list[Finding] = []
     skipped: list[Skipped] = []
     steps: list[tuple[str, str, str]] = []
+    #: 커버리지 원장 — 런 전체가 한 벌이다(시나리오를 가로질러 센다).
+    ledger = Ledger()
 
     for i, mod in enumerate(mods, 1):
         # ⚠ 슬롯 이름에 시나리오 이름을 붙이지 않는다 — 소켓 경로가 AF_UNIX 한계를 넘는다
@@ -156,7 +185,7 @@ def bake(args) -> tuple[int, str]:
         try:
             with slot:
                 try:
-                    ctx = run_scenario(mod, slot, seed)
+                    ctx = run_scenario(mod, slot, seed, ledger, run_dir)
                 except (EnvBroken, Refused) as e:
                     # ⛔ 환경 구성 실패도 결함이다 — 조용히 빠지지 않는다.
                     findings.append(Finding(
@@ -188,14 +217,44 @@ def bake(args) -> tuple[int, str]:
             else:
                 slot.wipe()
 
+    # ★ 커버리지 원장(pytmux/pytmux-145) — **안 지나 본 명령**을 센다. 결함 목록만으로는
+    #   보이지 않는 부류다(미커버는 조용하다 · 원칙 ⓑ).
+    #   ⛔ 원장을 소유한 시나리오가 안 돈 런에서는 원장을 내지 않는다 — 그 런이 안 지난
+    #      것은 제품의 결함이 아니라 **그 런의 범위**다(부분 런이 매번 붉어지면 꺼진다).
+    ran = {m.NAME for m in mods}
+    ledger_rows = None
+    if LEDGER_SCENARIO in ran:
+        ledger_rows, lfindings, lskips = ledger.audit(ran)
+        findings += lfindings
+        skipped += lskips
+
+    # ★ 저장소 위생(pytmux/pytmux-153) — 제품이 아니라 **게시 상태**를 잰다.
+    #   미러 빚은 조용하다: `scripts/publish_check.py` 가 사실을 이미 알지만 **사람이 안
+    #   돌리면 아무 일도 안 일어난다**. 야간 런에 붙이면 빚이 트래커의 이슈가 된다.
+    #   ⛔ 전 시나리오를 도는 런에서만 잰다 — 부분 런(`--scenario T0`)마다 이 줄이 붙으면
+    #      곧 아무도 안 보고, 그것이 원장이 같은 규칙을 쓰는 이유다.
+    if set(mods) == set(scenarios.REGISTRY):
+        rfindings, rskips, rsteps = repo.audit()
+        findings += rfindings
+        skipped += rskips
+        steps += rsteps
+    else:
+        print("[qa] 부분 런이라 저장소 위생(미러)은 안 잰다 — 전 시나리오 런에서 잰다")
+
     os.makedirs(run_dir, exist_ok=True)
-    fpath = write_findings(run_dir, run, findings)
+    # ★ 미검증도 함께 싣는다(pytmux/pytmux-148) — REPORT.md 는 `.p4ignore` 라 돌린 머신에만
+    #   남는다. 트래커까지 건너가지 않으면 rc 3 과 rc 0 이 저쪽에서 같은 모양이 된다.
+    fpath = write_findings(run_dir, run, findings, skipped)
     rpath = os.path.join(run_dir, "REPORT.md")
     with open(rpath, "w", encoding="utf-8") as fh:
-        fh.write(render_report(run, findings, skipped, steps))
+        fh.write(render_report(run, findings, skipped, steps, ledger_rows))
 
     print(f"\n[qa] {run_id} — 결함 {len(findings)} · 건너뜀 {len(skipped)} · "
           f"빌드 {run.build}{' (미제출 편집 있음)' if run.dirty else ''}")
+    for row in (ledger_rows or ()):
+        print(f"  [원장] {row.surface.key} — 인벤토리 {row.total or '?'} · "
+              f"지남 {len(row.covered)} ({row.pct}%) · 미커버 {len(row.uncovered)}"
+              + (f" · ⛔ {row.error}" if row.error else ""))
     for f in findings:
         print(f"  [{f.severity}] {f.title}  ({f.oracle} · {f.fp})")
     for s in skipped:

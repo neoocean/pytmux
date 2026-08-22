@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 import socket
 import stat as _stat
 import struct
@@ -38,16 +39,71 @@ __all__ = [
     "resolve_default_endpoint", "portfile_for", "state_base",
     "token_path", "write_token", "read_token", "peer_uid", "open_private",
     "start_server", "open_connection", "probe", "control_socket",
+    "DEFAULT_ENDPOINT_NAME", "endpoint_name", "tcp_endpoint",
 ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 엔드포인트 표현 / 기본값
 # ─────────────────────────────────────────────────────────────────────────────
+# TCP 엔드포인트의 **상태파일 이름**(prefix). Unix 는 소켓 경로가 곧 prefix 라 서버마다
+# 저절로 갈리는데, TCP 는 포트가 재기동마다 바뀌어 경로에 못 쓴다 — 그래서 종전에는 셋
+# (state_base·portfile·token)을 전부 상태 디렉터리의 **고정 이름** `default` 로 접었다.
+# 발견이 안정적이어야 하니 기본값으로는 옳지만, 그 결과 **한 머신에서 서버가 둘 뜨면
+# 두 서버가 같은 파일 이름을 쓴다**: 나중 것이 `default.token` 을 가져가고, 먼저 뜬
+# 서버에 붙는 클라가 `read_token()` 으로 남의 토큰을 읽어 내밀어 `auth_failed` 로 끊긴다
+# (실측 2026-08-08 alienware, pytmux/pytmux-152 — Windows 스위트에서 «서버 둘 + 클라
+# attach» 시나리오가 통째로 못 서던 원인).
+#
+# 그래서 이름을 **엔드포인트 문자열이 직접 나른다**: "tcp:[NAME@]HOST:PORT".
+# NAME 을 안 쓰면 `default` 라 종전 경로가 **바이트 그대로** 유지된다(발견 규약 무변경).
+DEFAULT_ENDPOINT_NAME = "default"
+# 이름은 그대로 **파일명**이 되므로 문자 집합을 좁게 못박는다. `remote_attach` 의
+# endpoint 는 클라가 준 비신뢰 문자열이라, 여기가 느슨하면 `..%s..` 로 상태 디렉터리
+# 밖에 토큰/포트파일을 읽고 쓰게 된다. 앞 글자는 영숫자, 나머지는 `[A-Za-z0-9._-]`,
+# 64자 이내 — 경로 구분자·`..`·NUL 이 애초에 못 들어온다.
+_ENDPOINT_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+
+def _split_tcp(endpoint: str) -> Tuple[str, str]:
+    """"tcp:[NAME@]HOST:PORT" → (name, "HOST:PORT"). 이름이 없으면 `default`.
+
+    `@` 는 호스트 부분에 쓰이지 않으므로(userinfo 문법을 안 쓴다) 첫 `@` 하나로
+    가른다. 이름이 규칙에 안 맞으면 ValueError — 조용히 `default` 로 접지 않는다
+    (접으면 오타 하나가 남의 서버 토큰을 읽는 경로가 된다)."""
+    rest = endpoint[len("tcp:"):]
+    name, sep, addr = rest.partition("@")
+    if not sep:
+        return DEFAULT_ENDPOINT_NAME, rest
+    if not _ENDPOINT_NAME_RE.match(name):
+        raise ValueError(f"잘못된 엔드포인트 이름: {name!r} ({endpoint!r})")
+    return name, addr
+
+
+def tcp_endpoint(name: str = DEFAULT_ENDPOINT_NAME, host: str = "127.0.0.1",
+                 port: int = 0) -> str:
+    """이름 있는 TCP 엔드포인트 문자열을 짓는다(기본 이름이면 종전 형태 그대로)."""
+    if name == DEFAULT_ENDPOINT_NAME:
+        return f"tcp:{host}:{port}"
+    if not _ENDPOINT_NAME_RE.match(name):
+        raise ValueError(f"잘못된 엔드포인트 이름: {name!r}")
+    return f"tcp:{name}@{host}:{port}"
+
+
+def endpoint_name(endpoint: str) -> str:
+    """TCP 엔드포인트의 상태파일 이름. unix 소켓이면 경로 자체가 이름이라 해당 없음."""
+    if not is_tcp(endpoint):
+        raise ValueError(f"tcp 엔드포인트가 아님: {endpoint!r}")
+    return _split_tcp(endpoint)[0]
+
+
 def parse_endpoint(endpoint: str) -> Tuple:
-    """엔드포인트 문자열 → ("unix", path) 또는 ("tcp", host, port:int)."""
+    """엔드포인트 문자열 → ("unix", path) 또는 ("tcp", host, port:int).
+
+    이름(`NAME@`)은 상태파일 경로에만 쓰이고 **전송에는 안 실린다** — 그래서 반환
+    모양은 종전 그대로다(호출부 무변경)."""
     if endpoint.startswith("tcp:"):
-        rest = endpoint[len("tcp:"):]
+        _name, rest = _split_tcp(endpoint)
         host, _, port = rest.rpartition(":")
         if not host:
             host, port = "127.0.0.1", rest
@@ -234,25 +290,38 @@ def resolve_default_endpoint() -> str:
     return default_endpoint()
 
 
+def _tcp_state_prefix(endpoint: str) -> str:
+    """TCP 엔드포인트의 상태파일 프리픽스 — `<state_dir>/<name>`.
+
+    포트는 재기동마다 바뀌므로 경로에 안 쓰고, **이름**(기본 `default`)만 쓴다.
+    그래서 `tcp:127.0.0.1:0`(기동 전)과 `tcp:127.0.0.1:54321`(확정 후)이 같은
+    자리를 가리키고, 이름이 다른 두 서버는 서로를 안 밟는다.
+
+    ⛔ 이름을 **먼저** 검증한다 — `default_state_dir()` 은 디렉터리를 만들고 권한까지
+    조이는 부작용이 있어, 거부할 문자열에 그 값을 치를 이유가 없다."""
+    name = _split_tcp(endpoint)[0]
+    return os.path.join(default_state_dir(), name)
+
+
 def state_base(endpoint: str) -> str:
     """상태파일(slots/opts/capture/layout) 경로의 프리픽스.
 
     Unix 소켓이면 소켓 경로 자체(고정 소켓→안정, 임시 소켓→테스트 격리). TCP
-    엔드포인트("tcp:host:port")면 콜론 등 파일명 불가 문자를 피하고 포트가 바뀌어도
-    안정적이도록 상태 디렉터리(default_state_dir)의 고정 prefix 를 쓴다
-    (docs/internal/WINDOWS_PORT.md §7-c-4)."""
+    엔드포인트("tcp:[name@]host:port")면 콜론 등 파일명 불가 문자를 피하고 포트가
+    바뀌어도 안정적이도록 상태 디렉터리(default_state_dir)의 **이름별** prefix 를
+    쓴다(docs/internal/WINDOWS_PORT.md §7-c-4 · pytmux/pytmux-152)."""
     if is_tcp(endpoint):
-        return os.path.join(default_state_dir(), "default")
+        return _tcp_state_prefix(endpoint)
     return endpoint
 
 
 def portfile_for(endpoint: str) -> str:
     """TCP 엔드포인트의 실제 포트를 게시/조회하는 파일 경로.
 
-    Unix 소켓 경로면 `<path>.port`, "tcp:..." 면 상태 디렉터리의 고정 파일.
+    Unix 소켓 경로면 `<path>.port`, "tcp:..." 면 상태 디렉터리의 `<name>.port`.
     """
     if is_tcp(endpoint):
-        return os.path.join(default_state_dir(), "default.port")
+        return _tcp_state_prefix(endpoint) + ".port"
     return endpoint + ".port"
 
 
@@ -290,9 +359,9 @@ def _write_portfile(path: str, port: int) -> None:
 # 실어 서버가 검증하면 무인가 로컬 주체의 접속을 차단한다(docs/internal/SECURITY_REVIEW.md F1).
 # ─────────────────────────────────────────────────────────────────────────────
 def token_path(endpoint: str) -> str:
-    """인증 토큰 파일 경로. Unix=소켓경로+".token", TCP=상태 디렉터리 고정 파일."""
+    """인증 토큰 파일 경로. Unix=소켓경로+".token", TCP=`<state_dir>/<name>.token`."""
     if is_tcp(endpoint):
-        return os.path.join(default_state_dir(), "default.token")
+        return _tcp_state_prefix(endpoint) + ".token"
     return endpoint + ".token"
 
 
@@ -516,11 +585,15 @@ def write_token(endpoint: str, token: str) -> str:
 
 
 def read_token(endpoint: str) -> Optional[str]:
-    """게시된 토큰을 읽는다(클라/launcher). 없거나 못 읽으면 None."""
+    """게시된 토큰을 읽는다(클라/launcher). 없거나 못 읽으면 None.
+
+    ValueError 도 삼킨다 — 엔드포인트 이름이 규칙에 안 맞으면 그건 "토큰이 없다"와
+    같은 결말이어야 한다(비신뢰 endpoint 문자열이 `remote_attach` 로 들어오는 자리라,
+    여기서 예외가 새면 서버 루프가 통째로 죽는다)."""
     try:
         with open(token_path(endpoint), "r", encoding="ascii") as f:
             return f.read().strip() or None
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
@@ -615,7 +688,9 @@ async def start_server(endpoint: str, on_connected: ClientCb, *,
         _, host, port = kind
         server = await asyncio.start_server(on_connected, host, port)
         actual = server.sockets[0].getsockname()[1] if port == 0 else port
-        resolved = f"tcp:{host}:{actual}"
+        # 이름을 **확정 엔드포인트에도 실어 준다** — 안 실으면 클라가 받은 문자열로
+        # 계산한 token/portfile 이 `default` 로 되돌아가 원래 결함이 그대로 재현된다.
+        resolved = tcp_endpoint(_split_tcp(endpoint)[0], host, actual)
         pf = portfile or portfile_for(endpoint)
         _write_portfile(pf, actual)
         return server, resolved

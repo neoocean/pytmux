@@ -607,6 +607,21 @@ class _InputMixin:
             self.send_cmd("new_window")
             self._exit_esc()
             return
+        if ch == "c":
+            # esc c: **지금 디렉토리에서 Claude Code CLI 가 도는 새 탭**(pytmux-137).
+            # 빈 셸 탭을 연 뒤 손으로 `claude` 를 치는 두 동작을 한 키로 줄인다.
+            #
+            # path 를 박아 보내는 이유: `send_cmd` 는 안 적으면 `default-path` 를
+            # 싣는데, 그 값이 `home` 이나 절대경로면 **요구("지금 워킹디렉토리")가
+            # 조용히 안 지켜진다**. 이 키의 값은 「이 디렉토리에서 바로 붙는다」에
+            # 있으므로 여기서만 설정을 무시한다(`esc n` 은 그대로 설정을 따른다).
+            #
+            # 실행할 것은 `claude-command` 설정이 정한다 — 경로·플래그가 사람마다
+            # 다르다. 비워 두면 서버가 그냥 셸 탭을 연다.
+            self.send_cmd("new_window", path="current",
+                          cmd=getattr(self, "claude_command", "claude"))
+            self._exit_esc()
+            return
         if ch == "p":
             self.send_cmd("split", orient="tb")
             self._exit_esc()

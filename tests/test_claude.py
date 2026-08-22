@@ -942,7 +942,10 @@ async def test_managed_settings_yes_requires_affirmative_selection():
             "\n"
             "Enter to confirm · Esc to exit\n")
     assert f(real) is True
-    assert f("Managed settings require approval\n > Yes, I trust these settings\n")
+    # 구 CLI 의 '>' 셀렉터도 같은 화면(미결 옵션이 함께 보인다)이면 True.
+    assert f("Managed settings require approval\n"
+             " > Yes, I trust these settings\n"
+             "   No, exit Claude Code\n") is True
     # 셀렉터가 다른 옵션에 있거나(재배열/기본 변경), 문구가 바뀌면 False.
     assert f("Managed settings require approval\n"
              "  1. Yes, I trust these settings\n"
@@ -956,6 +959,52 @@ async def test_managed_settings_yes_requires_affirmative_selection():
     assert f(None) is False
 
 
+# 실측 잔상(첨부 db01bdc1… · pytmux-151): 승인이 끝나도 Claude 는 화면을 안 지우고
+# 아래로 이어 그린다 — 머리글과 `❯ 1. Yes…` 줄은 남고, `2. No, exit Claude Code` 자리만
+# 다음 프레임("Resume this session with:")이 덮는다.
+_MS_LEFTOVER = ("Managed settings require approval\n"
+                "\n"
+                "Your organization has configured managed settings that could allow\n"
+                "execution of arbitrary code or interception of your prompts.\n"
+                "\n"
+                "❯ 1. Yes, I trust these settings\n"
+                "Resume this session with:\n"
+                "claude --resume \"rx\"\n"
+                " Enter to confirm · Esc to exit\n"
+                "\n"
+                "D:\\p4\\office\\rx>\n")
+
+_MS_LIVE = ("Managed settings require approval\n"
+            "\n"
+            "Your organization has configured managed settings that could allow\n"
+            "execution of arbitrary code or interception of your prompts.\n"
+            "\n"
+            "❯ 1. Yes, I trust these settings\n"
+            "  2. No, exit Claude Code\n"
+            "\n"
+            "Enter to confirm · Esc to exit\n")
+
+
+async def test_managed_settings_yes_ignores_resolved_leftover():
+    """pytmux-151: 판정은 "화면 어딘가에 그 문구가 있나"가 아니라 **지금 응답을 기다리는
+    승인 화면이 있나**다.
+
+    ① 통과된 잔상만 남은 화면은 False — 이게 True 이면 servermixin 의 재주입 방지 래치
+    (`_managed_ok_active`)가 영영 안 풀려, 같은 패널의 **두 번째** claude 가 승인 화면에서
+    멈춘다(제보 2026-08-06). ② 잔상 아래에 새 인스턴스의 진짜 승인 화면이 이어 붙으면
+    True — 판정 구간이 **마지막 머리글 이후**라 앞의 잔상은 안 본다."""
+    from pytmuxlib.claude import claude_managed_settings_yes as f
+    assert f(_MS_LEFTOVER) is False, "통과된 잔상만으로 True 면 래치가 안 풀린다"
+    assert f(_MS_LEFTOVER + "\n" + _MS_LIVE) is True, "잔상 + 살아 있는 승인 화면"
+    # 잔상이 둘 쌓여도(실측 첨부가 그 상태) 판정은 마지막 것만 본다.
+    assert f(_MS_LEFTOVER + "\n" + _MS_LEFTOVER) is False
+    assert f(_MS_LEFTOVER + "\n" + _MS_LEFTOVER + "\n" + _MS_LIVE) is True
+    # SEC-1 은 그대로: 마지막 구간의 셀렉터가 긍정이 아니면 잔상이 앞에 있어도 False.
+    not_affirmative = _MS_LIVE.replace("❯ 1. Yes", "  1. Yes") \
+                              .replace("  2. No", "❯ 2. No")
+    assert f(_MS_LEFTOVER + "\n" + not_affirmative) is False
+
+
 async def test_regex_patterns_no_catastrophic_backtracking():
     """claude.py 의 모든 모듈 레벨 컴파일 정규식이 ~40KB 적대적 입력에서도 상한
     내 완료(파국적 백트래킹 부재)."""
@@ -963,7 +1012,14 @@ async def test_regex_patterns_no_catastrophic_backtracking():
                 if isinstance(v, re.Pattern)]
     assert len(patterns) >= 20, f"패턴 수집 누락? {len(patterns)}"
     payloads = _redos_payloads(40000)
-    BUDGET = 0.5   # 선형이면 한참 못 미침; 파국적이면 수초+ 라 여유 큰 경계
+    # pytmux-210: 0.5s 는 여유가 아니라 빠듯했다 — `_ACCT_ORG_RE` 는 §5.9 에서 이미 한 번
+    # 선형화됐지만(길이 상한 {1,64}/{1,255}) 그 상한 자체가 위치당 상수 비용이라, 40KB
+    # 입력에서 실측 ~0.15s(맥·python 3.14)로 예산의 30%를 그냥 쓴다. CI 는 windows-latest·
+    # ubuntu-latest × python 3.11~3.13 매트릭스라 이 머신보다 흔히 느리고, 소스 변경 없이
+    # 2026-08-15~22 사이 6회 재관측(간헐)됐다 — 실 회귀가 아니라 예산이 얇았다. 파국적
+    # 백트래킹은 여전히 자릿수가 다르다(같은 자리 주석의 되돌리기 전 실측 ~14초) — 2.0s 도
+    # 그 값의 1/7 이라 진짜 회귀는 여전히 넉넉히 잡는다.
+    BUDGET = 2.0   # 선형이면 한참 못 미침; 파국적이면 수초+ 라 여유 큰 경계
     for name, pat in patterns:
         for s in payloads:
             t0 = time.perf_counter()

@@ -9,6 +9,7 @@ import contextlib
 import gc
 import hmac
 import os
+import shlex
 import time
 
 from . import ipc, proc, pty_backend, sshwrap
@@ -89,6 +90,26 @@ class ServerPtyMixin:
             shell = env.get("SHELL", "/bin/sh")
             argv = [shell, "-c", cmd] if cmd else [shell]
         return argv, env
+
+    def _cmd_then_shell(self, cmd: str) -> str:
+        """명령을 실행하고 **그 자리에 셸을 남기는** 한 줄로 감싼다(pytmux-137).
+
+        왜 감싸나: `셸 -c <cmd>` 만 쓰면 명령이 끝나는 순간 셸도 끝나고 PTY EOF 로
+        탭이 닫힌다. 팝업(`display-popup`)에서는 그것이 맞지만 **탭**에서는 아니다 —
+        ⛔ 특히 실행 파일을 못 찾을 때, 셸이 `command not found` 를 찍자마자 탭이
+        사라져 사용자에게는 "키가 안 먹었다"로 보인다. 남는 셸이 그 줄을 화면에
+        붙들어 두고, 그대로 평소의 셸 탭이 된다(= 새 탭을 연 것과 같은 자리).
+
+        ⚠ Windows 는 `cmd.exe /c` 를 전제한 `&` 연결이다(`_shell_argv_env` 와 같은
+        전제). `PYTMUX_SHELL` 을 PowerShell 로 두면 그 전제가 이미 `/c` 에서
+        깨져 있다 — 이 함수가 새로 만드는 제약이 아니다.
+        """
+        env = self._panel_env()
+        if pty_backend.IS_WINDOWS:
+            shell = env.get("PYTMUX_SHELL") or env.get("COMSPEC") or "cmd.exe"
+            return f'{cmd} & "{shell}"'
+        shell = env.get("SHELL", "/bin/sh")
+        return f"{cmd}; exec {shlex.quote(shell)}"
 
     def _next_pane_id(self) -> int:
         """host 모드 패널 id 할당(서버 전역 단조 증가). 재연결 후엔 list_panes 의

@@ -12,6 +12,18 @@
     set PYTMUX_PTY_BACKEND=owned
     py scripts\\validate_conpty.py
 
+**호스트 A/B**(pytmux/pytmux-208 · 2026-08-22): `--dll system` / `--dll bundled` 로 어느
+ConPTY 호스트를 띄울지 고른다(안 주면 지금 기본 = 시스템 conhost). 두 회차를 나란히
+돌려 [1][2][3] 이 둘 다 PASS 인지, 그리고 [4] «폭 2 글자 겹침»이 어느 쪽에서만 나오는지
+본다 — 후자가 그 이슈의 자리를 «호스트 안/밖»으로 가른다.
+
+    py scripts\\validate_conpty.py --dll bundled   > %TEMP%\\ab-bundled.txt
+    py scripts\\validate_conpty.py --dll system    > %TEMP%\\ab-system.txt
+
+⚠ 라우팅은 `pytmuxlib.conpty` **import 시점**에 굳는다(HPCON 은 그 DLL 내부 상태라 뒤에
+못 바꾼다) — 그래서 이 스크립트는 env 를 import 보다 먼저 세운다. 한 프로세스에서 두
+호스트를 번갈아 재는 길은 없다.
+
 ⚠️ stdout 을 `-RedirectStandardOutput` 으로 리다이렉트하면 자식이 부모 콘솔을 붙잡아 attach
 가 깨질 수 있다 — 리다이렉트 말고 `%TEMP%\\validate_conpty.out` 파일을 읽을 것. 비대화형
 batch-writer 자식 잔여 갭(conpty.py docstring 참조)과 별개로, 제품 패널이 실제 돌리는
@@ -22,6 +34,10 @@ batch-writer 자식 잔여 갭(conpty.py docstring 참조)과 별개로, 제품 
   2) 입력 왕복(echo 마커 + 한글).
   3) **멀티바이트 플러드 무손상**: 대량 CJK 출력을 read 경계에 걸쳐 받아도 U+FFFD 0개
      (raw 바이트 → incremental decoder carry; winpty-rs per-chunk 디코드 손상 회피).
+  4) **폭 2 글자 이중 방출**(pytmux/pytmux-208 · advisory): 제보된 한글 줄을 echo 해
+     돌아온 바이트에 `조조` 같은 겹침이 있나. ⛔ **VERDICT 에 안 넣는다** — 겹침 없음이
+     「고쳤다」가 아니기 때문이다(제보 경로는 Claude Code 의 콘솔 API 재페인트다).
+     값은 «났을 때» 있다: bundled 에서만 나면 자리는 그 호스트다.
 """
 import codecs
 import os
@@ -32,7 +48,18 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["PYTMUX_PTY_BACKEND"] = "owned"
 
+# `--dll <값>` 은 **import 전에** 세운다(위 머리말 ⚠ — 라우팅이 import 시점에 굳는다).
+# 값을 그대로 넘기고 «무엇을 뜻하나»는 conpty.conpty_dll_pref() 한 곳이 정한다.
+if "--dll" in sys.argv:
+    _i = sys.argv.index("--dll")
+    if _i + 1 < len(sys.argv):
+        os.environ["PYTMUX_CONPTY_DLL"] = sys.argv[_i + 1]
+
 from pytmuxlib import conpty, pty_backend  # noqa: E402
+
+# 제보된 그 줄(pytmux/pytmux-208) — 폭 2 글자가 **원래 잇달아 두 번 오는 자리가 없다**.
+# 그래서 여기서 나온 연속 중복은 전부 「호스트가 두 번 냈다」의 증거다.
+_HANGUL_LINE = "이 Claude는 조직 보안 정책에 의해 관리됩니다."
 
 # 결과를 stdout + 파일(%TEMP%\validate_conpty.out)에 동시에 남긴다. Start-Process
 # -WindowStyle Hidden(자기 콘솔 필요)로 띄우면 stdout 이 안 보이므로 파일로 확인.
@@ -80,6 +107,13 @@ def main():
         report("SKIP: Windows 전용"); return 0
     if not conpty.conpty_supported():
         report("FAIL: ConPTY 미지원 OS"); return 1
+
+    # ★ 어느 호스트로 쟀나 — 이 줄이 없으면 A/B 두 회차를 나중에 구별할 수 없다.
+    # «고른 것»(pref)과 «실제로 쓴 것»(SOURCE)을 따로 찍는다: bundled 를 골라도 DLL 이
+    # 없으면 system 으로 떨어지는데, 그때 둘이 갈린다.
+    report("[0] ConPTY host: %s (고른 것=%s · PYTMUX_CONPTY_DLL=%r)"
+           % (getattr(conpty, "CONPTY_DLL_SOURCE", "?"), conpty.conpty_dll_pref(),
+              os.environ.get("PYTMUX_CONPTY_DLL")))
 
     pty = pty_backend.spawn(["cmd.exe"], cols=200, rows=50, cwd=None,
                             env=dict(os.environ))
@@ -135,6 +169,25 @@ def main():
         report("[3] CJK flood: raw=%d bytes  CJK(가)=%d  U+FFFD=%d  -> %s"
                % (len(data), cjk, fffd, "OK" if ok_flood else "FAIL"))
         report("    (incremental-decoder path U+FFFD=%d)" % inc_txt.count("�"))
+
+        # [4] 폭 2 글자 «이중 방출»(pytmux/pytmux-208) — 제보된 그 줄을 그대로 echo 해서
+        # 호스트가 돌려준 raw 바이트에 `조조` 같은 겹침이 있는지 센다. chcp 65001 은 [3]
+        # 에서 이미 걸었다.
+        # ⛔ **초록을 「고쳤다」로 읽지 마라** — 제보 경로는 Claude Code 가 콘솔 API 로
+        # 그린 화면을 호스트가 VT 로 재방출하는 자리라, 이 echo 왕복에서는 안 날 수 있다.
+        # 이 줄의 값은 «났을 때»다: 겹침이 bundled 에서만 나오면 자리는 그 호스트다.
+        chunks.clear()
+        pty.write(("echo %s\r\n" % _HANGUL_LINE).encode("utf-8"))
+        deadline = time.time() + 4
+        while time.time() < deadline:
+            if "관리됩니다" in b"".join(chunks).decode("utf-8", "replace"):
+                break
+            time.sleep(0.2)
+        seen = b"".join(chunks).decode("utf-8", "replace")
+        dup = conpty.doubled_wide_chars(_HANGUL_LINE, seen)
+        report("[4] 폭2 이중 방출(pytmux-208): 겹친 글자 %d개%s  -> %s (advisory)"
+               % (len(dup), (" [%s]" % "".join(dup)) if dup else "",
+                  "겹침 없음" if not dup else "겹침 재현"))
 
         all_ok = ok_attach and ok_echo and ok_flood
         report("\nVERDICT: %s" % ("PASS" if all_ok else "FAIL"))

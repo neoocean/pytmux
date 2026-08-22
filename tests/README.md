@@ -42,6 +42,25 @@ python3 pytmux.py replay --cols 120 cap.raw --ruler
 
 프로그래밍 방식: `pytmux.replay(raw_bytes, cols, rows) -> list[str]`.
 
+## 스위트 위생(hermetic)
+
+스위트는 **이 상자의 사용자 상태와 무관하게** 같은 값을 내야 한다. 그래서 러너
+(`run.py` 머리말)와 하니스가 시작할 때 셸에서 물려받은 것을 정리한다 —
+`PYTMUX_HOME`·`NO_COLOR` 는 **거두고**, 설정 파일은 **세운다**.
+
+- ⛔ **설정만은 거두면 오히려 샌다**(pytmux/pytmux-135). 탐색 차례가
+  `$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` → `$XDG_CONFIG_HOME/pytmux/config`
+  → `~/.pytmux.conf` 라, `PYTMUX_HOME` 을 거두면 두 번째 자리가 사라져 곧장
+  **사용자의 진짜 `~/.config/pytmux/config`** 로 떨어진다. 그래서
+  `tests/hermetic.py::isolate_config` 가 `PYTMUX_CONFIG` 를 **빈 임시 파일**로
+  가리킨다. 읽기(그 상자에만 있는 `set inactive-dim off` 로 결과가 갈린다)와
+  쓰기(`keymap.config_path_for_write` 가 같은 차례를 쓴다 — `:settings` 경로가
+  사용자 파일에 줄을 박는다) 양쪽이 걸린 자리다.
+- 재는 것은 `test_config_hygiene.py`(대조군 포함). 같은 함정의 Rust 쪽 사고 기록은
+  `client/CLAUDE.md` §「설정 파일은 따로 격리한다」.
+- ⚠ 실험용으로 **손으로** 클라/서버를 띄울 때는 이 보호 밖이다 — 그때는
+  `PYTMUX_HOME=<스크래치>` 와 함께 `<스크래치>/config` 를 빈 파일로 먼저 만든다.
+
 ## 작성 규칙
 
 - 각 테스트는 `async def test_*()` 이며 러너가 **새 asyncio 루프**에서 실행한다.

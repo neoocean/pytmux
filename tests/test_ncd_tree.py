@@ -141,3 +141,184 @@ async def test_a_cut_tree_says_so_and_keeps_the_path_visible():
         assert "zzz-mine" in labels, "잘리면서 내 자리로 가는 길이 끊겼다"
         assert spec["rows"][spec["selected"]]["key"] == deep, spec["selected"]
         assert spec["note"], "잘랐는데 아무 말도 안 했다"
+
+
+def _canon_tag_colours():
+    """정본에서 뽑은 **이름 → hex** 표(`client/scripts/gen_row_tags.py` 한 벌).
+
+    여기서 정규식을 다시 쓰지 않는 이유: 그러면 「정본의 색을 읽는 법」이 두 벌이 되고,
+    두 벌은 갈린다 — 이 저장소가 여러 번 밟은 자리라 뽑는 코드는 그 스크립트 하나다."""
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    gen = os.path.join(root, "client", "scripts", "gen_row_tags.py")
+    if not os.path.exists(gen):
+        return None, root
+    spec = importlib.util.spec_from_file_location("gen_row_tags", gen)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    import pathlib
+    return mod.collect(pathlib.Path(root))["tags"], root
+
+
+async def test_ncd_never_wears_a_colour_its_own_screen_does_not_have():
+    r"""☠ **회귀(제보 2026-08-08 · CL 71010 빌드)**: GUI 의 `:ncd` 가 트리 전체를 **밝은
+    빨강**으로 그렸다 — "정본 배색과 다르다".
+
+    원인은 색 코드가 아니라 **이름**이었다. 줄의 태그 어휘는 한 벌을 두 화면이 나눠 쓰고
+    (`mdir/rowtag.py` 의 `TAGS`), 값은 mdir 의 `_TAG_STYLES` 에서 뽑힌다 — 그래서 `dir` 은
+    곧 **Mdir 시그니처 붉은색**이다. ncd 의 스펙이 평범한 줄에 그 이름을 달고 있었고, 그
+    이름을 아는 클라(Rust GUI)는 시킨 대로 붉게 칠했다. 정본 `ncd/screen.py` 에는 붉은색이
+    **한 칸도 없다**(판 바탕 `_BG` · 선택 막대 `_SEL`/`_SEL_BLUR` · 현재 자리 `_CWD`).
+
+    그래서 재는 것은 「`dir` 이 아니다」가 아니라 **「이 화면이 입는 색은 이 화면의
+    팔레트에 있는 색뿐이다」**다 — 후자라야 다음에 다른 이름(`drive`·`tagged` …)이 같은
+    길로 들어와도 운다. 뜻이 없는 줄은 이름을 안 달고, 그 줄은 각 클라의 기본 글자색으로
+    그려진다(정본이 `_BG` 로 하는 일)."""
+    import re
+    tags, root = _canon_tag_colours()
+    if tags is None:
+        from run import skip
+        skip("client/scripts/gen_row_tags.py 가 없다 — 정본 색표를 뽑을 자리가 없는 트리")
+        return
+    screen = os.path.join(root, "pytmuxlib", "plugins", "ncd", "screen.py")
+    with open(screen, encoding="utf-8") as f:
+        src = f.read()
+    palette = {h.lower() for h in re.findall(r"#[0-9a-fA-F]{6}", src)}
+    assert len(palette) >= 4, f"ncd 팔레트를 못 읽었다({palette}) — 정규식이 헛돌았다"
+
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        here = os.path.join(td, "a")
+        spec, _mine = _tree(td, cwd=here)
+        assert spec["rows"], "줄이 없으면 아래 단언이 공허하게 통과한다"
+        worn = {r["tag"] for r in spec["rows"] if r["tag"]}
+        assert "cwd" in worn, f"현재 자리 강조가 사라졌다: {_labels(spec)}"
+        wrong = sorted(
+            f"{t}({tags.get(t, '모르는 이름')})" for t in worn
+            if tags.get(t, "").lower() not in palette)
+        assert not wrong, (
+            f"ncd 가 자기 팔레트에 없는 색을 입었다: {wrong} · "
+            f"정본 팔레트 {sorted(palette)}")
+
+
+# ---- Windows: 뿌리가 여럿이다 (pytmux-160) ---------------------------------
+#
+# ☠ **드라이브 나열 코드는 있었는데 이 화면이 그것을 안 탔다.** `server._drive_roots()`
+# 를 쓰는 것은 `nc_list_fs`(정본 Textual 클라가 쓰는 액션)뿐이고, 네이티브 화면을 여는
+# `plugin_screen`→`_open_tree` 는 `_chain(cwd)` 의 꼭대기 — **셸이 서 있는 드라이브
+# 하나** — 를 뿌리로 삼았다. 그래서 Windows 에서 `C:\` 만 보이고 `D:\` 로 옮겨갈 항목이
+# 트리에 아예 없었다(제보 2026-08-08 · 우회로 없음).
+#
+# 여기서 Windows 를 **이 상자에서** 재는 법: 경로 판정 모듈(`server._pathmod`)과
+# 드라이브 나열·디렉터리 나열을 픽스처로 바꾼다 — `test_nc.py::
+# test_nc_build_chain_prepends_drives` 가 정본 쪽에서 쓰는 것과 같은 관례다.
+
+_WIN_FS = {
+    "C:\\": ["C:\\Users", "C:\\Windows"],
+    "C:\\Users": ["C:\\Users\\me"],
+    "C:\\Users\\me": ["C:\\Users\\me\\proj"],
+    "C:\\Users\\me\\proj": [],
+    "C:\\Windows": [],
+    "D:\\": ["D:\\work"],
+    "D:\\work": [],
+}
+
+
+def _windows(drives=("C:\\", "D:\\"), seen=None):
+    """이 블록 동안만 Windows 인 척한다(경로 판정·드라이브·디렉터리 나열).
+
+    `seen` 을 주면 `_list_dirs` 가 받은 경로를 거기 적는다 — **안 읽었다**를 재는 데
+    쓴다(연결 안 된 드라이브를 잎 판정 하나 때문에 열면 화면이 멎는다)."""
+    import ntpath
+    server = importlib.import_module("pytmuxlib.plugins.ncd.server")
+
+    def _list(p):
+        # 진짜 `scandir` 처럼 굴어야 한다: Windows 파일시스템은 **대소문자를 안 가리고**,
+        # `entry.path` 는 **요청한 표기** 위에 이름을 얹는다. 픽스처가 대소문자를 가리면
+        # 사슬이 셸 표기(`c:\users`)로 뻗을 때 조용히 빈 목록이 돌아와, 프로덕션이 아니라
+        # 픽스처가 만든 거짓 붉음이 난다.
+        if seen is not None:
+            seen.append(p)
+        want = ntpath.normcase(ntpath.normpath(p))
+        for d, kids in _WIN_FS.items():
+            if ntpath.normcase(ntpath.normpath(d)) == want:
+                return [ntpath.join(p, ntpath.basename(k.rstrip("\\"))) for k in kids]
+        return []
+
+    return harness.patched(server, _pathmod=ntpath,
+                           _drive_roots=lambda: list(drives), _list_dirs=_list)
+
+
+def _tops(spec):
+    return [r["key"] for r in spec["rows"] if r["depth"] == 0]
+
+
+async def test_windows_lists_every_drive_as_a_sibling_at_the_top():
+    r"""Windows 에는 뿌리가 여럿이다 — `C:\` 옆에 `D:\` 가 **형제로** 서야 한다.
+
+    종전엔 셸이 선 드라이브 하나만 뿌리였고, 다른 드라이브로 갈 항목이 트리에 없었다."""
+    with _windows():
+        mine = {"path": "C:\\Users\\me", "cwd": "C:\\Users\\me"}
+        spec = PLUGIN._open_tree(mine)
+        assert _tops(spec) == ["C:\\", "D:\\"], _labels(spec)
+        # 뿌리는 basename 이 비므로 경로 그대로 이름이 된다(`C:` 가 아니다 — 그건
+        # Windows 에서 «그 드라이브의 현재 디렉터리»라는 전혀 다른 자리다).
+        assert [r["label"] for r in spec["rows"] if r["depth"] == 0] == ["C:\\", "D:\\"]
+        # 서 있는 드라이브는 펼쳐져 cwd 까지 길이 보이고, 커서가 그 줄에 선다.
+        keys = [r["key"] for r in spec["rows"]]
+        assert "C:\\Users" in keys and "C:\\Users\\me" in keys, keys
+        assert spec["rows"][spec["selected"]]["key"] == "C:\\Users\\me", keys
+        assert _row(spec, "me")["tag"] == "cwd", _labels(spec)
+
+
+async def test_windows_does_not_read_a_drive_before_it_is_opened():
+    r"""⛔ 잎 판정 하나 때문에 **모든 드라이브를 열지 않는다** — 연결 안 된 네트워크·
+    광학 드라이브가 하나 있으면 그 한 번에 화면이 멎는다(정본도 펼칠 때 읽는다)."""
+    seen = []
+    with _windows(seen=seen):
+        mine = {"path": "C:\\Users\\me", "cwd": "C:\\Users\\me"}
+        spec = PLUGIN._open_tree(mine)
+        assert "D:\\" not in seen, seen
+        # 그래도 **열 수 있는 줄**로 보여야 한다(안 읽었다고 잎으로 그리면 거짓말이다).
+        assert next(r for r in spec["rows"] if r["key"] == "D:\\")["expand"] == "shut"
+
+
+async def test_windows_can_move_to_another_drive():
+    r"""제보의 요구 그대로: `D:\` 로 **옮겨갈 수 있어야** 한다."""
+    with _windows():
+        mine = {"path": "C:\\Users\\me", "cwd": "C:\\Users\\me"}
+        PLUGIN._open_tree(mine)
+        spec = PLUGIN._expand(mine, "D:\\")
+        d = next(r for r in spec["rows"] if r["key"] == "D:\\")
+        assert d["expand"] == "open", _labels(spec)
+        work = next(r for r in spec["rows"] if r["key"] == "D:\\work")
+        assert work["depth"] == d["depth"] + 1, _labels(spec)
+
+
+async def test_windows_drive_row_uses_the_canonical_spelling():
+    r"""셸이 준 cwd 는 사용자가 친 대소문자를 그대로 물고 온다(`c:\users\me`).
+
+    맞추지 않으면 같은 드라이브가 **두 줄**로 뜬다(하나는 최상위 목록, 하나는 사슬 머리)."""
+    with _windows():
+        mine = {"path": "c:\\users\\me", "cwd": "c:\\users\\me"}
+        spec = PLUGIN._open_tree(mine)
+        assert _tops(spec) == ["C:\\", "D:\\"], _labels(spec)
+        assert spec["rows"][spec["selected"]]["key"].lower() == "c:\\users\\me"
+
+
+async def test_windows_keeps_the_drive_we_stand_on_even_if_the_listing_misses_it():
+    r"""서 있는 드라이브가 목록에서 빠지면(subst·매핑 경합) **보강한다** — 지금 자리가
+    트리에 없으면 사슬이 통째로 끊긴다(`server._build_chain` 이 치르는 같은 값)."""
+    with _windows(drives=("D:\\",)):
+        mine = {"path": "C:\\Users", "cwd": "C:\\Users"}
+        spec = PLUGIN._open_tree(mine)
+        assert _tops(spec) == ["C:\\", "D:\\"], _labels(spec)
+
+
+async def test_posix_still_has_exactly_one_root():
+    """⛔ 드라이브 층을 **없는 곳에 만들지 않는다** — POSIX 는 뿌리가 하나다."""
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        spec, mine = _tree(td)
+        assert mine["root"] == PLUGIN._chain(td)[0] != "", mine["root"]
+        assert len([r for r in spec["rows"] if r["depth"] == 0]) == 1, _labels(spec)

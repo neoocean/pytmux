@@ -36,6 +36,119 @@ async def test_pane_tree_ops():
         await teardown(srv, task, sock)
 
 
+async def test_new_window_runs_a_command_and_leaves_a_shell():
+    """`new_window(cmd=…)` — 그 탭에서 명령이 돌고, **끝나도 탭이 안 사라진다**.
+
+    pytmux-137(`esc c` = Claude Code 탭)이 이 배선 위에 선다. 종전에는 `new_window`
+    가 `cmd` 를 받지도, 흘리지도 않았다(`spawn_pane` 은 받을 준비가 돼 있었다).
+
+    ⛔ **감싸지 않으면 실패가 조용하다.** `셸 -c <없는 명령>` 은 `command not found`
+    를 찍자마자 끝나고 PTY EOF 로 탭이 사라져, 사용자에게는 "키가 안 먹었다"로만
+    보인다. 그래서 없는 명령으로 재고, ⑴ 그 줄이 화면에 남아 있고 ⑵ 패널이 살아
+    있는지를 둘 다 본다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        before = len(sess.tabs)
+        srv.new_window(sess, cmd="nosuchcommand-pytmux137")
+        assert len(sess.tabs) == before + 1
+        pane = sess.active_window.active_pane
+        await wait_for(lambda: "nosuchcommand-pytmux137" in pane_text(pane))
+        text = pane_text(pane)
+        assert "nosuchcommand-pytmux137" in text, text
+        # 셸이 남아 그 줄을 붙들고 있다 — 명령이 죽어도 패널은 살고 **입력을 받는다**.
+        # 친 글자와 결과를 가르려고 따옴표를 끼워 넣는다(에코에는 `ali""ve137` 이,
+        # 결과에는 `alive137` 이 뜬다).
+        pane.pty.write(b'echo ali""ve137\n')
+        await wait_for(lambda: "alive137" in pane_text(pane))
+        assert "alive137" in pane_text(pane), pane_text(pane)
+        assert len(sess.tabs) == before + 1, "명령이 끝나며 탭이 사라졌다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_new_window_without_a_command_is_unchanged():
+    """빈 `cmd` 는 없는 것과 같다 — `셸 -c ''` 로 **즉시 죽는 탭**이 뜨면 안 된다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        seen = []
+        real = srv.spawn_pane
+        srv.spawn_pane = lambda *a, **k: (seen.append(k.get("cmd")), real(*a, **k))[1]
+        srv.new_window(sess)
+        srv.new_window(sess, cmd="   ")
+        assert seen == [None, None], seen
+    finally:
+        srv.spawn_pane = real
+        await teardown(srv, task, sock)
+
+
+async def test_new_window_wire_carries_the_command():
+    """와이어의 `cmd` 칸이 실제로 `spawn_pane` 까지 간다(pytmux-137).
+
+    ⛔ 이름이 맞아도 **칸이 틀리면 아무 소리가 안 난다** — 서버는 모르는 칸을 그냥
+    안 읽고, 증상은 "빈 셸 탭이 열린다"뿐이다(`split` 의 `orient` 가 이미 그렇게
+    G1 이래 전건 좌우로 갈렸던 자리다)."""
+    from pytmuxlib.model import ClientConn
+
+    class _FakeWriter:
+        def write(self, *_a):
+            pass
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+    srv, task, sock = await server_only()
+    real = srv.spawn_pane
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        client = ClientConn(_FakeWriter())
+        client.session = sess
+        client.cols, client.rows = 80, 24
+        seen = []
+        srv.spawn_pane = lambda *a, **k: (seen.append(k.get("cmd")), real(*a, **k))[1]
+        await srv._handle_cmd(client, {"t": "cmd", "action": "new_window"})
+        await srv._handle_cmd(client, {"t": "cmd", "action": "new_window",
+                                       "path": "current", "cmd": "claude"})
+        assert seen[0] is None, seen
+        assert seen[1] is not None and seen[1].startswith("claude"), seen
+    finally:
+        srv.spawn_pane = real
+        await teardown(srv, task, sock)
+
+
+async def test_cmd_then_shell_branches_per_os():
+    """명령 뒤에 셸을 남기는 한 줄의 OS 분기(pytmux-137).
+
+    POSIX 는 `<명령>; exec <셸>`, Windows(cmd.exe `/c`)는 `<명령> & "<셸>"`.
+    `_shell_argv_env` 와 **같은 전제**라 여기서만 갈리면 안 된다."""
+    from unittest import mock
+
+    from pytmuxlib import pty_backend
+
+    srv, task, sock = await server_only()
+    try:
+        with mock.patch.object(pty_backend, "IS_WINDOWS", False), \
+                mock.patch.dict("os.environ", {"SHELL": "/bin/zsh"}):
+            assert srv._cmd_then_shell("claude") == "claude; exec /bin/zsh"
+        # 셸 경로에 공백이 있어도 한 낱말로 남는다(`exec` 가 인자를 가른다).
+        with mock.patch.object(pty_backend, "IS_WINDOWS", False), \
+                mock.patch.dict("os.environ", {"SHELL": "/opt/my shell/sh"}):
+            assert srv._cmd_then_shell("claude") == "claude; exec '/opt/my shell/sh'"
+        with mock.patch.object(pty_backend, "IS_WINDOWS", True), \
+                mock.patch.dict("os.environ",
+                                {"COMSPEC": r"C:\Windows\System32\cmd.exe"},
+                                clear=True):
+            assert srv._cmd_then_shell("claude") == \
+                r'claude & "C:\Windows\System32\cmd.exe"'
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_zoom_resizes_hidden_panes():
     # §2.6: 줌 중에는 활성 패널만 표시되지만, 숨은 패널도 정상 분할 크기로 미리
     # 리사이즈돼야 한다 — 안 그러면 (줌 중 창 축소 + 숨은 패널 출력) 뒤 줌 해제
@@ -1334,6 +1447,63 @@ async def test_auto_confirm_managed_settings_screen():
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
         assert p._managed_ok_active is False, "사라지면 재무장"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_confirm_managed_settings_second_instance_without_clear():
+    """pytmux-151(제보 2026-08-06): 같은 패널에서 claude 를 **두 번째로** 띄워도 승인
+    화면이 자동 통과돼야 한다.
+
+    위 테스트의 픽스처는 매 프레임을 `\\x1b[2J\\x1b[H`(화면 지우기)로 시작해 실제
+    터미널을 재현하지 못했다 — Claude 는 승인 뒤 화면을 **안 지우고** 아래로 이어
+    그리므로, 통과된 승인 화면의 머리글과 `❯ 1. Yes…` 줄이 화면에 그대로 남는다.
+    그 잔상을 승인 화면으로 세면 재주입 방지 래치(`_managed_ok_active`)가 안 풀려
+    두 번째 인스턴스가 Enter 를 못 받는다. 여기서는 화면을 한 번만 지우고, 실측
+    첨부(db01bdc1…)와 같은 순서로 프레임을 이어 붙여 **Enter 가 두 번** 나가는지 본다.
+    """
+    _HDR = (b"Managed settings require approval\r\n"
+            b"\r\n"
+            b"Your organization has configured managed settings.\r\n"
+            b"\r\n")
+    # 살아 있는 승인 화면(응답 대기) — 8줄.
+    _LIVE = (_HDR +
+             b"\xe2\x9d\xaf 1. Yes, I trust these settings\r\n"
+             b"  2. No, exit Claude Code\r\n"
+             b"\r\n"
+             b"Enter to confirm \xc2\xb7 Esc to exit\r\n")
+    # 승인 직후 다음 프레임: 옵션 줄(6행) 자리를 resume 안내가 덮는다. 머리글과
+    # `❯ 1. Yes…`(5행)·`Enter to confirm`(8행)은 그대로 남는다 — 실측 잔상 모양.
+    _RESOLVED = (b"\x1b[6;1H\x1b[KResume this session with:\r\n"
+                 b"\x1b[Kclaude --resume \"rx\"\r\n"
+                 b"\x1b[9;1HD:\\p4\\office\\rx>")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+
+        p.feed(b"\x1b[2J\x1b[H" + _LIVE)          # ① 첫 인스턴스의 승인 화면
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r"], (writes, "첫 인스턴스 → Enter 1회")
+
+        p.feed(_RESOLVED)                          # ② 승인됨 — 화면은 안 지워진다
+        srv._scan_claude(sess, win)
+        assert p._managed_ok_active is False, \
+            "통과된 잔상이 화면에 남아도 래치는 풀려야 한다(안 풀리면 두 번째가 막힌다)"
+        assert writes == [b"\r"], (writes, "잔상에 Enter 를 또 쏘지 않는다")
+
+        # ③ 같은 패널에서 claude 재실행 — 새 승인 화면이 잔상 **아래에** 이어 붙는다.
+        p.feed(b"claude\r\n" + _LIVE)
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r", b"\r"], (writes, "두 번째 인스턴스도 자동 통과")
+        assert p._managed_ok_active is True
+        # 그 화면이 머무는 동안 세 번째 Enter 는 없다.
+        for _ in range(5):
+            srv._scan_claude(sess, win)
+        assert writes == [b"\r", b"\r"], (writes, "인스턴스당 Enter 는 딱 한 번")
     finally:
         await teardown(srv, task, sock)
 
@@ -6163,9 +6333,9 @@ async def test_liveness_evicts_dead_client_and_regrows_session():
 async def test_session_size_window_size_modes():
     """window_size 규칙(smallest|latest|largest, tmux 동형): 두 클라(작은/큰)가 한
     세션을 미러링할 때 _session_size 가 규칙대로 공유 크기를 고른다.
-      smallest(기본) = min → 아무도 안 잘림(현행 동작 불변).
+      smallest       = min → 아무도 안 잘림.
       largest        = max.
-      latest         = last_active 가 가장 큰(마지막 조작) 클라 크기, 없으면 smallest.
+      latest(기본)   = last_active 가 가장 큰(마지막 조작) 클라 크기, 없으면 smallest.
     제보(2026-07-13): 작은 코-클라가 min 을 핀해 큰 원격 뷰가 레터박스로 남던
     문제의 opt-in 해법. 설정 라운드트립·순환 토글도 함께 검증."""
     from pytmuxlib.model import ClientConn
@@ -6187,8 +6357,15 @@ async def test_session_size_window_size_modes():
         big = _mk(200, 60)       # 큰 원격 뷰
         srv.clients[:] = [small, big]
 
-        # 기본은 smallest → min(작은 쪽)
-        assert srv.window_size == "smallest"
+        # 기본은 latest — 그런데 **아직 아무도 조작 전**(last_active 0)이라 smallest 로
+        # 폴백한다. ⛔ 이 (88,30) 을 「기본이 smallest 라서」로 읽지 마라 — 기본은
+        # 2026-08-17 사람의 결정으로 latest 다(pytmux/pytmux-186). 값이 같은 것은
+        # **폴백** 때문이고, 그 둘을 가르는 것이 바로 아래 두 줄이다.
+        assert srv.window_size == "latest"
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # smallest 를 손으로 골라도 같은 값이다(= 위는 폴백이었다).
+        srv.set_window_size("smallest")
         assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
 
         # largest → max(큰 쪽)
@@ -6215,6 +6392,61 @@ async def test_session_size_window_size_modes():
         assert srv.window_size == "smallest"
         srv.set_window_size("latest")
         assert srv._load_opts().get("window_size") == "latest"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_window_size_default_is_latest_but_attaching_does_not_grab_the_grid():
+    """기본 규칙은 **latest** 이고, **붙는 것만으로는** 공유 격자를 못 가져간다.
+
+    사람의 결정 2026-08-17(pytmux/pytmux-186 · 질문 pytmux/pytmux-272 ①의 «②안»):
+    기본을 `latest` 로만 바꾸고 **attach 는 지금대로 「조작」으로 안 센다** — 새 클라는
+    키를 한 번 치면 자기 크기를 가져온다.
+
+    ⛔ 이 시험이 지키는 것은 **둘 다**이지 한쪽이 아니다. 종전 기본(`smallest`)만 고치고
+    attach 를 조작으로 세면 그것은 사람이 **안 고른** ①안이 되고(붙는 순간 먼저 보고
+    있던 작은 클라가 crop 된다), 반대로 기본을 안 고치면 제보가 그대로 남는다.
+
+    ☠ **아래 (88,30) 셋은 서로 다른 이유로 같은 값이다** — ⑴ 아무도 조작 전이라 폴백 ·
+    ⑵ 작은 클라만 조작해서 · ⑶ 큰 클라가 «붙기만» 해서. 셋을 한 줄로 줄이면 이 결정의
+    어느 반쪽이 깨져도 시험은 초록이다.
+    """
+    from pytmuxlib.model import ClientConn
+    srv, task, sock = await server_only()
+    try:
+        class _W:
+            def write(self, b): pass
+            def close(self): pass
+            async def drain(self): pass
+
+        def _mk(cols, rows):
+            c = ClientConn(_W())
+            c.session = sess
+            c.cols, c.rows = cols, rows
+            return c
+
+        sess = srv.ensure_default_session(120, 50)
+        assert srv.window_size == "latest", "기본이 latest 가 아니다"
+
+        # ⑴ 작은 클라 혼자 · 아무 조작 전 → 폴백
+        small = _mk(88, 30)
+        srv.clients[:] = [small]
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # ⑵ 그 클라가 조작했다(키를 쳤다) → 그 크기가 최신이다
+        small.last_active = 100.0
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # ⑶ ★ 큰 클라가 **나중에 붙는다** — last_active 는 0 그대로다(attach 는 조작이
+        #    아니다). 격자는 안 넘어간다: 먼저 보고 있던 작은 클라가 안 잘린다.
+        big = _mk(200, 60)
+        srv.clients[:] = [small, big]
+        assert big.last_active == 0, "attach 가 조작으로 세어졌다 — 사람이 안 고른 ①안이다"
+        assert srv._session_size(sess) == (88, 30), srv._session_size(sess)
+
+        # ⑷ 그 큰 클라가 키를 한 번 치면 그때 가져온다 — 이것이 제보가 바라던 결과다.
+        big.last_active = 200.0
+        assert srv._session_size(sess) == (200, 60), srv._session_size(sess)
     finally:
         await teardown(srv, task, sock)
 

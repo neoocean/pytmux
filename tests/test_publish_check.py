@@ -48,6 +48,11 @@ _CLEAN = {
     "git log --oneline origin/main..HEAD": (0, ""),
     "git ls-remote": (0, "abc123\trefs/heads/main\n"),
     "git merge-base": (0, ""),
+    # ★ 기준선 신선도(pytmux-153) — 깨끗한 기본값. `git rev-list --count` 는 **0 커밋**,
+    #   `p4 sync -n` 은 **빈 stdout**(실물도 그렇다: "up-to-date" 는 stderr 로 나간다).
+    "git fetch": (0, ""),
+    "git rev-list --count": (0, "0\n"),
+    "p4 sync -n": (0, ""),
     "p4 opened": (0, ""),
     "p4 diff -se": (0, ""),
     "git status --porcelain": (0, ""),
@@ -58,6 +63,89 @@ async def test_clean_tree_reports_in_sync():
     rc, text = _gate(dict(_CLEAN))
     assert rc == 0, text
     assert "미러 일치" in text, text
+
+
+# ── 기준선 신선도 (pytmux/pytmux-153) ────────────────────────────────────────
+# ☠ 이 게이트는 두 번 거짓말했다. **거짓 초록**(cp1252 디코드로 미푸시를 못 보던 것)과
+#   **거짓 붉음**(2026-08-10: 로컬 클론이 origin/main 보다 30커밋 뒤인 채로 재서, 남이 이미
+#   밀어 놓은 143 + 61건이 내 빚으로 올라왔다 — 표본 3개 중 2개가 이미 origin 에 있었다).
+#   둘 다 원인이 같다: **기준선이 낡았는데 판정을 냈다.** 그래서 이 묶음의 오라클은
+#   「낡았을 때 무엇을 말하나」가 아니라 **「낡았을 때 아무 목록도 안 내나」** 다.
+# ⛔ 아래 픽스처는 구체 키를 **_CLEAN 보다 먼저** 넣는다 — `_fake_run` 이 앞에서부터
+#    접두사로 맞추므로 순서를 뒤집으면 일반 키(`git rev-list --count`)가 먼저 걸려
+#    시험이 조용히 아무것도 안 재게 된다.
+
+
+async def test_stale_git_baseline_refuses_to_judge():
+    """로컬 HEAD 가 origin/main 보다 뒤 → **판정 자체를 안 낸다**(rc 2)."""
+    rc, text = _gate({"git rev-list --count HEAD..origin/main": (0, "30\n"),
+                      **_CLEAN,
+                      # 낡은 기준선이 만들어 내던 바로 그 거짓 붉음을 함께 심는다.
+                      "git status --porcelain": (0, " M client/crates/gui/src/titlebar.rs\n"),
+                      "p4 files": (0, _files(("CLAUDE.md", "edit"))),
+                      "git ls-files": (0, "CLAUDE.md\nclient/crates/gui/src/titlebar.rs\n")})
+    assert rc == pc.RC_STALE, text
+    assert "기준선이 낡" in text and "30커밋 뒤" in text, text
+    assert "titlebar.rs" not in text, (
+        "낡은 기준선으로 잰 목록을 내면 안 된다 — 143줄 중 참이 1줄이면 그건 소음이다: " + text)
+    assert "미러 일치" not in text, text
+    assert "reset --mixed" in text, "고치는 길을 알려줘야 한다: " + text
+
+
+async def test_stale_git_baseline_with_local_commits_does_not_suggest_reset():
+    """로컬 커밋이 있으면 `reset --mixed` 는 **그 커밋을 브랜치에서 떼어낸다** — rebase 다."""
+    rc, text = _gate({"git rev-list --count HEAD..origin/main": (0, "3\n"),
+                      "git rev-list --count origin/main..HEAD": (0, "2\n"),
+                      **_CLEAN})
+    assert rc == pc.RC_STALE, text
+    assert "rebase" in text and "reset --mixed" not in text, text
+
+
+async def test_stale_p4_workspace_refuses_to_judge():
+    """워크스페이스가 depot head 보다 뒤면 내용 드리프트를 **과소평가**한다
+    (2026-08-08 실측: 기록 4개 → `p4 sync` 후 19개)."""
+    rc, text = _gate({**_CLEAN,
+                      "p4 sync -n": (0, "//w/scripts/pytmux/a.py#4 - updating /w/a.py\n"
+                                        "//w/scripts/pytmux/b.py#2 - added as /w/b.py\n")})
+    assert rc == pc.RC_STALE, text
+    assert "안 받은 파일 2개" in text and "p4 sync" in text, text
+
+
+async def test_up_to_date_message_on_stdout_is_not_counted_as_behind():
+    """p4 판에 따라 'file(s) up-to-date.' 가 stdout 으로 올 수 있다 — 그것을 '뒤처짐'으로
+    세면 게이트가 **상시 rc 2** 가 되고, 상주하는 색은 곧 아무도 안 본다."""
+    rc, text = _gate({**_CLEAN, "p4 sync -n": (0, "./... - file(s) up-to-date.\n")})
+    assert rc == 0, text
+    assert "미러 일치" in text, text
+
+
+async def test_unmeasured_freshness_is_not_green():
+    """`git fetch` 가 실패하면 origin/main 이 낡았을 수 있다 — 드리프트가 0 이어도 그것은
+    「없다」가 아니라 **「못 쟀다」**다(원칙 ⓑ)."""
+    rc, text = _gate({**_CLEAN, "git fetch": (1, "could not resolve host\n")})
+    assert rc == pc.RC_STALE, text
+    assert "못 쟀다" in text and "미러 일치" not in text, text
+
+
+async def test_no_remote_flag_records_that_freshness_was_not_measured():
+    rc, text = _gate(dict(_CLEAN), remote=False)
+    assert "못 쟀다" in text and "--no-remote" in text, text
+    assert rc == pc.RC_STALE, "안 잰 채로 초록을 주면 --no-remote 가 게이트를 끄는 스위치가 된다"
+
+
+async def test_mirror_gate_actually_measures_freshness():
+    """**호출부를 겨눈 오라클.** 위 시험들이 `measure_freshness` 를 직접 부르지 않는 것은
+    일부러다 — `check_mirror` 에서 그 호출 한 줄을 지워도 통과하면 안 된다(이 저장소가
+    반복해 물린 '공허 통과'). 그래서 신선도 판정은 **게이트가 쓰는 경로**로만 잰다."""
+    calls = []
+    old = pc.measure_freshness
+    pc.measure_freshness = lambda remote=True: (calls.append(remote) or ([], []))
+    try:
+        rc, text = _gate(dict(_CLEAN))
+    finally:
+        pc.measure_freshness = old
+    assert calls, "check_mirror 가 기준선 신선도를 아예 안 쟀다"
+    assert rc == 0, text
 
 
 async def test_git_only_content_is_reported_as_p4_unsubmitted():

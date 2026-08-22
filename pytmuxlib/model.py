@@ -1390,6 +1390,11 @@ class ClientConn:
         # 그리게 된다. 그래서 런은 종전 주기로 만들고 여기서 꺼내 쓴다.
         self._cells_runs: list = []
         self._cells_dim: list = []
+        # 그 런·딤을 만들 때의 **기하**(패널 사각형·활성 패널·격자 크기 —
+        # `_cells_shape_key`). 지금 기하가 이것과 다르면 1초 주기를 안 기다리고 다시
+        # 만든다: 런의 자리가 여기서 나오므로, 안 그러면 창을 키운 뒤 최대 1초 동안
+        # 새 격자 위에 **옛 폭으로 잰 배지**가 얹힌다(pytmux-164).
+        self._cells_shape: tuple | None = None
         # window-size=latest 용: 이 클라에서 마지막 **사용자 조작**(키 입력·붙여넣기·
         # 마우스·스크롤·리사이즈)이 온 monotonic 시각(0=아직 없음). _session_size 가
         # latest 모드에서 이 값이 가장 큰(가장 최근 조작된) 클라의 크기를 세션 공유

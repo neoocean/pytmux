@@ -169,6 +169,9 @@ def load_config(path: str | None = None) -> dict:
         set status-fg <color>     # 상태줄 글자색
         set default-path <val>    # 새 탭/패널 시작 디렉토리
                                   #   current(기본)=현재 패널, home=$HOME, 또는 경로
+        set claude-command <cmd>  # `esc c` 가 새 탭에서 실행할 명령(기본 claude)
+                                  #   그 탭은 언제나 **현재 패널의 디렉토리**에서 뜬다
+                                  #   (default-path 를 안 따른다)
         set inactive-dim on|off   # 비활성 패널 흐리게(§2.9, 기본 on)
         set inactive-dim-ratio <0~0.8>   # 흐리게 세기(기본 0.18)
         set mouse-drag-threshold <1~20>  # 드래그 복사로 인정할 최소 이동 칸수
@@ -283,6 +286,11 @@ def load_config(path: str | None = None) -> dict:
                         #   home    = $HOME
                         #   <경로>  = 해당 절대/~ 경로
                         cfg["default_path"] = val.strip()
+                    elif opt in ("claude-command", "claude_command"):
+                        # `esc c` 가 새 탭에서 실행할 명령(pytmux-137). 실행 파일
+                        # 경로·플래그가 사람마다 달라 설정으로 뺀 값이다. 빈 값이면
+                        # 그냥 셸 탭이 열린다(= 키를 안 쓴 것과 같다).
+                        cfg["claude_command"] = val.strip()
                     elif opt in ("ambiguous-width", "ambiguous_width"):
                         # East Asian Ambiguous 폭(→ · — 등) 처리(cellwidth):
                         #   auto(기본) = 기동 시 단말에 CPR 질의로 자동 감지
@@ -350,6 +358,7 @@ def load_config(path: str | None = None) -> dict:
 # 찾아 덮어쓴다 — 새 줄을 중복 추가하지 않게). 키는 정규(하이픈) 이름.
 _OPT_ALIASES = {
     "tab-bar": ("tabbar",),
+    "claude-command": ("claude_command",),
     "default-path": ("default_path",),
     "inactive-dim": ("inactive_dim",),
     "inactive-dim-ratio": ("inactive_dim_ratio",),
