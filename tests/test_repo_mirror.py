@@ -12,6 +12,7 @@ p4/git 은 안 부른다 — `_load_publish_check` 를 갈아끼워 **게이트�
 """
 import os
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -53,8 +54,17 @@ def _drift(kind, severity, head, why, items, fix="고치는 길"):
 
 
 def _audit(gate):
-    with harness.patched(repo, _load_publish_check=lambda: gate):
-        return repo.audit()
+    """`repo.ROOT` 를 **git 클론이 있는 가짜 트리**로 갈아끼운 채로 잰다.
+
+    ⛔ 실제 `repo.ROOT`(이 저장소의 진짜 체크아웃)로 재면 그 워크스페이스가 p4 전용인지
+    (git 클론 없음)에 따라 결과가 갈린다 — pytmux-289. `test_p4_only_workspace_skips_
+    instead_of_failing` 가 그 반대쪽(클론 없음)을 이미 따로 재므로, 여기서는 「클론 있음」
+    가지를 고정해 나머지 시험이 실제 워크스페이스 상태와 무관하게 돈다.
+    """
+    with tempfile.TemporaryDirectory() as git_root:
+        os.mkdir(os.path.join(git_root, ".git"))
+        with harness.patched(repo, _load_publish_check=lambda: gate, ROOT=git_root):
+            return repo.audit()
 
 
 _STALE = [{"what": "git 기준선", "detail": "로컬 HEAD 가 origin/main 보다 30커밋 뒤",
@@ -123,9 +133,14 @@ async def test_unmeasured_is_not_green():
 
 async def test_p4_only_workspace_skips_instead_of_failing():
     """git 클론이 없는 워크스페이스에서는 **잴 것이 아예 없다**(pytmux-38 의 첫 얼굴).
-    거기서 결함을 내면 그 상자의 야간 런이 매일 붉고, 상주하는 붉음은 곧 안 보인다."""
-    with harness.patched(repo, ROOT=os.path.join(HERE, "no-such-tree")):
-        findings, skipped, steps = _audit(_Gate())
+    거기서 결함을 내면 그 상자의 야간 런이 매일 붉고, 상주하는 붉음은 곧 안 보인다.
+
+    ⛔ 여기서는 `_audit()` 을 안 쓴다 — 그것은 이제 「클론 있음」쪽을 고정하므로 이 시험이
+    겨눈 「클론 없음」이 가려진다.
+    """
+    with harness.patched(repo, _load_publish_check=lambda: _Gate(),
+                          ROOT=os.path.join(HERE, "no-such-tree")):
+        findings, skipped, steps = repo.audit()
     assert not findings, findings
     assert skipped and "git 클론이 아니다" in skipped[0].reason, skipped
 
