@@ -137,6 +137,10 @@ async def test_plugin_manager_popup_toggle_sends_cmd():
         app.push_screen(PluginManagerScreen())
         scr = await wait_mounted(pilot, "PluginManagerScreen", child="#plgbox")
         assert scr.__class__.__name__ == "PluginManagerScreen"
+        # 목록 채우기는 on_mount 가 asyncio.create_task 로 미루므로, 채워지기
+        # 전에 Space 를 누르면 highlighted_child 가 없어 토글이 조용히 안 먹는다.
+        lv = scr.query_one(ListView)
+        await wait_until(pilot, lambda: lv.highlighted_child is not None)
         # 첫 항목(활성) 위에서 Space → set_plugin_enabled(on=False) 전송.
         await pilot.press("space")
         await wait_until(pilot, lambda: bool(sent))
