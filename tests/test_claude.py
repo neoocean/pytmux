@@ -1012,7 +1012,14 @@ async def test_regex_patterns_no_catastrophic_backtracking():
                 if isinstance(v, re.Pattern)]
     assert len(patterns) >= 20, f"패턴 수집 누락? {len(patterns)}"
     payloads = _redos_payloads(40000)
-    BUDGET = 0.5   # 선형이면 한참 못 미침; 파국적이면 수초+ 라 여유 큰 경계
+    # pytmux-210: 0.5s 는 여유가 아니라 빠듯했다 — `_ACCT_ORG_RE` 는 §5.9 에서 이미 한 번
+    # 선형화됐지만(길이 상한 {1,64}/{1,255}) 그 상한 자체가 위치당 상수 비용이라, 40KB
+    # 입력에서 실측 ~0.15s(맥·python 3.14)로 예산의 30%를 그냥 쓴다. CI 는 windows-latest·
+    # ubuntu-latest × python 3.11~3.13 매트릭스라 이 머신보다 흔히 느리고, 소스 변경 없이
+    # 2026-08-15~22 사이 6회 재관측(간헐)됐다 — 실 회귀가 아니라 예산이 얇았다. 파국적
+    # 백트래킹은 여전히 자릿수가 다르다(같은 자리 주석의 되돌리기 전 실측 ~14초) — 2.0s 도
+    # 그 값의 1/7 이라 진짜 회귀는 여전히 넉넉히 잡는다.
+    BUDGET = 2.0   # 선형이면 한참 못 미침; 파국적이면 수초+ 라 여유 큰 경계
     for name, pat in patterns:
         for s in payloads:
             t0 = time.perf_counter()
