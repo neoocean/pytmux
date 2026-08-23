@@ -9,6 +9,31 @@
 
 set -e
 
-echo "⏳ 미러 드리프트 검사 중..."
-python3 scripts/publish_check.py --pre-push
+# ⛔ **`python3` 을 그냥 집지 않는다** — Windows 에서는 그 이름이
+#    `…\WindowsApps\python3`(Store 앱 별칭 = 설치 런처)일 수 있고, 그것은 스크립트를
+#    안 돌리고 "Python" 한 줄만 찍고 rc 49 로 죽는다(2026-08-23 실측, 이 상자).
+#    그러면 이 훅은 **아무것도 안 재고 push 를 막기만 한다** — CLAUDE.md 가 `bash` 에
+#    대해 적어 둔 함정(WindowsApps 별칭 = WSL 런처)과 **같은 것**이다.
+#    그래서 후보를 차례로 짚되 **진짜 파이썬 3 인지를 물어서** 고른다.
+#    다른 데 있으면 `PYTMUX_PYTHON=<경로>`.
+_pick_python() {
+    for cand in "$PYTMUX_PYTHON" "$PYTHON" python3 python py; do
+        [ -n "$cand" ] || continue
+        command -v "$cand" >/dev/null 2>&1 || continue
+        if [ "$("$cand" -c 'import sys; print(sys.version_info[0])' 2>/dev/null)" = "3" ]; then
+            printf '%s\n' "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PY=$(_pick_python) || {
+    echo "pre-push: 쓸 만한 파이썬 3 을 못 찾았다 — 미러 드리프트를 못 쟀다" >&2
+    echo "  → 못 쟀으면 통과가 아니다. PYTMUX_PYTHON=<경로> 로 지정할 것" >&2
+    exit 2
+}
+
+echo "⏳ 미러 드리프트 검사 중... ($PY)"
+"$PY" scripts/publish_check.py --pre-push
 echo "✓ 미러 드리프트 검사 통과"
