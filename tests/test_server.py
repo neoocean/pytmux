@@ -4575,6 +4575,61 @@ async def test_search_and_capture_keep_wide_chars_intact():
         await teardown(srv, task, sock)
 
 
+async def test_capture_pane_sees_output_that_did_not_grow_the_scrollback():
+    """새 출력이 **스크롤백을 안 늘렸을 때도** capture-pane 이 그것을 담는다(pytmux-385).
+
+    ⛔ 이 시험이 굳이 «첫 화면 안»에서 재는 이유가 전부다. `_pane_text_lines` 의 캐시
+    토큰은 (화면 객체 · 출력 순번 · 기하 · 스크롤백 길이)인데, 출력 순번 항이 **없는
+    칸을 읽어 늘 0** 이었다(`getattr(screen, "_feed_seq", 0)` — 그 칸은 `Pane` 의 것이다).
+    남은 무효화 조건은 리사이즈와 스크롤백 증가뿐이라, 위쪽의 형제 시험들처럼 40~50줄을
+    먹이면 `hlen` 이 바뀌어 **버그가 있어도 통과한다** — 두 달 넘게 그렇게 지나갔다.
+
+    그래서 여기서는 24행을 안 넘긴다. 스크롤백이 안 늘었음을 **단언까지** 해서, 나중에
+    누가 줄 수를 늘려 이 오라클을 조용히 무디게 만드는 것을 막는다.
+
+    ⚠ `feed`·`capture_pane` 은 둘 다 동기다 — 사이에 `await` 를 넣지 말 것. 패널에는
+    진짜 셸이 붙어 있어(`serverpty`) 양보 지점이 생기면 그 출력이 끼어든다(pytmux-384)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p.feed(b"FIRST\r\n")
+        srv.capture_pane(sess, full=True)
+        assert "FIRST" in srv.buffers[0], srv.buffers[0][:200]
+        before = len(p.screen.history.top)
+        p.feed(b"SECOND\r\n")
+        assert len(p.screen.history.top) == before, (
+            "이 시험은 **스크롤백이 안 늘 때**를 잰다 — 늘어나면 캐시가 그 항으로 깨져"
+            " 결함이 있어도 통과한다", before, len(p.screen.history.top))
+        srv.capture_pane(sess, full=True)
+        assert "SECOND" in srv.buffers[0], (
+            "방금 찍힌 줄이 복사에 안 담겼다 — 텍스트 캐시가 새 출력을 못 봤다",
+            srv.buffers[0][:200])
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_pane_text_cache_is_rebuilt_when_new_output_arrives():
+    """캐시가 새 출력을 보면 **다시 짓는다**(pytmux-385 · 위 시험의 한 겹 아래).
+
+    위 시험은 소비처(capture-pane)를 재고 이쪽은 그 밑의 헬퍼를 직접 잰다. 둘을 같이
+    두는 이유: 캐시를 고쳐도 호출부가 그것을 안 쓰면 위가 초록이 되고, 호출부만 고치고
+    캐시를 그대로 두면 다른 소비처(n/N 검색 · search_goto · Claude 프롬프트 점프)가
+    조용히 낡은 채 남는다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p.feed(b"FIRST\r\n")
+        first = srv._pane_text_lines(p)
+        p.feed(b"SECOND\r\n")
+        again = srv._pane_text_lines(p)
+        assert again is not first, "같은 목록을 그대로 돌려줬다 — 캐시가 안 깨졌다"
+        assert any("SECOND" in t for t in again), [t for t in again if t.strip()]
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_claude_jump_prompt_walks_turn_boundaries():
     """esc ctrl+↑/↓ 프롬프트 점프(사용자 요청 2026-07-15): 활성 Claude 패널의
     스크롤백에서 제출 프롬프트(`> …`) 위치를 하나씩 거슬러/되짚어 오간다.
