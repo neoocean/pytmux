@@ -336,7 +336,7 @@ class Server(*_SERVER_BASES):
         # 없앤다. 토큰은 코어 _feed_seq(feed 마다 증가) + 기하(리사이즈) + 스크롤백
         # 길이(clear_history). 어느 하나라도 바뀌면 재구성하므로 stale 결과가 없다.
         hlen = len(h.top) if h is not None else 0
-        ver = (id(screen), getattr(screen, "_feed_seq", 0),
+        ver = (id(screen), getattr(pane, "_feed_seq", 0),
                screen.columns, screen.lines, hlen)
         cache = getattr(pane, "_txt_cache", None)
         if cache is not None and cache[0] == ver:

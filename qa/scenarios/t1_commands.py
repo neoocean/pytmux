@@ -169,6 +169,14 @@ def run(ctx) -> None:
                          title="실 PTY 아래 붙인 클라가 스스로 종료한다",
                          expected="캡처 시간 동안 클라 프로세스가 살아 있다",
                          actual="캡처 중 스스로 종료(즉시 종료/크래시 신호)")
+            elif not screens.drawn(text):
+                # T0 `_judge_screen` 과 같은 규율(pytmux-149) — 「아무것도 못 그렸다」는
+                # rename 이 화면까지 안 간 것과 **다른 결함**이라 지문을 가른다.
+                ctx.fail(oracle="client/paints_anything", key="t1-blank",
+                         severity="S2",
+                         title="실 클라가 살아 있는데 화면에 아무것도 안 그렸다",
+                         expected="테두리든 탭바든 클라가 그린 것이 화면에 있다",
+                         actual=f"화면 {len(text)}자 · 그린 것으로 볼 만한 글자가 하나도 없다")
             elif RENAME_MARK not in text:
                 ctx.fail(oracle="client/renders_rename", key="t1-rename",
                          severity="S2",

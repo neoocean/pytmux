@@ -104,6 +104,23 @@ def _judge_screen(ctx, text: str, alive: bool, key_prefix: str) -> None:
                  expected="화면에 트레이스백이 없다",
                  actual=screens.around(text, "Traceback (most recent call last)"))
         return
+    # ⛔ **「아무것도 못 그렸다」와 「잘못 그렸다」를 한 지문에 접지 않는다**(pytmux-149).
+    #   종전에는 빈 캡처(0자)도 아래 `renders_tree` 로 떨어졌다 — 그 오라클+키는
+    #   «탭 1 이 스크롤로 숨는다»(149)의 지문이라(fingerprint = 시나리오+오라클+키),
+    #   클라가 화면을 통째로 못 낸 회차가 그 이슈를 S1 으로 되열었다 — 실측
+    #   2026-08-17 `qa-20260818-040008`: 같은 회차의 첫 attach 는 **화면 0자**,
+    #   T1 은 905자였고 그 둘(pytmux-278·279)은 나중에 `invalid` 로 닫혔다.
+    #   증상이 다르면 지문도 달라야 한다 — 여기서 가른다.
+    #   ⚠ 149 의 진짜 모양(테두리·탭바는 다 그려졌는데 `1:` 만 없다)은 이 관문을
+    #   **지나서** 아래 판정에 그대로 닿는다 — 이 갈래는 오라클을 약하게 하지 않는다.
+    if not screens.drawn(text):
+        ctx.fail(oracle="client/paints_anything", key=f"{key_prefix}-blank",
+                 severity="S2",
+                 title="실 클라가 살아 있는데 화면에 아무것도 안 그렸다",
+                 expected="테두리든 탭바든 클라가 그린 것이 화면에 있다",
+                 actual=f"화면 {len(text)}자 · 그린 것으로 볼 만한 글자가 하나도 없다 — "
+                        f"하네스가 화면을 못 받았거나 클라가 첫 프레임 전에 멈춰 선 것이다")
+        return
     missing = [n for n, ok in (
         ("탭 1", "1:" in text),
         ("탭 2", "2:" in text),

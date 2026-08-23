@@ -117,7 +117,15 @@ def test_screen_judgement_bites_on_a_dead_or_empty_client():
 
     blank = _C()
     _judge_screen(blank, "", True, "probe")
-    assert blank.findings == [("client/renders_tree", "S2")], blank.findings
+    assert blank.findings == [("client/paints_anything", "S2")], blank.findings
+
+    # ★ **그 관문이 진짜 결함을 삼키면 안 된다**(pytmux-149). 149 의 모양은 빈 화면이
+    #   아니라 **다 그려진 화면에서 `1:` 만 스크롤로 숨은** 것이다(실측 지문:
+    #   화면 9683자 · 상태줄 `◀ 2:zsh`). 이것은 관문을 지나 renders_tree 에 닿아야 한다 —
+    #   안 그러면 방금 갈라 낸 것이 149 의 오라클을 통째로 공허하게 만든 셈이 된다.
+    scrolled = _C()
+    _judge_screen(scrolled, "┌──┐\n│ ◀ 2:zsh   [+] │\n└──┘", True, "probe")
+    assert scrolled.findings == [("client/renders_tree", "S2")], scrolled.findings
 
 
 class _RecCtx:

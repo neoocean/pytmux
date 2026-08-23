@@ -113,6 +113,80 @@ async def test_the_spec_declares_the_keys_that_move_the_tree():
         assert spec["keys"].get("c") == "cd", spec["keys"]
 
 
+class _Pane:
+    """패널 한 짝 — 받은 바이트만 들고 있는다."""
+
+    def __init__(self):
+        self.written = b""
+
+    def write(self, data):
+        self.written += data
+
+
+class _Win:
+    def __init__(self, pane):
+        self.active_pane = pane
+
+
+class _Sess:
+    def __init__(self, pane):
+        self.active_window = _Win(pane)
+
+
+async def test_enter_actually_types_the_cd_into_the_active_pane():
+    """★ **제보(pytmux-173)가 가리킨 절반이 여기다** — GUI 는 `Enter` 를 `into` 로 잘 보내는데
+    (그쪽은 `session_view_tests.rs::enter_on_an_ncd_row_sends_the_into_action_with_that_path`
+    가 잠갔다) 「패널에 `cd` 가 안 들어간다」는 제보가 남아 있었다.
+
+    ⛔ **이 자리를 재는 시험이 없었다.** `into` 갈래는 화면을 닫는 응답을 늘 돌려주므로
+    (`plugin_screen_close`) 패널에 아무것도 안 써도 **겉보기는 성공과 똑같다** — 화면은
+    닫히고 아무 말도 안 남는다. 그래서 눈으로도 기계로도 안 잡히던 자리다."""
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        target = os.path.join(td, "a")
+        pane = _Pane()
+        resp = PLUGIN.plugin_screen(
+            object(), _Sess(pane),
+            {"id": "ncd", "do": "into", "row": 0, "input": target, "state": {}},
+        )
+        assert resp == {"t": "plugin_screen_close", "id": "ncd", "input": target}, resp
+        typed = pane.written.decode("utf-8")
+        assert typed.endswith("\r"), f"엔터가 안 붙었다 — 셸이 명령을 실행하지 않는다: {typed!r}"
+        assert target in typed, f"고른 경로가 안 실렸다: {typed!r}"
+        # 셸 방언은 **이 서버의 OS** 가 정한다(클라의 것을 쓰면 Windows 클라가 macOS
+        # 패널에 `cd /d` 를 흘린다 — 그 주석이 핸들러에 적혀 있다).
+        assert typed.startswith("cd /d " if os.name == "nt" else "cd "), typed
+
+
+async def test_an_into_without_a_path_does_not_pretend_it_worked():
+    """`input` 이 비면 패널에 아무것도 안 간다 — 그때 화면만 닫히면 사용자에게는
+    **제보와 똑같은 증상**(눌렀는데 아무 일도 안 남)이 된다.
+
+    여기서는 그 사실을 못박아 둔다: 빈 경로로는 아무것도 안 쓴다."""
+    pane = _Pane()
+    resp = PLUGIN.plugin_screen(
+        object(), _Sess(pane),
+        {"id": "ncd", "do": "into", "row": 0, "input": "", "state": {}},
+    )
+    assert pane.written == b"", pane.written
+    assert resp["t"] == "plugin_screen_close", resp
+
+
+async def test_the_c_key_types_a_cd_too():
+    """글자 키 `c`(여기로 cd)도 같은 자리를 지난다 — `into` 만 재고 이쪽을 안 재면
+    한쪽이 조용히 죽는다(둘은 서로 다른 갈래다)."""
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        target = os.path.join(td, "a")
+        pane = _Pane()
+        PLUGIN.plugin_screen(
+            object(), _Sess(pane),
+            {"id": "ncd", "do": "cd", "row": 0, "input": target, "state": {}},
+        )
+        typed = pane.written.decode("utf-8")
+        assert target in typed and typed.endswith("\r"), typed
+
+
 async def test_the_label_stays_data():
     """⛔ 들여쓰기를 **글자로 섞지 않는다** — 그러면 이름이 더는 자료가 아니고,
     타이핑 찾기·복사가 그 공백을 물고 간다. 깊이는 따로 나른다."""
