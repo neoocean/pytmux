@@ -122,6 +122,12 @@ pub static EN: &[(&str, &str)] = &[
         "프레임이 너무 크다: {advertised} 바이트 (상한 {limit})",
         "Frame too large: {advertised} bytes (limit {limit})",
     ),
+    // 길이 자리에 본문 글자가 온 경우의 덧말(pytmux-171) — 그 수를 손으로
+    // 16진수로 바꿔 보는 일을 오류가 대신한다.
+    (
+        "— 길이 자리에 글자가 왔다: {text} (스트림이 어긋났다)",
+        "— text arrived where the length should be: {text} (the stream is out of sync)",
+    ),
     (
         "프레임이 오다 말았다: {got}/{want} 바이트",
         "Frame stopped mid-way: {got}/{want} bytes",

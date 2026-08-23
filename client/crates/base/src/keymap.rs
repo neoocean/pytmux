@@ -73,6 +73,19 @@ pub enum Action {
     TogglePin,
     /// 서버의 페이스트 버퍼 맨 앞을 패널에 붙인다(`prefix ]`).
     PasteBuffer,
+    /// **OS 클립보드**를 활성 패널에 붙인다(`paste-clipboard` · `Ctrl+V`).
+    ///
+    /// ⚠ [`PasteBuffer`](Action::PasteBuffer) 와 **다른 기능**이다 — 이름이 닮아서 한
+    /// 자리로 접고 싶어지는데, 저쪽은 **서버가 든 버퍼**이고 이쪽은 **이 상자의 OS
+    /// 클립보드**다. 정본도 둘을 따로 둔다(`paste-buffer` · `paste-clipboard`).
+    ///
+    /// 글자면 그대로 붙이고, 그림이면 **임시 파일로 떨궈 그 경로를 붙인다**(정본이 정한
+    /// 계약 — `clip::save_image` 문서). 어느 쪽인지는 클립보드를 읽어 봐야 알므로 이
+    /// 액션은 「읽어서 알맞게 해 달라」 하나다(정본 `paste_os_clipboard` 과 같다).
+    ///
+    /// ⛔ 이 액션은 **뷰가 창을 쥔 자리**에서만 끝난다 — 클립보드를 읽는 데 창 문맥이
+    /// 필요해서다. 그래서 `action_to_command` 는 여기서 명령을 만들지 않는다.
+    PasteClipboard,
     /// 키 도움말 화면을 열고 닫는다(`esc ?`).
     ShowKeys,
     /// 탭 스위처를 연다(`esc Tab`).
@@ -384,6 +397,12 @@ pub enum Action {
     /// (「플러그인 = 화면까지 재현」)와 G7 결론(「켜고 끌 수는 있지만 그리지는 않는다」)이
     /// 여기서는 갈리지 않는다. 그리는 것은 상태줄 표식 하나다(`[자동재개]`).
     ToggleAutoresume,
+    /// 자동 재개 **설명 판**을 연다(pytmux-183 · 정본 `open_autoresume_info`).
+    ///
+    /// [`ToggleAutoresume`](Action::ToggleAutoresume) 과 가르는 것: 저쪽은 **바로
+    /// 뒤집고**(키·팔레트의 손) 이쪽은 **판을 세운다**(좌하단 표식을 눌렀을 때의 손).
+    /// 정본이 그 둘을 따로 두는 이유는 `Screen::Autoresume` 문서에 있다.
+    ShowAutoresume,
     /// UI 언어를 이 로케일로 바꾼다(`lang ko|en` — 파이썬 `cmd_lang`).
     ///
     /// **클라 안에서 끝난다** — 로케일은 per-user 라 서버에 보낼 것이 없다(파이썬도
@@ -442,6 +461,7 @@ impl Action {
             Action::ResizePane(_) => "패널 크기",
             Action::TogglePin => "탭 고정",
             Action::PasteBuffer => "버퍼 붙여넣기",
+            Action::PasteClipboard => "클립보드 붙여넣기",
             Action::ShowKeys => "키 도움말",
             Action::ShowTabs => "탭 스위처",
             Action::ShowTree => "트리(개요)",
@@ -549,6 +569,7 @@ impl Action {
             Action::ShowCompose => "작성창",
             Action::ShowInfoTabs => "상태 (서버·세션)",
             Action::ToggleAutoresume => "자동재개",
+            Action::ShowAutoresume => "자동재개 설명",
             Action::TogglePromptClear => "프롬프트 클리어",
             Action::SetLang(_) => "언어",
             Action::Reconnect => "재접속",
@@ -1211,6 +1232,11 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("pin-toggle", "탭", Action::TogglePin),
     pe("choose-tree", "탭", Action::ShowTree),
     pe("choose-buffer", "복사/버퍼", Action::ShowBuffers),
+    // ★ **`paste-buffer` 앞이다**(정본 `clientutil.py:1032` 의 2026-06-16 요청).
+    //   둘 다 `paste` 전체 접두 일치라 **선언 순서가 곧 기본 선택**이고, 「OS 클립보드가
+    //   더 흔한 의도」라 먼저 잡히게 한 것이다. 자리를 바꾸면 같은 타이핑이 정반대
+    //   후보를 고른다(pytmux-363 이 그 갈림을 제보로 잡았다).
+    pe("paste-clipboard", "복사/버퍼", Action::PasteClipboard),
     pe("paste-buffer", "복사/버퍼", Action::PasteBuffer),
     pe("synchronize-panes", "패널", Action::ShowCommandOptions("synchronize-panes")),
     pe("monitor-activity", "모니터", Action::ShowCommandOptions("monitor-activity")),
@@ -1700,6 +1726,7 @@ fn variant_index(action: Action) -> usize {
         Action::ResizePane(_) => 26,
         Action::TogglePin => 27,
         Action::PasteBuffer => 28,
+        Action::PasteClipboard => 116,
         Action::ShowKeys => 29,
         Action::ShowTabs => 30,
         Action::ShowTree => 31,
@@ -1775,6 +1802,7 @@ fn variant_index(action: Action) -> usize {
         Action::ShowCompose => 95,
         Action::ShowInfoTabs => 96,
         Action::ToggleAutoresume => 97,
+        Action::ShowAutoresume => 117,
         Action::Reconnect => 98,
         Action::RestartAll => 99,
         Action::SetLang(_) => 100,
@@ -1788,7 +1816,7 @@ fn variant_index(action: Action) -> usize {
     }
 }
 
-const ACTION_COUNT: usize = 116;
+const ACTION_COUNT: usize = 118;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1828,6 +1856,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::ResizePane(Dir::Left),
         Action::TogglePin,
         Action::PasteBuffer,
+        Action::PasteClipboard,
         Action::ShowKeys,
         Action::ShowTabs,
         Action::ShowTree,
@@ -1903,6 +1932,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::ShowCompose,
         Action::ShowInfoTabs,
         Action::ToggleAutoresume,
+        Action::ShowAutoresume,
         Action::Reconnect,
         Action::ToggleFullscreen,
         Action::RestartAll,
@@ -2008,6 +2038,21 @@ mod tests {
                 assert!(
                     scroll_hits('n') && scroll_hits('N'),
                     "스크롤 모드 `n`/`N` 반복이 끊겼다"
+                );
+                continue;
+            }
+            // 좌하단 `[자동재개]` 표식을 **누르는 것**이 이 액션의 유일한 입구다
+            // (pytmux-183). 정본도 그렇다 — `open_autoresume_info` 는 `_ar_zone` 클릭
+            // 하나로만 열리고 명령 이름이 없다. ⛔ 그래서 팔레트에 이름을 지어 넣지
+            // 않는다: 정본에 없는 조작 표면을 GUI 가 먼저 만드는 일이 된다.
+            //
+            // 넘기기만 하면 이 액션이 검사 밖으로 새므로, `MoveTabAt` 때와 같이
+            // **그 입구가 살아 있는지를 여기서 직접 본다**(클릭 표를 실제로 돌린다).
+            if same(Action::ShowAutoresume) {
+                assert_eq!(
+                    crate::chrome::SysBadge::AutoResume.action(),
+                    Some(Action::ShowAutoresume),
+                    "자동재개 표식의 클릭 입구가 끊겼다"
                 );
                 continue;
             }

@@ -234,6 +234,21 @@ fn ks(key: &str, ctrl: bool, alt: bool, shift: bool) -> warpui::keymap::Keystrok
     }
 }
 
+/// 맥의 `Cmd`(또는 윈도·리눅스의 `Super`)를 쥔 조합. 정본의 `super+v` 짝이다.
+///
+/// `ks` 에 인자를 둘 더 붙이지 않는 이유: 그 함수를 부르는 자리가 이미 여럿이고, 거기
+/// 전부에 `false, false` 를 더하면 **읽는 사람이 무엇이 참인지 못 본다.**
+fn ks_cmd(key: &str, cmd: bool, meta: bool, shift: bool) -> warpui::keymap::Keystroke {
+    warpui::keymap::Keystroke {
+        ctrl: false,
+        alt: false,
+        shift,
+        cmd,
+        meta,
+        key: key.to_owned(),
+    }
+}
+
 #[test]
 fn the_gui_reads_key_names_with_the_same_table_as_the_tui() {
     // ★ 이름 표가 갈리면 **한쪽 클라에서만 안 먹는 키**가 생기고, 그 증상은 조용하다
@@ -510,30 +525,265 @@ fn a_shift_press_inside_the_popup_goes_to_the_popup_app() {
     assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 20), true, true));
 }
 
-// ── 붙여넣기 조합(슬라이스 9) ────────────────────────────────────────────────
+// ── 붙여넣기 조합(슬라이스 9 · pytmux-364) ──────────────────────────────────
 //
 // 이 판정이 틀리면 **아무 소리 없이** 어긋난다: 좁으면 붙여넣기가 안 되고, 넓으면 패널
-// 안 프로그램의 키가 사라진다. 라이브로도 양쪽을 봤다(리포트 슬라이스 9) — Ctrl+Shift+V
-// 는 클립보드가 패널에 들어갔고, Ctrl+V 는 아무 일도 안 났다.
+// 안 프로그램의 키가 사라진다.
+//
+// ★ **2026-08-23 에 넓혔다.** 종전 오라클은 「`Ctrl+V` 는 붙여넣기가 **아니다**」를 단언해
+//   두었고(`plain_ctrl_v_belongs_to_the_program_in_the_pane`), 그래서 이 갈림은 **기계로는
+//   절대 안 잡히는** 상태였다 — 게이트가 결함을 「맞다」고 고정하고 있었다. 뒤집는 이유는
+//   그 관찰(0x16 은 패널의 바이트다)이 틀려서가 아니라, **정본이 이미 그 값을 치르기로**
+//   정해 두었기 때문이다(`clientio.py` 가 `ctrl+v`/`super+v` 를 크롬 키로 잡는다).
 
 #[test]
-fn ctrl_shift_v_asks_for_a_paste() {
+fn plain_ctrl_v_asks_for_a_paste_just_like_the_canon() {
+    // 제보(pytmux-364)가 짚은 그 손버릇이다 — 정본에서는 이것이 붙는다.
+    assert!(SessionView::is_paste_chord(&ks("v", true, false, false)));
+    assert!(SessionView::is_paste_chord(&ks("V", true, false, false)), "대문자로 와도 같은 키다");
+}
+
+#[test]
+fn ctrl_shift_v_still_asks_for_a_paste() {
+    // 터미널 에뮬레이터 관례 — 이미 손에 익은 사람이 있어 별칭으로 남긴다.
     assert!(SessionView::is_paste_chord(&ks("v", true, false, true)));
     assert!(SessionView::is_paste_chord(&ks("V", true, false, true)), "대문자로 와도 같은 키다");
 }
 
 #[test]
-fn plain_ctrl_v_belongs_to_the_program_in_the_pane() {
-    // ★ 0x16 은 패널 안 프로그램의 바이트다. 가로채면 그 프로그램의 기능이 조용히 사라진다.
-    assert!(!SessionView::is_paste_chord(&ks("v", true, false, false)));
+fn cmd_v_asks_for_a_paste_so_the_mac_has_an_entrance_at_all() {
+    // ⛔ 맥에서는 `Ctrl+Shift+V` 가 관례가 아니다 — 이것이 없으면 그 상자에는 입구가
+    //    **하나도 없다**(정본은 `super+v` 로 받는다).
+    assert!(SessionView::is_paste_chord(&ks_cmd("v", true, false, false)));
+    // 이 백엔드는 맥의 `Cmd` 와 윈도·리눅스의 `Super` 를 갈라 준다. 정본은 둘을 한
+    // 이름(`super+v`)으로 부르므로 여기서도 둘 다 같은 입구다.
+    assert!(SessionView::is_paste_chord(&ks_cmd("v", false, true, false)));
+    assert!(SessionView::is_paste_chord(&ks_cmd("V", true, false, true)), "Cmd+Shift+V 도 같다");
 }
 
 #[test]
-fn a_paste_needs_both_modifiers_and_nothing_else() {
+fn a_paste_is_one_family_or_the_other_and_never_another_key() {
     assert!(!SessionView::is_paste_chord(&ks("v", false, false, true)), "Shift+V 는 대문자 V 다");
     assert!(!SessionView::is_paste_chord(&ks("c", true, false, true)), "Ctrl+Shift+C 는 다른 키다");
+    assert!(!SessionView::is_paste_chord(&ks("v", false, false, false)), "맨 V 는 글자다");
     // Alt 가 섞이면 다른 조합이다 — 넓게 잡으면 그 조합이 통째로 사라진다.
     assert!(!SessionView::is_paste_chord(&ks("v", true, true, true)));
+    // `Ctrl` 과 `Cmd` 를 함께 쥔 것은 어느 계열도 아닌 제3의 조합이다.
+    let mut both = ks("v", true, false, false);
+    both.cmd = true;
+    assert!(!SessionView::is_paste_chord(&both));
+}
+
+// ── 클립보드 붙여넣기 — 글자와 **그림**(pytmux-159·363) ─────────────────────────
+//
+// ⛔ **여기 오라클이 없어서 기능이 한 revision 만에 조용히 사라졌다.** CL 71659 가 그림
+//    분기를 넣어 pytmux-159 를 닫았는데, 바로 다음 revision(CL 71667 — 설명은 테두리
+//    얘기뿐이다)에 그 코드가 통째로 없다. 낡은 트리로 덮어쓴 사고이고, **아무도 몰랐다**
+//    (그 CL 은 `cargo check` 로만 확인했다). 패리티 래칫은 그동안 계속 `Done` 이라고
+//    말하고 있었다.
+
+/// 클립보드 한 장을 짓는다. 창 계층이 주는 모양 그대로다(`ClipboardContent`).
+fn clipboard(text: &str, images: Vec<(&[u8], &str)>) -> warpui_core::clipboard::ClipboardContent {
+    warpui_core::clipboard::ClipboardContent {
+        plain_text: text.to_owned(),
+        images: (!images.is_empty()).then(|| {
+            images
+                .into_iter()
+                .map(|(data, mime)| warpui_core::clipboard::ImageData {
+                    data: data.to_vec(),
+                    mime_type: mime.to_owned(),
+                    filename: None,
+                })
+                .collect()
+        }),
+        ..Default::default()
+    }
+}
+
+/// 붙여넣기 한 장을 먹이고 **서버로 나간 것**과 **화면에 남은 말**을 돌려준다.
+fn paste_outcome(content: warpui_core::clipboard::ClipboardContent) -> (Vec<Outgoing>, Vec<String>) {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.paste_clipboard_for_test(content);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    let said = view
+        .state_for_test()
+        .notices()
+        .map(|n| n.text.clone())
+        .collect();
+    (out, said)
+}
+
+#[test]
+fn clipboard_text_goes_to_the_pane_as_a_paste() {
+    let (out, _) = paste_outcome(clipboard("hello", vec![]));
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::Paste { text }) if text == "hello")),
+        "글자가 `paste` 로 안 나갔다: {out:?}"
+    );
+}
+
+#[test]
+fn a_clipboard_image_is_pasted_as_the_path_of_a_temp_file() {
+    // ★ pytmux-159 의 본체. 정본이 정한 계약이다 — PTY 너머로 비트맵이 못 가서 파일로
+    //   떨구고 **경로**를 붙인다(Claude Code CLI 등이 그 경로를 첨부 이미지로 읽는다).
+    let (out, said) = paste_outcome(clipboard("", vec![(b"fake-png-bytes", "image/png")]));
+    let pasted = out.iter().find_map(|o| match o {
+        Outgoing::Command(Command::Paste { text }) => Some(text.clone()),
+        _ => None,
+    });
+    let Some(path) = pasted else {
+        panic!("그림이 `paste` 로 안 나갔다: {out:?}");
+    };
+    assert!(path.ends_with(".png"), "붙여넣은 것이 그림 경로가 아니다: {path}");
+    // ⛔ **파일이 실제로 있어야 한다.** 경로만 그럴듯하고 파일이 없으면 앱이 빈손을 쥐고,
+    //    증상은 "붙여넣기가 안 된다"가 아니라 "그림이 안 열린다"로 어긋난다.
+    assert_eq!(
+        std::fs::read(&path).expect("붙여넣은 경로에 파일이 없다"),
+        b"fake-png-bytes"
+    );
+    let _ = std::fs::remove_file(&path);
+    // 무슨 일이 났는지 **말한다** — 경로 하나가 프롬프트에 튀어나오는 것은 설명이 없으면
+    // 사용자에게 결함으로 읽힌다.
+    assert!(said.iter().any(|m| m.contains("이미지")), "그림을 붙였다고 말하지 않았다: {said:?}");
+}
+
+#[test]
+fn text_wins_over_an_image_when_the_clipboard_carries_both() {
+    // HTML 을 복사하면 창 계층이 글자와 그림을 **둘 다** 싣는다. 그때 기대되는 것은
+    // 글자이고, 정본도 글자를 먼저 본다.
+    let (out, _) = paste_outcome(clipboard("hello", vec![(b"fake-png-bytes", "image/png")]));
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::Paste { text }) if text == "hello")),
+        "글자가 있는데 그림을 붙였다: {out:?}"
+    );
+}
+
+#[test]
+fn an_image_we_cannot_save_falls_back_to_alt_v_like_the_canon() {
+    // 모르는 형식은 파일로 못 떨군다(`clip::save_image`). 그때 정본은 **안쪽 앱이 공유
+    // 클립보드를 스스로 읽게** `Alt+V`(= ESC v)를 보낸다 — 여기도 같아야 한다.
+    let (out, said) = paste_outcome(clipboard("", vec![(b"fake-bmp-bytes", "image/bmp")]));
+    assert!(
+        out.contains(&Outgoing::Input(vec![0x1b, b'v'])),
+        "폴백 Alt+V 가 안 나갔다: {out:?}"
+    );
+    assert!(!said.is_empty(), "폴백을 말없이 했다");
+}
+
+#[test]
+fn an_empty_clipboard_says_so_instead_of_doing_nothing() {
+    // ⛔ 제보(pytmux-364)의 핵심이 **무동작**이었다 — 클립보드가 빈 건지 클라가 못 받은
+    //    건지 서버가 안 넣은 건지 사용자가 가를 수 없었다. 말없이 끝나는 팔은 없다.
+    let (out, said) = paste_outcome(clipboard("", vec![]));
+    assert!(
+        !out.iter().any(|o| matches!(o, Outgoing::Command(Command::Paste { .. }))),
+        "빈 클립보드로 무언가를 붙였다: {out:?}"
+    );
+    assert!(
+        said.iter().any(|m| m.contains("클립보드")),
+        "빈 클립보드인데 아무 말도 안 했다: {said:?}"
+    );
+}
+
+#[test]
+fn an_image_on_a_remote_tab_never_pastes_a_local_path_straight_away() {
+    // ★ 파일은 **이 상자**에 생긴다. 원격 셸에 그 경로는 없다 — 그대로 붙이면 저쪽 앱이
+    //   "그런 파일 없음"이라 말하고, 증상은 "붙여넣기가 깨졌다"로 어긋난다. 정본은 `scp`
+    //   로 먼저 옮긴다(`_do_paste_clipboard`).
+    //
+    // 여기서 재는 것은 **즉시 붙이지 않는다**는 것이다: `scp` 는 상한이 30초라 스레드로
+    // 나가고, 붙이는 것은 그 결과가 온 뒤다. 진짜 `scp` 를 부르는 자리는 이 오라클 밖이고
+    // (`clip::scp_to_remote` 가 호스트 검증을 따로 잰다), 없는 호스트라 실패로 끝난다.
+    let (mut view, tx, sent) = harness();
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "⇄box:원격", "remote": true, "active": true}]
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(status))).unwrap();
+    view.pump_headless();
+    assert_eq!(
+        view.state_for_test().active_remote_host(),
+        Some("box"),
+        "하네스가 원격 탭을 안 세웠다 — 아래 단언이 공허하게 통과한다"
+    );
+
+    view.paste_clipboard_for_test(clipboard("", vec![(b"fake-png-bytes", "image/png")]));
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        !out.iter().any(|o| matches!(o, Outgoing::Command(Command::Paste { .. }))),
+        "원격 탭인데 옮기기도 전에 경로를 붙였다: {out:?}"
+    );
+    // 말없이 몇 초를 끌지 않는다 — 그 침묵이 곧 「아무 일도 안 난다」로 읽힌다.
+    assert!(
+        view.state_for_test().notices().count() > 0,
+        "원격 전송을 말없이 시작했다"
+    );
+}
+
+#[test]
+fn an_overlay_we_cannot_open_yet_says_why_instead_of_nothing() {
+    // ⛔ pytmux-366 — 시각 클릭·`prefix t`·`:clock-mode` 세 입구가 모두 여기로 모이는데,
+    //    레이아웃을 아직 못 받았으면 `toggle_overlay` 가 조용히 `None` 이었다. 그러면
+    //    누른 사람에게도 로그에도 「아무 일도 안 일어남」만 남아, 제보가 가른 후보 넷 중
+    //    무엇인지 **가릴 수가 없다**. 침묵 자체가 고쳐야 할 것이었다.
+    //
+    // 레이아웃을 안 먹인 하네스가 곧 그 상태다.
+    let (mut view, _tx, sent) = harness();
+    view.pump_headless();
+    assert!(view.apply_action_for_test(base::Action::ToggleClock));
+    view.pump_headless();
+    assert!(
+        !sent.lock().unwrap().iter().any(|o| matches!(
+            o,
+            Outgoing::Command(Command::PluginOverlay { .. })
+        )),
+        "대상 패널을 모르는데 오버레이를 켰다"
+    );
+    assert!(
+        view.state_for_test().notices().count() > 0,
+        "못 켠 이유를 아무 데도 안 남겼다 — 제보가 가른 그 침묵이다"
+    );
+}
+
+#[test]
+fn the_palette_entry_and_the_key_meet_at_the_same_action() {
+    // 입구가 둘이어도 경로는 하나다 — 팔레트의 `paste-clipboard` 도 키와 **같은 칸**에
+    // 실려 창을 쥔 자리로 간다.
+    let entry = base::PALETTE
+        .iter()
+        .find(|e| e.name == "paste-clipboard")
+        .expect("팔레트에 paste-clipboard 가 없다");
+    assert_eq!(entry.action, base::Action::PasteClipboard);
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    assert!(view.apply_action_for_test(entry.action));
+    assert!(
+        view.paste_requested_for_test(),
+        "팔레트로 부른 붙여넣기가 창을 쥔 자리로 안 실렸다"
+    );
+}
+
+#[test]
+fn typing_paste_in_the_palette_offers_the_clipboard_first_like_the_canon() {
+    // ★ pytmux-363 ⑵. 둘 다 `paste` 전체 접두 일치라 **선언 순서가 곧 기본 선택**이고,
+    //   정본은 2026-06-16 요청으로 클립보드를 앞에 뒀다(`clientutil.py:1032` ·
+    //   정본 오라클 `tests/test_client.py:7697`). 자리가 바뀌면 같은 타이핑이 정반대
+    //   후보를 고른다.
+    let first = base::PALETTE
+        .iter()
+        .find(|e| e.name.starts_with("paste"))
+        .expect("`paste` 로 시작하는 항목이 없다");
+    assert_eq!(
+        first.name, "paste-clipboard",
+        "`paste` 의 첫 후보가 정본과 다르다"
+    );
 }
 
 // ── 하단 한 줄(§10-21ⓝ·ⓦ·ⓗ2) ────────────────────────────────────────────────
@@ -679,6 +929,225 @@ fn a_short_list_still_fills_the_panel() {
     // 빈 목록도 예산만큼 자리를 차지한다(빈 줄로 채운다).
     let padded = view.pad_rows_count_for_test(0, budget);
     assert_eq!(padded, budget, "모자란 줄을 안 채운다");
+}
+
+// ── 폭 2 글자를 두 번 그리지 않는다(pytmux-208) ────────────────────────────────
+//
+// ⛔ **이 자리가 그 이슈의 마지막 빈칸이었다.** 정본 쪽 오라클
+//    (`tests/test_wide_char_no_duplication.py`)이 서버 격자·직렬화·파이썬 클라 합성까지
+//    재면서 머리말에 이렇게 적어 두었다: *"Rust GUI 는 여전히 안 잰다 — 같은 연속칸
+//    규약을 쓰는 **별개 구현**이라 `client/` 쪽 오라클이 따로 져야 한다."*
+//
+// 제보 모양(`조직` → `조조직직`)의 뿌리 가설은 「폭 2 글자를 **칸마다 한 번씩** 그린다」다.
+// 서버는 연속칸(`data == ""`)을 아예 안 보내므로, 이쪽에서 겹치려면 **우리가** 한 글자를
+// 두 조각으로 쪼개거나 두 번 실어야 한다 — 그것을 잰다. GPU 는 필요 없다.
+
+#[test]
+fn a_wide_char_is_one_piece_that_owns_two_cells() {
+    // 한 글자 = 한 조각 · 두 칸. 조각이 둘이 되면 그것이 곧 화면의 `조조` 다.
+    let segs = SessionView::grid_segments("조직");
+    assert_eq!(
+        segs,
+        vec![("조".to_owned(), 2), ("직".to_owned(), 2)],
+        "폭 2 글자가 한 조각·두 칸이 아니다"
+    );
+}
+
+#[test]
+fn legitimately_repeated_wide_chars_are_not_folded_away() {
+    // ⛔ 이 결함의 **유혹적인 오답**이 「연속 중복 접기」다(정본 오라클 머리말 ②).
+    //    넣는 순간 표시 결함이 **데이터 결함**으로 바뀐다 — `쓸쓸` 에서 글자가 조용히
+    //    사라진다. 그래서 ①(안 늘린다)과 ②(안 줄인다)를 같은 파일에 둔다.
+    let segs = SessionView::grid_segments("쓸쓸");
+    assert_eq!(segs, vec![("쓸".to_owned(), 2), ("쓸".to_owned(), 2)]);
+}
+
+#[test]
+fn a_hangul_line_from_the_server_is_painted_once() {
+    // 서버가 보낸 그대로(연속칸 없음)를 프레임까지 태워 본다 — 조각 단위가 아니라
+    // **그려진 줄**에서 제보 모양이 안 나오는지 본다.
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["이 Claude는 조직 보안 정책에", {}]]],
+        "cursor": [0, 0], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), screen], &[]);
+    // ⚠ 폭 2 글자는 **조각마다 따로** 그려지므로(`grid_segments`) 한 줄이 여러 조각으로
+    //   온다 — 그래서 이어 붙여서 본다. 이어 붙이면 제보 사진과 같은 글이 된다.
+    let line: String = painted.concat();
+    assert!(line.contains("Claude"), "그 줄이 프레임에 없다: {painted:?}");
+    for ch in ['조', '직', '보', '안'] {
+        let n = line.matches(ch).count();
+        assert_eq!(
+            n, 1,
+            "`{ch}` 가 {n}번 그려졌다 — 제보의 `조조직직` 이 바로 이 모양이다: {line:?}"
+        );
+    }
+}
+
+// ── 칸을 넘는 글리프를 자르지 않는다(pytmux-270) ──────────────────────────────
+
+#[test]
+fn a_wide_glyph_is_pinned_to_its_cells_without_being_clipped() {
+    // ⛔ 종전에는 비 ASCII 조각을 `ConstrainedBox` 로 `칸수 × 칸너비` 에 묶었다. 그
+    //    상자는 아이의 `constraint.max` 를 좁히고, `Text` 는 그 값을 그대로
+    //    `layout_line(.., max_width, clip_config)` 에 넘긴다 — 그리고
+    //    `ClipConfig::default()` 는 `{direction: End, style: Fade}` 다.
+    //    ⇒ 넘치는 만큼이 **오른쪽에서 지워졌다**(제보의 `★`·`❋` 가 오른쪽이 잘리고
+    //    `⚠️` 가 왼쪽 반쪽만 남은 그 그림).
+    //
+    // 창 없이 화소는 못 재므로(이 파일 머리말 — `Scene` 은 glyph_key 만 준다) 재는 것은
+    // **한도를 내려보내지 않는다**는 성질이다. 그것이 자르기의 유일한 원인이기 때문이다.
+    for (what, body) in [
+        ("캔버스 줄", source_after("let mut cell = cell.finish();", 500)),
+        ("격자 한 줄", source_after("fn mono_row(", 900)),
+    ] {
+        assert!(
+            body.contains("CellBox::new("),
+            "{what}: 칸 상자가 `CellBox` 가 아니다 — 다시 글리프가 잘린다: {body}"
+        );
+        assert!(
+            !body.contains("ConstrainedBox::new(cell)"),
+            "{what}: 아직 한도를 내려보내는 상자를 쓴다: {body}"
+        );
+    }
+    // 그리고 그 상자가 **실제로 한도를 안 내려보내는지** — 이름만 바꾸면 위는 통과한다.
+    let boxed = source_after("impl Element for CellBox {", 900);
+    assert!(
+        boxed.contains("f32::INFINITY"),
+        "`CellBox` 가 가로 한도를 내려보낸다 — 그러면 종전과 같다: {boxed}"
+    );
+    // 격자는 여전히 우리가 정한 값이라야 한다(안 그러면 이번엔 줄이 밀린다).
+    assert!(
+        boxed.contains("vec2f(self.width, child.y())"),
+        "`CellBox` 가 잰 값을 돌려준다 — 칸이 밀린다: {boxed}"
+    );
+}
+
+// ── 캔버스 팔레트 — 「밝은 쪽이 더 밝다」(pytmux-187) ─────────────────────────
+//
+// ⛔ 이 축에는 **팔레트 취향이 안 섞인다.** 어느 표를 고르든(tokyonight·Campbell·
+//    사용자 것) 밝은 변형은 제 기준색보다 밝아야 한다 — 안 그러면 `SGR 93`·`96`
+//    (밝게 강조)이 `33`·`36` 보다 어둡게 그려져 **강조가 뜻과 반대로** 나온다.
+//    그래서 「어느 팔레트인가」(pytmux-187 의 남은 물음)를 기다리지 않고 잰다.
+//
+// 실측(2026-08-23)으로 여덟 짝 중 **둘이 뒤집혀 있었다**(노랑·청록). 밝은 마젠타는
+// 같은 부류가 먼저 잡혀 고쳐진 자리다 — 그때는 「값이 겹친다」로 읽혔고, 이번에
+// 재 보니 겹침이 아니라 **뒤집힘**이 본체였다.
+
+/// 사람 눈이 느끼는 밝기(Rec. 709). 채도·색상을 안 보는 이유: 밝은 변형이 **다른 색상**
+/// 인 것은 팔레트의 자유이고(밝은 노랑이 주황 쪽으로 도는 표가 흔하다), 여기서 재는
+/// 것은 그 자유 밖의 성질 하나다.
+fn luminance(c: warpui::color::ColorU) -> f32 {
+    0.2126 * c.r as f32 + 0.7152 * c.g as f32 + 0.0722 * c.b as f32
+}
+
+#[test]
+fn the_bright_half_of_every_pair_is_actually_brighter() {
+    let pairs: [(&str, proto::style::NamedColor, proto::style::NamedColor); 8] = [
+        ("검정", proto::style::NamedColor::Black, proto::style::NamedColor::BrightBlack),
+        ("빨강", proto::style::NamedColor::Red, proto::style::NamedColor::BrightRed),
+        ("초록", proto::style::NamedColor::Green, proto::style::NamedColor::BrightGreen),
+        ("노랑", proto::style::NamedColor::Yellow, proto::style::NamedColor::BrightYellow),
+        ("파랑", proto::style::NamedColor::Blue, proto::style::NamedColor::BrightBlue),
+        ("마젠타", proto::style::NamedColor::Magenta, proto::style::NamedColor::BrightMagenta),
+        ("청록", proto::style::NamedColor::Cyan, proto::style::NamedColor::BrightCyan),
+        ("흰색", proto::style::NamedColor::White, proto::style::NamedColor::BrightWhite),
+    ];
+    for (name, base_c, bright_c) in pairs {
+        let b = SessionView::named_for_test(base_c);
+        let br = SessionView::named_for_test(bright_c);
+        assert_ne!(
+            (b.r, b.g, b.b),
+            (br.r, br.g, br.b),
+            "{name}: 밝은 쪽이 기준색과 **같은 값**이다 — SGR 3x 와 9x 가 한 색으로 붙는다"
+        );
+        assert!(
+            luminance(br) > luminance(b),
+            "{name}: 밝은 쪽이 더 어둡다(기준 {:.1} · 밝은 {:.1}) — 강조가 뜻과 반대로 그려진다",
+            luminance(b),
+            luminance(br)
+        );
+    }
+}
+
+#[test]
+fn the_compose_panel_does_not_dim_what_you_are_writing_about() {
+    // 제보(pytmux-370 · 첨부 5장): GUI 는 작성창 뒤를 딤으로 덮어 스크롤백이 안 읽힌다.
+    // 정본은 아무것도 어둡게 하지 않는다 — 작성창은 **위에 보이는 것을 보면서 쓰는
+    // 자리**라, 뒤가 안 보이면 그 화면의 값이 절반 사라진다.
+    //
+    // 판정의 주인은 core 다(자리표와 같은 결) — 뷰가 각자 정하면 클라마다 달라진다.
+    assert!(
+        !base::screens::Screen::Compose.dims_behind(),
+        "작성창이 아직 뒤를 가라앉힌다"
+    );
+    // ⚠ 나머지는 종전대로다 — 제보는 작성창 하나를 말했다.
+    for screen in [
+        base::screens::Screen::Commands,
+        base::screens::Screen::Confirm,
+        base::screens::Screen::Notices,
+    ] {
+        assert!(screen.dims_behind(), "{screen:?} 의 딤이 사라졌다(범위 밖 변경)");
+    }
+    // 그리고 뷰가 그 자료를 **실제로 본다** — 안 보면 위 단언은 공허하다.
+    let body = source_after("let mut body = Stack::new()", 1400);
+    assert!(
+        body.contains("screen.dims_behind()"),
+        "뷰가 화면별 딤 판정을 안 본다 — 다시 전부 덮는다: {body}"
+    );
+}
+
+#[test]
+fn a_filler_row_is_exactly_as_tall_as_a_real_one() {
+    // ⛔ **줄 수만 재던 오라클이 이 결함을 통과시켰다**(pytmux-369). `pad_rows` 는 줄
+    //    수를 늘 예산만큼 채웠지만, 채움 줄은 맨 글자이고 항목 줄은 1px 사방 패딩
+    //    컨테이너라 **한 줄이 2px 낮았다** — 목록이 짧을수록(채움이 많을수록) 판이
+    //    그만큼 짧아져, 분류 탭을 옮길 때마다 판이 들썩였다.
+    //
+    //    루트 CLAUDE.md 가 경고하는 *"값을 만드는 헬퍼만 테스트하면 공허 통과"* 의 실례라,
+    //    여기서는 **한 줄을 짓는 자리가 하나**라는 것을 소스로 못박는다(뮤테이션 '호출
+    //    제거'에도 걸리게).
+    let pad = source_after("fn pad_rows(", 700);
+    assert!(
+        pad.contains("self.panel_row_box("),
+        "채움 줄이 판의 줄 상자를 안 쓴다 — 다시 2px 씩 어긋난다: {pad}"
+    );
+    let item = source_after("fn palette_item(", 3000);
+    assert!(
+        item.contains("self.panel_row_box(line)"),
+        "항목 줄이 판의 줄 상자를 안 쓴다: {item}"
+    );
+    // 그리고 그 상자가 **실제로 감싸는지** — 빈 함수로 만들면 위 둘은 통과한다.
+    let helper = source_after("fn panel_row_box(", 400);
+    assert!(
+        helper.contains("with_uniform_padding"),
+        "줄 상자가 아무것도 안 한다: {helper}"
+    );
+}
+
+#[test]
+fn the_palette_panel_is_the_same_height_whatever_the_list_length() {
+    // 제보(pytmux-369 · 첨부 2장): 분류 탭만 바꿨는데 판 위 모서리가 약 18px 내려왔다.
+    // 바닥은 붙박이라 **위 모서리만** 움직인다 — 곧 판이 짧아진 것이다.
+    //
+    // 재는 것은 그림이 아니라 **줄 수 × 한 줄 높이**의 불변식이다: 채움이 몇이든 판이
+    // 쓰는 줄 수는 예산으로 같고(pytmux-58), 한 줄 높이도 이제 한 곳이 정한다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    let budget = view.panel_budget_for_test();
+    assert!(budget >= 5, "예산이 너무 작아 단언이 뜻을 잃는다: {budget}");
+    // 목록이 하나든 예산만큼이든 **채움 뒤 총 줄 수는 같다**.
+    for drawn in [0usize, 1, budget / 2, budget] {
+        // ⚠ 이 헬퍼는 **총 줄 수**를 준다(채움 수가 아니다 — 이름이 그렇게 읽힌다).
+        assert_eq!(
+            view.pad_rows_count_for_test(drawn, budget),
+            budget,
+            "목록 길이 {drawn} 에서 판이 쓰는 줄 수가 달라졌다"
+        );
+    }
 }
 
 #[test]
@@ -1566,18 +2035,180 @@ fn the_bottom_edge_takes_the_focus_to_the_badges_and_enter_runs_one() {
     //   재는 것("아래로 내려가면 배지에 포커스가 가고 Enter 가 그것을 실행한다")은
     //   그대로 두고 **남아 있는 배지**로 재도록 고친다. 알림은 있을 때만 실리므로
     //   하나 만들어 두고 본다.
+    //
+    // ★ **2026-08-23 에 차례가 바뀌었다**(pytmux-367): 알림 배지가 정본과 같이 **우측
+    //   무리의 머리**로 옮겨 가면서 `badges()` 의 차례도 눈에 보이는 왼→오를 따르게 됐다
+    //   — 이제 `⇕`(왼쪽)가 먼저이고 알림이 그 다음이다. 그래서 여기서도 한 칸 옮겨
+    //   누른다. 재는 것은 그대로다(아래로 내려가면 배지에 포커스가 가고 Enter 가 그것을
+    //   실행한다) — 바뀐 것은 **어느 배지가 첫 칸인가**뿐이다.
     let (mut view, tx, _sent) = harness();
     tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
     view.pump_headless();
     view.state.note_notice(String::from("무언가 알림"));
     view.handle_key(Key::Escape, Mods::NONE);
     view.handle_key(Key::Down, Mods::NONE);
+    // 첫 칸은 `⇕`(터치 스크롤 · 기본 켜짐) — 한 칸 오른쪽이 알림이다.
+    view.handle_key(Key::Right, Mods::NONE);
     view.handle_key(Key::Enter, Mods::NONE);
     assert_eq!(
         view.screens.top(),
         Some(base::screens::Screen::Notices),
-        "아래 모서리에서 Enter 가 첫 배지(알림)를 실행하지 않았다"
+        "아래 모서리에서 배지 포커스를 돌려 Enter 를 눌렀는데 알림이 안 열렸다"
     );
+}
+
+// ── 시스템 표식 자리 + 자동재개 판(pytmux-183) ────────────────────────────────
+
+fn autoresume_on() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "하나", "active": true}],
+        "autoresume": true
+    }))
+    .unwrap()
+}
+
+#[test]
+fn system_badges_sit_in_the_bottom_status_bar_not_the_tab_bar() {
+    // 사용자 요청(pytmux-183): `[자동재개]` 자리를 정본에 맞춘다 — 정본은 **좌하단**
+    // 클러스터이고 GUI 는 좌상단(탭바 앞)이었다.
+    //
+    // ⚠ 감시류가 2026-07-30 에 **같은 이유로 먼저** 내려간 선례가 있다
+    // (`monitor_badges_sit_in_the_bottom_status_bar_not_the_tab_bar`) — 재는 방법도 같다:
+    // 프레임은 위에서 아래로 그려지므로, 탭바에 남아 있으면 캔버스보다 먼저 그려진다.
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["HELLO-ORACLE", {}]]], "cursor": [0, 0], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), screen, autoresume_on()], &[]);
+    let badge_at = painted.iter().position(|t| t.contains("[자동재개]"));
+    let canvas_at = painted.iter().position(|t| t.contains("HELLO-ORACLE"));
+    let badge_at = badge_at.unwrap_or_else(|| panic!("[자동재개] 표식이 프레임에 없다: {painted:?}"));
+    let canvas_at = canvas_at.unwrap_or_else(|| panic!("캔버스가 없다: {painted:?}"));
+    assert!(
+        badge_at > canvas_at,
+        "[자동재개] 가 아직 캔버스보다 먼저 그려진다(= 탭바에 남았다): {painted:?}"
+    );
+}
+
+#[test]
+fn clicking_the_autoresume_badge_opens_the_panel_instead_of_toggling() {
+    // 제보 ②: *"이 배지를 마우스로 클릭하면 auto-resume 을 설정할 수 있는 팝업이 떠야 한다."*
+    //
+    // ⛔ **누르자마자 뒤집지 않는다**(정본과 같다). 자동재개는 「모르고 켜 두면 자리를
+    //    비운 사이 대화가 이어지는」 상태라, 클릭 한 번에 뒤집히면 이번엔 **모르고 꺼
+    //    버리는** 자리가 하나 더 생긴다. 정본은 설명을 보이고 `a` 로 뒤집게 한다.
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), autoresume_on()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.chrome_click(base::chrome::ClickTarget::SysBadge(
+        base::chrome::SysBadge::AutoResume,
+    ));
+    view.pump_headless();
+    assert_eq!(
+        view.screens.top(),
+        Some(base::screens::Screen::Autoresume),
+        "표식을 눌렀는데 판이 안 열렸다"
+    );
+    assert!(
+        !sent.lock().unwrap().iter().any(|o| matches!(
+            o,
+            Outgoing::Command(Command::SetAutoresume)
+        )),
+        "판을 열기만 해야 하는데 그 자리에서 뒤집었다"
+    );
+}
+
+#[test]
+fn the_a_key_toggles_autoresume_and_closes_the_panel_like_the_canon() {
+    // 정본 `open_autoresume_info` 의 `hide_key="a"` + `hide_cb` 그대로다 —
+    // 뒤집는 명령을 보내고 판을 닫는다(다시 열어 새 상태를 확인하는 동선).
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), autoresume_on()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert!(view.apply_action_for_test(base::Action::ShowAutoresume));
+    view.handle_key(Key::Char('a'), Mods::NONE);
+    view.pump_headless();
+    assert_eq!(view.screens.top(), None, "`a` 를 눌렀는데 판이 안 닫혔다");
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(
+            o,
+            Outgoing::Command(Command::SetAutoresume)
+        )),
+        "`a` 가 자동재개를 안 뒤집었다: {out:?}"
+    );
+}
+
+#[test]
+fn the_autoresume_panel_says_which_way_it_is_set() {
+    // 판이 **지금 상태**를 말해야 뜻이 있다(정본 `ar.line1`). 켜짐/꺼짐이 같은 글이면
+    // 사용자는 무엇을 뒤집는지 모른 채 `a` 를 누른다.
+    let on = proto::info::autoresume_lines(&{
+        let mut s = proto::SessionState::default();
+        s.apply(serde_json::from_value(serde_json::json!({
+            "t": "status", "windows": [{"index": 0, "name": "하나", "active": true}],
+            "autoresume": true
+        }))
+        .unwrap());
+        s
+    });
+    let off = proto::info::autoresume_lines(&proto::SessionState::default());
+    assert_ne!(on, off, "켜짐과 꺼짐의 글이 같다");
+    assert!(on.iter().any(|l| l.contains("[a]")), "뒤집는 손 안내가 없다: {on:?}");
+}
+
+// ── 배지 자리 — 알림은 **우측 무리의 머리**다(pytmux-367) ──────────────────────
+
+#[test]
+fn the_notices_badge_sits_at_the_head_of_the_right_hand_group_like_the_canon() {
+    // 제보(첨부 4장): 같은 서버·같은 순간에 두 클라를 나란히 놓으면 알림 배지가 정본은
+    // **오른쪽 아래**(`≡2` 가 `alienware 18:26 …` 바로 앞), GUI 는 **왼쪽 아래**였다.
+    // 사용자 요청은 *"tui를 기준으로 맞춰야 합니다"* 였다.
+    //
+    // ⛔ 「오른쪽 **끝**」이 아니라 「오른쪽 **무리의 머리**」다 — host·시각·날짜가 그
+    //    뒤로 온다(정본 `_render_main` §10-8 주석).
+    let painted = painted_after_setup(vec![layout_one_pane()], &[], |v| {
+        v.state.note_notice(String::from("무언가 알림"));
+    });
+    let line = painted
+        .iter()
+        .find(|l| l.contains("알림"))
+        .unwrap_or_else(|| panic!("알림 배지가 어느 줄에도 없다: {painted:?}"));
+    let notices_at = line.find("알림").expect("방금 찾은 글자가 사라졌다");
+    // `⇕`(터치 스크롤)는 정본에서도 **왼쪽**이라 그대로다 — 알림만 오른쪽으로 갔다.
+    if let Some(touch_at) = line.find('⇕') {
+        assert!(
+            touch_at < notices_at,
+            "알림이 아직 `⇕` 보다 왼쪽에 있다(= 왼쪽 무리에 남았다): {line:?}"
+        );
+    }
+}
+
+#[test]
+fn the_focus_ring_walks_the_badges_in_the_order_they_are_drawn() {
+    // ⚠ 제보의 「고칠 때 같이 봐야 할 것」: 크롬 포커스 순환이 `badges()` 차례를 쓴다 —
+    //    눈에 보이는 자리와 탭 순서가 어긋나면 사용자는 화살표가 어디로 갈지 못 읽는다.
+    //    그래서 그 목록의 차례가 곧 **왼→오**여야 한다.
+    let mut state = proto::SessionState::default();
+    state.apply(serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 4, "active": 1,
+        "panes": [{"id": 1, "x": 0, "y": 0, "w": 80, "h": 4, "title": "sh", "active": true}]
+    }))
+    .unwrap());
+    state.note_notice(String::from("무언가"));
+    let badges = state.badges();
+    let touch = badges.iter().position(|b| *b == base::Badge::TouchScroll);
+    let notices = badges.iter().position(|b| *b == base::Badge::Notices);
+    assert!(notices.is_some(), "알림이 목록에 없다: {badges:?}");
+    if let (Some(t), Some(n)) = (touch, notices) {
+        assert!(t < n, "포커스 차례가 화면 차례(왼→오)와 어긋난다: {badges:?}");
+    }
 }
 
 // ── 퍼올리기 자체 — G8p 가 통째로 빠졌던 자리 ────────────────────────────────
@@ -4010,6 +4641,84 @@ fn a_letter_key_the_spec_declares_becomes_that_plugin_action() {
     assert_eq!(action["input"], "/home/me/src", "고른 줄의 뜻이 안 실렸다: {action:?}");
 }
 
+/// 진짜 `ncd` 가 내려 주는 모양의 **트리** 스펙(`plugins/ncd/__init__.py::_tree_spec`).
+///
+/// 위 `ncd_list_screen` 과 가르는 것: `depth`·`expand` 가 실리고 키 표에 `right`/`left`
+/// (펼치기·접기)가 있다. 제보(pytmux-173)가 가리키는 화면이 이쪽이다.
+fn ncd_tree_screen() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "ncd", "kind": "list",
+        "title": "디렉터리 — /home/me", "hint": "(↑↓ · Enter 여기로 cd · ←→ 접고 펴기)",
+        "rows": [
+            {"key": "/home", "label": "home", "cols": [], "depth": 0, "expand": "open"},
+            {"key": "/home/me", "label": "me", "cols": [], "depth": 1, "expand": "open",
+             "tag": "cwd"},
+            {"key": "/home/me/src", "label": "src", "cols": [], "depth": 2, "expand": "shut"}
+        ],
+        "selected": 1, "note": "",
+        "keys": {"enter": "into", "c": "cd", "right": "expand", "left": "collapse"}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn enter_on_an_ncd_row_sends_the_into_action_with_that_path() {
+    // ⛔ **이 자리에 양성 오라클이 없었다**(pytmux-173 「참고」). 글자 키(`c`)는 위에서
+    //    잠겨 있었지만 `Enter` 는 아니었고, 제보가 가리킨 것이 바로 `Enter` 다.
+    //
+    // 재는 것: 커서를 한 칸 내리고 `Enter` → **그 줄의 경로**를 실은 `into` 가 나간다.
+    // 서버(`plugins/ncd/__init__.py`)의 `do == "into"` 는 `input` 이 비면 아무것도 안
+    // 보내고 화면만 닫는다 — 곧 `input` 이 빠지는 것이 제보의 증상과 똑같이 생겼다.
+    let sent = sent_after(
+        vec![layout_one_pane(), ncd_tree_screen()],
+        &[(Key::Down, Mods::NONE), (Key::Enter, Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let action = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_action")
+        .unwrap_or_else(|| panic!("Enter 가 액션이 안 됐다: {frames:?}"));
+    assert_eq!(action["id"], "ncd");
+    assert_eq!(action["do"], "into", "Enter 가 `into` 로 안 갔다: {action:?}");
+    assert_eq!(
+        action["input"], "/home/me/src",
+        "고른 줄의 **경로**가 안 실렸다 — 서버는 input 이 비면 조용히 아무것도 안 한다: {action:?}"
+    );
+}
+
+#[test]
+fn enter_without_moving_uses_the_row_the_spec_preselected() {
+    // ncd 는 커서를 **셸이 서 있는 줄**에 두고 연다(`_tree_spec` 의 `selected`) — 그래야
+    // 「열자마자 Enter 한 번」이 뜻을 갖는다. 그 자리를 안 쓰면 늘 첫 줄로 cd 한다.
+    let sent = sent_after(
+        vec![layout_one_pane(), ncd_tree_screen()],
+        &[(Key::Enter, Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let action = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_action")
+        .unwrap_or_else(|| panic!("Enter 가 액션이 안 됐다: {frames:?}"));
+    assert_eq!(action["input"], "/home/me", "스펙이 고른 줄(selected=1)이 안 쓰였다");
+}
+
+#[test]
+fn the_arrow_keys_fold_and_unfold_instead_of_moving_the_cursor() {
+    // 트리에서 `←→` 는 **접고 펴기**다(스펙이 정한다) — 그 배선이 죽으면 트리가 목록으로
+    // 되돌아가고, `Enter` 로 갈 수 있는 줄이 그만큼 줄어든다(제보의 「확인하면 좁혀질 것」).
+    let sent = sent_after(
+        vec![layout_one_pane(), ncd_tree_screen()],
+        &[(Key::Right, Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let action = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_action")
+        .unwrap_or_else(|| panic!("→ 가 액션이 안 됐다: {frames:?}"));
+    assert_eq!(action["do"], "expand");
+    assert_eq!(action["input"], "/home/me");
+}
+
 fn claude_settings_form_screen() -> ServerMessage {
     // 서버가 켬/끔을 로케일 불문 고정 기호로 낸다(`screenspec.py` `pscreen.spec_on_mark`
     // /`_off_mark` = "●"/"○") — 순환값(예: 반복 알림 초)은 숫자 그대로 남는다.
@@ -4626,7 +5335,7 @@ fn block_characters_become_rectangles_at_their_own_cells() {
     assert_eq!(blocks.len(), 2, "블록 둘을 못 찾았다");
     assert_eq!((blocks[0].x, blocks[0].y), (1, 0));
     assert_eq!((blocks[1].x, blocks[1].y), (3, 0));
-    assert_eq!(blocks[1].fill, proto::canvas::block_fill('▀').unwrap());
+    assert_eq!(blocks[1].fill, proto::canvas::block_fills('▀').unwrap()[0]);
 }
 
 #[test]
@@ -7176,17 +7885,53 @@ fn the_panel_keeps_its_width_whatever_it_holds() {
 #[test]
 fn the_panel_width_is_said_in_exactly_one_place() {
     // 안쪽 폭 = 바깥 폭 − (여백 + 테두리) × 2. 두 값을 각각 글자로 적으면 언젠가 갈린다.
+    //
+    // ⚠ **2026-08-23 에 메서드가 됐다**(pytmux-368): 팔레트 폭이 이제 캔버스를 따라가므로
+    //   뷰 없이는 답할 수 없다. 재는 것(두 값이 한 곳에서 나온다)은 그대로다.
+    let (view, _tx, _sent) = harness();
     for screen in [Screen::Tree, Screen::Commands, Screen::Buffers] {
         assert_eq!(
-            SessionView::panel_inner_width(screen),
-            SessionView::panel_width(screen)
+            view.panel_inner_width(screen),
+            view.panel_width(screen)
                 - 2. * (SessionView::PANEL_PAD + SessionView::PANEL_BORDER),
             "{screen:?} 의 안쪽 폭이 바깥 폭에서 안 나온다"
         );
     }
     assert!(
-        SessionView::panel_width(Screen::Commands) > SessionView::panel_width(Screen::Tree),
+        view.panel_width(Screen::Commands) > view.panel_width(Screen::Tree),
         "팔레트가 더 넓어야 한다(이름+설명 한 줄을 눈으로 잇는다)"
+    );
+}
+
+#[test]
+fn the_palette_follows_the_canvas_instead_of_a_fixed_width() {
+    // 제보(pytmux-368): 정본의 `esc :` 는 **단말 좌우 폭 전체**를 쓰는데 GUI 는 900px
+    // 상수라, 캔버스가 넓은 창에서 목록이 가운데 갇히고 설명이 더 일찍 접혔다.
+    //
+    // ⛔ 그릇은 **창이 아니라 캔버스**다 — 정본이 말하는 「단말 전체」가 곧 캔버스다.
+    let (mut view, tx, _sent) = harness();
+    let narrow = view.panel_width(Screen::Commands);
+    // 넓은 캔버스를 먹인다(80칸 → 400칸).
+    let wide: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 400, "rows": 40, "active": 1,
+        "panes": [{"id": 1, "x": 0, "y": 0, "w": 400, "h": 40, "title": "sh", "active": true}]
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(wide))).unwrap();
+    view.pump_headless();
+    // 셀 폭을 아직 못 재는 헤드리스에서는 상수로 떨어진다 — 그때는 값이 안 움직이는 것이
+    // **맞다**(첫 프레임 전에도 판은 떠야 한다). 잴 수 있으면 넓어져야 한다.
+    if view.cell_px_for_test().is_some() {
+        assert!(
+            view.panel_width(Screen::Commands) > narrow,
+            "캔버스가 넓어졌는데 팔레트 폭이 그대로다"
+        );
+    }
+    // 어느 쪽이든 **칸 수가 폭에서 나온다**는 성질은 지켜져야 한다 — 상수에 묶여 있으면
+    // 판만 넓어지고 설명은 그대로 접힌다(제보가 짚은 그 증상).
+    assert!(
+        view.palette_cols() >= SessionView::PAL_NAME_COLS + SessionView::PAL_OPTS_COLS + 12,
+        "설명 칸이 남지 않는 폭이 나왔다"
     );
 }
 
@@ -7196,7 +7941,7 @@ fn the_panel_is_still_handed_to_the_box_that_pins_it() {
     //   화면은 종전대로 흔들리는데 시험은 전부 통과한다(호출 제거 뮤테이션).
     let body = source_after("fn render_screen_panel(", 14000);
     assert!(
-        body.contains("PanelBox::new(column.finish(), Self::panel_inner_width(screen))"),
+        body.contains("PanelBox::new(column.finish(), self.panel_inner_width(screen))"),
         "판이 `PanelBox` 를 안 지난다 — 폭이 다시 내용을 따라간다(pytmux-158)"
     );
     assert!(

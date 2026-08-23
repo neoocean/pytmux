@@ -125,6 +125,56 @@ pub struct ChromeCtx<'a> {
 /// 어느 픽셀/칸이 어느 자리인지는 뷰(레이아웃)만 알지만, 그 자리를 누르면 무슨 일이
 /// 나는지는 **한 벌**이어야 한다([`click`]) — 뷰가 각자 정하면 GUI 에서는 탭 클릭이
 /// 전환인데 TUI 에서는 아닌 식으로 갈린다(이 모듈이 존재하는 이유와 같다).
+/// **시스템 표식** — 모르고 두면 입력·동작이 달라지는 상태(줌·동기화·자동재개·
+/// 프롬프트클리어). 정본의 좌하단 클러스터에 앉는다(pytmux-183).
+///
+/// # 왜 낱말이 아니라 뜻인가
+///
+/// 종전에는 `Vec<&'static str>`(이미 번역된 낱말)이었다. 그러면 뷰가 **어느 칩이 무엇인지**
+/// 알 길이 글자 비교뿐이고, 그 비교는 로케일이 바뀌는 순간 조용히 틀린다 — 자동재개
+/// 칩에만 클릭을 붙이려는데 그 판정을 글자로 할 수는 없다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SysBadge {
+    /// 활성 패널이 창 전체를 덮고 있다.
+    Zoom,
+    /// **입력이 복제되는 상태** — 표식 중 가장 위험하다(모르고 치면 모든 패널에서
+    /// 같은 명령이 돈다).
+    Sync,
+    /// 토큰 한도에 걸린 뒤 서버가 대화를 이어 붙인다. **꺼져 있을 때가 기본**이라
+    /// 켜져 있다는 사실이 보여야 한다.
+    AutoResume,
+    /// 완료마다 패널이 문서화 + `/clear` 를 돌린다.
+    PromptClear,
+}
+
+impl SysBadge {
+    /// 칩에 적을 낱말. 두 뷰가 같은 낱말을 쓰도록 여기 한 곳에서 만든다.
+    pub fn label(self) -> &'static str {
+        crate::i18n::t(match self {
+            SysBadge::Zoom => "[줌]",
+            SysBadge::Sync => "[동기화]",
+            SysBadge::AutoResume => "[자동재개]",
+            SysBadge::PromptClear => "[프롬프트클리어]",
+        })
+    }
+
+    /// 눌렀을 때 일어나는 일 — 없으면 **표식일 뿐 버튼이 아니다**.
+    ///
+    /// 정본이 클릭존을 둔 것은 `AR` 하나뿐이다(`clientwidgets.py` 의 `_ar_zone` →
+    /// `open_autoresume_info`). 나머지에 우리 마음대로 클릭을 붙이면 **정본에 없는
+    /// 조작 표면**을 GUI 가 먼저 만드는 것이 된다(CLAUDE.md).
+    ///
+    /// ⛔ 여는 것이 **토글이 아니라 판**인 것도 정본 그대로다: 눌러서 바로 뒤집으면
+    /// 「모르고 켜 두는 상태」를 모르고 **꺼 버리는** 자리가 하나 더 생긴다. 정본은
+    /// 설명을 보여 주고 `a` 로 뒤집게 한다.
+    pub fn action(self) -> Option<Action> {
+        match self {
+            SysBadge::AutoResume => Some(Action::ShowAutoresume),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClickTarget {
     Spot(TabSpot),
@@ -162,6 +212,8 @@ pub enum ClickTarget {
     /// GUI 에는 셀 격자가 없다 — 글자마다 자기 자리를 갖는 편이 같은 일을 **자릿수
     /// 계산 없이** 한다(한글에서 폭으로 되짚다 어긋나는 부류가 아예 없어진다).
     SessionCursor(usize),
+    /// 시스템 표식 하나(pytmux-183) — 지금은 **자동재개만** 눌린다([`SysBadge::action`]).
+    SysBadge(SysBadge),
 }
 
 /// 클릭 하나를 액션으로 — **Enter 와 같은 길**이다(파이썬 `on_mouse_down`/`_hit` 도
@@ -176,6 +228,9 @@ pub fn click(target: ClickTarget, ctx: &ChromeCtx) -> Option<Action> {
         ClickTarget::Spot(TabSpot::New) => Action::NewTab,
         ClickTarget::Spot(TabSpot::Close) => Action::KillTab,
         ClickTarget::Badge(badge) => badge.action(),
+        // 표식일 뿐인 것(줌·동기화·프롬프트클리어)은 `None` 이라 여기서 빠진다 —
+        // 정본이 클릭존을 둔 것은 자동재개 하나다.
+        ClickTarget::SysBadge(badge) => badge.action()?,
         ClickTarget::TabScroll { .. }
         | ClickTarget::DismissMessage
         | ClickTarget::PluginBadge(_)

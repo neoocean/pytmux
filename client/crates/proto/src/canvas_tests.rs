@@ -155,7 +155,7 @@ fn a_later_pane_overwrites_an_earlier_one_where_they_overlap() {
 
 #[test]
 fn a_full_block_fills_the_whole_cell() {
-    let f = block_fill('█').expect("█ 이 표에 없다");
+    let f = block_fills('█').expect("█ 이 표에 없다")[0];
     assert_eq!((f.x0, f.y0, f.x1, f.y1), (0., 0., 1., 1.));
     assert_eq!(f.alpha, 1.);
 }
@@ -164,16 +164,16 @@ fn a_full_block_fills_the_whole_cell() {
 fn the_upper_half_block_fills_the_top_not_the_bottom() {
     // ★ 위아래가 뒤집히면 마스코트가 통째로 뒤집힌다 — 그런데 "어긋난다"로만 보여
     //   눈으로는 원인을 못 가른다. 방향을 여기서 못박는다.
-    let f = block_fill('▀').unwrap();
+    let f = block_fills('▀').unwrap()[0];
     assert_eq!((f.y0, f.y1), (0., 0.5), "▀ 는 칸의 **위** 절반이다");
-    let f = block_fill('▄').unwrap();
+    let f = block_fills('▄').unwrap()[0];
     assert_eq!((f.y0, f.y1), (0.5, 1.), "▄ 는 칸의 **아래** 절반이다");
 }
 
 #[test]
 fn the_left_and_right_half_blocks_are_mirror_images() {
-    let l = block_fill('▌').unwrap();
-    let r = block_fill('▐').unwrap();
+    let l = block_fills('▌').unwrap()[0];
+    let r = block_fills('▐').unwrap()[0];
     assert_eq!((l.x0, l.x1), (0., 0.5));
     assert_eq!((r.x0, r.x1), (0.5, 1.));
 }
@@ -184,7 +184,7 @@ fn the_eighth_blocks_grow_one_eighth_at_a_time() {
     // 계단이 아니라 톱니가 된다.
     let bars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     for (i, ch) in bars.iter().enumerate() {
-        let f = block_fill(*ch).unwrap();
+        let f = block_fills(*ch).unwrap()[0];
         let want = (7 - i) as f32 / 8.;
         assert!(
             (f.y0 - want).abs() < 1e-6,
@@ -199,7 +199,7 @@ fn the_eighth_blocks_grow_one_eighth_at_a_time() {
 fn shades_are_the_whole_cell_at_lower_alpha() {
     // 음영은 **모양이 아니라 진하기**다. 사각형을 줄이면 격자에 구멍이 뚫린다.
     for (ch, want) in [('░', 0.25), ('▒', 0.5), ('▓', 0.75)] {
-        let f = block_fill(ch).unwrap();
+        let f = block_fills(ch).unwrap()[0];
         assert_eq!((f.x0, f.y0, f.x1, f.y1), (0., 0., 1., 1.), "{ch}");
         assert_eq!(f.alpha, want, "{ch}");
     }
@@ -208,18 +208,52 @@ fn shades_are_the_whole_cell_at_lower_alpha() {
 #[test]
 fn a_letter_is_not_a_block() {
     // 넓게 잡으면 글자가 사각형으로 덮여 사라진다.
-    for ch in ['a', ' ', '─', '│', '가', '▖'] {
-        assert!(block_fill(ch).is_none(), "{ch} 를 블록으로 읽었다");
+    //
+    // ⚠ **`▖` 는 2026-08-23 에 이 목록에서 나갔다**(pytmux-177): 사분면이 표에 들어오면서
+    //   이제 **블록이 맞다**. 종전에 여기 있던 것은 「사분면을 안 싣기로 한」 그때의
+    //   결정을 못박은 것이었지 사분면이 글자라는 뜻이 아니었다.
+    for ch in ['a', ' ', '─', '│', '가'] {
+        assert!(block_fills(ch).is_none(), "{ch} 를 블록으로 읽었다");
     }
+}
+
+#[test]
+fn the_quadrants_are_blocks_too() {
+    // pytmux-177 — 빠져 있는 동안 이 글자들은 폴백 글꼴로 그려졌고, 그것이 곧 pytmux-55 가
+    // 고친 그 결함(진폭이 칸너비의 정수배가 아니라 행마다 어긋난다)이다.
+    for ch in ['▖', '▗', '▘', '▝', '▙', '▚', '▛', '▜', '▞', '▟'] {
+        let fills = block_fills(ch).unwrap_or_else(|| panic!("{ch} 가 표에 없다"));
+        assert!(!fills.is_empty(), "{ch} 의 사각형이 없다");
+        // 셋을 채우는 것(`▙▛▜▟`)과 대각(`▚▞`)은 사각형 둘, 나머지는 하나다.
+        let want = if "▙▚▛▜▞▟".contains(ch) { 2 } else { 1 };
+        assert_eq!(fills.len(), want, "{ch} 의 사각형 수가 다르다: {fills:?}");
+    }
+}
+
+#[test]
+fn a_quadrant_covers_exactly_the_corners_it_names() {
+    // 이름이 곧 자리다 — 어긋나면 그림이 뒤집힌 채로 «정렬은 맞게» 그려져 더 헷갈린다.
+    let one = |ch| block_fills(ch).unwrap()[0];
+    let f = one('▖');   // 좌하
+    assert_eq!((f.x0, f.y0, f.x1, f.y1), (0., 0.5, 0.5, 1.));
+    let f = one('▝');   // 우상
+    assert_eq!((f.x0, f.y0, f.x1, f.y1), (0.5, 0., 1., 0.5));
+    // `▚`(좌상+우하)는 대각이라 두 사각형이 서로 안 닿는다.
+    let d = block_fills('▚').unwrap();
+    assert_eq!((d[0].x0, d[0].y0, d[0].x1, d[0].y1), (0., 0., 0.5, 0.5));
+    assert_eq!((d[1].x0, d[1].y0, d[1].x1, d[1].y1), (0.5, 0.5, 1., 1.));
 }
 
 #[test]
 fn every_fill_stays_inside_its_cell() {
     // 하나라도 칸을 넘으면 이웃 칸을 덮는다 — 격자를 지키려고 옮긴 것이 격자를 깬다.
-    for (ch, f) in BLOCK_FILLS {
-        assert!(f.x0 >= 0. && f.y0 >= 0. && f.x1 <= 1. && f.y1 <= 1., "{ch} 가 칸을 넘는다");
-        assert!(f.x0 < f.x1 && f.y0 < f.y1, "{ch} 의 사각형이 비었다");
-        assert!(f.alpha > 0. && f.alpha <= 1., "{ch} 의 진하기가 범위 밖이다");
+    for (ch, fills) in BLOCK_FILLS {
+        assert!(!fills.is_empty(), "{ch} 에 사각형이 하나도 없다");
+        for f in *fills {
+            assert!(f.x0 >= 0. && f.y0 >= 0. && f.x1 <= 1. && f.y1 <= 1., "{ch} 가 칸을 넘는다");
+            assert!(f.x0 < f.x1 && f.y0 < f.y1, "{ch} 의 사각형이 비었다");
+            assert!(f.alpha > 0. && f.alpha <= 1., "{ch} 의 진하기가 범위 밖이다");
+        }
     }
 }
 

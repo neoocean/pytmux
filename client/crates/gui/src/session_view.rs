@@ -48,6 +48,7 @@ use warpui::{
     AfterLayoutContext, AppContext, Element, Entity, EventContext, LayoutContext, PaintContext,
     SingletonEntity as _, SizeConstraint, TypedActionView, View, ViewContext,
 };
+use warpui_core::clipboard::ClipboardContent;
 use warpui_core::event::DispatchedEvent;
 
 use crate::{mono_font, theme, titlebar};
@@ -82,7 +83,8 @@ mod palette {
     pub const BR_BLACK: ColorU = c(0x41, 0x48, 0x68);
     pub const BR_RED: ColorU = c(0xff, 0x7a, 0x93);
     pub const BR_GREEN: ColorU = c(0xb9, 0xf2, 0x7c);
-    pub const BR_YELLOW: ColorU = c(0xff, 0x9e, 0x64);
+    /// ⚠ 기준 노랑보다 **어두웠다** — 사유와 고친 방법은 [`BR_CYAN`] 문서에 함께 있다.
+    pub const BR_YELLOW: ColorU = c(0xff, 0xb3, 0x86);
     pub const BR_BLUE: ColorU = c(0x7d, 0xa6, 0xff);
     /// ☠ **`MAGENTA` 와 같은 값이면 안 된다**(pytmux-187).
     ///
@@ -97,11 +99,28 @@ mod palette {
     /// 진한 보라)은 안 골랐다: 이 색은 이미 HSV 의 V 가 0.97 이라 더 밝게 하는 길이 흰
     /// 쪽뿐이고, 채도를 올리면 밝은 쪽이 도리어 어두워져 "밝게"라는 뜻과 반대가 된다.
     ///
-    /// ⚠ 나머지 두 짝은 그 모양이 **아니다** — 밝은 노랑(`BR_YELLOW`)은 주황 쪽으로
-    /// 색상이 돌고 밝은 청록(`BR_CYAN`)은 도리어 어둡다. 둘 다 값이 겹치지는 않아서
-    /// 여기서는 안 건드렸다(어느 팔레트를 쓸 것인가가 pytmux-187 에 걸려 있다).
+    /// ★ **나머지 두 짝도 같은 결함이었다**(pytmux-187 · 2026-08-23 실측). 종전 주석은
+    /// *"값이 겹치지는 않아서 안 건드렸다"* 였는데, 겹침이 아니라 **뒤집힘**이 문제였다 —
+    /// 재 보니 밝은 노랑과 밝은 청록은 각각 제 기준색보다 **더 어두웠다**:
+    ///
+    /// | 짝 | 기준 L | 밝은 L |
+    /// |---|---|---|
+    /// | 노랑 `#e0af68` → `#ff9e64` | 180.3 | **174.4** |
+    /// | 청록 `#7dcfff` → `#0db9d7` | 193.0 | **150.6** |
+    ///
+    /// 곧 `SGR 93`·`96`(밝게 강조)이 `33`·`36` 보다 **어둡게** 그려졌다 — 강조가 뜻과
+    /// 반대로 나온 것이고, 밝은 마젠타 때와 **같은 부류**다.
+    ///
+    /// ⛔ 이 판정에는 팔레트 취향이 안 섞인다: 어느 표를 고르든 「밝은 쪽이 더 밝다」는
+    /// 지켜져야 한다. 그래서 **「어느 팔레트인가」(pytmux-187 의 남은 물음)를 기다리지
+    /// 않고** 고쳤다. `the_bright_half_of_every_pair_is_actually_brighter` 가 여덟 짝을
+    /// 전부 잰다.
+    ///
+    /// 값은 [`BR_MAGENTA`] 와 **같은 방법**이다 — 그 색을 흰 쪽으로 한 단 올렸다.
+    /// 노랑은 종전 밝은 값이 주황 쪽으로 돈 색인데, **그 색상은 그대로 두고 밝기만**
+    /// 올렸다(색상까지 되돌리면 그건 팔레트를 고르는 일이고 이 이슈의 남은 절반이다).
     pub const BR_MAGENTA: ColorU = c(0xd7, 0xb6, 0xff);
-    pub const BR_CYAN: ColorU = c(0x0d, 0xb9, 0xd7);
+    pub const BR_CYAN: ColorU = c(0x9a, 0xda, 0xff);
     pub const BR_WHITE: ColorU = c(0xc0, 0xca, 0xf5);
 }
 
@@ -293,6 +312,12 @@ pub struct SessionView {
     /// 통째로 멈춘다(클립보드를 스레드로 뺀 것과 같은 이유 — 파이썬 클라는 여기서
     /// 막히지만 그건 따라 할 이유가 없다).
     shell_result: std::sync::Arc<std::sync::Mutex<Option<ShellOutcome>>>,
+    /// 원격 탭에 그림을 올리는 `scp` 의 결과가 도착하는 자리(pytmux-159).
+    ///
+    /// **스레드로 뺀 이유**는 위와 같다 — 상한이 30초라 이벤트 루프에서 부르면 창이 그동안
+    /// 통째로 멈춘다(정본도 워커로 뺀다). 붙여넣기는 그 결과가 온 **뒤에야** 뜻이 생긴다:
+    /// 어느 경로를 붙일지가 성공 여부로 갈리기 때문이다.
+    paste_result: std::sync::Arc<std::sync::Mutex<Option<RemoteImage>>>,
     /// 사용자 설정(패리티 G5·G6b). **한 번 읽어 들고 있는다** — 설정 화면에서 바꾸면
     /// 여기를 고치고 파일에 쓴다(그래야 이번 판에 바로 먹는다).
     config: base::Config,
@@ -395,6 +420,13 @@ pub struct SessionView {
     /// `quit_requested` 와 같은 모양으로 한 프레임 실어 나른다. **상태를 드는 것이
     /// 아니다**(전체 화면인지의 진실은 창에 있다) — 이건 "해 달라"는 요청 한 번이다.
     fullscreen_requested: bool,
+    /// 이번 펌프에서 **OS 클립보드를 읽어 붙여넣을까**(`paste-clipboard` · pytmux-159).
+    ///
+    /// `fullscreen_requested` 와 같은 모양·같은 이유다: 클립보드를 읽으려면 `ViewContext`
+    /// 가 있어야 하는데 `apply_action` 에는 창이 없다. 팔레트·키 어느 입구로 들어오든
+    /// 여기 한 칸에 모였다가 창을 쥔 자리에서 **한 함수**로 끝난다 — 입구가 둘이어도
+    /// 경로가 둘이면 그 둘은 조용히 갈라진다.
+    paste_requested: bool,
 
     // ── 마우스(P7) · 스플리터(§4.2) ─────────────────────────────────────────
     /// 지금 끌고 있는 분할 경계의 id. 놓으면 비운다.
@@ -581,6 +613,7 @@ impl SessionView {
             mode: ModeState::with_prefix(config.prefix),
             config,
             shell_result: Default::default(),
+            paste_result: Default::default(),
             pending: Vec::new(),
             pinger: proto::rtt::Pinger::default(),
             screens: Screens::new(),
@@ -605,6 +638,7 @@ impl SessionView {
             window_op: None,
             quit_requested: false,
             fullscreen_requested: false,
+            paste_requested: false,
             dragging: None,
             divider_hover: None,
             span_hover: None,
@@ -656,22 +690,47 @@ impl SessionView {
         Some((key, mods))
     }
 
-    /// 이 키가 "지금 OS 클립보드를 붙여넣어 달라"인가(`Ctrl+Shift+V`).
+    /// 이 키가 "지금 OS 클립보드를 붙여넣어 달라"인가 — `Ctrl+V` · `Cmd`(`Super`)`+V` ·
+    /// `Ctrl+Shift+V`.
     ///
-    /// # 왜 `Ctrl+V` 가 아닌가
+    /// # 왜 `Ctrl+V` **도** 인가 (pytmux-364)
     ///
-    /// `Ctrl+V`(0x16)는 **패널 안 프로그램이 쓰는 바이트**다. 클라가 그걸 가로채면 그
-    /// 프로그램의 기능이 조용히 사라진다(vim 의 비주얼 블록, PSReadLine 의 붙여넣기가
-    /// 그 자리다). 터미널 에뮬레이터 관례를 따르면 둘 다 산다.
+    /// 종전에는 `Ctrl+Shift+V` 뿐이었고, 사유는 「`Ctrl+V`(0x16)는 패널 안 프로그램이 쓰는
+    /// 바이트라 가로채면 vim 의 비주얼 블록·PSReadLine 의 붙여넣기가 조용히 사라진다」였다.
+    /// **관찰은 지금도 옳다** — 뒤집는 이유는 관찰이 틀려서가 아니다.
+    ///
+    /// ⛔ **그 트레이드오프는 GUI 가 새로 할 것이 아니었다.** 정본이 이미 반대로 정해 두었다:
+    /// `pytmuxlib/clientio.py` 가 `ctrl+v`/`super+v` 를 **크롬 키로** 잡고, 자리가 `F12`·
+    /// prefix 바로 다음 · 패널 패스스루와 `bind -n` **앞**이다. 곧 정본에서도 패널 안
+    /// 프로그램은 `0x16` 을 못 받는다 — 그 값은 이미 치르기로 한 것이다. 단말은 `Ctrl+V` 를
+    /// **줄 수 있으므로** 허용 갈림 셋(ⓐ 단말이 못 주는 키 · ⓑ 픽셀 그림 · ⓒ OS 창 통합)
+    /// 어디에도 안 들어간다(CLAUDE.md ★★ · `pytmux/pytmux-185` 와 같은 매듭).
+    ///
+    /// 되돌리는 길을 여기 만들지 않는다 — `0x16` 을 패널에 돌려주는 설정이 필요하다면
+    /// **정본에 먼저** 생겨야 한다(정본에 없는 조작 표면을 GUI 가 먼저 만들지 않는다).
+    ///
+    /// # 세 벌인 이유
+    ///
+    /// - `Ctrl+V` — 정본과 **같은 손버릇**. 이것이 없어서 제보가 왔다.
+    /// - `Cmd+V`/`Super+V` — 정본 `super+v` 의 짝. 맥에서는 `Ctrl+Shift+V` 가 관례가 아니라,
+    ///   이것이 없으면 그 상자에는 **입구가 하나도 없다**.
+    /// - `Ctrl+Shift+V` — 터미널 에뮬레이터 관례. 이미 손에 익은 사람이 있어 별칭으로 남긴다.
+    ///
+    /// `Alt` 가 섞이면 다른 조합이다(넓게 잡으면 그 조합이 통째로 사라진다). `Ctrl` 과
+    /// `Cmd` 를 **함께** 쥔 것도 아니다 — 둘은 서로 다른 계열의 입구이고, 겹쳐 누른 것은
+    /// 어느 쪽도 아닌 제3의 조합이다.
     ///
     /// 순수 함수로 빼 두는 이유: 이 판정이 틀리면 **아무 소리 없이** 어긋난다 — 좁으면
     /// 붙여넣기가 안 되고, 넓으면 패널 안 프로그램의 키가 사라진다. 창을 띄우지 않고
     /// 물을 수 있는 자리에 둔다.
     fn is_paste_chord(keystroke: &warpui::keymap::Keystroke) -> bool {
-        keystroke.ctrl
-            && keystroke.shift
-            && !(keystroke.alt || keystroke.meta || keystroke.cmd)
-            && keystroke.key.eq_ignore_ascii_case("v")
+        if !keystroke.key.eq_ignore_ascii_case("v") || keystroke.alt {
+            return false;
+        }
+        // `meta` 도 함께 본다 — 이 백엔드에서 맥의 `Cmd` 와 윈도·리눅스의 `Super` 가
+        // 갈라져 오는 자리다. 정본의 `super+v` 는 그 셋을 한 이름으로 부른다.
+        let cmd = keystroke.cmd || keystroke.meta;
+        (keystroke.ctrl && !cmd) || (cmd && !keystroke.ctrl)
     }
 
     /// 이 키가 **전체 화면 토글**인가(§10-21ⓘ3) — `Alt`+`Enter`.
@@ -841,6 +900,18 @@ impl SessionView {
 
     fn push_overlay(&mut self, name: &str, t: Option<proto::session::OverlayToggle>) {
         let Some(t) = t else {
+            // ⛔ **말없이 돌아가지 않는다**(pytmux-366). `toggle_overlay`/`set_overlay` 의
+            //    첫 줄은 `self.layout.as_ref()?` 라, 아직 레이아웃을 못 받았으면 조용히
+            //    `None` 이다 — 그러면 시각을 눌러도·`prefix t` 를 쳐도 **아무 일도 안
+            //    일어나고 자취도 없다**. 제보가 가른 후보 넷 중 어느 것인지 사용자도
+            //    로그도 못 가르던 이유가 이 침묵이었다.
+            //
+            //    이 저장소의 규율과 같은 자리다: 「못 하는 것을 눌리는 것처럼 그리지
+            //    않는다」. 여기서는 이미 눌린 뒤라, 최소한 **왜 안 됐는지**는 말한다.
+            log::info!("오버레이 {name} 요청 — 아직 레이아웃이 없어 대상 패널을 모른다");
+            // ⚠ 인자 이름 `t` 가 i18n 의 `t` 를 가린다 — 여기서만 길게 부른다.
+            self.state
+                .note_notice(base::i18n::t("아직 화면을 받지 못했다 — 잠시 뒤 다시"));
             return;
         };
         if let Some(closed) = t.closed {
@@ -1014,6 +1085,11 @@ impl SessionView {
                             preset,
                         }));
                     }
+                }
+                // 자동 재개 판에서 `a` 를 눌렀다(pytmux-183) — 정본 `hide_cb` 와 같은 일:
+                // 뒤집는 명령을 보낸다(판은 core 가 이미 닫았다).
+                ScreenKey::Chosen(_) if screen_before == Some(Screen::Autoresume) => {
+                    self.apply_action(Action::ToggleAutoresume);
                 }
                 // 플러그인이 준 목록에서 골랐다 — **그 줄의 뜻**을 되돌려준다(P4).
                 ScreenKey::Chosen(row) if screen_before == Some(Screen::PluginView) => {
@@ -1321,6 +1397,33 @@ impl SessionView {
         self.apply_action(action)
     }
 
+    /// 클립보드 한 장을 먹인다 — **읽기를 뺀** 붙여넣기 전부(`paste_from_clipboard`).
+    ///
+    /// 진짜 클립보드에 그림을 넣어야 잴 수 있는 함수는 헤드리스 러너가 못 잰다. 읽기는
+    /// 창을 쥔 자리에 있고, 여기로는 **읽은 것**이 들어온다.
+    #[cfg(test)]
+    pub(crate) fn paste_clipboard_for_test(&mut self, content: ClipboardContent) -> bool {
+        self.paste_from_clipboard(content)
+    }
+
+    /// 팔레트·`bind` 로 들어온 붙여넣기 요청이 한 칸에 서 있나(창 없이 묻는 유일한 관측점).
+    #[cfg(test)]
+    pub(crate) fn paste_requested_for_test(&self) -> bool {
+        self.paste_requested
+    }
+
+    /// 팔레트 이름 하나를 이 뷰의 색으로 — 팔레트 오라클이 여덟 짝을 재는 문(pytmux-187).
+    #[cfg(test)]
+    pub(crate) fn named_for_test(color: proto::style::NamedColor) -> ColorU {
+        named(color)
+    }
+
+    /// 셀 폭·높이를 잴 수 있나(그린 뒤에만 안다). 폭 오라클이 갈래를 가르는 데 쓴다.
+    #[cfg(test)]
+    pub(crate) fn cell_px_for_test(&self) -> Option<(f32, f32)> {
+        self.cell_px.get()
+    }
+
     /// 깜빡임 한 틱(`pytmux/pytmux-161`). `expired` 면 **반주기가 지난 것으로 치고** 부른다.
     ///
     /// # 왜 시계를 밀어 주나
@@ -1351,6 +1454,12 @@ impl SessionView {
             // 창 일이라 여기서 못 한다 — `ViewContext` 를 쥔 자리로 한 프레임 넘긴다.
             Action::ToggleFullscreen => {
                 self.fullscreen_requested = true;
+                return true;
+            }
+            // 클립보드 읽기도 창 일이다(같은 자리·같은 모양) — pytmux-159·363.
+            // 팔레트의 `paste-clipboard` 와 `Ctrl+V` 가 **여기서 만난다**.
+            Action::PasteClipboard => {
+                self.paste_requested = true;
                 return true;
             }
             Action::ToggleClaudeDetail => {
@@ -1459,6 +1568,12 @@ impl SessionView {
             }
             Action::ShowSettings => {
                 self.screens.open(Screen::Settings);
+                return true;
+            }
+            // 좌하단 `[자동재개]` 표식을 눌러 여는 판(pytmux-183). **뒤집지 않는다** —
+            // 그 이유는 `Screen::Autoresume` 문서에 있다.
+            Action::ShowAutoresume => {
+                self.screens.open(Screen::Autoresume);
                 return true;
             }
             // 패널로 **바이트를 보내는** 액션이다(키 입력과 같은 길). 명령이 아니다.
@@ -2163,6 +2278,125 @@ impl SessionView {
             return true;
         }
         self.pending.push(Outgoing::Command(Command::Paste { text }));
+        true
+    }
+
+    /// OS 클립보드 한 장을 **알맞게** 붙여넣는다(`paste-clipboard` · pytmux-159).
+    ///
+    /// 정본 `paste_os_clipboard`/`_do_paste_clipboard` 와 **같은 차례**다:
+    ///
+    /// 1. **글자가 있으면 글자다.** 그림·파일 목록보다 먼저 본다 — 정본이 그 순서이고,
+    ///    HTML 을 복사하면 창 계층이 글자와 그림을 **둘 다** 실어 주기 때문이다(그때
+    ///    사용자가 기대하는 것은 글자다).
+    /// 2. **그림이면 임시 파일로 떨구고 그 «경로»를 붙인다.** PTY 너머로 비트맵이 못 가서
+    ///    정본이 정한 계약이다(`clip::save_image`). Claude Code CLI 등이 경로를 첨부
+    ///    이미지로 읽는다.
+    /// 3. **떨구지 못했으면 `Alt+V`(= `ESC v`) 한 벌**을 패널에 보낸다 — 안쪽 앱이 공유
+    ///    클립보드를 **자기가** 읽게 하는 정본의 폴백이다. 작성창이 떠 있을 때는 그 길이
+    ///    없으므로(그건 앱 전용이다) 안내만 남긴다.
+    /// 4. 아무것도 없으면 **그렇다고 말한다.**
+    ///
+    /// ⛔ **말없이 끝나는 팔이 없다.** 제보(pytmux-364)의 핵심이 「무동작이라 클립보드가
+    /// 빈 건지 클라가 못 받은 건지 서버가 안 넣은 건지 가를 수 없다」였다 — 붙였으면
+    /// 로그가, 못 붙였으면 **화면에 한 줄**이 남는다.
+    ///
+    /// 인자로 **읽은 내용을 받는** 이유: 진짜 클립보드에 그림을 넣어야 잴 수 있는 함수는
+    /// 헤드리스 러너가 못 잰다. 읽기는 창을 쥔 자리에 두고 판단만 여기로 뺀다.
+    fn paste_from_clipboard(&mut self, content: ClipboardContent) -> bool {
+        // ★ 창을 볼 수 없는 자리에서 이 경로의 **유일한 관측점**이다. 붙여넣기가 안 될 때
+        //   갈라야 하는 층이 셋인데(⑴조합이 창까지 왔나 ⑵클립보드에 무엇이 있나 ⑶서버가
+        //   패널에 넣었나) 화면만 보면 셋이 전부 "아무 일도 안 남"으로 똑같아 보인다.
+        //   실제로 이 줄이 없어서 한 번 헤맸다(2026-07-28).
+        log::info!(
+            "붙여넣기 요청: 클립보드 {}자 · 그림 {}장",
+            content.plain_text.chars().count(),
+            content.images.as_ref().map_or(0, Vec::len)
+        );
+        if !content.plain_text.is_empty() {
+            return self.handle_paste(&content.plain_text);
+        }
+        let image = content.images.as_ref().and_then(|images| images.first());
+        let Some(image) = image else {
+            self.state
+                .note_notice(t("클립보드가 비어있거나 읽을 수 없음"));
+            return true;
+        };
+        if let Some(path) = clip::save_image(&image.data, &image.mime_type) {
+            // ★ **원격 탭이면 그 경로가 저쪽에 없다.** 파일은 이 상자에 생겼다 — 그대로
+            //   붙이면 원격 앱이 "그런 파일 없음"이라 말하고, 사용자는 붙여넣기가 깨진 줄
+            //   안다. 정본과 같이 `scp` 로 먼저 옮긴다(`_do_paste_clipboard`).
+            if let Some(host) = self.state.active_remote_host() {
+                self.send_image_to_remote(host.to_owned(), path);
+                return true;
+            }
+            // 경로를 그대로 흘린다 — 작성창으로 갈지 패널로 갈지는 `handle_paste` 가
+            // 이미 아는 일이다(정본 `_paste_image_path` 와 같은 갈림).
+            self.state
+                .note_notice(tf("클립보드 이미지 → 경로 붙여넣기: {path}", &[("path", &path)]));
+            return self.handle_paste(&path);
+        }
+        // 떨구지 못했다 — 정본의 폴백으로 간다.
+        if self.screens.editor().is_some() {
+            self.state
+                .note_notice(t("작성창엔 이미지를 넣을 수 없음(경로 저장 실패)"));
+            return true;
+        }
+        self.pending.push(Outgoing::Input(vec![0x1b, b'v']));
+        self.state.note_notice(t("이미지 붙여넣기 → 내부 앱(Alt+V)"));
+        true
+    }
+
+    /// 원격 탭에 그림을 **올려 두고** 그 경로를 붙인다(`scp` · 정본과 같은 자리).
+    ///
+    /// 여기서 기다리지 않는 이유: `scp` 상한이 30초다. 이벤트 루프에서 부르면 창이 그동안
+    /// 통째로 멈춘다 — 셸 명령을 스레드로 뺀 것과 **같은 규칙**이고(`spawn_shell`), 정본도
+    /// 워커로 뺀다. 결과는 다음 펌프가 줍는다([`take_remote_image`](Self::take_remote_image)).
+    fn send_image_to_remote(&mut self, host: String, local: String) {
+        // 원격 자리는 파일 이름만 옮긴다(정본과 같은 `/tmp/<이름>`). 원격이 어떤 상자든
+        // `/tmp` 는 있고, 이름을 그대로 두어야 사용자가 무엇을 붙였는지 알아본다.
+        let name = std::path::Path::new(&local)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "pytmux-clip".to_owned());
+        let remote = format!("/tmp/{name}");
+        // 말없이 몇 초를 끌지 않는다 — 그 침묵이 곧 「아무 일도 안 난다」로 읽힌다.
+        self.state.note_notice(t("클립보드 붙여넣기 중… 잠시만요"));
+        let slot = self.paste_result.clone();
+        std::thread::spawn(move || {
+            let ok = clip::scp_to_remote(&host, &local, &remote);
+            if let Ok(mut slot) = slot.lock() {
+                // 실패하면 **로컬 경로**를 붙인다(정본과 같다) — 손에 쥔 것이 있어야
+                // 사용자가 스스로 옮길 수 있다.
+                *slot = Some(RemoteImage {
+                    path: if ok { remote } else { local },
+                    ok,
+                });
+            }
+        });
+    }
+
+    /// 도착한 `scp` 결과를 붙인다. 붙였으면 `true`(= 다시 그릴 일이 있다).
+    ///
+    /// 실패도 붙이는 이유는 [`RemoteImage`] 문서에 있다 — 다만 **경고와 함께** 준다.
+    fn take_remote_image(&mut self) -> bool {
+        let Some(image) = self.paste_result.lock().ok().and_then(|mut s| s.take()) else {
+            return false;
+        };
+        // ⚠ 원문을 **리터럴로** 부른다(변수로 넘기면 i18n 게이트의 사각지대에 들어가
+        //   영어 짝이 빠져도 아무도 안 운다 — `i18n_coverage.rs` 머리말).
+        let said = if image.ok {
+            tf(
+                "클립보드 이미지 → 원격 전송 후 경로 붙여넣기: {path}",
+                &[("path", &image.path)],
+            )
+        } else {
+            tf(
+                "이미지 원격 전송 실패(scp 오류) — 로컬 경로 붙여넣기: {path}",
+                &[("path", &image.path)],
+            )
+        };
+        self.state.note_notice(said);
+        self.handle_paste(&image.path);
         true
     }
 
@@ -3096,9 +3330,11 @@ impl SessionView {
         if let Some(action) = next {
             self.apply_action(action);
         }
+        // 원격에 올린 그림도 스레드에서 온다 — 셸 결과와 **같은 자리**에서 줍는다.
+        let pasted = self.take_remote_image();
         // 시계는 서버 메시지가 없어도 흐른다 — 퍼올리기와 같은 자리에서 재운다
         // (GUI 에는 TUI 의 프레임 루프에 해당하는 자리가 여기뿐이다).
-        let mut dirty = self.tick_clock() || shell;
+        let mut dirty = self.tick_clock() || shell || pasted;
         // 입력기 배지는 서버 메시지와 무관하게 바뀐다 — 시계와 같은 자리에서 잰다.
         dirty |= self.tick_ime();
         let mut arrived = 0usize;
@@ -3256,6 +3492,16 @@ impl SessionView {
                     }
                 },
                 LinkEvent::Ended(reason) => {
+                    // ⛔ **로그에도 남긴다**(pytmux-171). 종전에는 사유가 화면의 빨간 한
+                    //    줄로만 갔다 — 제보자는 `--frame-dump` 그림에서 **눈으로** 보고서야
+                    //    알았고 `stdout`/`stderr` 은 둘 다 비어 있었다. 끊김은 진단이
+                    //    필요한 사건이라 자취가 화면 밖에도 있어야 하고, 그 줄이 없으면
+                    //    다음 사람은 같은 그림을 보고도 지나친다.
+                    //
+                    //    `error!` 인 이유: 기본 로그 수준에서도 보여야 한다(`debug!` 로
+                    //    두면 `RUST_LOG` 를 미리 켜 둔 사람만 본다 — 끊김은 미리 켜 둘
+                    //    수 있는 사건이 아니다).
+                    log::error!("서버 연결이 끝났다: {reason}");
                     self.note_ended(reason);
                     dirty = true;
                 }
@@ -3315,7 +3561,8 @@ impl SessionView {
             // ASCII 조각은 자연폭이 곧 `칸수 × 칸너비`다 — 거기에 잰 값을 덮어씌우면
             // 부동소수 한 톨 차이로 마지막 글자가 흐려질 수 있다(`render_row` 와 같은 이유).
             row = row.with_child(if boxed {
-                ConstrainedBox::new(cell).with_width(cell_w * cells as f32).finish()
+                // 캔버스 줄과 **같은 상자**다 — 여기만 자르면 표·그래프의 기호가 잘린다.
+                CellBox::new(cell, cell_w * cells as f32).finish()
             } else {
                 cell
             });
@@ -3513,9 +3760,27 @@ impl SessionView {
     fn pad_rows(&self, column: Flex, drawn: usize, budget: usize) -> Flex {
         let mut column = column;
         for _ in drawn..budget {
-            column = column.with_child(self.text(" ", 13., palette::DIM));
+            // ⛔ **채움 줄도 항목 줄과 같은 상자**를 쓴다(pytmux-369). 맨 글자로 두면
+            //    한 줄이 항목보다 2px 낮아, 목록이 짧을수록(= 채움이 많을수록) 판이
+            //    그만큼 짧아진다 — 분류 탭을 옮길 때마다 판이 들썩였다.
+            column = column.with_child(self.panel_row_box(self.text(" ", 13., palette::DIM)));
         }
         column
+    }
+
+    /// 판의 **한 줄 상자** — 「한 줄 = 몇 px 인가」를 정하는 **유일한 자리**(pytmux-369).
+    ///
+    /// # 왜 헬퍼인가
+    ///
+    /// 종전에는 채움 줄과 항목 줄이 **각자** 지었다: 항목만 `with_uniform_padding(1.)`
+    /// 로 감싸 한 줄이 2px 더 높았다. 줄 **수**는 `panel_budget` 이 상수로 쥐고 있었으니
+    /// (pytmux-58) 「줄 수 = 높이」라는 불변식이 픽셀에서만 조용히 깨져 있었다.
+    ///
+    /// ⚠ 그 함정을 코드가 **이미 알고 있었다** — `palette_item` 의 *"안쪽 열의 행간은
+    /// 판의 것과 같은 상수다"* 가 행간은 맞췄는데, 바로 다음 줄의 *"패딩은 줄마다다"*
+    /// 가 패딩을 안 맞췄다. 두 곳이 각자 짓는 한 다음 판에서 또 갈린다.
+    fn panel_row_box(&self, child: Box<dyn Element>) -> Box<dyn Element> {
+        Container::new(child).with_uniform_padding(1.).finish()
     }
 
     fn panel_rows(&self, screen: Screen) -> usize {
@@ -4039,9 +4304,17 @@ impl SessionView {
         // 패널에 같은 명령이 도는** 상태라 안 보이면 안 된다(패리티 G6). 감시류
         // ([벨감시]·[활동감시])는 여기가 아니라 하단 상태줄이다(파이썬 정본의 시스템
         // 배지 자리 — 사용자 요청 2026-07-30).
-        for badge in self.state.flags().tab_badges() {
-            row = row.with_child(self.chip(badge, palette::BR_YELLOW));
-        }
+        // ★ **시스템 표식은 여기 없다**(pytmux-183) — 하단 상태줄로 내려갔다.
+        //
+        //   종전에는 `[줌]`·`[동기화]`·`[자동재개]`·`[프롬프트클리어]` 가 탭바 **앞**에
+        //   붙었고, 근거는 *"모르고 두면 입력이 달라지는 상태라 눈앞에 있어야 한다"*
+        //   였다. 목표는 지금도 옳지만 **정본은 그 목표를 좌하단에서 이룬다**
+        //   (`clientwidgets.py` 의 「시스템 배지 영역(SYNC/AR 직후)」 = 좌하단 클러스터).
+        //   하단 상태줄도 **늘 그려지므로** 「항상 보인다」는 그대로다.
+        //
+        //   ⚠ 감시류(`monitor_badges`)가 2026-07-30 에 **같은 이유로 먼저** 내려갔다 —
+        //   그때 남은 이 넷만 위에 있어서 정본에서 한 무리인 것이 GUI 에서 두 자리로
+        //   갈려 있었다. 이제 한 자리다.
         // 크롬 포커스가 이 줄에 있으면 **고른 자리 하나만** 테두리로 강조한다.
         let chrome_tabs = self.chrome_tabs();
         let badges = self.state.badges();
@@ -4339,6 +4612,111 @@ impl SessionView {
             .finish()
     }
 
+    /// 시스템 표식 칩 하나(pytmux-183) — 줌·동기화·자동재개·프롬프트클리어.
+    ///
+    /// **자동재개만 눌린다.** 정본이 클릭존을 둔 것이 `AR` 하나이기 때문이고
+    /// (`clientwidgets.py` 의 `_ar_zone`), 나머지에 우리 마음대로 붙이면 정본에 없는
+    /// 조작 표면을 GUI 가 먼저 만드는 것이 된다. 그 판정은 [`base::chrome::SysBadge::action`]
+    /// 이 든다 — 뷰가 낱말로 가르면 로케일이 바뀌는 순간 조용히 틀린다.
+    ///
+    /// 눌리는 것은 hover 로 그 사실을 보인다(N4 — 다른 클릭존과 같은 규율: 「못 하는
+    /// 것을 눌리는 것처럼 그리지 않는다」의 짝이다).
+    fn sys_badge_chip(&self, badge: base::chrome::SysBadge) -> Box<dyn Element> {
+        let chip = self.chip(badge.label(), palette::BR_YELLOW);
+        if badge.action().is_none() {
+            return chip;
+        }
+        // 자리 색인은 크롬이 쓰는 자리들 **뒤**에서 잇는다 — 겹치면 hover 가 엉뚱한
+        // 칩에 붙는다(`chrome_slot_end` 가 그 끝을 안다).
+        let index = self.chrome_slot_end();
+        let inner = if self.chrome_hovered(index) {
+            Container::new(self.ui_text(badge.label(), 11., palette::BR_YELLOW))
+                .with_horizontal_padding(8.)
+                .with_vertical_padding(2.)
+                .with_background_color(theme::HOVER)
+                .with_border(Border::all(1.).with_border_color(theme::FOCUS))
+                .with_corner_radius(theme::PILL_RADIUS)
+                .finish()
+        } else {
+            chip
+        };
+        self.clickable_chrome(index, base::chrome::ClickTarget::SysBadge(badge), inner)
+    }
+
+    /// 상태줄 배지 칩 하나 — **왼쪽 무리든 오른쪽 무리든 같은 그림**(pytmux-367).
+    ///
+    /// # 왜 한 함수인가
+    ///
+    /// 알림 배지가 오른쪽 무리의 머리로 옮겨 가면서 이 칩을 짓는 자리가 둘이 됐다.
+    /// 두 벌로 적으면 hover·켜짐·포커스 테두리 중 하나가 한쪽에서만 빠지고, 그 종류의
+    /// 어긋남은 **누르기 전에는 안 보인다**.
+    ///
+    /// # 자리 색인은 «그리는 무리» 가 아니라 «목록에서의 자리» 다
+    ///
+    /// `badges` 안 위치로 색인을 짓는다 — 그래야 알림을 오른쪽에 그려도 그 색인이 안
+    /// 움직이고, 아래 우측 구간·플러그인 배지의 색인과도 안 겹친다(`chrome_slot_end`
+    /// 가 같은 산수를 쓴다).
+    fn status_badge_chip(
+        &self,
+        badge: base::Badge,
+        badges: &[base::Badge],
+        picked: Option<base::Badge>,
+        fg: ColorU,
+    ) -> Box<dyn Element> {
+        let mut text = badge.label().to_string();
+        // 곁가지(개수·호스트 이름)는 뷰가 붙인다 — core 는 그 값을 모른다.
+        match badge {
+            base::Badge::Notices => {
+                text.push_str(&format!(" {}", self.state.notices().len()))
+            }
+            base::Badge::Host => {
+                if let Some(host) = self.state.active_remote_host() {
+                    text.push_str(&format!(" {host}"));
+                }
+            }
+            _ => {}
+        }
+        // 배지 클릭 = Enter 와 같은 액션(파이썬 상태줄 버튼과 같은 표면).
+        // 상태 색인은 탭바 자리들 **뒤**에서 시작한다.
+        let state_index = self.state.tabs().tabs.len()
+            + 2
+            + badges.iter().position(|b| *b == badge).unwrap_or(0);
+        // ★ **켜짐**은 배지 모양이 말한다(§10-21ⓧ) — 반전 칩이다.
+        //
+        // 제보: *"눌러 스크롤바가 뜨면 버튼도 색이 바뀌는 등 토글 상태임을 알 수
+        // 있어야 한다."* 상태는 이미 우리가 안다 — 안 하던 것은 그것을 **모양에
+        // 싣는 일**뿐이었다.
+        //
+        // ⚠ 켜짐을 **일반 개념으로** 둔다(`Badge::is_on`): 하나씩 특수 처리하면
+        //   다음 토글 배지에서 또 빠진다.
+        let on = self.badge_is_on(badge);
+        let (fg, bg) = if on {
+            (theme::INVERT_FG, Some(theme::INVERT_BG))
+        } else {
+            (fg, None)
+        };
+        // 칩 버튼(N4): hover 배경, 키보드 포커스는 FOCUS 테두리(탭바와 같은 문법).
+        let mut boxed = Container::new(self.ui_text(text, 11., fg))
+            .with_horizontal_padding(8.)
+            .with_vertical_padding(2.)
+            .with_corner_radius(theme::PILL_RADIUS);
+        if let Some(bg) = bg {
+            boxed = boxed.with_background_color(bg);
+        } else if self.chrome_hovered(state_index) {
+            boxed = boxed.with_background_color(theme::HOVER);
+        }
+        // ⚠ FOCUS 테두리는 **다른 뜻**이다 — "키보드가 이 배지를 고르고 있다"이지
+        //   켜짐이 아니다.
+        if picked == Some(badge) {
+            boxed = boxed.with_border(Border::all(1.5).with_border_color(theme::FOCUS));
+        }
+        self.clickable_chrome(
+            state_index,
+            base::chrome::ClickTarget::Badge(badge),
+            boxed.finish(),
+        )
+    }
+
     fn render_status(&self) -> Box<dyn Element> {
         let tabs = self.chrome_tabs();
         let badges = self.state.badges();
@@ -4376,60 +4754,19 @@ impl SessionView {
             left = left.with_child(self.chip_on(badge));
         }
         for badge in &badges {
-            let mut text = badge.label().to_string();
-            // 곁가지(개수·호스트 이름)는 뷰가 붙인다 — core 는 그 값을 모른다.
-            match badge {
-                base::Badge::Notices => {
-                    text.push_str(&format!(" {}", self.state.notices().len()))
-                }
-                base::Badge::Host => {
-                    if let Some(host) = self.state.active_remote_host() {
-                        text.push_str(&format!(" {host}"));
-                    }
-                }
-                _ => {}
+            // ★ **알림은 오른쪽 무리의 머리로 간다**(pytmux-367 · 정본 `_render_main`
+            //   §10-8: host/시각/날짜 **앞**). 「오른쪽 끝」이 아니라 오른쪽 무리의
+            //   머리라는 점이 핵심이다. 나머지 배지(`⇕`)는 정본에서도 왼쪽이라 그대로다.
+            if *badge == base::Badge::Notices {
+                continue;
             }
-            // 배지 클릭 = Enter 와 같은 액션(파이썬 상태줄 버튼과 같은 표면).
-            // 상태 색인은 탭바 자리들 **뒤**에서 시작한다 — 한 프레임의 렌더 순서가
-            // 곧 색인이라 겹치지 않는다.
-            let state_index =
-                self.state.tabs().tabs.len() + 2 + badges.iter().position(|b| b == badge).unwrap();
-            // ★ **켜짐**은 배지 모양이 말한다(§10-21ⓧ) — 반전 칩이다.
-            //
-            // 제보: *"눌러 스크롤바가 뜨면 버튼도 색이 바뀌는 등 토글 상태임을 알 수
-            // 있어야 한다. 지금은 스크롤바만 나타나고 버튼은 그대로라 버튼만 보고는
-            // 켜졌는지 알 수 없다."* 상태는 이미 우리가 안다 — 안 하던 것은 그것을
-            // **모양에 싣는 일**뿐이었다.
-            //
-            // ⚠ 켜짐을 **일반 개념으로** 둔다(`Badge::is_on`): 하나씩 특수 처리하면
-            //   다음 토글 배지에서 또 빠진다(제보의 마지막 문단이 그 걱정이다).
-            let on = self.badge_is_on(*badge);
-            let (fg, bg) = if on {
-                (theme::INVERT_FG, Some(theme::INVERT_BG))
-            } else {
-                (fg, None)
-            };
-            // 칩 버튼(N4): hover 배경, 키보드 포커스는 FOCUS 테두리(탭바와 같은 문법).
-            let mut boxed = Container::new(self.ui_text(text, 11., fg))
-                .with_horizontal_padding(8.)
-                .with_vertical_padding(2.)
-                .with_corner_radius(theme::PILL_RADIUS);
-            if let Some(bg) = bg {
-                boxed = boxed.with_background_color(bg);
-            } else if self.chrome_hovered(state_index) {
-                boxed = boxed.with_background_color(theme::HOVER);
-            }
-            // ⚠ FOCUS 테두리는 **다른 뜻**이다 — "키보드가 이 배지를 고르고 있다"이지
-            //   켜짐이 아니다. 그래서 켜짐은 배경으로, 고름은 테두리로 갈라 둔다
-            //   (겹치면 둘이 한 그림이 된다).
-            if picked == Some(*badge) {
-                boxed = boxed.with_border(Border::all(1.5).with_border_color(theme::FOCUS));
-            }
-            left = left.with_child(self.clickable_chrome(
-                state_index,
-                base::chrome::ClickTarget::Badge(*badge),
-                boxed.finish(),
-            ));
+            left = left.with_child(self.status_badge_chip(*badge, &badges, picked, fg));
+        }
+        // ★ 시스템 표식(줌·동기화·자동재개·프롬프트클리어) — **정본의 좌하단 클러스터**
+        //   다(pytmux-183). 감시류 **앞**에 두어 정본 순서(Z·SYNC·AR 다음이 REC 류)를
+        //   지킨다. 자리를 옮긴 이유는 탭바 쪽 주석에 있다.
+        for badge in self.state.flags().tab_badges() {
+            left = left.with_child(self.sys_badge_chip(badge));
         }
         // 감시류 표식([활동감시]·[벨감시]) — 파이썬 정본이 시스템 배지(Z·SYNC·AR·REC)를
         // 두는 하단 상태줄 자리다(사용자 요청 2026-07-30: 탭바 → 여기로). 버튼이 아니라
@@ -4464,6 +4801,11 @@ impl SessionView {
                 // 색인은 위 배지 자리들 **뒤**에서 이어진다 — 한 프레임의 렌더 순서가
                 // 곧 색인이라 겹치면 hover 가 엉뚱한 칩에 붙는다.
                 Some(_) => self.clickable_chrome(
+                    // ⛔ 우측 구간과 **겹치던 자리**다(pytmux-367 을 고치며 드러났다):
+                    //    아래 `part_index` 도 `tabs+2+badges.len()` 에서 시작해, 첫
+                    //    플러그인 배지와 첫 클릭 구간이 같은 `MouseState` 를 나눠 썼다 —
+                    //    한쪽에 마우스를 올리면 엉뚱한 쪽이 밝아진다. 구간 쪽을 플러그인
+                    //    배지 **뒤**로 밀어 갈랐다(`chrome_slot_end` 도 같은 산수다).
                     self.state.tabs().tabs.len() + 2 + badges.len() + i,
                     base::chrome::ClickTarget::PluginBadge(i),
                     chip,
@@ -4484,12 +4826,27 @@ impl SessionView {
         // 클릭 존이 된다 — 뜻은 이미 있는 배지 액션 그대로다(TUI 와 같은 표). 자리
         // 색인은 배지들 뒤에서 잇는다(렌더 순서 = 색인).
         let parts = status::expand_parts(&self.config.status_right, &sctx);
-        let mut part_index = self.state.tabs().tabs.len() + 2 + badges.len();
+        let mut part_index =
+            self.state.tabs().tabs.len() + 2 + badges.len() + self.state.plugin_badges().len();
         // 구간 사이에 여백을 끼우지 않는다 — `%H:%M %Y-%m-%d` 의 붙은 모양 그대로.
         let mut right = Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(0.);
+        // ★ **알림 배지가 이 무리의 머리다**(pytmux-367). 정본 `_render_main` §10-8 이
+        //   그 규칙을 주석으로 못 박아 두었다: *"알림 이력 배지는 우측 배지열의 **맨
+        //   왼쪽**에 붙인다(host/시각/날짜 앞)"*. 곧 「오른쪽 끝」이 아니라 **오른쪽
+        //   무리의 머리**이고, 그래서 `parts` 루프 **앞**에 그린다.
+        //
+        //   칩이 자기 여백(8px)을 들고 있어 `spacing(0)` 이어도 host 와 안 붙는다.
+        if badges.contains(&base::Badge::Notices) {
+            right = right.with_child(self.status_badge_chip(
+                base::Badge::Notices,
+                &badges,
+                picked,
+                fg,
+            ));
+        }
         for (kind, text) in parts {
             // `#S` 를 `status-right` 에 둔 설정에서도 같은 자리를 누를 수 있다. 양쪽에
             // 다 뒀으면 **왼쪽이 편집 자리**이고 여기는 글자로만 남는다(파이썬과 같다) —
@@ -4684,7 +5041,13 @@ impl SessionView {
             .into_iter()
             .filter(|(kind, _)| status::run_badge(*kind).is_some())
             .count();
-        self.state.tabs().tabs.len() + 2 + self.state.badges().len() + clickable_parts
+        // ⚠ 플러그인 배지도 자리를 쓴다 — 빠져 있어서 새 클릭 표면이 그 위에 겹칠
+        //   수 있었다(`render_status` 의 색인 산수와 **같은 식**이라야 한다).
+        self.state.tabs().tabs.len()
+            + 2
+            + self.state.badges().len()
+            + self.state.plugin_badges().len()
+            + clickable_parts
     }
 
     /// 끊김·서버 오류 한 줄 — **창 맨 아래**(사용자 요청 2026-07-30).
@@ -5488,7 +5851,10 @@ impl SessionView {
         left: usize,
     ) -> (Box<dyn Element>, usize) {
         let (cmd, opts) = proto::palette::split_name(name);
-        let desc_cols = Self::PANEL_COLS
+        // 폭이 캔버스를 따라 움직이므로 칸 수도 거기서 나온다(pytmux-368) — 상수에
+        // 묶어 두면 판만 넓어지고 설명은 그대로 접힌다.
+        let desc_cols = self
+            .palette_cols()
             .saturating_sub(Self::PAL_NAME_COLS + Self::PAL_OPTS_COLS + 2);
         // 접힌 줄이 예산을 넘기지 않게 자른다 — 마지막 한 줄만 남았는데 설명이 세 줄이면
         // 그 항목이 판을 밀고 나간다.
@@ -5521,8 +5887,10 @@ impl SessionView {
                 .with_child(col(self, o, Self::PAL_OPTS_COLS, palette::YELLOW))
                 .with_child(col(self, chunk, desc_cols, palette::DIM))
                 .finish();
-            // 패딩은 줄마다다(종전과 같은 높이) · 배경은 아래 한 겹뿐이다.
-            rows = rows.with_child(Container::new(line).with_uniform_padding(1.).finish());
+            // 패딩은 줄마다다 · 배경은 아래 한 겹뿐이다. ⛔ 상자는 **`panel_row_box`
+            // 한 곳**이 짓는다(pytmux-369) — 채움 줄이 같은 것을 써야 판 높이가 목록
+            // 길이와 무관해진다.
+            rows = rows.with_child(self.panel_row_box(line));
         }
         let item = if selected {
             Container::new(rows.finish())
@@ -7363,15 +7731,57 @@ impl SessionView {
 
     /// 판의 바깥 폭(px). **화면이 정하고 내용은 못 정한다.**
     ///
-    /// 팔레트가 넓은 이유는 목록이 넓어야 읽히기 때문이다(이름+설명 한 줄을 눈으로
-    /// 잇는다). 나머지는 좁게 둔다 — 창 끝까지 퍼지면 칸 사이가 벌어진다.
-    fn panel_width(screen: Screen) -> f32 {
-        if screen == Screen::Commands { 900. } else { 760. }
+    /// 나머지 판은 좁게 둔다(760) — 창 끝까지 퍼지면 칸 사이가 벌어진다. 「내용이 못
+    /// 정한다」는 규칙은 [[pytmux-158]] 이 세운 것이고 그대로 살아 있다.
+    ///
+    /// # 팔레트만 **담는 그릇**을 따라간다 (pytmux-368)
+    ///
+    /// 정본의 `esc :` 는 **단말 좌우 폭 전체**를 쓴다. 우리는 900px 상수였고, 캔버스가
+    /// 그보다 훨씬 넓은 창에서는 목록이 가운데 갇혀 설명이 더 일찍 접혔다 —
+    /// 사용자 요청은 *"위치와 크기를 맞춰주세요"* 다.
+    ///
+    /// ⛔ 그릇은 **창이 아니라 터미널 캔버스**다: 정본이 말하는 「단말 전체」가 곧
+    /// 캔버스이고, 창을 쓰면 크롬(탭바·상태줄)까지 폭에 끼어 정본과 결이 갈린다.
+    ///
+    /// ⚠ 이건 「빠뜨린 것」이 아니라 **종전 판단을 뒤집는 것**이다(그 주석이 반대 근거를
+    /// 적어 두고 있었다: *"창 끝까지 퍼지면 칸 사이가 벌어진다"*). 그 걱정은
+    /// [`palette_cols`](Self::palette_cols) 가 푼다 — 이름·옵션 칸은 **상수 폭**이라
+    /// 넓어진 자리는 전부 설명 칸이 먹는다. 곧 이름과 설명 사이는 안 벌어지고,
+    /// 늘어난 폭은 접히던 설명이 펴지는 데 쓰인다(정본 첨부와 같은 모양).
+    ///
+    /// 캔버스를 아직 못 받았으면 종전 상수로 떨어진다 — 첫 프레임 전에도 판은 뜬다.
+    fn panel_width(&self, screen: Screen) -> f32 {
+        if screen != Screen::Commands {
+            return 760.;
+        }
+        match (self.state.composite().map(|c| c.size().0), self.cell_px.get()) {
+            (Some(cols), Some((cell_w, _))) if cols > 0 && cell_w > 0. => {
+                (cols as f32 * cell_w).max(760.)
+            }
+            _ => 900.,
+        }
     }
 
     /// 판 **안쪽**(여백·테두리를 뺀) 폭 — 줄 하나가 실제로 쓸 수 있는 자리.
-    fn panel_inner_width(screen: Screen) -> f32 {
-        Self::panel_width(screen) - 2. * (Self::PANEL_PAD + Self::PANEL_BORDER)
+    fn panel_inner_width(&self, screen: Screen) -> f32 {
+        self.panel_width(screen) - 2. * (Self::PANEL_PAD + Self::PANEL_BORDER)
+    }
+
+    /// 팔레트 한 줄이 쓸 수 있는 **칸 수** — 안쪽 폭에서 나온다(pytmux-368).
+    ///
+    /// [`PANEL_COLS`](Self::PANEL_COLS) 상수를 안 쓰는 이유: 폭이 이제 캔버스를 따라
+    /// 움직이는데 칸 수만 110 에 묶여 있으면, 넓어진 자리를 **아무도 안 쓴다**(판만
+    /// 넓어지고 글은 그대로 접힌다). 픽셀과 칸을 한 값에서 유도해야 둘이 안 갈린다.
+    ///
+    /// 글꼴 크기를 아직 모르면 상수로 떨어진다(그리기 전에는 셀 폭을 알 수 없다).
+    fn palette_cols(&self) -> usize {
+        match self.cell_px.get() {
+            Some((cell_w, _)) if cell_w > 0. => {
+                ((self.panel_inner_width(Screen::Commands) / cell_w) as usize)
+                    .max(Self::PAL_NAME_COLS + Self::PAL_OPTS_COLS + 12)
+            }
+            _ => Self::PANEL_COLS,
+        }
     }
 
     /// 이벤트의 픽셀 좌표를 셀 좌표로. 자리표가 아직 없으면 `None`.
@@ -7534,6 +7944,10 @@ impl SessionView {
             Screen::Version => proto::info::version_lines(&self.state)
                 .into_iter()
                 .fold(column, |c, row| c.with_child(self.text(row, 13., palette::FG))),
+            // 자동 재개 설명(pytmux-183) — 줄은 proto 가 짓는다(정본과 **같은 글**).
+            Screen::Autoresume => proto::info::autoresume_lines(&self.state)
+                .into_iter()
+                .fold(column, |c, row| c.with_child(self.text(row, 13., palette::FG))),
         };
         // 힌트 줄(판 바닥) — 위 구분선의 짝이다.
         let column = column.with_child(
@@ -7558,7 +7972,7 @@ impl SessionView {
             column.finish()
         } else {
             Clipped::new(
-                PanelBox::new(column.finish(), Self::panel_inner_width(screen)).finish(),
+                PanelBox::new(column.finish(), self.panel_inner_width(screen)).finish(),
             )
             .finish()
         };
@@ -7743,16 +8157,19 @@ impl SessionView {
                 if cell.continuation {
                     continue;
                 }
-                let Some(fill) = proto::canvas::block_fill(cell.ch) else {
+                // 사분면은 사각형이 **둘**이다(pytmux-177) — 칸 하나가 블록 여럿을 낸다.
+                let Some(fills) = proto::canvas::block_fills(cell.ch) else {
                     continue;
                 };
                 let (fg, _) = colors(&cell.style);
-                out.push(crate::splitter::Block {
-                    x: x as u16,
-                    y: y as u16,
-                    fill,
-                    color: fg,
-                });
+                for fill in fills {
+                    out.push(crate::splitter::Block {
+                        x: x as u16,
+                        y: y as u16,
+                        fill: *fill,
+                        color: fg,
+                    });
+                }
             }
         }
         out
@@ -8205,7 +8622,9 @@ impl SessionView {
                 }
                 let mut cell = cell.finish();
                 if let (Some(w), true) = (cell_w, boxed) {
-                    cell = ConstrainedBox::new(cell).with_width(w * cells as f32).finish();
+                    // ⛔ `ConstrainedBox` 가 아니다 — 그것은 한도를 아이에게 내려보내
+                    //    `Text` 가 그 폭에서 **페이드**한다(pytmux-270 · `CellBox` 문서).
+                    cell = CellBox::new(cell, w * cells as f32).finish();
                 }
                 row = row.with_child(match bg {
                     Some(bg) => Container::new(cell).with_background_color(bg).finish(),
@@ -8379,12 +8798,19 @@ impl View for SessionView {
         let mut body = Stack::new()
             .with_child(Rect::new().with_background_color(palette::BG).finish())
             .with_child(inside);
-        // 떠 있는 화면(팝업 계층) — 스크림이 아래를 가라앉히고 판이 가운데 뜬다(N2).
+        // 떠 있는 화면(팝업 계층) — 스크림이 아래를 가라앉히고 판이 뜬다(N2).
         // 캔버스 마우스는 화면이 떠 있는 동안 core 판정 전에 뷰가 끊는다(`handle_mouse_*`).
+        //
+        // ⛔ **딤은 화면마다 다르다**(pytmux-370). 종전에는 `top()` 이 무엇이든 창 전체를
+        //    덮었다 — 화면별 갈래가 아예 없었다. 작성창은 **위에 보이는 것을 보면서 쓰는
+        //    자리**라 정본이 아무것도 어둡게 하지 않는다. 그 판정의 주인은 core 다
+        //    (`Screen::dims_behind` — 자리표와 같은 결).
         if let Some(screen) = self.screens.top() {
-            body = body
-                .with_child(Rect::new().with_background_color(theme::DIM_SCRIM).finish())
-                .with_child(self.render_screen_panel(screen));
+            if screen.dims_behind() {
+                body = body
+                    .with_child(Rect::new().with_background_color(theme::DIM_SCRIM).finish());
+            }
+            body = body.with_child(self.render_screen_panel(screen));
         }
         let body = body.finish();
 
@@ -8411,11 +8837,12 @@ impl View for SessionView {
         // 일도 구조적으로 없다.
         EventHandler::new(body)
             .on_keydown(|evt, _app, keystroke| {
-                // ★ 붙여넣기는 **Ctrl+Shift+V** 다. 이 클라에는 붙여넣기를 대신 해 줄
-                // 바깥 터미널이 없어서(TUI 는 bracketed paste 로 받는다) 여기서 직접
-                // 받아야 하는데, `Ctrl+V`(0x16)는 패널 안 프로그램이 쓰는 바이트다 —
-                // 그걸 가로채면 그 프로그램의 기능이 조용히 사라진다. 터미널 에뮬레이터
-                // 관례(Ctrl+Shift+V)를 따르면 둘 다 산다.
+                // ★ 붙여넣기는 **Ctrl+V**(정본과 같은 손버릇) · **Cmd/Super+V**(정본
+                // `super+v`) · **Ctrl+Shift+V**(터미널 관례 별칭)다. 이 클라에는 붙여넣기를
+                // 대신 해 줄 바깥 터미널이 없어서(TUI 는 bracketed paste 로 받는다) 여기서
+                // 직접 받는다. 가로채면 패널 안 프로그램이 `0x16` 을 못 받는데, 그 값은
+                // **정본이 이미 치르기로 한 것**이다(`is_paste_chord` 문서 · pytmux-364).
+                // ⛔ 자리도 정본과 같다 — 패널 패스스루와 `bind -n` **앞**이다.
                 if Self::is_paste_chord(keystroke) {
                     evt.dispatch_typed_action(ViewAction::PasteRequest);
                     return DispatchEventResult::StopPropagation;
@@ -8691,17 +9118,11 @@ impl TypedActionView for SessionView {
             ViewAction::Preedit(text) => self.handle_preedit(text),
             ViewAction::PasteRequest => {
                 // GUI 에는 bracketed paste 를 대신 해 줄 바깥 터미널이 없다. 창 계층이
-                // 아는 클립보드를 읽어 같은 경로(`handle_paste`)로 흘린다 — 마커를
-                // 감쌀지는 여전히 서버가 정한다.
-                // 글자만 본다 — 그림·파일 목록은 패널에 넣을 것이 아니다(빈 문자열은
-                // `handle_paste` 가 조용히 버린다).
-                let text = ctx.clipboard().read().plain_text;
-                // ★ 창을 볼 수 없는 자리에서 이 경로의 **유일한 관측점**이다. 붙여넣기가
-                // 안 될 때 갈라야 하는 층이 셋인데(⑴조합이 창까지 왔나 ⑵클립보드에 글자가
-                // 있나 ⑶서버가 패널에 넣었나) 화면만 보면 셋이 전부 "아무 일도 안 남"으로
-                // 똑같아 보인다. 실제로 이 줄이 없어서 한 번 헤맸다(2026-07-28).
-                log::info!("붙여넣기 요청: 클립보드 {}자", text.chars().count());
-                self.handle_paste(&text)
+                // 아는 클립보드를 읽어 흘린다 — 마커를 감쌀지는 여전히 서버가 정한다.
+                // 무엇을 어떻게 붙일지는 **팔레트로 들어온 것과 같은 함수**가 정한다
+                // (입구가 둘이어도 경로는 하나 — pytmux-159·363·364).
+                let content = ctx.clipboard().read();
+                self.paste_from_clipboard(content)
             }
         };
         if dirty {
@@ -8715,6 +9136,15 @@ impl TypedActionView for SessionView {
         //
         //   격자 재보고는 따로 안 한다 — 창 크기가 바뀌면 자리표가 다시 재지고
         //   `report_size` 가 그 값으로 서버에 알린다(평소 리사이즈와 같은 길).
+        // ★ 클립보드 읽기(`paste-clipboard` · pytmux-159) — 전체 화면과 **같은 자리**다.
+        //   `apply_action` 에는 창이 없어 한 칸에 실려 왔고, 여기서 `PasteRequest` 와
+        //   똑같은 함수로 떨어진다.
+        if std::mem::take(&mut self.paste_requested) {
+            let content = ctx.clipboard().read();
+            if self.paste_from_clipboard(content) {
+                ctx.notify();
+            }
+        }
         if std::mem::take(&mut self.fullscreen_requested) {
             if let Some(window) = ctx.windows().platform_window(ctx.window_id()) {
                 window.toggle_fullscreen();
@@ -8758,6 +9188,91 @@ impl TypedActionView for SessionView {
 #[cfg(test)]
 #[path = "session_view_tests.rs"]
 mod tests;
+
+/// 캔버스 한 조각의 **칸 폭을 못박되 글리프는 안 자르는** 상자(pytmux-270).
+///
+/// # 무엇이 잘리고 있었나
+///
+/// 격자를 지키려고 비 ASCII 조각을 [`ConstrainedBox`] 로 `칸수 × 칸너비` 에 묶었다.
+/// 그런데 그 상자는 아이의 `constraint.max` 를 좁히고, [`Text`] 는 그 값을 그대로
+/// `layout_line(..., max_width, clip_config)` 에 넘긴다. 그리고 `ClipConfig::default()`
+/// 는 `{direction: End, style: Fade}` 다 — **넘치는 만큼이 오른쪽에서 지워진다.**
+///
+/// 보조 글꼴(`Segoe UI Symbol`·`Segoe UI Emoji`)은 비례폭이라 전진폭이 칸 너비의
+/// 정수배가 아니고, 그래서 `★`·`❋` 는 오른쪽이 잘리고 `⚠️` 는 왼쪽 반쪽만 남았다.
+/// ⇒ **격자를 지키려고 넣은 장치가 격자를 넘는 글리프를 지우고 있었다.**
+///
+/// ★ 그 판정이 예측하는 **자르는 방향**(`End` = 오른쪽)이 제보의 화소 대조와 정확히
+/// 맞는다 — 그래서 「그럴듯한 기전」이 아니라 증거다.
+///
+/// # 이 상자가 하는 일
+///
+/// [`PanelBox`] 와 **같은 처방**이다: 아이에게는 한도를 안 걸고(자연폭으로 그리게 두고)
+/// **돌려주는 크기만 정한 값**으로 준다. 그래서 격자는 그대로 서고, 칸을 넘는 글리프는
+/// 잘리는 대신 이웃 칸으로 조금 넘친다.
+///
+/// ⛔ 넘치게 두는 쪽을 고른 이유: 정본 TUI 는 이 판단을 **호스트 단말에 맡기고**, 단말은
+/// 넘치게 둔다. 줄여 넣는 쪽(그 조각만 글꼴 크기를 낮춘다)은 같은 줄 안에서 글자 크기가
+/// 들쭉날쭉해져 정본과 더 멀어진다.
+struct CellBox {
+    child: Box<dyn Element>,
+    width: f32,
+    size: Option<Vector2F>,
+    origin: Option<Point>,
+}
+
+impl CellBox {
+    fn new(child: Box<dyn Element>, width: f32) -> Self {
+        Self { child, width, size: None, origin: None }
+    }
+}
+
+impl Element for CellBox {
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        ctx: &mut LayoutContext,
+        app: &AppContext,
+    ) -> Vector2F {
+        // ⛔ **가로 한도를 안 내려보낸다** — 내려보내는 순간 `Text` 가 그 값으로 페이드한다.
+        //    세로는 부모 것 그대로다.
+        let inner = SizeConstraint::new(
+            vec2f(0., constraint.min.y()),
+            vec2f(f32::INFINITY, constraint.max.y()),
+        );
+        let child = self.child.layout(inner, ctx, app);
+        // 아이가 얼마나 넓든 이 칸이 격자에서 차지하는 폭은 우리가 정한 값이다.
+        let size = vec2f(self.width, child.y());
+        self.size = Some(size);
+        size
+    }
+
+    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &AppContext) {
+        self.child.after_layout(ctx, app);
+    }
+
+    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
+        self.origin = Some(Point::from_vec2f(origin, ctx.scene.z_index()));
+        self.child.paint(origin, ctx, app);
+    }
+
+    fn size(&self) -> Option<Vector2F> {
+        self.size
+    }
+
+    fn origin(&self) -> Option<Point> {
+        self.origin
+    }
+
+    fn dispatch_event(
+        &mut self,
+        event: &DispatchedEvent,
+        ctx: &mut EventContext,
+        app: &AppContext,
+    ) -> bool {
+        self.child.dispatch_event(event, ctx, app)
+    }
+}
 
 /// 판의 **가로 크기를 못박는** 상자 — 안이 무엇을 그리든 이 상자의 폭은 준 값이다.
 ///
@@ -8850,6 +9365,17 @@ impl Element for PanelBox {
     fn debug_text_content(&self) -> Option<String> {
         self.child.debug_text_content()
     }
+}
+
+/// 스레드에서 돌린 `scp` 한 번의 결과 — 원격 탭에 붙일 **그림의 경로**(pytmux-159).
+///
+/// 성공·실패 **양쪽 다 붙인다**(정본과 같다). 실패했다고 아무것도 안 붙이면 사용자는
+/// 스크린샷을 다시 찍는 수밖에 없는데, 로컬 경로라도 손에 쥐면 스스로 옮길 수 있다 —
+/// 다만 그것이 원격에서 안 열린다는 **경고와 함께** 준다.
+struct RemoteImage {
+    /// 붙일 경로. 성공이면 원격 자리, 실패면 이 상자의 자리다.
+    path: String,
+    ok: bool,
 }
 
 /// 스레드에서 돌린 셸 명령의 결과.

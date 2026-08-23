@@ -297,12 +297,18 @@ static CONTRACTS: &[Contract] = &[
          처리로 흘러 **아무 일도 안 한다**(판이 그대로 있다) — `press_list` 수정으로 \
          우리도 이제 같다(종전엔 아무 키나 닫았다)",
     ),
+    c(
+        Screen::Autoresume,
+        Closes,
+        Same("clientconn.py open_autoresume_info 직접 대조 — 정본은 범용 InfoScreen 을 hide_key=a 로 띄운다. 곧 `a` 는 뒤집고 닫고, 그 밖의 키는 InfoScreen 규약대로 닫힌다(_NAV_KEYS 넷 + Home/End 만 스크롤). 우리도 같은 갈래다"),
+        "자동 재개 설명 + 켜고 끄기(pytmux-183). 좌하단 `[자동재개]` 표식을 눌러 연다 — `a` 가 뒤집고 닫는 것까지 정본과 같다",
+    ),
 ];
 
 /// 지금 점수. **양방향 래칫**이다 — 늘어도 줄어도 여기를 고쳐야 한다(`parity.rs` 규칙 2).
 ///
 /// `(같다, 허용된 갈림, 결함, 못 쟀다)`.
-static SCORE: (usize, usize, usize, usize) = (11, 2, 1, 10);
+static SCORE: (usize, usize, usize, usize) = (12, 2, 1, 10);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4).
 ///
@@ -356,6 +362,7 @@ fn opened(screen: Screen) -> Screens {
         | Screen::Version
         | Screen::ShellOutput
         | Screen::RestartCheck
+        | Screen::Autoresume
         | Screen::MergeRemote
         | Screen::Layouts
         | Screen::Notices
@@ -515,6 +522,49 @@ fn an_unmeasured_row_is_a_debt_not_a_default() {
          ⛔ **지금 있는 것을 다 못 쟀다는 사실은 새 화면을 안 재도 된다는 뜻이 아니다.** \
          새 판을 더했으면 정본의 같은 자리를 눌러 보고 「같다/허용/결함」 중 하나로 적는다 \
          (pytmux-185). 옛 줄을 쟀으면 `UNMEASURED_CEILING` 도 함께 내릴 것."
+    );
+}
+
+/// 붙여넣기가 **어디로 가나** — `paste-clipboard` 의 계약 절반(pytmux-159·364).
+///
+/// # 왜 여기인가
+///
+/// 이 축이 재는 질문(「같게 구나」)의 붙여넣기판이다. 정본은 작성창이 떠 있으면
+/// `_active_compose_screen` 으로 라우팅해 **작성 버퍼**에 넣고, 없으면 활성 패널에 넣는다
+/// (`client.py::_do_paste_clipboard`). 갈리면 증상이 고약하다 — 팝업을 띄운 채 붙여넣은
+/// 글이 **뒤 셸에 찍힌다**.
+///
+/// ⚠ **키 판정(`Ctrl+V` 가 붙여넣기인가)은 여기서 못 잰다.** 그 판정은 창 계층 위에 있어
+/// (`gui::SessionView::is_paste_chord`) 이 크레이트에서 안 보인다 — 그쪽은 `gui` 의
+/// `plain_ctrl_v_asks_for_a_paste_just_like_the_canon` 이 순수 함수로 잰다. 여기서 재는
+/// 것은 **판정 뒤의 라우팅**이고, 둘이 합쳐야 한 계약이다.
+#[test]
+fn a_paste_lands_in_the_compose_buffer_while_it_is_open() {
+    // ⑴ 작성창이 떠 있으면 그 버퍼다.
+    let mut screens = opened(Screen::Compose);
+    assert!(
+        screens.paste_into_compose("붙인 글"),
+        "작성창이 떠 있는데 붙여넣기가 그 버퍼로 안 갔다 — 그 글은 뒤 셸에 찍힌다"
+    );
+    assert!(
+        screens.editor().map(|e| e.text()).unwrap_or_default().contains("붙인 글"),
+        "작성창이 받았다고 했는데 버퍼에 없다"
+    );
+
+    // ⑵ 팔레트가 **작성창 위에** 떠 있어도 작성창이다(정본은 스택 어디서든 찾아 넣는다 —
+    //    `esc :` 로 팔레트를 열고 `paste-clipboard` 를 치는 그 동선이 요점이다).
+    screens.open_palette();
+    assert_eq!(screens.top(), Some(Screen::Commands));
+    assert!(
+        screens.paste_into_compose("둘째"),
+        "팔레트가 위에 떠 있다고 붙여넣기가 작성창을 놓쳤다"
+    );
+
+    // ⑶ 작성창이 없으면 **화면이 안 받는다** — 그래야 뷰가 패널로 보낸다.
+    let mut none = Screens::default();
+    assert!(
+        !none.paste_into_compose("패널로 갈 글"),
+        "작성창이 없는데 화면이 붙여넣기를 삼켰다 — 그러면 패널에 아무것도 안 들어간다"
     );
 }
 

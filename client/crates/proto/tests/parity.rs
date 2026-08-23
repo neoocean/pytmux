@@ -98,7 +98,7 @@ static COMMANDS: &[Item] = &[
     i(
         "commands",
         Done,
-        "팔레트(86/87 + 파이썬 설명·타이핑 필터) — paste-clipboard 만 밖(뷰별 능력, every_python_command_is_in_the_palette 의 예외 목록). 종전 사유의 25개는 낡은 수였다",
+        "팔레트(87/88 + 파이썬 설명·타이핑 필터) — monitor-bell 만 밖(§10-21ⓜ 로 화면에서 감춘 것이지 못 하는 것이 아니다). paste-clipboard 는 2026-08-23 에 들어왔다(pytmux-363)",
     ),
     i("detach-client", Done, "prefix d — 창을 닫는다"),
     i("display-message", Done, "팔레트 → 알림 이력에 남는다"),
@@ -134,7 +134,7 @@ static COMMANDS: &[Item] = &[
     i("next-layout", Done, "prefix Space"),
     i("next-tab", Done, "prefix n · esc j / esc down"),
     i("paste-buffer", Done, "prefix ] (맨 앞 버퍼) · 번호 선택은 G3"),
-    i("paste-clipboard", Done, "GUI Ctrl+Shift+V · TUI bracketed paste"),
+    i("paste-clipboard", Done, "팔레트 · Ctrl+V(정본과 같다) · Cmd/Super+V · Ctrl+Shift+V — 글자는 그대로, 그림은 임시 파일 경로로(정본 계약)"),
     i("pin-tab", Done, "팔레트 - 켜기(뒤집기 아님)"),
     i("pin-toggle", Done, "prefix P"),
     i("pipe-pane", Done, "팔레트 → 명령 입력(비우면 끄기)"),
@@ -418,14 +418,20 @@ static SCORE: &[(&str, usize, usize)] = &[
 /// 픽스처의 명령 전부가 팔레트에 실려 있는가 — `commands`/`list-commands` 의 Done 을
 /// 지키는 게이트다(파이썬이 명령을 늘리면 팔레트가 따라잡을 때까지 여기가 운다).
 ///
-/// 예외: `monitor-bell` 과 `paste-clipboard` 는 뷰별 능력이다.
-/// - `monitor-bell`: **사용자 결정으로 화면에서 감췄다**(§10-21ⓜ — "당장은 지원하지 않겠다").
-///   못 하는 것이 아니라 **입구를 닫은** 것이다.
-/// - `paste-clipboard`: **Ctrl+Shift+V 단축키가 주 입구**다. 팔레트에는 없지만 기능은 동작한다
-///   (GUI 에서 클립보드 텍스트·이미지를 붙여넣을 수 있다).
+/// 예외는 **하나**다 — `monitor-bell` 은 **사용자 결정으로 화면에서 감췄다**
+/// (§10-21ⓜ — "당장은 지원하지 않겠다"). 못 하는 것이 아니라 **입구를 닫은** 것이다.
+///
+/// ★ **`paste-clipboard` 는 2026-08-23 에 이 목록에서 나갔다**(pytmux-159·363·364).
+///   여기 「Ctrl+Shift+V 가 주 입구라 팔레트에는 없어도 된다」고 적혀 있었는데, 그 문장이
+///   면제해 준 것은 **뷰별 능력이 아니라 결함 셋**이었다:
+///   ⑴ 단축키를 모르는 사람에게는 기능이 없는 것과 같았고(실제로 그렇게 제보가 왔다),
+///   ⑵ 정본이 정한 「`paste` 의 첫 후보는 클립보드」가 GUI 에서 뒤집혔고,
+///   ⑶ 사유문이 말하던 **이미지**는 CL 71667 에 지워진 뒤 트리에 없었다.
+///   ⇒ 예외 목록에 이름을 넣는 것은 **재는 것을 멈추는 일**이다. 사유가 「뷰별 능력」이
+///   아니면 넣지 않는다.
 #[test]
 fn every_python_command_is_in_the_palette() {
-    const NOT_IN_PALETTE: &[&str] = &["monitor-bell", "paste-clipboard"];
+    const NOT_IN_PALETTE: &[&str] = &["monitor-bell"];
     let have: BTreeSet<&str> = base::PALETTE
         .iter()
         .flat_map(|e| [e.name, e.name.split(' ').next().unwrap_or(e.name)])

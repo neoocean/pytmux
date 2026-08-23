@@ -48,8 +48,13 @@ pub enum FrameError {
     #[error("{}", base::i18n::t("연결이 닫혔다"))]
     Closed,
     /// 광고된 길이가 상한을 넘었다. 읽지 않고 끊는다.
-    #[error("{}", err_too_large(.advertised, .limit))]
-    TooLarge { advertised: usize, limit: usize },
+    ///
+    /// `header` 는 **길이로 읽은 그 4바이트**다(pytmux-171). 스트림이 어긋나면 이 자리에
+    /// 오는 것은 길이가 아니라 **본문 글자**이고, 그때 사용자에게 보이는 것은
+    /// `1684217948 바이트` 같은 뜻 모를 수다 — 제보자가 그 수를 손으로 16진수로 바꿔
+    /// `dc \` 라는 아스키를 알아냈다. 그 한 걸음을 오류가 스스로 하게 한다.
+    #[error("{}", err_too_large(.advertised, .limit, .header))]
+    TooLarge { advertised: usize, limit: usize, header: [u8; 4] },
     /// 프레임을 시작해 놓고 나머지가 [`PARTIAL_FRAME_PATIENCE`] 안에 안 왔다.
     ///
     /// 끊긴 것도(그건 [`Closed`](FrameError::Closed)) 없는 것도 아니라 **반만 온**
@@ -63,14 +68,37 @@ pub enum FrameError {
     Decode(#[from] serde_json::Error),
 }
 
-fn err_too_large(advertised: &usize, limit: &usize) -> String {
-    base::i18n::tf(
+fn err_too_large(advertised: &usize, limit: &usize, header: &[u8; 4]) -> String {
+    let mut out = base::i18n::tf(
         "프레임이 너무 크다: {advertised} 바이트 (상한 {limit})",
         &[
             ("advertised", advertised.to_string().as_str()),
             ("limit", limit.to_string().as_str()),
         ],
-    )
+    );
+    // ★ 길이 자리에 **글자**가 왔으면 그렇다고 말한다(pytmux-171). 그 수를 손으로
+    //   16진수·아스키로 바꿔 보는 일을 오류가 대신한다 — 그 한 걸음이 「알 수 없는 수」와
+    //   「스트림이 어긋났고 여기 이 글자를 길이로 읽었다」를 가른다.
+    if let Some(text) = printable_ascii(header) {
+        out.push(' ');
+        out.push_str(&base::i18n::tf(
+            "— 길이 자리에 글자가 왔다: {text} (스트림이 어긋났다)",
+            &[("text", text.as_str())],
+        ));
+    }
+    out
+}
+
+/// 네 바이트가 **전부 읽을 수 있는 아스키**면 그 글자. 아니면 `None`.
+///
+/// 제어문자·비아스키를 빼는 이유: 진짜 큰 길이(예: 손상된 거대 프레임)까지 글자로
+/// 보여 주면 그 안내가 거짓 단서가 된다. 여기서 말하고 싶은 것은 「본문이 길이 자리에
+/// 왔다」이고, 그 경우는 대개 인쇄 가능한 글자다.
+fn printable_ascii(bytes: &[u8; 4]) -> Option<String> {
+    bytes
+        .iter()
+        .all(|b| (0x20..0x7f).contains(b))
+        .then(|| String::from_utf8_lossy(bytes).into_owned())
 }
 
 fn err_stalled(got: &usize, want: &usize) -> String {
@@ -159,6 +187,7 @@ pub fn read_frame<R: Read>(reader: &mut R, limit: usize) -> Result<serde_json::V
         return Err(FrameError::TooLarge {
             advertised,
             limit,
+            header,
         });
     }
     let mut payload = vec![0u8; advertised];
@@ -176,6 +205,9 @@ pub fn write_frame<W: Write, T: serde::Serialize>(
         return Err(FrameError::TooLarge {
             advertised: payload.len(),
             limit: MAX_FRAME,
+            // 우리가 만든 프레임이라 길이 자리는 늘 진짜 길이다 — 글자 단서를 붙일
+            // 일이 없다(`printable_ascii` 가 0 바이트를 안 읽을 수 있다고 판정한다).
+            header: [0; 4],
         });
     }
     let len = u32::try_from(payload.len()).expect("MAX_FRAME 이 u32 안이다");
@@ -230,12 +262,39 @@ mod tests {
         let wire = u32::MAX.to_be_bytes().to_vec();
         let err = read_frame(&mut wire.as_slice(), MAX_FRAME).unwrap_err();
         match err {
-            FrameError::TooLarge { advertised, limit } => {
+            FrameError::TooLarge { advertised, limit, .. } => {
                 assert_eq!(advertised, u32::MAX as usize);
                 assert_eq!(limit, MAX_FRAME);
             }
             other => panic!("상한 초과로 안 걸렀다: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_length_that_is_really_text_names_the_characters() {
+        // ★ **제보의 그 바이트다**(pytmux-171): 화면에는 `1684217948 바이트` 라고만 떴고,
+        //   제보자가 손으로 `0x6463205c` = 아스키 `dc \` 임을 알아내고서야 「길이 자리에
+        //   본문이 왔다」가 드러났다. 그 한 걸음을 오류가 스스로 하게 한다.
+        let wire = b"dc \\";
+        let err = read_frame(&mut wire.as_slice(), MAX_FRAME).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            said.contains("dc \\"),
+            "길이로 읽은 글자를 안 말한다 — 그 수는 사람에게 아무 뜻이 없다: {said}"
+        );
+    }
+
+    #[test]
+    fn a_genuinely_huge_length_does_not_invent_a_text_clue() {
+        // ⛔ 진짜로 큰 길이(제어문자가 섞인 바이트)까지 글자로 보여 주면 그 안내가
+        //    **거짓 단서**가 된다 — 없는 「어긋남」을 있다고 말하는 셈이다.
+        let wire = [0xff, 0xff, 0xff, 0xff];
+        let err = read_frame(&mut wire.as_slice(), MAX_FRAME).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            !said.contains("길이 자리에 글자") && !said.contains("where the length"),
+            "글자가 아닌 바이트에 글자 단서를 붙였다: {said}"
+        );
     }
 
     #[test]

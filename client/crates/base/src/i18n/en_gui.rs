@@ -53,6 +53,31 @@ pub static EN: &[(&str, &str)] = &[
     ("설정 형식이 아니다: {line}", "Not a config line: {line}"),
     ("바인딩을 저장하지 못했다: {err}", "Could not save the binding: {err}"),
     ("읽을 수 없는 키 표기: {answer}", "Unreadable key notation: {answer}"),
+    // ── session_view.rs · OS 클립보드 붙여넣기(pytmux-159·363·364) ──
+    // ⛔ 영어는 **정본이 이미 적은 것 그대로**다(`pytmuxlib/i18n.py` 의 `msg.paste_*`
+    //    ·`msg.clipboard_empty`). 같은 일이 두 클라에서 다른 말로 보고되면 그것도 갈림이다.
+    ("클립보드 이미지 → 경로 붙여넣기: {path}", "Clipboard image → pasted path: {path}"),
+    ("이미지 붙여넣기 → 내부 앱(Alt+V)", "Image paste → inner app (Alt+V)"),
+    (
+        "작성창엔 이미지를 넣을 수 없음(경로 저장 실패)",
+        "Can't add image to compose (path save failed)",
+    ),
+    ("클립보드가 비어있거나 읽을 수 없음", "Clipboard is empty or unreadable"),
+    // ── session_view.rs · 오버레이(시계·달력)를 아직 못 켜는 자리(pytmux-366) ──
+    ("아직 화면을 받지 못했다 — 잠시 뒤 다시", "No frame yet — try again in a moment"),
+    // 원격 탭 — 파일은 이 상자에 생기므로 `scp` 로 옮긴 뒤 저쪽 경로를 붙인다.
+    // ⚠ 「중…」 줄만 정본과 다르다: 정본은 `(ESC 로 빠져나가기)` 를 붙이는데 그건 그동안
+    //   키를 막기 때문이다(`_pasting` 가드). 여기서는 스레드로 나가 아무것도 안 막으므로
+    //   빠져나갈 것이 없다 — 없는 길을 안내하지 않는다.
+    ("클립보드 붙여넣기 중… 잠시만요", "Pasting clipboard… please wait"),
+    (
+        "클립보드 이미지 → 원격 전송 후 경로 붙여넣기: {path}",
+        "Clipboard image → transferred to remote, pasted path: {path}",
+    ),
+    (
+        "이미지 원격 전송 실패(scp 오류) — 로컬 경로 붙여넣기: {path}",
+        "Image remote transfer failed (scp error) — pasted local path: {path}",
+    ),
     // ── session_view.rs · 원격 탭 합치기(G8n) ──
     ("지금 탭이 원격이 아니라 합칠 것이 없다", "This tab is not remote — nothing to merge"),
     ("같은 원격에 다른 탭이 없다", "No other tab on the same remote"),

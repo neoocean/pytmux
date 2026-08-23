@@ -1812,6 +1812,13 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         // 자리는 탭바를 봐야 안다 — `action_to_command_with_tabs` 가 채운다.
         Action::TogglePin => Some(Command::TogglePin { index: None }),
         Action::PasteBuffer => Some(Command::PasteBuffer { index: 0 }),
+        // ⛔ **여기서 명령이 안 난다** — 무엇을 붙일지는 클립보드를 읽어야 알고, 읽는 데는
+        // 창 문맥이 필요하다(글자면 그대로, 그림이면 임시 파일 경로). 뷰가 읽은 뒤에야
+        // `paste` 하나가 만들어진다 — 작성창(`ShowCompose`)과 **같은 자리**다.
+        Action::PasteClipboard => None,
+        // 판을 여는 것은 **클라 안의 일**이다 — 뒤집는 명령(`set_autoresume`)은 그 판
+        // 안에서 `a` 를 눌렀을 때 난다(`ToggleAutoresume` 이 이미 그 명령을 든다).
+        Action::ShowAutoresume => None,
         // 화면을 여는 것은 **클라 안의 일**이다 — 서버는 이 클라가 무엇을 덮어 보이는지
         // 알 필요가 없다(플랜 화면과 같은 자리).
         Action::ShowKeys | Action::ShowTabs => None,

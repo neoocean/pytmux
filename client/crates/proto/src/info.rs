@@ -255,6 +255,42 @@ fn strip_p4(version: &str) -> String {
 ///
 /// `(안전한가, 줄들)` 을 함께 돌려주는 이유: 뷰가 단추를 **켤지 끌지**를 같은 판정으로
 /// 정해야 한다. 뷰가 다시 재면 판의 글과 단추가 어긋날 수 있다.
+/// 자동 재개 판의 줄들 — **정본 `open_autoresume_info` 와 같은 글**(pytmux-183).
+///
+/// # 왜 뷰가 아니라 여기서 짓나
+///
+/// 이 저장소의 규율이다(`restart_check_lines` 와 같은 자리): 줄을 짓는 것은 판정이라
+/// proto 가 하고 뷰는 그리기만 한다. 뷰가 지으면 두 클라가 같은 상태를 다르게 설명하기
+/// 시작한다 — 그리고 그 갈림은 **판을 열어 보기 전에는 아무도 모른다**.
+///
+/// 글은 정본 카탈로그의 `ar.*` 를 그대로 옮긴 것이다(`pytmuxlib/i18n.py`).
+pub fn autoresume_lines(state: &SessionState) -> Vec<String> {
+    use base::i18n::t;
+    let on = state.flags().autoresume;
+    // ⚠ **끝값 둘을 문장 통째로 둔다.** 상태말(`켜짐`)과 방향말(`끄기`)을 인자로 끼우면
+    //    ⑴ 그 낱말만 한국어로 남고(이 저장소가 2026-08-02p 에 배운 자리 — `en_gui.rs`
+    //    머리말이 같은 규칙을 적어 두었다) ⑵ `켜기`·`끄기` 는 이미 카탈로그에 **다른
+    //    영어**(`On`/`Off`, 홀로 서는 라벨)로 들어 있어 키가 부딪힌다. 줄이 둘로 늘어도
+    //    그쪽이 옳다.
+    vec![
+        if on {
+            t("자동 재개(AR)이 현재 켜짐(ON) 입니다.").to_owned()
+        } else {
+            t("자동 재개(AR)이 현재 꺼짐(OFF) 입니다.").to_owned()
+        },
+        String::new(),
+        t("• Claude 가 5시간 사용 한도로 멈추면, 리셋 시각 직후 자동으로").to_owned(),
+        t("  작업을 이어갑니다('continue' 입력을 그 패널에 주입).").to_owned(),
+        t("• 활성 패널 기준으로 켜고 끕니다(단축키 prefix+R 과 동일).").to_owned(),
+        String::new(),
+        if on {
+            t("[a] AR 끄기   ·   닫기: Esc 또는 바깥 클릭.").to_owned()
+        } else {
+            t("[a] AR 켜기   ·   닫기: Esc 또는 바깥 클릭.").to_owned()
+        },
+    ]
+}
+
 pub fn restart_check_lines(state: &SessionState) -> (bool, Vec<String>) {
     use base::restart;
     if !state.has_restart_check() {

@@ -835,32 +835,42 @@ impl StatusFlags {
     /// [`tab_badges`](Self::tab_badges) + [`monitor_badges`](Self::monitor_badges)
     /// 순서 그대로다 — 자리를 안 가르는 뷰(TUI)는 이걸 그대로 쓴다.
     pub fn badges(&self) -> Vec<&'static str> {
-        let mut out = self.tab_badges();
+        let mut out: Vec<&'static str> =
+            self.tab_badges().into_iter().map(|b| b.label()).collect();
         out.extend(self.monitor_badges());
         out
     }
 
-    /// 탭바 앞에 붙는 표식 — 모르고 두면 **입력·동작이 달라지는** 상태들(줌·동기화·
-    /// 자동재개·프롬프트클리어). 눈앞(위쪽)에 있어야 하는 부류다(패리티 G6).
-    pub fn tab_badges(&self) -> Vec<&'static str> {
+    /// **시스템 표식** — 모르고 두면 입력·동작이 달라지는 상태들(줌·동기화·자동재개·
+    /// 프롬프트클리어).
+    ///
+    /// ★ **이름이 「탭」인 것은 옛 자리 때문이다**(pytmux-183). 종전에는 탭바 앞에
+    /// 붙었고 근거는 *"눈앞(위쪽)에 있어야 하는 부류"* 였다. 목표는 지금도 옳지만
+    /// **정본은 그 목표를 좌하단에서 이룬다** — 그래서 자리를 정본에 맞췄다. 이름은
+    /// 호출부가 여럿이라 그대로 두되, 뜻은 「시스템 표식」이다.
+    ///
+    /// 낱말이 아니라 **뜻**을 돌려준다([`SysBadge`]) — 뷰가 자동재개 칩에만 클릭을
+    /// 붙여야 하는데, 그 판정을 번역된 글자로 하면 로케일이 바뀌는 순간 조용히 틀린다.
+    pub fn tab_badges(&self) -> Vec<base::chrome::SysBadge> {
+        use base::chrome::SysBadge;
         let mut out = Vec::new();
         if self.zoomed {
-            out.push(t("[줌]"));
+            out.push(SysBadge::Zoom);
         }
         // ★ 동기화는 **입력이 복제되는 상태**다. 모르고 치면 모든 패널에서 같은 명령이
         // 돈다 — 표식 중 가장 위험한 것이라 항상 보인다.
         if self.sync {
-            out.push(t("[동기화]"));
+            out.push(SysBadge::Sync);
         }
         // ★ 자동재개는 **꺼져 있을 때가 기본**이라, 켜져 있다는 사실이 보여야 한다 —
         // 켜 두면 토큰 한도에 걸린 뒤 클라 없이도 서버가 대화를 이어 붙인다. 모르고
         // 켜 둔 채 자리를 비우면 의도 없이 진행되는 셈이라 동기화와 같은 부류다.
         if self.autoresume {
-            out.push(t("[자동재개]"));
+            out.push(SysBadge::AutoResume);
         }
         // 자동재개와 같은 이유다 — 켜 두면 완료마다 패널이 문서화+`/clear` 를 돌린다.
         if self.prompt_clear {
-            out.push(t("[프롬프트클리어]"));
+            out.push(SysBadge::PromptClear);
         }
         out
     }
@@ -2101,9 +2111,6 @@ impl SessionState {
     pub fn badges(&self) -> Vec<crate::Badge> {
         use crate::Badge;
         let mut out = Vec::new();
-        if self.notices.len() > 0 {
-            out.push(Badge::Notices);
-        }
         // ★ **`서버`·`시계`·`달력` 은 여기 없다**(제보 §10-21ⓑ, 2026-08-02).
         //
         // 제보: *"왼쪽 하단의 `Server` `Clock` `Calendar` 표시가 없어야 한다 — 오른쪽
@@ -2124,6 +2131,17 @@ impl SessionState {
         // 자리만 차지한다.
         if self.touch_scroll {
             out.push(Badge::TouchScroll);
+        }
+        // ★ **알림이 마지막이다**(pytmux-367). 이 목록의 차례는 크롬 포커스(`e_down`)가
+        //   도는 차례이고, 그것은 **눈에 보이는 왼→오** 여야 한다. 알림 배지는 정본과
+        //   같이 **우측 무리의 머리**(host·시각·날짜 앞)에 그려지므로, 왼쪽 무리인
+        //   `⇕` 뒤에 온다. 종전에는 이 줄이 맨 앞이었고 그래서 GUI 는 알림을 왼쪽
+        //   무리에 그렸다 — 제보가 지목한 그 갈림이다.
+        //
+        // ⚠ 자리를 옮기는 것은 뷰지만 **차례를 정하는 것은 여기**다: 뷰가 그리는 무리와
+        //   포커스가 도는 차례가 갈리면 탭 순서가 화면과 어긋난다.
+        if self.notices.len() > 0 {
+            out.push(Badge::Notices);
         }
         out
     }

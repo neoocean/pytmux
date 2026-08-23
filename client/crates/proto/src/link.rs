@@ -76,6 +76,9 @@ impl ServerLink {
                         }
                     }
                     Err(e) => {
+                        // ⚠ 로그는 **뷰가 남긴다**(pytmux-171 · `handle_ended`). 이
+                        //   크레이트는 프로토콜이라 `log` 의존이 없고, 진단을 어디에
+                        //   남길지는 앱의 정책이다.
                         let _ = tx.send(LinkEvent::Ended(e.to_string()));
                         break;
                     }
