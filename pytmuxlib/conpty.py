@@ -207,6 +207,33 @@ def doubled_wide_chars(sent: str, seen: str) -> list:
     return out
 
 
+def reemit_verdict(sent: str, seen: str):
+    """호스트가 **다시 뱉은** 글을 «셋»으로 가른다 — 겹쳤나 · 안 겹쳤나 · **못 쟀나**.
+
+    pytmux/pytmux-208 진단 전용. [`doubled_wide_chars`](doubled_wide_chars) 는 목록
+    하나만 돌려주므로 **빈 목록이 두 가지 뜻**을 진다: 「겹치지 않았다」와 「애초에 볼
+    것이 안 왔다」. 재방출을 요구하는 자극(리사이즈 등)에서는 그 둘이 갈려야 한다 —
+    호스트가 아무것도 다시 안 뱉었는데 「겹침 0」이라 적으면 그것이 곧 **못 잰 것을
+    초록으로 위장하는** 자리다(저장소 규율).
+
+    ⚠ 이 갈래가 필요해진 근거는 실측이다(2026-08-23 · GHA 32578439033). 라이브
+    하네스 `[4]`(echo 왕복)가 **번들·시스템 두 호스트 × 파이썬 셋 = 여섯 회차 전부**
+    「겹친 글자 0개」를 냈다. 그 0 은 「고쳤다」가 아니라 **「이 자극에서는 안 났다」**이고,
+    그 사실은 `[4]` 의 주석이 미리 적어 둔 그대로다. 다음 자극(재방출)에서 같은 0 을
+    또 「겹침 없음」이라고만 적으면 두 번째 회차도 답을 안 준다.
+
+    돌려주는 것: `("unmeasured" | "clean" | "doubled", 겹친 글자들)`.
+    """
+    from .cellwidth import char_cells   # 지연 import(`doubled_wide_chars` 와 같은 규약)
+    wide = [ch for ch in dict.fromkeys(sent) if char_cells(ch) == 2]
+    if not wide:
+        return ("unmeasured", [])       # 보낸 글에 잴 대상이 없다
+    if not any(ch in seen for ch in wide):
+        return ("unmeasured", [])       # 그 글이 되돌아오지 않았다 = 재방출이 없었다
+    dup = doubled_wide_chars(sent, seen)
+    return ("doubled" if dup else "clean", dup)
+
+
 if IS_WINDOWS:
     _HANDLE = wintypes.HANDLE
     _HPCON = wintypes.HANDLE

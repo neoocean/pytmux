@@ -189,6 +189,51 @@ def main():
                % (len(dup), (" [%s]" % "".join(dup)) if dup else "",
                   "겹침 없음" if not dup else "겹침 재현"))
 
+        # [5] **리페인트 재방출**(pytmux/pytmux-208) — [4] 가 답을 «안» 준 이유를 겨눈다.
+        #
+        # ☠ 2026-08-23 실측(GHA 32578439033): [4] 는 번들·시스템 두 호스트 × 파이썬 셋 =
+        #   **여섯 회차 전부** 「겹친 글자 0개」였다. 그러니 [4] 만으로는 A/B 가 두 호스트를
+        #   **가르지 못한다.** 그 결과는 [4] 자신의 주석이 미리 적어 둔 그대로다 — 제보 경로는
+        #   호스트가 **자기 텍스트 버퍼를 훑어 VT 로 다시 뱉는** 자리인데, echo 왕복은 글자가
+        #   들어온 «그대로» 지나가므로 그 자리를 한 번도 안 지난다.
+        #
+        # 그 자리를 지나게 하는 가장 싼 자극이 **리사이즈**다: 폭이 바뀌면 호스트는 버퍼를
+        # 칸 단위로 다시 훑어 화면을 재구성해 내보낸다. 폭 2 글자의 **뒤 칸**을 건너뛰지
+        # 않으면 정확히 제보 모양(`조조직직`)이 그 순간 나온다. 제보의 *"공백도 한 번 늘었다 ·
+        # 줄바꿈/재그리기 경계"* 도 같은 곳을 가리킨다.
+        #
+        # ⛔ **0 을 「겹침 없음」으로만 적지 않는다** — 호스트가 아무것도 다시 안 뱉었을 때도
+        #   0 이다. 그 둘을 `conpty.reemit_verdict` 가 셋으로 가른다(「못 쟀다」가 따로 있다).
+        # ⛔ 이 스텝은 **VERDICT 에 안 든다**(advisory) — 그리고 무슨 일이 나도 여기서 죽지
+        #   않는다. 죽으면 아래 VERDICT 줄이 통째로 안 찍혀 회차 전체가 판정 불능이 된다.
+        try:
+            chunks.clear()
+            pty.write(("echo %s\r\n" % _HANGUL_LINE).encode("utf-8"))
+            deadline = time.time() + 4
+            while time.time() < deadline:
+                if "관리됩니다" in b"".join(chunks).decode("utf-8", "replace"):
+                    break
+                time.sleep(0.2)
+            # 여기서부터가 «재방출»이다 — 앞의 echo 응답은 세지 않는다.
+            chunks.clear()
+            pty.resize(120, 50)
+            deadline = time.time() + 4
+            while time.time() < deadline:
+                if "관리됩니다" in b"".join(chunks).decode("utf-8", "replace"):
+                    break
+                time.sleep(0.2)
+            seen2 = b"".join(chunks).decode("utf-8", "replace")
+            state, dup2 = conpty.reemit_verdict(_HANGUL_LINE, seen2)
+            word = {"doubled": "겹침 재현", "clean": "겹침 없음",
+                    "unmeasured": "재방출을 못 받았다 — 못 쟀다(초록이 아니다)"}[state]
+            report("[5] 리페인트 재방출(pytmux-208): %d bytes · 겹친 글자 %d개%s  -> %s"
+                   " (advisory)"
+                   % (len(seen2), len(dup2),
+                      (" [%s]" % "".join(dup2)) if dup2 else "", word))
+            pty.resize(200, 50)
+        except Exception as exc:                      # noqa: BLE001 (진단 스텝)
+            report("[5] 리페인트 재방출(pytmux-208): 못 쟀다 — %r (advisory)" % (exc,))
+
         all_ok = ok_attach and ok_echo and ok_flood
         report("\nVERDICT: %s" % ("PASS" if all_ok else "FAIL"))
         return 0 if all_ok else 1

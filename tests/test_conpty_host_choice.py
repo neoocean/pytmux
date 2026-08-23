@@ -103,6 +103,74 @@ async def test_doubled_wide_chars_quiet_when_clean():
     assert conpty.doubled_wide_chars(sent, "C:\\> echo %s\r\n%s" % (sent, sent)) == []
 
 
+# ── 「겹침 0」과 「못 쟀다」를 가르는 자리 (pytmux/pytmux-208 · 2026-08-23) ─────────
+# ☠ **A/B 는 돌았고, 두 호스트를 못 갈랐다.** GHA 32578439033 의 리포트 여섯 장
+# (번들·시스템 × py3.11·3.12·3.13)이 전부 `[4] 겹친 글자 0개` 였다. 그 0 은 「고쳤다」가
+# 아니라 **「이 자극에서는 안 났다」**이고, `[4]` 자신의 주석이 그럴 수 있다고 미리 적어
+# 뒀다 — 제보 경로는 호스트가 **자기 버퍼를 훑어 다시 뱉는** 자리인데 echo 왕복은 그
+# 자리를 안 지난다.
+#
+# 그래서 하네스에 `[5] 리페인트 재방출`(리사이즈로 그 훑기를 강제한다)을 더했다. 그런데
+# 그 자극은 **아무것도 안 돌아올 수 있다** — 그때도 겹침은 0 이다. 두 0 을 같은 말로
+# 적으면 두 번째 회차도 답을 안 준다. `reemit_verdict` 가 그 둘을 가르고, 아래 셋이
+# 그 가름을 잰다.
+#
+# ⛔ 여기서 재는 것은 **판정 함수**다 — 리사이즈 자체는 Windows 에서만 나므로 이
+#    러너(macOS)가 못 잰다. 그 사실은 위 §계측 주석이 이미 지고 있다.
+
+async def test_reemit_verdict_separates_no_reemission_from_no_overlap():
+    """☠ **「재방출이 없었다」를 「겹침 없음」으로 적지 않는다.**"""
+    sent = "이 Claude는 조직 보안 정책에 의해 관리됩니다."
+    # 호스트가 아무것도 다시 안 뱉었다 — 겹침도 0 이지만 그것은 **못 쟀다**다.
+    assert conpty.reemit_verdict(sent, "") == ("unmeasured", [])
+    # 프롬프트만 돌아왔다(폭 2 글자가 한 자도 없다) — 역시 못 쟀다.
+    assert conpty.reemit_verdict(sent, "C:\\Users\\me>") == ("unmeasured", [])
+
+
+async def test_reemit_verdict_says_clean_only_when_the_line_actually_came_back():
+    """그 줄이 **실제로 돌아왔고** 안 겹쳤을 때만 「clean」이다."""
+    sent = "이 Claude는 조직 보안 정책에 의해 관리됩니다."
+    assert conpty.reemit_verdict(sent, sent) == ("clean", [])
+
+
+async def test_reemit_verdict_reports_the_report_shape():
+    """제보 모양이 재방출에서 나오면 그 글자들과 함께 「doubled」다."""
+    sent = "이 Claude는 조직 보안 정책에 의해 관리됩니다."
+    seen = "이이 Claude는는 조조직직 보보안안 정정책책에 의의해해 관관리리됩됩니니다다."
+    state, dup = conpty.reemit_verdict(sent, seen)
+    assert state == "doubled", (state, dup)
+    for ch in ("조", "직", "보", "안"):
+        assert ch in dup, (ch, dup)
+
+
+async def test_the_harness_uses_the_three_way_verdict_not_a_bare_count():
+    """⛔ 하네스 `[5]` 가 **셋으로 가르는 그 함수**를 실제로 쓴다.
+
+    이 줄이 없으면 다음 사람이 `[5]` 를 `doubled_wide_chars` 로 «되돌려» 놓아도
+    아무도 안 운다 — 그 순간 「못 쟀다」가 다시 「겹침 없음」이 된다."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, "scripts", "validate_conpty.py"),
+               encoding="utf-8").read()
+    mark = "# [5] **리페인트 재방출**"
+    assert mark in src, "리페인트 자극 스텝이 사라졌다"
+    # ⛔ **그 스텝의 «몸통»만 본다.** 파일 전체에서 이름을 세면 «주석에 적힌 이름»이
+    #    걸려 되돌린 것을 초록으로 통과시킨다 — 이 시험을 지을 때 실제로 그렇게
+    #    빠져나갔다(변이 B 가 13/0 으로 통과했다). 자리를 좁히는 것이 그 고침이다.
+    # ⚠ 끝을 «VERDICT 라는 낱말»로 자르지 마라 — 그 스텝의 주석이 스스로 그 낱말을
+    #    쓴다("이 스텝은 VERDICT 에 안 든다"). 그렇게 자르면 몸통이 통째로 빠져 이
+    #    시험이 **언제나** 붉다(지을 때 실제로 그랬다). 자르는 자리는 그 줄을 찍는
+    #    «호출»이다.
+    tail_mark = 'report("\\nVERDICT'
+    assert tail_mark in src, "VERDICT 를 찍는 자리가 사라졌다"
+    body = src[src.index(mark):src.index(tail_mark)]
+    assert "reemit_verdict(" in body, "[5] 가 셋으로 가르는 판정을 안 부른다"
+    assert "doubled_wide_chars(" not in body, (
+        "[5] 가 맨 세기로 되돌아갔다 — 「못 쟀다」가 다시 「겹침 없음」이 된다")
+    # 그 스텝이 죽으면 VERDICT 줄이 통째로 안 찍힌다 — 반드시 감싸져 있어야 한다.
+    assert "except Exception" in body, (
+        "[5] 가 안 감싸져 있다 — 여기서 죽으면 회차가 판정 불능이 된다")
+
+
 # ── 이 실험을 «실제로 재는 자리» 가 살아 있나 (pytmux/pytmux-208) ────────────────
 # 위 시험들은 「기본이 무엇인가」를 못박는다. 그런데 이 뒤집기는 **실험**이라 기본을
 # 못박는 것만으로는 반쪽이다 — 답을 내는 것은 Windows 에서 도는 계측(`.github/workflows/
