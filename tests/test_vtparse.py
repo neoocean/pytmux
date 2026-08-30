@@ -399,3 +399,54 @@ async def test_sgr_params_from_raw_unit():
     assert _sgr_params_from_raw("58:2::1:2:3") is None     # 밑줄색 → 버림
     assert _sgr_params_from_raw("1;38:5:82;4") == [1, 38, 5, 82, 4]
     assert _sgr_params_from_raw("0") == [0]
+
+# ── 문자소 군집 (pytmux-407) ──────────────────────────────────────────────────
+async def test_a_variation_selector_does_not_swallow_the_rest_of_the_line():
+    """폭 0 글자 하나가 **그 줄의 나머지를 통째로 버리던** 자리(pytmux-407).
+
+    ⛔ 색 이야기가 아니라 **내용 손실**이다. 실측(2026-08-26) 그대로:
+    `|A⚠️B| tail` → `|A⚠` — 뒤따르는 멀쩡한 글자가 전부 사라졌다.
+
+    뿌리는 `unicodedata.combining()` 이 「결합 문자인가」가 아니라 **결합 «클래스»**를
+    돌려준다는 것이었다. 변이 선택자(U+FE0F)와 ZWJ(U+200D)는 클래스가 **0** 이라
+    그 갈래를 못 타고 `else: break` 로 떨어졌고, `break` 는 남은 데이터를 버린다.
+    """
+    from pytmuxlib.model import Pane
+
+    pane = Pane(-1, -1, 20, 3, vt_parser="native")
+    pane.feed("|A⚠️B| tail".encode("utf-8"))
+    line = pane._main.buffer[0]
+    text = pane._serialize_row(line, 20)[0][0]
+    assert "B| tail" in text, f"선택자 뒤가 잘렸다: {text!r}"
+    # 그리고 그 글자는 **앞 글자에 얹혀** 한 셀에 있다(칸을 안 먹는다).
+    assert line[2].data == "⚠️", repr(line[2].data)
+    assert line[3].data == "B", "선택자가 제 칸을 먹었다"
+
+
+async def test_an_unprintable_char_is_skipped_not_a_truncation():
+    """⛔ 대조군 — 못 찍는 글자 하나로도 줄을 버리면 안 된다.
+
+    폭이 음수인 글자는 얹히지도 않는다(범주가 표시·서식이 아니다). 그때도 **건너뛸 뿐**
+    스트림을 끊지 않는 것이 실제 단말의 손이다.
+    """
+    from pytmuxlib.model import Pane
+
+    pane = Pane(-1, -1, 20, 3, vt_parser="native")
+    pane.feed("abcd".encode("utf-8"))     # BEL 은 파서가 먹지만 폭도 없다
+    text = pane._serialize_row(pane._main.buffer[0], 20)[0][0]
+    assert "cd" in text, f"못 찍는 글자 뒤가 잘렸다: {text!r}"
+
+
+async def test_a_combining_accent_still_composes_the_way_it_always_did():
+    """⛔ 두 번째 대조군 — 종전에 되던 것(악센트 결합)이 그대로여야 한다.
+
+    범주로 판정을 바꾸면서 결합 클래스가 큰 글자(U+0301 = 230)를 놓치면, 이 슬라이스가
+    고친 것보다 많은 것을 깨뜨린 셈이 된다.
+    """
+    from pytmuxlib.model import Pane
+
+    pane = Pane(-1, -1, 20, 3, vt_parser="native")
+    pane.feed("éx".encode("utf-8"))
+    line = pane._main.buffer[0]
+    assert line[0].data == "é", repr(line[0].data)   # NFC 로 합쳐진다
+    assert line[1].data == "x", "악센트가 칸을 먹었다"

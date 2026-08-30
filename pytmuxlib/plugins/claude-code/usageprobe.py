@@ -218,6 +218,26 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     env["TERM"] = "xterm-256color"
     env.pop("PYTMUX", None)
     env.pop("LC_PYTMUX", None)
+    # ☠☠ **이 한 줄이 사용자 패널의 렌더러를 지킨다**(pytmux-414 · 실측 2026-08-27).
+    #   Claude Code 2.1.247 에는 *fullscreen boot canary* 가 있다 — fullscreen 으로 부팅하면
+    #   `~/.claude.json` 에 `fullscreenBootPending[pid]` 를 적고 **첫 프레임 + 10초**를
+    #   살아남아야 그 기록을 지운다. 기록이 남은 채 pid 가 죽어 있으면 다음 실행이
+    #   스트라이크 +1 로 세고, **2회**면 `fullscreenAutoDisabled` 를 써서 그 머신의
+    #   fullscreen 을 통째로 끈다(키 = 버전·hostname·platform).
+    #   ⇒ 이 프로브는 진짜 대화형 `claude` 를 띄웠다가 `finally: sess.kill()` 로
+    #     **강제 종료**한다(POSIX SIGKILL · Windows TerminateProcess). 어느 쪽도 자식의
+    #     `process.on("exit")` 훅을 못 돌리므로 죽은 pid 기록이 남는다. 프로브가
+    #     2~8분마다 도니까 스트라이크는 금방 2 가 되고, 그때부터 **사용자의** claude 패널이
+    #     classic 렌더러로 조용히 떨어진다(설정에 `"tui": "fullscreen"` 을 적어 두었어도).
+    #     실측: claude 설치 09:10 → 09:18:21 에 `strikes: 2` 도달(8분).
+    #   ★ 그래서 canary 를 «끄는» 것이 아니라 **애초에 안 무장시킨다** — 이 env 를 주면
+    #     진입경로가 `env_off` 가 되어 기록 자체가 안 생긴다. 프로브는 alt-screen 이
+    #     필요 없다(아래 스크래퍼가 `alt_hook=None` 이다).
+    #   ⛔ **`CLAUDE_CODE_NO_FLICKER=1` 로 대신하지 마라** — canary 는 같이 피하지만 자식이
+    #     fullscreen 으로 떠서 이 스크래퍼의 전제("2J+draw 로 단일 버퍼에 그린다")를 깬다.
+    #   ⚠ 이것이 alt-screen 처리 결함을 고치는 것이 아니다 — 회계(canary) 문제다.
+    #     반증으로 `CLAUDE_CODE_NO_FLICKER=1` 로 돌려도 `/usage` 파싱은 성공했다.
+    env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1"
     # Windows 는 PATH/PATHEXT 검색이 spawn 백엔드마다 다를 수 있어 미리 .exe 로 해석.
     argv = [cmd]
     if IS_WINDOWS:

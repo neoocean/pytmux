@@ -143,6 +143,14 @@ class _S:
     def _schedule_usage_refresh(self, *a):
         pass
 
+    def _notice_fullscreen_off(self):
+        """pytmux-415 ⑶ 이 세션 경계에서 부르는 알림 — 여기서는 무동작.
+
+        실물은 `~/.claude.json` 을 읽는데, 이 파일의 오라클은 **회계 경계**를 재지
+        알림을 안 잰다. 실물을 물리면 이 상자의 진짜 설정 파일에 따라 결과가
+        달라진다(= 기계마다 다른 시험). 알림 자체는
+        tests/test_claude_fullscreen_notice.py 가 전담한다."""
+
 
 def _frame(old_cl, new_cl, old_hdr):
     return sm._ScanFrame("txt", old_cl, new_cl, old_hdr)

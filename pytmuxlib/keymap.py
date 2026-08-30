@@ -178,9 +178,9 @@ def load_config(path: str | None = None) -> dict:
                                   #   (기본 3 — 짧은 클릭이 드래그로 오인되는 것 방지)
         set copy-unwrap on|off    # 마우스 복사 시 앱이 접은 줄바꿈·들여쓰기 펴기
                                   #   (기본 on — 긁어 복사한 명령을 바로 붙여넣기)
-        set touch-scroll on|off   # 탭으로 쓰는 스크롤 UI(기본 on) — 상태줄 ⇕ 배지
-                                  #   + 스크롤 모드 세로 스크롤바. 휠 이벤트를 앱에
-                                  #   안 넘기는 터미널(iPhone Blink 등)용
+        set set-clipboard on|off  # 패널 안 앱이 OSC 52 로 「이 글을 클립보드에」 한 것을
+                                  #   이 클라의 OS 클립보드에 반영(기본 on, tmux 동명)
+                                  #   끄면 ssh 너머 앱의 복사가 안 먹는다(pytmux-420)
         set ambiguous-width auto|narrow|wide  # East Asian Ambiguous 폭(→·— 등)
                                   #   auto(기본)=기동 시 단말 자동감지, wide=강제 2칸
                                   #   (CJK 로케일 단말), narrow=1칸
@@ -227,6 +227,11 @@ def load_config(path: str | None = None) -> dict:
                         # §2.4 좌드래그=pytmux 패널선택→자동복사(기본 on). off 면 앱 패스스루.
                         cfg["mouse_drag_copy"] = val.lower() in (
                             "on", "true", "1", "yes")
+                    elif opt in ("set-clipboard", "set_clipboard"):
+                        # 패널 안 앱의 OSC 52 를 이 클라의 OS 클립보드에 반영할지
+                        # (tmux 의 `set-clipboard` 자리 · 기본 on · pytmux-420 ①).
+                        cfg["set_clipboard"] = val.lower() in (
+                            "on", "true", "1", "yes")
                     elif opt in ("mouse-drag-threshold", "mouse_drag_threshold"):
                         # 드래그로 인정할 최소 이동(칸, 기본 3 — 클릭이 드래그로 오인돼
                         # 클립보드가 덮어써지던 문제). 클라가 1~20 클램프. 파싱 실패 무시.
@@ -234,12 +239,6 @@ def load_config(path: str | None = None) -> dict:
                             cfg["mouse_drag_threshold"] = int(val)
                         except ValueError:
                             pass
-                    elif opt in ("touch-scroll", "touch_scroll"):
-                        # 탭(터치)으로 쓰는 스크롤 UI — 상태줄 ⇕ 배지 + 스크롤 모드
-                        # 세로 스크롤바(기본 on). 휠을 앱에 안 넘기는 터미널
-                        # (iPhone Blink 등)용 경로라 데스크탑에선 꺼도 된다.
-                        cfg["touch_scroll"] = val.lower() in (
-                            "on", "true", "1", "yes")
                     elif opt in ("copy-unwrap", "copy_unwrap"):
                         # 마우스 복사 시 **앱이 접은** 줄바꿈·매달림 들여쓰기 펴기
                         # (기본 on) — Claude Code 의 `! …` 명령을 바로 붙여넣기 위함.
@@ -365,7 +364,7 @@ _OPT_ALIASES = {
     "mouse-drag-copy": ("mouse_drag_copy",),
     "mouse-drag-threshold": ("mouse_drag_threshold",),
     "copy-unwrap": ("copy_unwrap",),
-    "touch-scroll": ("touch_scroll",),
+    "set-clipboard": ("set_clipboard",),
     "strip-box-drawing": ("strip_box_drawing",),
     "lang": ("language",),
 }
@@ -482,5 +481,35 @@ def set_config_option(opt: str, value: str, path: str | None = None) -> str:
     tmp = target + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.writelines(lines)
-    os.replace(tmp, target)
+    _replace_with_retry(tmp, target)
     return target
+
+
+# Windows 에서 방금 쓴 파일을 바꿔치기할 때 몇 번 다시 해 볼까.
+#
+# ⛔ **한 번만 하면 설정이 조용히 안 저장된다**(실측 2026-08-24 · 이 상자):
+# `os.replace(config.tmp, config)` 가 `PermissionError: [WinError 5] Access is denied` 로
+# 죽었다 — 3회 중 1회. 원인은 우리 코드가 아니라 **다른 프로세스가 그 순간 그 파일을 열고
+# 있는 것**이다(보안 에이전트·인덱서가 갓 쓰인 파일을 훑는다. 이 상자에는 그런 방해의
+# 선례가 이미 있다 — `client/CLAUDE.md` 의 `CARGO_INCREMENTAL=0` 항목).
+#
+# 그 창은 밀리초 단위라 잠깐 기다리면 열린다. POSIX 에서는 `os.replace` 가 그 이유로
+# 실패하지 않으므로 이 되풀이는 사실상 Windows 전용이고, 실패가 없으면 첫 시도에서 끝난다.
+#
+# ⚠ 끝까지 안 되면 **삼킨다면 더 나쁘다** — 마지막 예외를 그대로 올려 보낸다(사용자에게는
+# 「설정을 저장하지 못했다」로 보여야 하고, 조용히 성공한 척하면 다음에 그 값이 없다).
+_REPLACE_TRIES = 6
+_REPLACE_WAIT = 0.05
+
+
+def _replace_with_retry(tmp: str, target: str) -> None:
+    """`os.replace(tmp, target)` — 남이 파일을 쥐고 있는 짧은 창을 넘긴다."""
+    import time
+    for attempt in range(_REPLACE_TRIES):
+        try:
+            os.replace(tmp, target)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_TRIES - 1:
+                raise
+            time.sleep(_REPLACE_WAIT)

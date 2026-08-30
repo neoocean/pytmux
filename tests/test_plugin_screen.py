@@ -16,6 +16,7 @@
 3. 스펙의 모양이 계약대로다(목록 줄의 `key` 가 뜻을 나르고, 클라가 그것을 되돌려준다).
 """
 
+import contextlib
 import harness  # noqa: F401  (경로 설정)
 from harness import server_only, teardown
 
@@ -167,6 +168,478 @@ async def test_an_empty_list_says_so_and_an_error_says_something_else():
         await teardown(srv, task, sock)
 
 
+class _TokenSrv:
+    """토큰 판들이 읽는 서버 표면만 가진 대역(집계 DB 없이도 판은 서야 한다)."""
+    _usage = {"session": {"pct": 42, "reset": "3:00 PM (KST)"},
+              "week_all": {"pct": 7, "reset": "Mon"}}
+    _usage_ts = None
+
+    def _tokens_db_conn(self):
+        return None
+
+    def _read_warn_history(self, limit=50):
+        import time
+        return [{"ts": time.time(), "kind": "loop", "n": 5, "badge": "repeat"},
+                {"ts": time.time() - 90000, "kind": "fmt", "n": 1, "badge": "format"}]
+
+
+async def test_every_token_panel_reaches_every_other_one():
+    """★ **전수 오라클** — 정본은 이 판들을 한 팝업의 **탭 띠**로 묶는다(기간·세션·머신·
+    한도·경고). GUI 는 판이 여러 개라 같은 뜻을 «잇는 줄»로 내는데, 판마다 손으로 적으면
+    새 판이 생길 때 **어떤 판에서는 안 보인다** — 그 조용한 갈림이 이 저장소가 반복해 물린
+    부류다(pytmux-35 의 죽은 줄). 그래서 표(`_HUB`) 하나를 두고 여기서 전수로 잰다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    sids = [sid for _k, _l, sid in ss._HUB]
+    assert len(sids) >= 4, sids
+    for key, _label, sid in ss._HUB:
+        spec = ss.open_spec(srv, None, sid if sid != "claude-usage-panel" else "limits")
+        assert spec is not None, f"{sid} 판이 안 열린다"
+        keys = [r["key"] for r in spec["rows"]]
+        # 자기 자신으로 가는 줄은 없다(눌러도 아무 일 없는 줄은 거짓말이다).
+        assert key not in keys, f"{sid} 가 자기 자신으로 가는 줄을 그렸다"
+        # 나머지 전부로 가는 줄이 있다.
+        for other_key, _l2, other_sid in ss._HUB:
+            if other_sid == sid:
+                continue
+            assert other_key in keys, f"{sid} → {other_sid} 로 가는 줄이 없다: {keys}"
+            do = "toggle" if sid == "claude-warn-history" else "apply"
+            got = ss.action(srv, None, {"id": sid, "do": do, "input": other_key})
+            assert got and got.get("id") == other_sid, (sid, other_key, got)
+
+
+async def test_every_token_panel_reaches_the_scenario_settings_and_that_panel_stays_put():
+    """⑥ 자동재개 설정 — 정본 탭 띠 **끝의 초록 배지**(`시나리오`)로 간다(pytmux-371 ⑥).
+
+    판(`claude-settings`)은 이미 있었는데 **가는 줄이 없었다** — GUI 사용자는 팔레트에
+    그 이름을 쳐야만 닿았다. 정본은 토큰 팝업의 어느 탭에서든 그 배지가 보인다.
+
+    ★ 그리고 이 줄은 **한 방향**이다. 정본에서 ⑥ 은 탭이 아니라 경고 탭 위에 겹쳐 뜨는
+    판이고 꼬리줄이 광고하는 조작이 `Enter toggle/cycle · ESC close` 뿐이다 — 탭 전환이
+    없다. 그래서 `_HUB`(서로 오가는 판들의 표)가 아니라 `_HUB_ACTIONS` 에 있고,
+    **대조군**으로 그 판에 잇는 줄이 안 생겼는지까지 잰다. 대칭으로 만들면 정본에 없는
+    이동을 GUI 가 갖게 되고 그것이 [[pytmux-185]] 가 결함으로 세는 갈림이다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    assert [sid for _k, _l, sid in ss._HUB_ACTIONS] == ["claude-settings"], ss._HUB_ACTIONS
+
+    # ⑴ 어느 판에서든 그 줄이 있고, 눌러야 실제로 그 판이 온다(죽은 줄 방지 · pytmux-35).
+    for _key, _label, sid in ss._HUB:
+        spec = ss.open_spec(srv, None, sid if sid != "claude-usage-panel" else "limits")
+        keys = [r["key"] for r in spec["rows"]]
+        assert ss._GOTO_SETTINGS in keys, f"{sid} → 시나리오 설정 줄이 없다: {keys}"
+        do = "toggle" if sid == "claude-warn-history" else "apply"
+        got = ss.action(srv, None, {"id": sid, "do": do, "input": ss._GOTO_SETTINGS})
+        assert got and got.get("id") == "claude-settings", (sid, got)
+
+    # ⑵ 대조군 — 그 판은 **어디로도 안 잇는다**(정본 꼬리줄에 탭 전환이 없다).
+    panel = ss.open_spec(srv, None, "claude-settings")
+    stray = [r["key"] for r in panel["rows"] if str(r["key"]).startswith("goto:")]
+    assert stray == [], ("⑥ 이 정본에 없는 이동을 갖게 됐다", stray)
+    # 그리고 여덟 줄이 그대로다 — 잇는 줄을 더하다 토글 줄을 밀어내지 않았다.
+    assert len(panel["rows"]) == len(ss._saver_rows()) == 8, panel["rows"]
+
+
+async def test_the_token_panels_answer_the_same_letter_keys_the_canonical_popup_does():
+    """정본 토큰 팝업의 **글자 키**가 GUI 판에서도 같은 뜻이다(pytmux-371 · pytmux-185).
+
+    ⛔ 여기가 «있다» 와 «같게 군다» 가 갈리는 자리다. 잇는 줄은 이미 있었다(위 시험) —
+    그런데 정본을 손에 익힌 사람은 줄을 고르지 않고 `p`·`l` 을 친다
+    (`screens.TokenLogScreen.on_key`). 그 글자가 GUI 에서 안 먹으면 «기능은 있는데
+    안 쓰이는» 상태이고, 루트 CLAUDE.md ★★ 는 그것을 결함으로 센다.
+
+    정본 대조표(`screens.py` 의 `on_key`):
+
+    | 키 | 정본 | 여기 |
+    |---|---|---|
+    | `p` | 세션 뷰 토글 | `claude-token-sessions` |
+    | `l` | 한도 상세 토글 | `claude-usage-panel` |
+    | `o` | 머신 뷰 토글 | `claude-token-machines` |
+    | `s` | 시나리오(자동재개) 판 | `claude-settings` |
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    want = {"p": "claude-token-sessions", "l": "claude-usage-panel",
+            "o": "claude-token-machines", "s": "claude-settings"}
+    for _key, _label, sid in ss._HUB:
+        spec = ss.open_spec(srv, None, sid if sid != "claude-usage-panel" else "limits")
+        keys = spec["keys"]
+        for letter, target in want.items():
+            assert letter in keys, f"{sid} 가 `{letter}` 를 안 문다: {sorted(keys)}"
+            got = ss.action(srv, None, {"id": sid, "do": keys[letter], "input": ""})
+            # 지금 판이 목적지면 정본처럼 **기간으로 되돌아온다**(토글).
+            expect = "claude-token-period" if target == sid else target
+            assert got and got.get("id") == expect, (sid, letter, expect, got)
+
+
+async def test_the_letter_key_wins_over_whatever_row_the_cursor_sits_on():
+    """글자를 눌렀는데 **커서가 앉은 줄**이 열리면 안 된다.
+
+    클라는 글자 키에도 «고른 줄의 열쇠»를 `input` 으로 함께 싣는다
+    (`session_view.rs` 의 `key_action` 갈래). 그래서 `action()` 이 줄을 먼저 보면,
+    커서가 마침 잇는 줄 위에 있을 때 `l` 이 **엉뚱한 판**을 연다 — 눌러 보기 전에는
+    안 보이고, 눌러 봐도 "가끔 이상하다"로만 보이는 부류다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    spec = ss.open_spec(srv, None, "token-period")
+    got = ss.action(srv, None, {"id": "claude-token-period",
+                                "do": spec["keys"]["l"],
+                                "input": ss._GOTO_MACHINES})   # 커서가 «머신별 →» 위
+    assert got and got["id"] == "claude-usage-panel", got
+
+
+async def test_the_roster_of_letter_key_actions_matches_what_the_panels_actually_emit():
+    """`_HUB_KEY_DOS` 전수 ↔ 실제로 나가는 `do` — **양방향**으로 맞댄다.
+
+    왜 전수를 따로 적나: 죽은 `do` 를 잡는 자(`tests/test_plugin_do_wiring.py`)는 그
+    파일을 **읽지 부르지 않으므로**(그 모듈 머리말) 함수가 짓는 표를 못 본다. 그래서
+    「낼 수 있는 이름」을 글자로 적어 두고 그 자가 그것을 읽는다.
+
+    ⛔ 두 벌이 되는 순간 갈릴 수 있다 — 그것을 막는 자리가 여기다:
+    ⑴ 실제로 나가는 이름이 전수 밖이면 **아무도 안 재는 키**가 생기고,
+    ⑵ 전수에만 있고 안 나가는 이름이 있으면 그 자는 **없는 키를 받는다고** 믿는다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    # ⚠ **글자 키만** 본다. `enter`·`right`·`left` 는 그 판 안의 조작(펼침·적용)이라
+    #    탭 전환 전수와 섞으면 전수가 무엇을 말하는지 흐려진다.
+    emitted = set()
+    for _key, _label, sid in ss._HUB:
+        spec = ss.open_spec(srv, None, sid if sid != "claude-usage-panel" else "limits")
+        emitted |= {v for k, v in spec["keys"].items() if len(k) == 1 and k.isalpha()}
+    assert emitted <= set(ss._HUB_KEY_DOS),         ("전수 밖의 do 가 나간다 — 그 키는 아무도 안 잰다", emitted - set(ss._HUB_KEY_DOS))
+    assert set(ss._HUB_KEY_DOS) <= emitted,         ("전수에만 있고 안 나가는 do", set(ss._HUB_KEY_DOS) - emitted)
+
+
+async def test_the_limit_panel_carries_the_reset_moment_not_a_countdown_string():
+    """한도 판이 **시각을 자료로** 싣는다(pytmux-371 ④).
+
+    ⛔ 글자로 실으면 초마다 프레임이 와야 한다 — 판 하나 때문에 초당 한 번 전 세션을
+    다시 그리는 값이다. 그래서 서버는 «언제인지»만 싣고 남은 시간은 클라가 굴린다.
+
+    ⚠ 못 읽는 표기면 칸을 **아예 안 만든다** — `0` 을 실으면 클라가 그것을 「지금 리셋」
+    으로 그린다(그 판정은 클라 쪽 대조군이 잰다).
+    """
+    import importlib, time
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    spec = ss.open_spec(srv, None, "limits")
+    withts = [r for r in spec["rows"] if r.get("until")]
+    assert withts, f"리셋 시각을 실은 줄이 없다: {spec['rows']}"
+    for r in withts:
+        assert isinstance(r["until"], int), (r["key"], type(r["until"]))
+        # 대역이 주는 표기("3:00 PM (KST)")는 **다가올** 시각으로 풀린다.
+        assert r["until"] > time.time() - 86400, (r["key"], r["until"])
+    # ⛔ 대조군 — 표기를 못 읽으면 칸이 없다(0 이 아니라 «없음»이다).
+    assert ss._reset_epoch("") == 0 and ss._reset_epoch("nonsense") == 0
+
+
+async def test_the_linking_rows_carry_their_words_so_the_client_can_translate_them():
+    """잇는 줄의 글은 **자료가 아니라 우리가 적은 말**이다 — 재료를 실어야 번역된다.
+
+    ⛔ 목록 줄의 `label` 을 클라는 **번역하지 않는다**(`PluginRow::say_label` — 「복사」라는
+    이름의 파일이 `Copy` 로 보이면 안 되므로). 그래서 말을 그냥 실으면 **서버 로케일로
+    굳는다**.
+
+    실측(2026-08-26 · Windows 프레임): 제목·꼬리줄이 영어로 뜬 판인데 잇는 줄만
+    «한도(/usage) 보기 →» 로 한국어였다. `_perm_spec` 이 이미 쓰던 처방(`i18n.phrase`)을
+    같은 자리에 놓는다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    spec = ss.open_spec(srv, None, "token-period")
+    links = [r for r in spec["rows"] if str(r["key"]).startswith("goto:")]
+    assert links, "잇는 줄이 없다 — 재는 것이 없다"
+    from pytmuxlib import i18n
+    values = set(i18n._CATALOG["ko"].values())
+    for r in links:
+        carried = (r.get("i18n") or {}).get("label")
+        assert carried, (r["key"], "글을 재료로 안 실었다 — 서버 로케일로 굳는다")
+        # ⚠ 재료는 «키»가 아니라 **원문 + 인자**다(`i18n.phrase` 의 계약) — 클라는
+        #   `tf(원문, 인자)` 로 다시 짓는다. 그러니 원문이 카탈로그를 거친 글이라야 한다
+        #   (손으로 적은 글은 러스트 표에 짝이 없어 그대로 뜬다).
+        fmt = carried.get("fmt") if isinstance(carried, dict) else None
+        assert fmt in values, (r["key"], "카탈로그를 안 거친 글이다", fmt)
+
+
+async def test_the_period_hint_does_not_advertise_an_operation_that_is_gone():
+    """⛔ **안 먹는 키를 광고하면 그것도 거짓말이다**(pytmux-371 · 실측 2026-08-26).
+
+    기간 판이 계층 트리가 되면서 버킷 고르개가 사라졌는데 꼬리줄은 한동안
+    «Enter 로 기간 단위 고르기» 를 그대로 광고했다 — 라이브 프레임에서 눈에 띄었다.
+    """
+    import importlib
+    from pytmuxlib import i18n
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    hint = ss.open_spec(srv, None, "token-period")["hint"]
+    for gone in ("기간 단위", "period unit"):
+        assert gone not in hint, f"없어진 조작을 광고한다({gone}): {hint}"
+    # 그리고 **지금 있는 손**을 적는다 — Enter/←→ 펼침·접힘.
+    assert "Enter" in hint and ("펼침" in hint or "expand" in hint), hint
+    # 카탈로그를 거친 글이라야 클라가 자기 로케일로 다시 읽는다.
+    assert hint in set(i18n._CATALOG["ko"].values()) | set(i18n._CATALOG["en"].values()), hint
+
+
+async def test_the_swallowed_letters_are_left_out_on_purpose_and_that_is_written_down():
+    """정본이 예약해 둔 글자(`h`·`d`·`w`·`m`·`r`)를 **스펙에 안 싣는** 것이 맞다.
+
+    ⚠ 이 시험은 «없음»을 재는 드문 자리라 까닭을 함께 적어 둔다. 정본이 그 글자를 문
+    이유는 *팝업이 오타에 닫히지 않게* 인데 GUI 에는 그 위험이 없다 — 이 클라는 스펙
+    표에 **없는** 글자에 이미 아무 일도 안 한다(pytmux-181·273 · 재는 자리는
+    `gui/src/session_view_tests.rs::a_letter_the_spec_does_not_declare_is_ignored_not_a_close`).
+    실으면 아무 일도 안 하는 **왕복**만 한 번 더 간다.
+
+    ⛔ 지우지 말 것: 2026-08-25 에 실제로 실었다가 되돌렸다. 이 줄이 없으면 다음 사람이
+    「정본에 있으니 우리도」로 같은 길을 한 번 더 간다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    for _key, _label, sid in ss._HUB:
+        spec = ss.open_spec(srv, None, sid if sid != "claude-usage-panel" else "limits")
+        stray = [k for k in ss._KEY_RESERVED if k in spec["keys"]]
+        assert stray == [], (sid, "예약 글자를 실었다 — 빈 왕복이 생긴다", stray)
+
+
+async def test_the_tail_line_advertises_the_letter_keys_it_actually_answers():
+    """꼬리줄이 광고하는 조작이 곧 최소 요건이다(pytmux-371 §옮길 때의 계약).
+
+    ⛔ 반대 방향도 잰다 — **안 먹는 키를 광고하면** 그것도 거짓말이다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    for _key, _label, sid in ss._HUB:
+        spec = ss.open_spec(srv, None, sid if sid != "claude-usage-panel" else "limits")
+        hint = spec["hint"]
+        for letter in sorted(ss._KEY_TABS):
+            assert letter in spec["keys"], (sid, letter)
+            assert f"{letter} " in hint or f"{letter}세" in hint or letter in hint,                 f"{sid} 꼬리줄이 `{letter}` 를 안 알린다: {hint}"
+
+
+async def test_the_period_panel_is_the_same_hierarchical_tree_the_canonical_popup_draws():
+    """기간 판(pytmux-371 ①) — 정본은 열자마자 **월→주→일→시각 트리**를 보인다.
+
+    종전 GUI 판은 평면 막대 + 버킷 고르개(h/d/w/m)였다. 그 손은 정본의 **옛** 서브탭이고
+    지금 정본에는 남아 있지 않다(그 글자들은 `event.stop()` 만 한다) — 즉 GUI 는 정본에
+    없는 조작을 갖고, 정본에 있는 트리는 없었다. 둘 다 [[pytmux-185]] 가 세는 갈림이다.
+
+    ⛔ 산수를 두 벌로 적지 않는 것이 이 슬라이스의 핵심이다 — 재는 것은 「트리 모양이
+    나오나」이지 「트리가 맞나」가 아니다(뒤엣것은 정본 스위트가 이미 잰다).
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    ut = importlib.import_module("pytmuxlib.plugins.claude-code.usagetree")
+    # 트리 산수는 **한 벌**이고 정본 화면도 그것을 부른다 — 그 사실부터 못박는다.
+    scr = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
+    import inspect
+    src = inspect.getsource(scr.TokenLogScreen._build_tree_rows)
+    assert "usagetree.build" in src,         "정본 화면이 공용 트리를 안 부른다 — 산수가 두 벌이 됐다"
+
+    # 기록을 직접 먹여 트리 줄을 만든다(대역 서버에는 DB 가 없다).
+    # ⚠ **오늘 기준**으로 만든다 — 트리의 구역 가르기가 오늘을 축으로 하므로, 옛 시각을
+    #   주면 전부 「이전 달」 한 줄로 접혀 일·시각 행이 아예 안 나온다(그건 트리가 맞게
+    #   구는 것이지 결함이 아니다. 실측으로 한 번 헛짚었다).
+    import time
+    now = time.time()
+    recs = [{"ts": now - i * 3600, "tokens": 1000 + i, "account": "a"}
+            for i in range(30)]
+    nodes, _total = ut.build(recs, None, None, ())
+    assert nodes, "트리가 비었다 — 재는 것이 없다"
+    kinds = {n["kind"] for n in nodes}
+    assert "day" in kinds, f"일 행이 없다: {sorted(kinds)}"
+    assert any(n["expandable"] for n in nodes), "펼칠 수 있는 행이 하나도 없다"
+    # 오늘 행은 **기본이 펼침**이라 시각 행이 딸려 나온다(정본과 같은 기본값).
+    assert "hour" in kinds, f"오늘의 시각 행이 없다: {sorted(kinds)}"
+    # ⛔ 대조군 — 그 행을 **뒤집으면** 시각이 사라진다(펼침 집합이 실제로 먹는다).
+    today_key = next(n["key"] for n in nodes if n["kind"] == "day" and n["expandable"])
+    shut, _ = ut.build(recs, None, None, {today_key})
+    assert "hour" not in {n["kind"] for n in shut}, "토글이 안 먹는다 — 집합이 죽었다"
+
+
+async def test_the_period_tree_expands_and_the_client_holds_which_rows_are_open():
+    """펼침 상태는 **클라가 든다** — 경고 판과 같은 처방(서버가 들면 클라 둘이 흔든다).
+
+    정본의 `_tree_open` 은 `기본값 ^ 토글` 이라 그 집합은 「펴진 것」이 아니라
+    **「뒤집은 것」**이다. 그 뜻까지 옮겼는지를 잰다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    spec = ss.open_spec(srv, None, "token-period")
+    # 정본 트리의 손이 광고돼야 한다 — Enter 토글 · → 펼침 · ← 접힘.
+    for key, act in (("enter", "toggle"), ("right", "expand"), ("left", "collapse")):
+        assert spec["keys"].get(key) == act, (key, spec["keys"])
+    # 뒤집은 집합이 왕복을 타고 돌아온다(대역 서버는 DB 가 없어 판만 다시 선다).
+    out = ss.action(srv, None, {"id": "claude-token-period", "do": "toggle",
+                                "row": 0, "input": "day:2026-08-25",
+                                "state": {"tree_open": []}})
+    assert out and out["id"] == "claude-token-period", out
+    # ⛔ 대조군 — 자료 줄(키 없는 divider)을 눌러도 판이 안 닫힌다.
+    out2 = ss.action(srv, None, {"id": "claude-token-period", "do": "toggle",
+                                 "row": 1, "input": "", "state": {}})
+    assert out2 and out2.get("t") != "plugin_screen_close", out2
+
+
+async def test_the_bars_are_scaled_to_the_biggest_row_not_to_the_total():
+    """막대 기준은 **그 목록의 최대값**이다(정본 `bmax` 와 같다).
+
+    전체 대비 비중을 막대로 쓰면 항목이 스물일 때 전부 5% 근처라 막대가 통째로 납작해져
+    «어느 것이 큰가»를 못 읽는다. 비중은 칸에 숫자로 함께 적어 둘이 다른 값임을 말한다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    rows = ss._bar_rows([("a", 100, 50), ("b", 50, 25), ("c", 10, 5)])
+    assert [r["bar"] for r in rows] == [1000, 500, 100], rows
+    assert rows[0]["cols"] == ["100", "50%"], rows[0]
+    # 값이 다 0 이면 막대는 0 이고 **터지지 않는다**(0 으로 나누는 자리다).
+    zero = ss._bar_rows([("a", 0, 0)])
+    assert zero[0]["bar"] == 0, zero
+
+
+async def test_the_warn_history_opens_the_newest_day_and_folds_the_rest():
+    """경고 이력은 날짜별로 접힌다 — **최신 날짜는 펴 둔다**.
+
+    전부 접혀 있으면 판을 열자마자 「방금 무슨 경고가 있었나」를 못 본다(한 번 더 눌러야
+    안다). 그리고 접힘·펼침은 **클라가 드는 상태**라(스펙의 `expand`) 서버가 그것을 들면
+    클라마다 다른 판을 봐야 할 때 갈린다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    spec = ss.open_spec(srv, None, "warn-history")
+    days = [r for r in spec["rows"] if r.get("depth") == 0 and r.get("expand")]
+    assert len(days) == 2, spec["rows"]
+    assert days[0]["expand"] == "open" and days[1]["expand"] == "shut", days
+    # 펴진 날짜 밑에는 그 날의 경고 줄이 있다(깊이 1).
+    assert any(r.get("depth") == 1 for r in spec["rows"]), spec["rows"]
+    # 접힌 날짜를 누르면 펴진다(클라가 실어 보낸 «지금 펴진 목록» 위에서 뒤집는다).
+    opened_now = [r["key"] for r in days if r["expand"] == "open"]
+    nxt = ss.action(srv, None, {"id": "claude-warn-history", "do": "toggle",
+                                "input": days[1]["key"],
+                                "state": {"warn_open": opened_now}})
+    got = {r["key"]: r.get("expand") for r in nxt["rows"] if r.get("depth") == 0}
+    assert got[days[1]["key"]] == "open", got
+    # 이력이 없으면 **빈 판이 아니라 사유**다.
+    class _Empty(_TokenSrv):
+        def _read_warn_history(self, limit=50):
+            return []
+    empty = ss.open_spec(_Empty(), None, "warn-history")
+    assert empty["note"], empty
+
+
+async def test_the_limit_and_model_panels_link_to_each_other():
+    """정본은 모델·컨텍스트와 한도를 **한 탭**에 담는다(`[한도]` 탭의 첫 두 행이 모델이다).
+
+    GUI 는 판을 잇는 줄로 같은 곳에 닿는다(사용자 결정 ⓒ) — 정본의 판 구성을 흔들지 않고
+    한 자리에서 셋에 닿는다. ⛔ 판정은 **라벨이 아니라 열쇠**로 한다: 라벨은 번역을 타므로
+    영어 UI 에서 그 줄이 죽는다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+
+    class _Srv:
+        _usage = {"session": {"pct": 42, "reset": "3:00 PM (KST)"}}
+        _usage_ts = None
+
+    limits = ss.open_spec(_Srv(), None, "usage-panel")
+    keys = [r["key"] for r in limits["rows"]]
+    assert ss._GOTO_MODEL in keys, keys
+    # 그 줄을 누르면 **닫히지 않고** 모델 판이 온다.
+    nxt = ss.action(_Srv(), None, {"id": "claude-usage-panel", "do": "apply",
+                                   "input": ss._GOTO_MODEL})
+    assert nxt and nxt["id"] == "model", nxt
+
+    # 반대 방향도 같다.
+    model = ss.open_spec(_Srv(), None, "model")
+    assert ss._GOTO_LIMITS in [r["key"] for r in model["rows"]], model["rows"][-1]
+    back = ss.action(_Srv(), None, {"id": "model", "do": "apply",
+                                    "input": ss._GOTO_LIMITS})
+    assert back and back["id"] == "claude-usage-panel", back
+
+    # ⛔ 대조군: 보통 줄(모델 하나)은 여전히 **적용하고 닫는다**(잇는 줄이 그것을 안 먹었다).
+    first = next(r["key"] for r in model["rows"] if r["key"] != ss._GOTO_LIMITS)
+    done = ss.action(_Srv(), None, {"id": "model", "do": "apply", "input": first})
+    assert done and done.get("t") == "plugin_screen_close", done
+
+
+async def test_the_limit_panel_carries_ratios_not_glyph_bars():
+    """한도 판은 **비율**을 싣는다 — `█`·`░` 를 실으면 받는 클라가 텍스트 UI 를 그린다."""
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+
+    class _Srv:
+        _usage = {"session": {"pct": 42, "reset": "3:00 PM (KST)"},
+                  "week_all": {"pct": 7, "reset": "Mon"}}
+        _usage_ts = None
+
+    spec = ss.open_spec(_Srv(), None, "limits")
+    assert spec["kind"] == "table", spec
+    bars = [r.get("bar") for r in spec["rows"] if "bar" in r]
+    assert bars == [420, 70], spec["rows"]
+    joined = "".join(str(r) for r in spec["rows"]) + spec.get("text", "")
+    for glyph in ("█", "░", "▉"):
+        assert glyph not in joined, f"서버가 막대를 글자로 그렸다: {glyph}"
+
+
+async def test_the_machines_spec_carries_a_ratio_not_a_drawn_bar():
+    """머신별 판(pytmux-371 ③) — 서버는 **비율만** 싣는다.
+
+    ⛔ `█` 같은 글자를 서버가 실으면 그 순간 서버가 UI 를 알게 되고(설계 §10 위험표),
+    격자 없는 GUI 는 그 글자를 다시 해석해야 한다. 그래서 계약은 «천분율 정수» 하나다 —
+    막대를 몇 픽셀로 그릴지는 뷰가 안다(사용자 지시: 인터페이스는 GUI 기반).
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+
+    class _Srv:
+        def _tokens_db_conn(self):
+            return None
+
+    # 재료가 없으면 **빈 판이 아니라 사유**다(이 저장소의 규율).
+    empty = ss.open_spec(_Srv(), None, "claude-token-machines")
+    assert empty["id"] == "claude-token-machines" and empty["kind"] == "table", empty
+    # 재료가 없으면 **빈 판이 아니라 사유**다. ⚠ 줄이 아주 비지는 않는다 — 판을 잇는
+    #   허브 줄은 늘 있다(정본의 탭 띠에 해당). 그러니 «자료 줄이 없다» 로 잰다.
+    data_rows = [r for r in empty["rows"] if "bar" in r]
+    assert data_rows == [] and empty["note"], empty
+
+    # 비율은 천분율 정수이고 글자 막대가 아니다.
+    rows = [("이 머신", 1200, 1.0), ("91ddca94", 300, 0.25)]
+    with harness.patched(ss, _machine_rows=lambda server: (rows, "")):
+        spec = ss.open_spec(_Srv(), None, "token-machines")
+    bars = [r["bar"] for r in spec["rows"] if "bar" in r]
+    assert bars == [1000, 250], spec["rows"]
+    assert all(isinstance(b, int) for b in bars), spec["rows"]
+    joined = "".join(str(r) for r in spec["rows"])
+    for glyph in ("█", "▇", "▆"):
+        assert glyph not in joined, f"서버가 막대를 글자로 그렸다: {glyph}"
+
+
+async def test_the_machines_screen_is_reachable_as_a_command():
+    """팔레트에서 열 수 있어야 한다 — 화면만 있고 여는 길이 없으면 죽은 줄이다(pytmux-35)."""
+    import importlib
+    mod = importlib.import_module("pytmuxlib.plugins.claude-code")
+    names = {c[0] for c in mod.COMMANDS} if hasattr(mod, "COMMANDS") else set()
+    if not names:
+        # 표 이름이 다르면 등록 튜플에서 직접 찾는다(이 가드가 공허해지지 않게).
+        names = {n for n in mod.NOARG}
+    assert "claude-token-machines" in mod.NOARG, mod.NOARG
+    # 그리고 그 이름이 **실제로 화면을 내는** 이름이라야 한다.
+    ss = mod.screenspec
+    assert "claude-token-machines" in ss.MACHINES and "claude-token-machines" in ss.IDS
+
+
 async def test_the_screen_state_belongs_to_the_client_connection():
     """화면 상태는 **그 클라의 것**이다(설계 P5).
 
@@ -178,6 +651,36 @@ async def test_the_screen_state_belongs_to_the_client_connection():
     assert a.plugin_state == {} and b.plugin_state == {}
     a.plugin_state.setdefault("ncd", {})["path"] = "/a"
     assert b.plugin_state == {}, "한 클라의 상태가 다른 클라에 샜다"
+
+
+class _FakePty:
+    """패널의 pty — 받은 바이트만 들고 있는다.
+
+    ☠ **`patched(type(pane), write=…)` 로 심지 마라**(pytmux-173). 프로덕션
+    `pytmuxlib.model.Pane` 에는 `write` 가 **없다** — 시험이 그 이름을 진짜 클래스에
+    만들어 붙이는 바람에, 플러그인 셋이 `pane.write` 오타로 라이브에서 늘
+    `AttributeError` 로 죽는 동안 이 파일의 두 시험은 늘 초록이었다. 가짜는
+    프로덕션에 **있는** 이름(`pane.pty`)에만 단다. 전수 오라클은
+    `tests/test_pane_write_typo.py`.
+    """
+
+    def __init__(self, sink):
+        self.sink = sink
+
+    def write(self, data):
+        self.sink.append(data)
+
+
+@contextlib.contextmanager
+def _pty_capture(pane):
+    """`pane.pty` 를 가짜로 바꿔 쓴 바이트를 모은다(끝나면 되돌린다)."""
+    wrote = []
+    real = pane.pty
+    pane.pty = _FakePty(wrote)
+    try:
+        yield wrote
+    finally:
+        pane.pty = real
 
 
 async def test_ncd_walks_with_state_and_cd_closes_the_screen():
@@ -209,8 +712,7 @@ async def test_ncd_walks_with_state_and_cd_closes_the_screen():
 
         # `cd` 는 패널에 명령을 넣고 화면을 닫는다 — 정본 Enter 와 같은 결과다.
         pane = sess.active_window.active_pane
-        wrote = []
-        with harness.patched(type(pane), write=lambda self, data: wrote.append(data)):
+        with _pty_capture(pane) as wrote:
             resp = plugin.plugin_screen(srv, sess, {
                 "id": "ncd", "do": "cd", "input": here, "state": state,
             })
@@ -405,8 +907,7 @@ async def test_mdir_cd_writes_to_the_pane_and_closes_the_screen():
         p = _mdir()
         with tempfile.TemporaryDirectory() as tmp:
             pane = sess.active_window.active_pane
-            wrote = []
-            with harness.patched(type(pane), write=lambda self, d: wrote.append(d)):
+            with _pty_capture(pane) as wrote:
                 resp = p.plugin_screen(srv, sess, {
                     "id": "mdir", "do": "cd", "row": 0, "input": "",
                     "state": {"mdir": {"path": tmp, "tags": [], "items": []}},

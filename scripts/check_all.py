@@ -397,7 +397,7 @@ def run(step, env, timeout=None):
 def child_env():
     """모든 스텝이 물려받을 env. **여기가 게이트의 유일한 자식 환경**이다.
 
-    세 가지를 한다. 셋 다 "게이트가 재는 대상을 게이트가 바꾸지 않는다"의 반대편 —
+    네 가지를 한다. 넷 다 "게이트가 재는 대상을 게이트가 바꾸지 않는다"의 반대편 —
     **상자가 재는 대상을 바꾸고 있는 것**을 걷어내는 자리다.
 
     ⑴ `NO_COLOR` 를 지운다. Claude Code 툴 환경이 `NO_COLOR=1` 을 심는데, 그러면
@@ -426,6 +426,19 @@ def child_env():
        - ⚠ `cargo test` 를 **직접** 치는 사람은 여전히 보호 밖이다. 읽기 사물함을
          `Config::path()` 에 두는 것은 「테스트가 기대하는 기본값」을 프로덕션 경로에
          심는 모양이 되기 쉬워, 그 판단은 따로 남겼다(pytmux-202 본문).
+    ⑷ ★ `PYTHON` 에 **이 게이트가 도는 인터프리터**(`sys.executable`)를 싣는다
+       (pytmux/pytmux-383). ⑵ 가 cargo 에 한 것과 **정확히 같은 결**이다 — 셸 게이트
+       (`check_licenses.sh`·`build_release.sh`)는 자기가 파이썬을 다시 찾으므로, 여기서
+       안 넘기면 그 스텝만 이 상자의 `python3` 로 떨어진다.
+       - 값은 실측이다(2026-08-23 · 이 Windows 상자): 그 이름이 Store 앱 별칭
+         (`…\\WindowsApps\\python3`)이라 「라이선스 경계」가 **1.0초 만에 FAIL** 로
+         떨어졌다(스크립트는 멀쩡했다 — 잴 사람을 못 찾은 것이다).
+       - ☠ 더 나쁜 방향이 남아 있다: 같은 별칭이 **rc 0 으로** 끝나는 판이 있고, 그때
+         그 스텝은 **아무것도 안 재고 초록**이 된다. 그래서 처방이 둘이다 — 여기서
+         넘겨 주는 것과, 받는 쪽이 "있나"가 아니라 **"도나"**로 고르는 것
+         (`scripts/pick_python.sh`). 서로를 대신하지 않는다.
+       - `sys.executable` 이 빈 값인 자리(임베딩)가 있어 **있을 때만** 싣는다. 없는
+         값을 빈 문자열로 심으면 받는 쪽의 `${PYTHON:-…}` 갈래가 조용히 달라진다.
 
     ⛔ **`main()` 안에 인라인으로 두지 않는다** — 그러면 이 셋이 실제로 자식에게 가는지를
     재려면 전체 게이트를 돌려야 하고, 그건 스위트 안에서 못 한다(`test_check_all.py`
@@ -442,6 +455,9 @@ def child_env():
     cargo_dir = find_cargo()
     if cargo_dir and cargo_dir not in env.get("PATH", "").split(os.pathsep):
         env["PATH"] = cargo_dir + os.pathsep + env.get("PATH", "")
+
+    if sys.executable:
+        env["PYTHON"] = sys.executable
     return env
 
 

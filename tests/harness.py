@@ -81,12 +81,29 @@ def tcp_state_dir():
     **평상시 POSIX 스위트에서 TCP 를 강제로 쓰는 테스트**가 실사용
     `$XDG_RUNTIME_DIR`(= 사용자의 라이브 데몬이 사는 곳)를 안 밟게 하는 자리다.
     블록을 벗어나면 원래 값으로 되돌린다 — 같은 프로세스의 뒤 모듈에 안 샌다."""
+    global _tcp_state_dir
     d = tempfile.mkdtemp(prefix="pytmux-test-tcp-")
     old = os.environ.get(_TCP_STATE_DIR_ENV)
+    old_cached = _tcp_state_dir
     os.environ[_TCP_STATE_DIR_ENV] = d
+    # ★ **프로세스 공용 캐시도 이 블록 동안 이 디렉터리로 겹쳐 둔다**(2026-08-25).
+    #   `server_only()` 는 `tcp_forced()`(=Windows) 면 env 를 `_isolated_tcp_state_dir()`
+    #   로 **다시 덮는다** — 그러면 이 블록이 세운 `d` 는 무시되고 포트/토큰이 딴 데
+    #   생겨, `d` 안에서 그 파일을 찾는 시험이 이 상자에서만 붉었다
+    #   (test_the_resolved_endpoint_still_carries_the_name). 캐시를 같은 값으로 두면
+    #   두 경로가 **같은 자리**를 가리켜 시험이 플랫폼과 무관하게 선다.
+    _tcp_state_dir = d
     try:
-        yield d
+        # ★ **돌려주는 것은 «상태 디렉터리»지 그 환경변수 값이 아니다**(2026-08-25).
+        #   Unix 는 `$XDG_RUNTIME_DIR` 가 곧 상태 디렉터리라 둘이 같지만 Windows 는
+        #   `%LOCALAPPDATA%\pytmux` 라 «\pytmux» 한 조각이 더 붙는다 — 그 차이 때문에
+        #   `os.path.join(d, "srvA")` 로 견주는 test_endpoint_isolation 4건이 이 상자에서
+        #   상시 붉었다(경로 규약이 틀린 게 아니라 시험이 POSIX 모양이었다).
+        #   ⛔ 환경변수를 돌려주면 시험이 플랫폼 분기를 스스로 다시 써야 한다.
+        from pytmuxlib import ipc as _ipc
+        yield _ipc.default_state_dir()
     finally:
+        _tcp_state_dir = old_cached
         if old is None:
             os.environ.pop(_TCP_STATE_DIR_ENV, None)
         else:
@@ -398,6 +415,45 @@ def pane_text(pane):
     """패널의 현재 렌더 결과를 텍스트로(스타일 제외)."""
     rows, _ = pane.render(False)
     return "\n".join("".join(seg[0] for seg in row) for row in rows)
+
+
+def hush_pane(pane) -> bool:
+    """패널에 붙은 **진짜 셸이 화면에 더 못 쓰게** 한다 → 붙어 있었나(pytmux/pytmux-384).
+
+    스크롤백을 심어 두고 재는 시험(`pane.feed(...)`)은 그 패널에 **진짜 PTY 가 붙어
+    있다**는 것을 잊기 쉽다. `serverpty._shell_argv_env` 가 띄우는 것이 OS 마다 다르다:
+    POSIX 는 `$SHELL`→`/bin/sh`(대개 조용하다), Windows 는
+    `PYTMUX_SHELL`→`COMSPEC`→`cmd.exe`(**배너를 찍고 ConPTY 가 화면을 정리한다**).
+    그래서 같은 시험이 리눅스에서는 늘 초록이고 Windows 에서는 늘 빨갛다 — 회귀가
+    아니라 «처음부터 그랬다».
+
+    덮이는 순간은 **양보 지점**이다: `search_all_panes` 는 단일 스레드 루프에 숨 쉴
+    틈을 주려고 패널마다 `await asyncio.sleep(0)` 을 한다. 그 틈에 루프가 pty 를
+    드레인하고, 배너가 심어 둔 줄을 지운다(실측 2026-08-23: 심은 줄 셋이 전부
+    `Microsoft Windows [Version …]` 으로 바뀌거나 빈 화면이 됐다).
+    ⛔ **그 `sleep(0)` 을 걷어서 고치지 마라** — 그것은 제품의 장치이고, 그것을 재는
+    시험이 바로 옆에 있다(`test_search_all_yields_the_loop_between_panes`).
+
+    ★ 그래서 «리더»를 끊는다. 이 한 줄이면 그 뒤로 **어느 OS에서도** 셸의 바이트가
+    화면에 닿지 않는다:
+      · POSIX(`pty_backend._UnixPty`)  — `loop.remove_reader(fd)`. 콜백이 안 걸린다.
+      · Windows(`pty_backend._WinPty`) — `_stop` 을 세운다. 리더 **스레드**가 이미
+        `call_soon_threadsafe` 로 넘겨 둔 조각까지 `_deliver` 가 그 깃발을 보고
+        버린다(그 파일의 `_deliver`). ⇒ «이미 큐에 든 것»도 안 샌다.
+    ⚠ 그러니 **심기 전에** 부른다 — 뒤에 부르면 이미 덮인 것을 못 되돌린다.
+    ⚠ 그리고 패널이 **생긴 직후**(그 사이에 `await` 가 없게) 부르는 것이 가장 싸다.
+      그러면 리더가 한 번도 안 돌아 배너가 아예 화면에 못 닿는다.
+
+    ⛔ 셸을 죽이지도 pty 를 닫지도 않는다 — `cleanup()` 이 그대로 회수한다
+    (`stop_reader` 는 멱등이라 그쪽에서 다시 불러도 무해하다).
+    ⛔ 「조용한 셸을 골라 주기」로 고치지 않는다 — `PYTMUX_SHELL` 을 세우면 그 값이
+      **제품 코드가 읽는 손잡이**라, 시험이 재는 대상을 시험이 바꾸는 자리가 된다.
+    """
+    stop = getattr(getattr(pane, "pty", None), "stop_reader", None)
+    if stop is None:            # host 모드·가짜 pty — 막을 입이 없다
+        return False
+    stop()
+    return True
 
 
 async def _poll(sleep, cond, timeout, step, snapshot=None, settle=8):

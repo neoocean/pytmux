@@ -129,7 +129,10 @@ def test_only_the_badge_with_a_screen_is_clickable():
                          "claude_warn": "⚠ x"})
     opens = {b["kind"]: b.get("do") for b in got}
     assert opens["usage"] == "usage-panel", opens
-    for kind in ("model", "pending", "warn"):
+    # ★ 모델도 눌린다(pytmux-379) — 규칙은 그대로고 **사실이 바뀌었다**: 그 화면이
+    #   Tier C 에 생겼다(`screenspec.MODEL`). 규칙을 지키는지는 아래 대조군이 잰다.
+    assert opens["model"] == "model", opens
+    for kind in ("pending", "warn"):
         assert opens[kind] is None, f"{kind} 에 화면이 없는데 누를 자리를 만들었다: {opens}"
 
 
@@ -144,6 +147,11 @@ def test_the_name_it_carries_is_one_the_plugin_actually_opens():
     got = _mod().badges({"claude_active": True, "tok5h_pct": 12})
     name = next(b["do"] for b in got if b["kind"] == "usage")
     assert name in plug._USAGE_PANEL, (name, plug._USAGE_PANEL)
+    # 모델 배지도 같은 관문을 지난다 — 이름이 **그 플러그인이 여는 이름**이라야 한다.
+    got_model = _mod().badges({"claude_active": True, "claude_model": "opus-5"})
+    mname = next(b["do"] for b in got_model if b["kind"] == "model")
+    spec = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    assert mname in spec.MODEL, (mname, spec.MODEL)
     # 정본의 명령 갈래도 같은 이름을 받는다(팔레트에서 되는 것이 여기서도 돼야 한다).
     assert name in importlib.import_module('pytmuxlib.plugins.claude-code').NOARG, name
 
@@ -159,11 +167,23 @@ def test_the_usage_panel_hands_out_a_screen_spec():
         _usage_ts = None
 
     spec = plug.plugin_screen(_Srv(), None, {"do": "open", "name": "usage-panel"})
-    assert spec["kind"] == "text" and spec["id"] == "claude-usage-panel", spec
+    # ★ 2026-08-24(pytmux-371 ④): `text`(글자 막대 76칸) → **자료**(줄 + 천분율 막대).
+    #   글자 막대를 실으면 받는 클라가 «텍스트 기반 인터페이스»를 그리게 된다 —
+    #   사용자 지시가 금한 그것이고, 76칸은 그 창과 무관한 남의 숫자다.
+    assert spec["kind"] == "table" and spec["id"] == "claude-usage-panel", spec
     assert spec["note"] == "", "값이 있는데 '데이터 없음'을 적었다"
-    # 제보가 든 세 값이 실제로 담겼나 — 사용 비율 · 리셋 시각 · (한도별) 사용량.
-    assert "42%" in spec["text"], spec["text"]
-    assert "3:00 PM" in spec["text"], spec["text"]
+    # 제보가 든 세 값이 그대로 있나 — 한도 이름 · 사용 비율 · 리셋 시각.
+    by_label = {r["label"]: r for r in spec["rows"]}
+    row = by_label.get("세션 5h") or next(iter(spec["rows"]))
+    assert any("42%" in c for c in row["cols"]), row
+    assert any("3:00 PM" in c for c in row["cols"]), row
+    # 막대는 **천분율 정수**이고 글자가 아니다(뷰가 면으로 그린다).
+    assert row["bar"] == 420, row
+    joined = "".join(str(r) for r in spec["rows"]) + spec["text"]
+    for glyph in ("█", "░", "▉"):
+        assert glyph not in joined, f"서버가 막대를 글자로 그렸다: {glyph}"
+    # 계정·신선도처럼 비율이 없는 줄은 **막대 없이** 온다(있으면 0% 막대로 오독된다).
+    assert all("bar" in r or r["cols"] == [] for r in spec["rows"]), spec["rows"]
     # 내 이름이 아니면 안 받는다(첫 비-None 채택 규약).
     assert plug.plugin_screen(_Srv(), None, {"do": "open", "name": "ncd"}) is None
 
@@ -271,7 +291,8 @@ def test_a_screen_command_still_reaches_its_screen_through_the_new_path():
         _usage_ts = None
 
     spec = plug.plugin_screen(_Srv(), None, {"do": "open", "name": "usage-panel"})
-    assert spec and spec["kind"] == "text", spec
+    # 이 판은 2026-08-24 에 `text` → `table`(자료 + 천분율 막대)로 바뀌었다(pytmux-371 ④).
+    assert spec and spec["kind"] == "table", spec
 
 
 async def test_the_new_command_actually_moves_server_state():

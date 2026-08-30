@@ -538,6 +538,9 @@ class PermModeScreen(ModalScreen):
 
 # TokenLogScreen 이 쓰는 심볼. usagelog 는 S5 T5 에서 플러그인 소속(상대 import).
 from . import usagelog
+# 계층 트리의 산수 — **화면 밖 한 벌**이다(pytmux-371 ①). 그 모듈 머리말이 왜 나갔는지를
+# 쥔다: 여기 두면 정본만 그 트리를 그릴 수 있고 네이티브 클라는 평면 판에 머문다.
+from . import usagetree
 from .claude import parse_reset_ts
 from pytmuxlib.clientutil import (_char_cells, bar, bar_floating,
                                   bar_floating_segments,
@@ -1809,135 +1812,19 @@ class TokenLogScreen(ModalScreen):
         return default ^ (key in self._tree_toggled)
 
     def _build_tree_rows(self):
-        """계층 트리 노드 목록을 만든다(표 행과 1:1). 각 노드 dict:
-          kind: 'month'|'week'|'day'|'hour'|'divider'
-          key: 토글 키(펼침 가능 행만, leaf/divider 는 None)
-          label·tokens·models·level(들여쓰기)·expandable·expanded·bk(시각 5h% 조인키)
-        반환: (nodes, total) — total=표시 합(중복 없는 일자 전체 합).
+        """계층 트리 노드 목록(표 행과 1:1)과 표시 합.
 
-        멤버십은 day 인덱스에서 각 날짜의 (월, ISO주)를 파생해 세 구역으로 가른다:
-          ① 이번 주의 날 → 최상위 일 행(오늘은 시각까지 기본 펼침),
-          ② 이번 달의 지난 주 → 최상위 주 행(펼치면 일·시각),
-          ③ 이전 달 → 최상위 월 행(펼치면 주·일·시각).
-        각 날짜는 정확히 한 구역에만 들어가 토큰이 중복 집계되지 않는다(가산성 유지).
-        시각 입도는 서버가 SQL 로 집계해 보낸 _hourly(이력 전체)를 쓴다 — 종전처럼 raw
-        _records(최근 N 건)로 만들면 그 창(실측 ~22시간)을 벗어난 날은 시각이 비고
-        펼침 화살표조차 안 붙었다(제보 2026-07-27). 구버전 서버(_hourly 없음)만 종전
-        raw 폴백이라 옛 날이 여전히 비어 보일 수 있다."""
-        from datetime import date, datetime
-        src = self._full_recs if self._full_recs is not None else self._records
-        weekdays = i18n.t("pscreen.weekdays").split(",")
-        hour_suffix = i18n.t("pscreen.hour_suffix")
-        day_idx = usagelog.agg_index(src, "day", weekdays=weekdays,
-                                     hour_suffix=hour_suffix)
-        hour_idx = (usagelog.hourly_index(self._hourly, hour_suffix)
-                    if self._hourly else
-                    usagelog.agg_index(self._records, "hour",
-                                       hour_suffix=hour_suffix))
-        try:
-            today = date.today()
-        except Exception:
-            today = None
-        today_key = today.strftime("%Y-%m-%d") if today else ""
-        this_week = today.strftime("%G-W%V") if today else ""
-        this_month = today.strftime("%Y-%m") if today else ""
+        ⛔ **산수는 여기 없다** — `usagetree.build` 한 벌이다(pytmux-371 ①). 종전에는 이
+        메서드가 전부를 들고 있어서 **정본만** 이 트리를 그릴 수 있었다: `screenspec` 은
+        Textual 을 물지 않는 것이 규약이라 네이티브 클라에 같은 판을 내려보낼 길이 없었고,
+        GUI 의 기간 판은 평면 막대에 머물렀다. 옮긴 이유와 「두 벌로 적지 않는다」의 근거는
+        그 모듈 머리말에 있다.
 
-        def wk_of(d):
-            try:
-                return datetime.strptime(d, "%Y-%m-%d").strftime("%G-W%V")
-            except ValueError:
-                return d
-
-        seg_week_days = []      # 이번 주: 일 키 목록
-        seg_month = {}          # 이번 달 지난 주: week_key -> [day keys]
-        seg_past = {}           # 이전 달: month_key -> {week_key -> [day keys]}
-        for d in day_idx:
-            wk, mk = wk_of(d), d[:7]
-            if wk == this_week:
-                seg_week_days.append(d)
-            elif mk == this_month:
-                seg_month.setdefault(wk, []).append(d)
-            else:
-                seg_past.setdefault(mk, {}).setdefault(wk, []).append(d)
-
-        nodes = []
-
-        def _hours_of(day_key):
-            return sorted((h for h in hour_idx if h[:10] == day_key),
-                          reverse=True)
-
-        def emit_hours(day_key, level):
-            for hk in _hours_of(day_key):
-                e = hour_idx[hk]
-                nodes.append({"kind": "hour", "key": None,
-                              "label": hk[11:13] + hour_suffix,
-                              "tokens": e["tokens"], "models": e["models"],
-                              "level": level, "expandable": False,
-                              "expanded": False, "bk": hk})
-
-        def emit_day(day_key, level, default_open):
-            e = day_idx[day_key]
-            key = "day:" + day_key
-            has_hours = bool(_hours_of(day_key))
-            opened = self._tree_open(key, default_open) if has_hours else False
-            nodes.append({"kind": "day", "key": key if has_hours else None,
-                          "label": e["label"], "tokens": e["tokens"],
-                          "models": e["models"], "level": level,
-                          "expandable": has_hours, "expanded": opened,
-                          "bk": None})
-            if opened:
-                emit_hours(day_key, level + 1)
-
-        def emit_week(week_key, days, level, parent_mk):
-            key = "week:%s:%s" % (parent_mk, week_key)
-            tok = sum(day_idx[d]["tokens"] for d in days)
-            models = usagelog._merge_tiers([day_idx[d]["models"] for d in days])
-            opened = self._tree_open(key, False)
-            nodes.append({"kind": "week", "key": key,
-                          "label": "W" + week_key.split("-W", 1)[-1],
-                          "tokens": tok, "models": models, "level": level,
-                          "expandable": True, "expanded": opened, "bk": None})
-            if opened:
-                for d in sorted(days, reverse=True):
-                    emit_day(d, level + 1, False)
-
-        def emit_month(month_key, weeks_map, level):
-            key = "month:" + month_key
-            all_days = [d for ds in weeks_map.values() for d in ds]
-            tok = sum(day_idx[d]["tokens"] for d in all_days)
-            models = usagelog._merge_tiers(
-                [day_idx[d]["models"] for d in all_days])
-            opened = self._tree_open(key, False)
-            nodes.append({"kind": "month", "key": key, "label": month_key,
-                          "tokens": tok, "models": models, "level": level,
-                          "expandable": True, "expanded": opened, "bk": None})
-            if opened:
-                for wk in sorted(weeks_map, reverse=True):
-                    emit_week(wk, weeks_map[wk], level + 1, month_key)
-
-        def divider(text):
-            nodes.append({"kind": "divider", "key": None, "label": text,
-                          "tokens": 0, "models": {}, "level": 0,
-                          "expandable": False, "expanded": False, "bk": None})
-
-        # ① 이번 주의 날들(최근 위, 오늘은 시각까지 기본 펼침).
-        for d in sorted(seg_week_days, reverse=True):
-            emit_day(d, 0, default_open=(d == today_key))
-        # ② 이번 달의 지난 주(주 행, 기본 접힘).
-        if seg_month:
-            if seg_week_days:
-                divider(i18n.t("pscreen.tree_earlier_weeks"))
-            for wk in sorted(seg_month, reverse=True):
-                emit_week(wk, seg_month[wk], 0, this_month)
-        # ③ 이전 달(월 행, 기본 접힘).
-        if seg_past:
-            if seg_week_days or seg_month:
-                divider(i18n.t("pscreen.tree_earlier_months"))
-            for mk in sorted(seg_past, reverse=True):
-                emit_month(mk, seg_past[mk], 0)
-
-        total = sum(e["tokens"] for e in day_idx.values())
-        return nodes, total
+        여기 남는 것은 **이 화면이 든 상태**를 그 함수에 건네는 일뿐이다 — 펼침 집합은
+        화면이 들고(`_tree_toggled`), 스펙 경로에서는 클라가 든다.
+        """
+        return usagetree.build(self._records, self._full_recs, self._hourly,
+                               self._tree_toggled)
 
     @staticmethod
     def _tree_label(node):

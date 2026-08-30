@@ -38,6 +38,15 @@ COMMANDS = [
     ("claude-token-log", "Claude 토큰 사용량 팝업 — 기간(시/일/주/월)·계정·세션 뷰 + "
                          "실측 한도·5h창(상태줄 사용량 클릭)",
                          "Claude"),
+    ("claude-token-period", "Claude 토큰 사용량 — 기간별(시/일/주/월) 총계·막대"
+                            "(별칭 token-period)", "Claude"),
+    ("claude-token-sessions", "Claude 토큰 사용량 — 세션별 총계·막대"
+                              "(별칭 token-sessions)", "Claude"),
+    ("claude-warn-history", "Claude 경고 이력 — 날짜별로 접었다 펴는 목록"
+                            "(별칭 claude-warns·warn-history)", "Claude"),
+    ("claude-token-machines", "Claude 토큰 사용량 — 원산지 머신별 총계·막대"
+                              "(별칭 token-machines · 동기화를 켰을 때 어디서 온 값인지)",
+                              "Claude"),
     ("claude-usage", "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신"
                      "(별칭 usage)", "Claude"),
     ("usage-panel", "Claude 토큰 사용 한도 팝업 — /usage(세션 5h·주 전체·주 Sonnet) "
@@ -78,7 +87,10 @@ COMMANDS = [
 ]
 NOARG = {
     "claude-rules", "claude-settings",
-    "claude-token-log",
+    "claude-token-log", "claude-token-machines", "token-machines",
+    "claude-warn-history", "claude-warns", "warn-history",
+    "claude-token-period", "token-period",
+    "claude-token-sessions", "token-sessions",
     "claude-usage", "usage", "usage-panel", "usage-limits", "limits",
 }
 # 옵션(선택지) 스키마 — 팔레트에서 on/off/토글을 키보드로 고른다(코어 COMMAND_OPTIONS 병합).
@@ -146,6 +158,10 @@ i18n.register({
         "cmd.auto-resume": "Auto-resume on token limit [on|off]",
         "cmd.auto-resume-message": "Set the auto-resume message",
         "cmd.claude-token-log": "Token usage popup — period (h/d/w/m)·session views + measured limits·5h window (alias token-usage, click status usage)",
+        "cmd.claude-token-period": "Claude token usage by period (hour/day/week/month) — totals with bars (alias token-period)",
+        "cmd.claude-token-sessions": "Claude token usage by session — totals with bars (alias token-sessions)",
+        "cmd.claude-warn-history": "Claude warning history — a per-day list you expand and collapse (alias claude-warns·warn-history)",
+        "cmd.claude-token-machines": "Claude token usage by origin machine — totals with bars (alias token-machines; shows where the account sum came from when sync is on)",
         "cmd.claude-usage": "Shadow /usage query — refresh real session/weekly limits via a hidden session (alias usage)",
         "cmd.usage-panel": "Claude token usage-limit popup — /usage (session 5h·week all·week Sonnet) bar graph (alias usage-limits·limits)",
         "cmd.claude-token-account": "Manually set the active pane's Claude account (token-account <name>, empty=auto)",
@@ -197,6 +213,12 @@ i18n.register({
         "ccmsg.resume_unverified": "자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — "
                                    "리밋 배너가 위조로 의심됨(패널 {pane}, "
                                    "claude-resume-verify {mode})",
+        # pytmux-415 ⑶: claude 가 스스로 끈 fullscreen 은 stderr 로 **한 번**만
+        # 말하고 사라진다 — 사용자는 스크롤 프롬프트 바가 없어진 것만 겪는다.
+        "ccmsg.fullscreen_off":
+            "Claude fullscreen 이 꺼져 있습니다 — 스크롤 프롬프트 바와 «클릭해서 "
+            "점프»가 안 뜹니다. claude 에서 /tui fullscreen 으로 되살리세요"
+            "(claude {ver} · {when} · 스트라이크 {strikes})",
         # F3 벡터 3: 정책 차단 래치는 투명해야 하고(조용한 중단 금지) 자기치유한다.
         "ccmsg.rc_policy_blocked": "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})",
         "ccmsg.rc_policy_cleared": "원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다",
@@ -205,7 +227,7 @@ i18n.register({
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
         "ccmsg.usage_title": "Claude 사용 한도 (/usage)",
         # Tier C 한도 판(pytmux-20) — 읽는 판이라 키가 스크롤·닫기뿐이다.
-        "cusage.hint": "↑↓ 스크롤 · Esc 닫기",
+        "cusage.hint": "↑↓ 스크롤 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "ccmsg.no_warn": "표시할 Claude 경고가 없습니다(이미 해소됨).",
         "ccmsg.rc_title": "원격 제어(Remote Control)",
         "ccmsg.rc_body":
@@ -229,6 +251,10 @@ i18n.register({
     "en": {
         "ccmsg.resume_injected": "Auto-resume: injected '{msg}' (pane {pane})",
         "ccmsg.resume_throttled": "Auto-resume suppressed: injected too recently (pane {pane})",
+        "ccmsg.fullscreen_off":
+            "Claude's fullscreen renderer is off — the scrolled-prompt bar and "
+            "click-to-jump are gone. Run /tui fullscreen in claude to bring it "
+            "back (claude {ver} · {when} · {strikes} strikes)",
         "ccmsg.rc_policy_blocked": "Org policy message seen — stopping auto /rc injection (pane {pane})",
         "ccmsg.rc_policy_cleared": "Remote control is actually on — clearing the policy-block latch",
         "ccmsg.resume_unverified": "Auto-resume suppressed: only {used} tokens used in "
@@ -239,7 +265,7 @@ i18n.register({
         "ccmsg.usage_no_data":
             "No /usage limit data — run /usage in a Claude panel first",
         "ccmsg.usage_title": "Claude usage limit (/usage)",
-        "cusage.hint": "↑↓ scroll · Esc close",
+        "cusage.hint": "↑↓ scroll · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "ccmsg.no_warn": "No Claude warning to show (already cleared).",
         "ccmsg.rc_title": "Remote Control",
         "ccmsg.rc_body":
@@ -1789,22 +1815,16 @@ class _ClaudeCodePlugin:
         return screenspec.action(server, sess, req)
 
     @staticmethod
+    @staticmethod
     def _usage_panel_spec(server):
-        from pytmuxlib.usagebar import usage_bar_lines
-        import time as _t
-        uts = getattr(server, "_usage_ts", None)
-        lines = usage_bar_lines(
-            getattr(server, "_usage", None), 76,
-            age_sec=(max(0, int(_t.time() - uts)) if uts is not None else None))
-        # ⚠ **빈 목록과 실패는 다르다**(스펙의 `note`). 한도를 아직 못 재 왔으면
-        #    빈 판이 아니라 이유를 보인다 — 정본도 같은 문구로 알린다.
-        return {
-            "t": "plugin_screen", "id": "claude-usage-panel", "kind": "text",
-            "title": i18n.t("ccmsg.usage_title"),
-            "hint": i18n.t("cusage.hint"),
-            "text": "\n".join(lines or []),
-            "note": "" if lines else i18n.t("ccmsg.usage_no_data"),
-        }
+        """한도 판 — 구현은 `screenspec._limits_spec` 한 벌이다(pytmux-371 ④).
+
+        여기 두었던 판을 그리로 옮긴 이유: 그 판이 **모델 판과 서로 잇기** 때문이다(정본은
+        그 둘을 `[한도]` 탭 하나에 담는다). 잇는 줄이 두 모듈에 걸치면 한쪽만 고쳐진다.
+        이 자리는 종전 이름으로 부르는 호출부(시험·`plugin_screen`)를 위해 남긴다.
+        """
+        from . import screenspec
+        return screenspec._limits_spec(server)
 
     # (client_status_tabs 훅 — 통합 상태 팝업의 '토큰 사용량' 탭 — 은 token-log 통합
     #  (2026-06-12)으로 제거. 통합 상태 팝업은 REC·서버 두 탭, 토큰은 token-log 팝업.)

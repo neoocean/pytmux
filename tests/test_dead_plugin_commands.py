@@ -206,13 +206,29 @@ async def test_the_rules_prompt_carries_the_current_text_as_the_seed():
         assert out["t"] == "plugin_screen_close"
 
 
+class _FakePty:
+    """패널의 pty — 받은 바이트만 들고 있는다.
+
+    ☠ **`pane.write = …` 로 달지 마라**(pytmux-173). 여기 `pane` 은 **진짜**
+    `pytmuxlib.model.Pane` 이고 거기에는 `write` 가 **없다** — 그런데 이 시험이 그
+    이름을 **만들어 붙여서** `/model` 적용이 라이브에서 늘 `AttributeError` 로 죽는
+    동안에도 늘 초록이었다. 가짜는 프로덕션에 **있는** 이름에만 단다.
+    """
+
+    def __init__(self):
+        self.written = []
+
+    def write(self, data):
+        self.written.append(data)
+
+
 async def test_choosing_a_model_types_it_into_the_active_pane():
     """정본 `_apply_model_config` 와 **같은 결과** — 그 패널을 들고 있는 것이 서버다."""
     async with running_server() as (srv, _task, _sock):
         sess = srv.ensure_default_session(80, 24)
         pane = sess.active_window.active_pane
-        written = []
-        pane.write = written.append
+        pane.pty = _FakePty()
+        written = pane.pty.written
         spec_mod = importlib.import_module(
             "pytmuxlib.plugins.claude-code.screenspec")
         spec = spec_mod.open_spec(srv, sess, "model")
@@ -221,6 +237,18 @@ async def test_choosing_a_model_types_it_into_the_active_pane():
                                           "row": 0, "input": "opus 1m"})
         assert written == [b"/model opus 1m\r"], written
         assert out["t"] == "plugin_screen_close"
+
+
+async def test_applying_a_model_without_a_pty_says_no_instead_of_dying():
+    """`pane.pty` 는 `None` 일 수 있다 — 그때 `_model_apply` 는 **`False`** 라야 한다.
+    터지면 `plugin_screen_close` 가 안 나가고, 조용히 `True` 면 부르는 쪽이 「먹었다」로
+    읽는다. 둘 다 사용자에게는 「골랐는데 아무 일도 안 남」이다(pytmux-173)."""
+    async with running_server() as (srv, _task, _sock):
+        sess = srv.ensure_default_session(80, 24)
+        sess.active_window.active_pane.pty = None
+        spec_mod = importlib.import_module(
+            "pytmuxlib.plugins.claude-code.screenspec")
+        assert spec_mod._model_apply(srv, sess, "opus 1m") is False
 
 
 async def test_the_queue_screen_lists_what_is_queued_and_c_clears_it():

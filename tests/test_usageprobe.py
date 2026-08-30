@@ -327,3 +327,42 @@ async def test_query_usage_none_when_session_open_fails():
     finally:
         usageprobe._open_session = orig
     assert u is None
+
+
+async def test_probe_never_arms_the_fullscreen_boot_canary():
+    """☠ 그림자 프로브가 **사용자 패널의 렌더러**를 망가뜨리지 않는다 (pytmux-414).
+
+    Claude Code 2.1.247 의 fullscreen boot canary 는 「fullscreen 으로 떴다가 첫 프레임
+    +10초 안에 강제로 죽은」 실행을 스트라이크로 세고, 2회면 그 머신의 fullscreen 을
+    통째로 끈다. 이 프로브는 정확히 그 모양으로 돈다(진짜 claude 를 띄웠다가
+    `finally: sess.kill()`). 그래서 자식 env 로 canary 를 **애초에 안 무장시킨다.**
+
+    ⛔ 「돌려 보니 되더라」로는 이 회귀를 못 잡는다 — 트립은 스트라이크 2회째에,
+       그것도 **다음 실행**에서 조용히 일어난다. 그래서 재는 것은 결과가 아니라
+       **자식에게 넘긴 env** 다.
+    """
+    captured = {}
+    orig = usageprobe._open_session
+    sess = _FakeSession(b"\x1b[2J\x1b[H Welcome to Claude\r\n ? for shortcuts\r\n",
+                        _panel_bytes())
+
+    def spy(argv, cwd, env, cols, rows):
+        captured.update(env)
+        return sess
+
+    usageprobe._open_session = spy
+    try:
+        usageprobe.query_usage(cmd="claude", boot_timeout=2.0, panel_timeout=2.0)
+    finally:
+        usageprobe._open_session = orig
+
+    assert captured, "자식 env 를 한 번도 못 붙잡았다 — 이 시험의 전제가 무너졌다"
+    assert captured.get("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN") == "1", (
+        "그림자 프로브가 alt-screen 을 끄지 않고 claude 를 띄운다 — 그러면 fullscreen boot "
+        "canary 가 무장하고, 뒤따르는 강제 kill 이 스트라이크를 쌓아 **사용자의** claude 패널이 "
+        "classic 렌더러로 떨어진다(pytmux-414)")
+    # ⛔ 대조군 — 같은 목적을 이 값으로 대신하면 자식이 fullscreen 으로 떠서
+    #    스크래퍼의 전제(2J+draw 단일 버퍼)를 깬다. canary 를 피하는 것과 별개 문제다.
+    assert "CLAUDE_CODE_NO_FLICKER" not in captured, (
+        "CLAUDE_CODE_NO_FLICKER 로 대신하면 안 된다 — canary 는 피하지만 자식이 fullscreen 으로 "
+        "떠서 이 스크래퍼가 가정한 단일 버퍼가 깨진다")

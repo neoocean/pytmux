@@ -549,11 +549,18 @@ class _MdirPlugin:
         return None
 
     def _send_to_pane(self, server, sess, text):
-        """활성 패널에 글자를 넣는다(정본 F4 와 같은 결과)."""
+        """활성 패널에 글자를 넣는다(정본 F4 와 같은 결과).
+
+        ☠ **`pane.write` 가 아니다**(pytmux-173) — 까닭과 실측은
+        `plugins/ncd/__init__.py` §`_send_to_pane` **한 곳**이 쥔다.
+        """
         win = sess.active_window if sess else None
         pane = win.active_pane if win else None
-        if pane is not None:
-            pane.write(text.encode("utf-8", "replace"))
+        try:
+            if pane is not None and pane.pty is not None:
+                pane.pty.write(text.encode("utf-8", "replace"))
+        except OSError:
+            pass
 
     # ---- 화면 만들기(전부 순수 fs — executor 에서 돈다) ----
     def _spec(self, mine, sel, note):

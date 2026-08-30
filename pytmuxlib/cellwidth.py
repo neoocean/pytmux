@@ -65,6 +65,47 @@ def char_cells(ch: str) -> int:
     return w
 
 
+@lru_cache(maxsize=8192)
+def cluster_cells(text: str) -> int:
+    """**문자소 군집**이 차지하는 칸 수(pytmux-407).
+
+    # 왜 `char_cells` 를 못 쓰나
+
+    저 함수는 글자 **하나**를 받는다(`ord()` 를 부른다). 그런데 셀이 군집을 들기
+    시작하면서(`⚠`+U+FE0F) 그 값이 두 글자짜리 문자열로 오고, 그때 저 함수는
+    `ord() expected a character, but string of length 2` 로 **죽는다**(실측 2026-08-26).
+
+    ⛔ **저 함수의 값을 바꿔 고칠 수 없다** — 러스트 `proto::compose::char_cells` 와
+    글자 하나까지 같아야 한다는 계약이 있고 `conformance.rs` 가 표본으로 잰다.
+    그래서 군집을 받는 **새 입구**를 낸다(pytmux-389 가 `char_advance` 를 따로 낸 것과
+    같은 판단).
+
+    칸 수는 **첫 글자**가 정한다 — 뒤따르는 것은 폭 0 이라 얹히기만 한다. 빈 글은 1 이다
+    (빈 셀도 한 칸이고, 화면 대부분이 그것이다).
+    """
+    return char_cells(text[0]) if text else 1
+
+
+@lru_cache(maxsize=8192)
+def char_advance(ch: str) -> int:
+    """이 글자가 격자에서 **밀어내는 칸 수**. 폭 0 글자는 0 이다.
+
+    # 왜 char_cells 와 따로 있나 (pytmux-389)
+
+    `char_cells` 는 *"몇 칸으로 그리나"* 이고 **러스트 `proto::compose::char_cells`
+    와 글자 하나까지 같아야 한다**는 계약이 있다(`client/crates/proto/tests/
+    conformance.rs` 가 표본 60개로 잰다). 그래서 거기서는 폭 0 도 1 로 떨어진다.
+
+    자리를 나눌 때 묻는 것은 다른 질문이다 — *"다음 글자를 몇 칸 밀어내나"*. 변이
+    선택자(U+FE0E·U+FE0F)·ZWJ(U+200D)·결합 표시는 **앞 글자에 얹히는** 것이라 아무도
+    밀지 않는다. 한 칸을 주면 그 글자가 든 줄이 **한 칸씩 오른쪽으로 밀린다**
+    (실측 2026-08-24 · GUI 프레임 덤프에서 `|⚠ |` 의 닫는 `|` 가 4번째 칸).
+
+    ⚠ 비출력 문자(wcwidth < 0)는 0 이 아니다 — 종전대로 한 칸으로 센다(폭을 알 수
+    없는 것과 폭이 0 인 것은 다르다)."""
+    return 0 if wcwidth(ch) == 0 else char_cells(ch)
+
+
 def ambiguous_wide() -> bool:
     return _AMBIG_WIDE
 

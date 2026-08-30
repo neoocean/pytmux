@@ -255,11 +255,31 @@ class _NcdPlugin:
         return None
 
     def _send_to_pane(self, server, sess, text):
-        """활성 패널에 글자를 넣는다(정본 ncd 의 Enter 와 같은 결과)."""
+        """활성 패널에 글자를 넣는다(정본 ncd 의 Enter 와 같은 결과).
+
+        ☠ **`pane.write` 가 아니다 — `Pane` 에 그런 메서드는 없다**(pytmux-173).
+        종전 이 한 줄은 불릴 때마다 `AttributeError` 로 죽었고, 서버는 데몬이라
+        stderr 이 `/dev/null` 이라 그 트레이스백은 `<state_base>.error.log` 에만
+        남았다. `plugin_screen` 이 예외로 죽으면 `plugin_screen_close` 도 안 나가서
+        **화면도 안 닫히고 cd 도 안 들어가는** 「아무 일도 안 남」이 된다 — 사용자
+        제보가 본 것이 정확히 그것이다(라이브 로그 실측 2026-08-23 17:45:08).
+
+        글자를 넣는 길은 `pane.pty.write` 하나다. 가드는 정본
+        (`plugins/claude-resume/__init__.py` §`_resume`)과 같은 모양이다 —
+        `pane.pty` 는 `None` 일 수 있다(`model.py` 의 `self.pty = None` ·
+        `reinit` 직후).
+
+        ⛔ **가짜를 `pane` 에 달아 재지 마라** — 그것이 이 결함을 살려 둔 길이다
+        (`tests/test_ncd_tree.py` §`_Pane` · 전수 오라클은
+        `tests/test_pane_write_typo.py`).
+        """
         win = sess.active_window if sess else None
         pane = win.active_pane if win else None
-        if pane is not None:
-            pane.write(text.encode("utf-8", "replace"))
+        try:
+            if pane is not None and pane.pty is not None:
+                pane.pty.write(text.encode("utf-8", "replace"))
+        except OSError:
+            pass
 
     # ---- 트리(pytmux-11 B) --------------------------------------------------
     #

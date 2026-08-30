@@ -97,11 +97,19 @@ GUI 의 것으로 얹는다(TUI 식 텍스트 위젯을 흉내내지 않는다).
     는 잴 것이 없어 건너뛴다. 건너뛴 것은 요약의 `건너뜀 N:` 줄에 **사유와 함께** 남는다.
   - ★ **게이트는 «이 상자» 를 자식에게서 걷어낸다**(§`child_env` 한 함수 · pytmux/pytmux-202):
     `NO_COLOR` 를 지우고 · 찾은 cargo 를 PATH 앞에 세우고 · **`PYTMUX_CONFIG` 를 빈 임시
-    파일로 세운다**. 셋째가 없으면 `cargo test` 가 탐색 차례를 끝까지 걸어가 **이 상자의
-    진짜 `~/.config/pytmux/config`** 를 읽는다 — 실측(2026-08-16)으로 `set status-position
-    top` 한 줄에 GUI 배지 자리 오라클이 떨어졌다. 파이썬 스위트는 `tests/run.py` 가 제
-    손으로 막지만 **카고는 그 프로세스를 안 지나서** 보호 밖이었다.
+    파일로 세우고** · **`PYTHON` 에 자기 인터프리터를 싣는다**. 셋째가 없으면 `cargo test`
+    가 탐색 차례를 끝까지 걸어가 **이 상자의 진짜 `~/.config/pytmux/config`** 를 읽는다 —
+    실측(2026-08-16)으로 `set status-position top` 한 줄에 GUI 배지 자리 오라클이
+    떨어졌다. 파이썬 스위트는 `tests/run.py` 가 제 손으로 막지만 **카고는 그 프로세스를
+    안 지나서** 보호 밖이었다.
     ⚠ **`cargo test` 를 직접 치면 여전히 밖이다**(그때는 `PYTMUX_CONFIG` 를 손으로 세운다).
+  - ★ **파이썬을 고르는 법은 저장소에 한 자리다**(`scripts/pick_python.sh` · pytmux-383):
+    셸 게이트(`check_licenses.sh`·`build_release.sh`)와 `pre-push` 훅이 **전부 그것을
+    source 한다**. ⛔ **`command -v python3` 으로 판정하지 않는다** — Windows 에서 그
+    이름은 Store 앱 실행 별칭일 수 있고 `command -v` 는 **그것을 찾아낸다**. 그래서
+    후보를 짚되 **진짜 파이썬 3 인지를 물어서** 고른다. 다른 데 있으면
+    `PYTHON=<경로>`(훅은 `PYTMUX_PYTHON` 도 받는다). 재는 것은
+    `tests/test_shell_gate_python.py`(대조군 포함).
 - **테스트(커밋 전 필수)**: `python3 tests/run.py` — 헤드리스로 전체 스위트를 돌려
   `N passed, 0 failed` 를 확인한다. 특정 모듈만: `python3 tests/run.py test_server`.
   - 주의: `run.py` 는 실패해도 종료코드가 0 일 수 있으니 **요약줄(passed/failed)** 을

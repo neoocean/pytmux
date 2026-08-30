@@ -109,6 +109,34 @@ class _ClipboardMixin:
         if text:
             self.copy_text(text)
 
+    def _apply_remote_clipboard(self, data):
+        """서버가 넘긴 OSC 52 본문(base64)을 이 기계의 OS 클립보드에 넣는다.
+
+        ⛔ **`copy_text` 를 쓰지 않는다.** 그쪽은 서버 페이스트 버퍼에도 쓰고 「N자
+        복사됨」을 띄우는데, 이것은 **사용자가 한 복사가 아니라 앱이 한 복사**다. 서버
+        버퍼까지 덮으면 사용자가 방금 고른 것이 앱의 선택으로 조용히 바뀌고, 매번
+        토스트가 뜨면 (auto-copy on select 처럼) 선택할 때마다 화면이 시끄럽다.
+
+        못 푸는 값(잘린 base64·비-UTF8)은 **조용히 버린다** — 앱이 보낸 쓰레기 때문에
+        클라가 죽거나 사용자의 클립보드가 깨지면 안 된다."""
+        if not isinstance(data, str) or not data:
+            return
+        try:
+            text = base64.b64decode(data, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return
+        if text:
+            self._copy_to_os_clipboard(text)
+
+    def _copy_to_os_clipboard(self, text):
+        """푼 글을 OS 클립보드에 넣는다(워커 — pbcopy/PowerShell 은 느리다).
+
+        `_apply_remote_clipboard` 에서 **디코드와 갈라 둔** 이유는 시험이 「무엇을
+        풀었나」를 볼 자리가 필요해서다. 코루틴을 닫아 버리면 「불렸다」만 보이고
+        base64 를 거꾸로 풀어도 초록이 된다(공허 통과)."""
+        self.run_worker(asyncio.to_thread(clientclip.copy, text),
+                        exclusive=False)
+
     async def _do_copy_text(self, text):
         clip = await asyncio.to_thread(clientclip.copy, text)
         self.display_message(
@@ -421,7 +449,7 @@ class _ChooseScreensMixin:
                           route=it.get("route") or [],
                           query=msg.get("query", ""))
             self.mode = "scroll"
-            self.status.refresh()   # ⇕ 배지 강조(모드 표시 동기화)
+            self.status.refresh()   # 모드가 바뀌었으니 상태줄을 다시 그린다
         self.push_screen(SearchResultsScreen(msg), handle)
 
     # ---- 탭 스위처(esc → Tab) ----
@@ -634,9 +662,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 안 보내므로 키가 없으면 종전(화면 내) 선택으로 폴백한다.
             self.pane_top = {}
             # id -> 그 패널이 라이브에서 **위로 올라간 행수**(서버 프레임의 "scr",
-            # 라이브면 필드 부재 = 0). 터치 스크롤바(touch-scroll)가 썸 위치와 점프
-            # 거리를 계산하는 유일한 입력이다 — `pane_top` 과 짝을 이뤄 "위로 갈 수
-            # 있는 최대치 = top + scr" 를 준다(clientrender.scrollbar_chars 주석).
+            # 라이브면 필드 부재 = 0). `pane_top` 과 짝을 이뤄 "위로 갈 수 있는
+            # 최대치 = top + scr" 를 준다.
+            # ⚠ **이 클라는 지금 이 값을 그리는 데 안 쓴다**(pytmux-377 로 탭 스크롤
+            # UI 를 걷었다). 남긴 이유는 둘이다 — ⑴ `scr` 는 살아 있는 서버 필드이고
+            # Rust GUI 의 **표시용** 스크롤바(pytmux-25)가 그것을 읽는다 ⑵ 서버가
+            # "올라가 있을 때만 싣는다"는 계약을 종단으로 재는 오라클이 이 캐시를
+            # 지나간다(tests/test_scroll_wire.py). 지우려거든 그 둘을 함께 본다.
             self.pane_scroll = {}
             # id -> 그 패널 셸의 작업 디렉터리(서버 `cwd` 프레임. 셸 통합이 없으면 없다).
             # 패널 글 안의 **상대경로를 푸는 기준**이다(§10-21ⓧ2 / pytmux-24) — 없으면
@@ -770,18 +802,13 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 2026-07-30). 판정은 휴리스틱이라(앱 접힘엔 신호가 없다) 오탐이 거슬리면
             # `set copy-unwrap off` — clientutil.unwrap_copy_text 주석에 게이트 설명.
             self.copy_unwrap = bool(config.get("copy_unwrap", True))
+            # 패널 안 앱의 OSC 52(「이 글을 클립보드에 넣어라」)를 이 클라의 OS
+            # 클립보드에 반영할지. tmux 의 `set-clipboard` 와 같은 자리이고 기본은
+            # tmux 와 같이 **켜짐**이다 — 끄면 ssh 너머에서 도는 앱(예: fullscreen
+            # claude 의 auto-copy on select)의 복사가 조용히 안 먹는다(pytmux-420 ①).
+            self.set_clipboard = bool(config.get("set_clipboard", True))
             # copy_range 회신(selection)에 쓸 (선택 패널 폭, 첫 줄 시작 열).
             self._copy_unwrap_geom = (0, 0)
-            # 터치 스크롤 UI(기본 on): 상태줄 `⇕` 배지 탭 → 스크롤 모드, 스크롤
-            # 모드에서 활성 패널 오른쪽 끝 세로 스크롤바를 탭으로 조작. **휠을 앱에
-            # 넘기지 않는 터미널**(iPhone Blink 등 — 스와이프를 자기 스크롤백 UI로
-            # 소비, 진단 2026-07-31)에서 유일하게 남는 입력이 탭이라서 만든 경로다.
-            # 휠이 정상인 데스크탑에선 불필요하므로 `set touch-scroll off` 로 끄면
-            # 배지·스크롤바가 사라진다(clientrender.scrollbar_chars 주석 참조).
-            self.touch_scroll = bool(config.get("touch_scroll", True))
-            # 이번 합성에서 그린 스크롤바 클릭존 (pane_id, x, y0, h) 또는 None —
-            # PaneView.on_mouse_down 이 선택/패스스루보다 먼저 hit-test 한다.
-            self._touch_scroll_zone = None
             # 마우스 이벤트 진단 로그(원격 SSH 휠 스크롤 미동작 등 환경 의존 문제용).
             # `set mouse-debug on` 으로 켜면 클라이언트가 받은 마우스/휠 이벤트와
             # **내비게이션 키**(↑/↓/페이지/홈/엔드 — `_KEY_DIAG` 화이트리스트)를
@@ -1280,6 +1307,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         self.pane_cwds[_pid] = _cwd
                     else:
                         self.pane_cwds.pop(_pid, None)
+            elif t == "clipboard":
+                # 패널 안 앱이 OSC 52 로 「이 글을 클립보드에 넣어라」 했다
+                # (pytmux-420 ①). 서버는 base64 를 안 풀고 넘긴다 — OS 클립보드를
+                # 가진 쪽이 여기다. `set set-clipboard off` 면 아무 일도 안 한다.
+                if self.set_clipboard:
+                    self._apply_remote_clipboard(msg.get("data"))
             elif t == "screen":
                 self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
                 self.pane_wrap[msg["pane"]] = set(msg.get("wrap") or ())
@@ -1605,42 +1638,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     m["delta"] = delta
                 asyncio.create_task(write_msg(self.writer, m))
 
-        def toggle_scroll_mode(self):
-            """터치 스크롤 UI(상태줄 `⇕` 배지 탭)의 스크롤 모드 진입/이탈.
-
-            나갈 땐 맨 아래(live)로 되돌린다 — 키보드 q/ESC/Enter 종료와 같은 의미
-            (`_handle_scroll_key`). normal/scroll 이 아닌 모드(prompt·display·prefix)
-            에선 no-op — 그 모드들의 키 해석을 배지 탭이 가로채지 않게 한다."""
-            if self.mode == "scroll":
-                self.send_scroll(self.layout.get("active"), bottom=True)
-                self.mode = "normal"
-            elif self.mode == "normal":
-                self.mode = "scroll"
-            else:
-                return
-            self.status.refresh()
-            self._composite()
-
-        def touch_scroll_action(self, pane_id, h, iy):
-            """스크롤바(높이 h) 상대 행 iy 탭 처리 — ▲/▼ = 반 화면 위/아래(PgUp/PgDn
-            과 같은 양), 트랙 = 그 위치로 점프. 점프는 절대 위치 명령을 새로 만들지
-            않고 **현재 위치와의 차**를 기존 scroll 델타로 보낸다."""
-            hit = clientrender.scrollbar_hit(h, iy)
-            if hit is None:
-                return
-            kind, frac = hit
-            half = max(1, h // 2)
-            if kind == "up":
-                self.send_scroll(pane_id, delta=half)
-            elif kind == "down":
-                self.send_scroll(pane_id, delta=-half)
-            else:
-                delta = clientrender.scrollbar_jump_delta(
-                    h, self.pane_top.get(pane_id, 0),
-                    self.pane_scroll.get(pane_id, 0), frac)
-                if delta:
-                    self.send_scroll(pane_id, delta=delta)
-
         def _apply_ambiguous_wide(self, wide: bool):
             """모호폭 wide 모드를 런타임 전환한다(:set ambiguous-width). 클라 폭 모델
             (char_cells·Rich/Textual 측정)을 바꾸고, 서버에 통지(set_ambig)해 서버 pyte
@@ -1866,6 +1863,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.mouse_enabled = val.lower() in ("on", "true", "1", "yes")
             elif name in ("mouse-drag-copy", "mouse_drag_copy"):
                 self.mouse_drag_copy = val.lower() in ("on", "true", "1", "yes")
+            elif name in ("set-clipboard", "set_clipboard"):
+                # 패널 안 앱이 OSC 52 로 넣으라 한 글을 **이 클라의** OS 클립보드에
+                # 쓸지. 클라마다 따로 정한다 — 한 세션에 여러 사람이 붙어 있을 때
+                # 남의 복사가 내 클립보드를 덮는 것을 각자 끌 수 있어야 한다.
+                self.set_clipboard = val.lower() in ("on", "true", "1", "yes")
             elif name in ("mouse-drag-threshold", "mouse_drag_threshold"):
                 # 드래그 확정 최소 이동(칸). 범위 밖/비숫자는 무시하고 알린다.
                 try:
@@ -1881,15 +1883,6 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.display_message(i18n.t(
                     "msg.copy_unwrap",
                     state=("ON" if self.copy_unwrap else "OFF")))
-            elif name in ("touch-scroll", "touch_scroll"):
-                self.touch_scroll = val.lower() in ("on", "true", "1", "yes")
-                if not self.touch_scroll:
-                    self._touch_scroll_zone = None   # 남은 클릭존 즉시 무효화
-                self.display_message(i18n.t(
-                    "msg.touch_scroll",
-                    state=("ON" if self.touch_scroll else "OFF")))
-                self.status.refresh()
-                self._composite()
             elif name in ("mouse-debug", "mouse-log"):
                 self.mouse_debug = val.lower() in ("on", "true", "1", "yes")
                 if self.mouse_debug:
@@ -2036,12 +2029,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 return "on" if self.mouse_enabled else "off"
             if key in ("mouse-drag-copy", "mouse_drag_copy"):
                 return "on" if self.mouse_drag_copy else "off"
+            if key in ("set-clipboard", "set_clipboard"):
+                return "on" if self.set_clipboard else "off"
             if key in ("mouse-drag-threshold", "mouse_drag_threshold"):
                 return str(self.mouse_drag_threshold)
             if key in ("copy-unwrap", "copy_unwrap"):
                 return "on" if self.copy_unwrap else "off"
-            if key in ("touch-scroll", "touch_scroll"):
-                return "on" if self.touch_scroll else "off"
             if key == "mode-keys":
                 return self.mode_keys
             if key == "alt-scroll":
@@ -2097,7 +2090,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 f"mouse-drag-copy {'on' if self.mouse_drag_copy else 'off'}",
                 f"mouse-drag-threshold {self.mouse_drag_threshold}",
                 f"copy-unwrap {'on' if self.copy_unwrap else 'off'}",
-                f"touch-scroll {'on' if self.touch_scroll else 'off'}",
+                f"set-clipboard {'on' if self.set_clipboard else 'off'}",
                 f"mouse-debug {'on' if self.mouse_debug else 'off'}",
                 f"alt-scroll  {'on' if self.disable_alt_scroll else 'off'}",
                 f"status-bg   {self.status.bg}",

@@ -243,10 +243,15 @@ class Session:
         ⛔ 돌려주는 것은 **호출부가 운전하는** 핸들이다. 다 쓰면 `close()` 로 회수한다
         (`with` 를 쓰면 저절로) — 우리가 쥔 pid 로만 죽는다(안전 규율 ⑵).
         """
-        if IS_WINDOWS:
-            raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
+        # ★ **오용 검사가 능력 검사보다 «먼저»다**(2026-08-25): `clients(1)` 은 어느 OS 에서든
+        #   프로그래밍 오류지 「이 상자가 못 하는 일」이 아니다. 순서가 뒤집혀 있던 동안
+        #   Windows 에서는 그 계약을 **잴 수가 없었고**(NotSupported 가 먼저 나가
+        #   test_session_refuses_a_single_client_roster 가 붉었다) — 커버리지를 SKIP 으로
+        #   덮는 대신 잴 수 있는 쪽으로 옮긴다.
         if n < 2:
             raise ValueError(f"다중 클라가 둘 미만이면 이 시나리오는 뜻이 없다: n={n}")
+        if IS_WINDOWS:
+            raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
         return ptyshot.Multi([self.client_argv()] * n, cols=self.cols, rows=self.rows,
                              env={"PYTMUX_HOME": self.slot.home})
 

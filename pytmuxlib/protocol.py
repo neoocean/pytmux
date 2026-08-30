@@ -74,7 +74,10 @@ PROTO_VERSION = 1
 #
 # cwd — 패널 셸의 작업 디렉터리. 패널 글 안의 **상대경로를 푸는 기준**이다
 #       (§10-21ⓧ2). 없으면 절대경로만 눌린다.
-CLIENT_CAPS = ("cwd",)
+# clipboard — 패널 안 앱이 OSC 52 로 「이 글을 클립보드에 넣어라」 한 것. **OS
+#       클립보드를 가진 쪽은 클라**라 서버는 base64 를 풀지 않고 그대로 넘긴다
+#       (pytmux-420 ①). 광고 안 한 클라에는 한 바이트도 안 간다.
+CLIENT_CAPS = ("cwd", "clipboard")
 
 
 async def read_msg(reader: asyncio.StreamReader, max_frame: int = MAX_FRAME):

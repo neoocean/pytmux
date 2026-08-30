@@ -108,15 +108,21 @@ def badges(fields) -> list:
         model = fields.get("claude_model")
         if model:
             # 모델 이름은 번역하지 않는다 — `opus-5` 는 철자 그 자체다.
-            out.append(_badge("model", str(model), _SEC))
+            #
+            # ★ **누르면 열린다**(pytmux-379). 아래 ⚠ 주석은 오래 *"model 에는 아직 안
+            #   싣는다 — 그 클릭이 여는 화면이 Tier C 에 없다"* 였는데, 그 사이에 생겼다:
+            #   `screenspec.MODEL` → `_model_spec`(모델×컨텍스트 목록, 고르면 `/model` 주입).
+            #   정본도 이 배지 클릭을 같은 곳으로 보낸다(`open_model_config` → 토큰 팝업의
+            #   `[한도]` 탭 = 모델·컨텍스트 섹션. 그 탭의 GUI 대역이 이 스펙이다).
+            out.append(_badge("model", str(model), _SEC, do="model"))
         text, spec = _limit_badge(fields)
         # ★ **누르면 열리는 이름**을 싣는다(pytmux-20). 이 칸을 오래 비워 둔 이유는
         #   "선언은 있고 배선이 없는 칸"을 안 만들려는 것이었다 — 그 화면(Tier C)이
         #   없었으니까. 이제 `usage-panel` 이 화면 스펙을 내므로 조건이 섰다.
         #   클라는 이 이름의 뜻을 모른 채 `plugin_open` 으로 되돌려 보낸다(오버레이의
         #   `do` 와 같은 규약 — 행동은 서버가 정한다).
-        #   ⚠ 나머지 셋(model·pending·warn)에는 아직 안 싣는다. 정본에서 그 클릭이
-        #   여는 화면들은 여전히 Tier C 가 없다.
+        #   ⚠ 나머지 둘(pending·warn)에는 아직 안 싣는다. 정본에서 그 클릭이 여는
+        #   화면들은 여전히 Tier C 가 없다 — **선언은 있고 배선이 없는 칸**을 안 만든다.
         out.append(_badge("usage", text, _SEC, spec, do="usage-panel"))
     pending = fields.get("claude_pending")
     if isinstance(pending, dict):

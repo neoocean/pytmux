@@ -9,9 +9,11 @@ client_key/handle_command 는 가짜 app 으로, 코어 on_key 배선은 라이�
 계약(delete-to-disable): 플러그인을 Registry 에서 빼면 ime 명령/훅이 전부 사라진다.
 """
 import os
+import re
 
 import harness  # noqa: F401  (sys.path 주입)
 from harness import make_app, server_only, teardown, wait_until
+from run import skip
 from rich.style import Style
 from textual.events import Key
 
@@ -379,6 +381,41 @@ async def test_client_tick_lazily_installs_fast_timer_once():
         _oskbd.current_source_id = orig
         _oskbd.spawn_watcher = orig_spawn
         _restore_ssh_env(_ssh)
+
+
+async def test_the_two_clients_poll_the_ime_at_the_same_rate():
+    """정본과 Rust GUI 의 한/영 폴링 주기가 **갈리지 않는지**(pytmux-378).
+
+    왜 여기서 재나: 이 값은 두 클라가 같은 사실을 같은 속도로 말해야 하는 자리다. 갈리면
+    사용자가 두 창을 나란히 놓는 순간 그 갈림이 곧 제보가 된다 — 실제로 300ms 대 50ms
+    (6배)가 그렇게 들어왔다. 어느 한쪽만 고치면 다음에 같은 제보가 반대 방향으로 온다.
+
+    ⛔ 값을 여기 박아 두지 않는다. **두 파일에서 읽어 서로 대조**한다 — 상수를 세 곳에
+    두면 그 셋이 갈릴 뿐이다.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    canon = os.path.join(root, "pytmuxlib", "plugins", "ime-indicator", "__init__.py")
+    with open(canon, encoding="utf-8") as fh:
+        canon_src = fh.read()
+    # 정본은 `si = getattr(app, "set_interval", None)` 로 한 번 감싼 뒤 부른다 —
+    # 그래서 이름이 아니라 **타이머를 담는 자리**(`_ime_os_timer`)를 앵커로 삼는다.
+    m = re.search(r"_ime_os_timer\s*=\s*\(?\s*si\(\s*([0-9.]+)\s*,", canon_src)
+    assert m, "정본의 폴링 타이머를 못 찾았다 — 이 가드가 공허해졌다"
+    canon_ms = round(float(m.group(1)) * 1000)
+
+    gui = os.path.join(root, "client", "crates", "gui", "src", "session_view.rs")
+    if not os.path.isfile(gui):
+        skip("client/ 가 없다 — Rust 클라 트리 없이 정본만 있는 판")
+    with open(gui, encoding="utf-8") as fh:
+        gui_src = fh.read()
+    m2 = re.search(r"IME_PERIOD:\s*std::time::Duration\s*=\s*"
+                   r"std::time::Duration::from_millis\((\d+)\)", gui_src)
+    assert m2, "GUI 의 IME_PERIOD 를 못 찾았다 — 이름이 바뀌었으면 이 가드도 옮길 것"
+    gui_ms = int(m2.group(1))
+
+    assert gui_ms == canon_ms, (
+        f"두 클라의 한/영 폴링 주기가 갈렸다 — 정본 {canon_ms}ms · GUI {gui_ms}ms"
+    )
 
 
 # ---- 3.6) macOS 감시 헬퍼 경로(인프로세스 TIS freeze 우회) ----

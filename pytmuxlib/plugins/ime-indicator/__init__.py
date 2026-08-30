@@ -359,9 +359,19 @@ class _ImeIndicatorPlugin:
         from .cells import ime_cells
         if not getattr(server, "ime_show", True):
             return []                      # 꺼 뒀다(`ime-indicator off`) — 안 그린다
-        label = ((req.get("facts") or {}).get("ime") or "").strip()
+        facts = req.get("facts") or {}
+        label = (facts.get("ime") or "").strip()
         if not label:
             return []                      # 안 올라왔으면 안 그린다(끄는 것도 프레임)
+        # ★ **자기가 그리는 클라에게는 런을 안 보낸다**(pytmux-392). GUI 는 격자가 아니라
+        #   캔버스 위에 떠서 그릴 수 있어 「글자를 안 가리는 배지」를 가질 수 있는데
+        #   (pytmux-185 가 허용하는 갈림 ⓑ 픽셀 그림), 우리가 같은 자리에 글자 런을 보내면
+        #   그 그림과 **겹친다**. 그래서 그 클라는 사실을 하나 더 올린다.
+        #   ⛔ 런을 문구로 알아보고 지우는 길(클라에서 `text == "[한]"` 매칭)은 안 쓴다 —
+        #      규칙이 두 벌이 되고 문구가 바뀌면 조용히 깨진다. 판정은 여기 한 곳이다.
+        #   ⚠ 정본 TUI 는 이 사실을 안 올리므로 종전과 똑같이 받는다(격자에서는 그것이 옳다).
+        if (facts.get("ime_render") or "").strip() == "client":
+            return []
         panes = req.get("panes") or []
         active = req.get("active")
         box = next((p for p in panes if p["id"] == active), None)
