@@ -24,11 +24,25 @@
 10. 고리(A→B→A)에서 팬아웃이 **홉 상한에서 멈추는가**.
 11. 2단(A→B→C)에서 **표시 번호**(우리 병합 탭바)와 **점프 좌표**(최종 서버의 로컬
     탭)가 갈린 채로 끝까지 가는가 — 뭉치면 "번호는 맞는데 엉뚱한 탭으로 뛴다".
+
+# ⛔ 이 파일의 함정 — 심은 줄에는 **주인이 하나 더** 있다 (pytmux/pytmux-384)
+
+여기 모든 시험은 `_fill` 로 패널 스크롤백에 글을 심고 그것을 찾는다. 그런데 그 패널에는
+**진짜 셸이 붙어 있다** — 그리고 그 셸이 무엇을 찍는지는 OS 마다 다르다. Windows 의
+`cmd.exe` 는 배너를 찍고 ConPTY 가 화면을 정리하므로, 검색이 패널마다 도는
+`await asyncio.sleep(0)` 그 틈에 **심어 둔 줄이 통째로 사라진다.** 그래서 이 파일과
+`test_search_fanout_boundary.py` 의 다섯이 리눅스에서는 늘 초록, Windows 에서는 늘
+빨갰다(회귀가 아니다 — 처음부터 그랬다).
+
+⇒ `_fill` 이 심기 전에 `harness.hush_pane` 으로 **셸의 입을 막는다.** 근거·되돌리는
+길은 그 함수 머리말이 쥐고, 그것이 실제로 걸려 있나는
+`test_fill_deafens_the_pane_to_its_own_shell` 이 대조군을 두고 잰다.
 """
 
 import asyncio
 import harness  # noqa: F401  (경로 설정)
-from harness import server_only, teardown, wait_for
+from harness import server_only, teardown, wait_for, hush_pane, pane_text
+from run import skip
 from test_remote import _attach_client, _read_until
 from pytmuxlib.protocol import read_msg, write_msg
 
@@ -43,6 +57,14 @@ from pytmuxlib.protocol import read_msg, write_msg
 
 
 async def _fill(pane, lines):
+    """패널 스크롤백에 줄을 심는다 — **셸의 입을 막고** 심는다(pytmux/pytmux-384).
+
+    ⛔ `hush_pane` 을 빼지 마라. 이 패널들에는 진짜 PTY 가 붙어 있어서, 안 막으면
+    Windows 의 `cmd.exe` 배너가 **검색이 도는 사이**(패널마다 도는 `sleep(0)`) 여기
+    심은 줄을 덮는다 — 이 파일과 `test_search_fanout_boundary.py` 의 다섯이 그렇게
+    Windows 에서만 늘 빨갰다. 근거와 되돌리는 길은 `harness.hush_pane` 머리말.
+    """
+    hush_pane(pane)
     for ln in lines:
         pane.feed((ln + "\r\n").encode())
 
@@ -73,6 +95,50 @@ async def test_search_all_crosses_tabs_and_panes():
         one = next(it for it in res["items"] if it["pane"] == p2.id)
         assert one["wid"] == sess.tabs[1].wid and one["tab"] == sess.tabs[1].name
         assert "NEEDLE" in one["text"] and isinstance(one["line"], int)
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_fill_deafens_the_pane_to_its_own_shell():
+    """`_fill` 이 심은 줄은 **셸이 나중에 무엇을 쓰든** 살아남는다(pytmux/pytmux-384).
+
+    이 파일이 재려는 것은 「스크롤백에서 찾는가」이지 「셸이 뜨는가」가 아닌데, 안 막으면
+    후자가 전자를 이긴다 — Windows 에서 실제로 다섯이 그렇게 떨어졌다.
+
+    ⛔ **대조군이 없으면 공허하게 통과한다** — 셸이 pty 로 아무것도 안 돌려주는 상자에서는
+    「안 덮였다」가 저절로 참이다. 그래서 **입을 안 막은 패널**이 실제로 그 길로 글을
+    받는 것을 먼저 보이고, 안 받으면 세지 않고 skip 한다.
+    ⚠ 대조군이 «덮이는» 것까지는 안 잰다 — 무엇을 찍을지는 그 상자의 셸이 정한다
+    (Windows 에서는 화면을 지우고, POSIX 에서는 대개 프롬프트 한 줄이다). 재는 것은
+    **그 길이 살아 있나**이고, 그 길을 끊는 것이 처방이다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        loud = sess.active_window.active_pane
+        loud.feed("대조군 NEEDLE\r\n".encode())      # 옛 `_fill` 과 같은 모양
+        srv.split_pane(sess, "lr")
+        quiet = sess.active_window.active_pane
+        quiet.resize(80, 24)
+        await _fill(quiet, ["본시험 NEEDLE"])          # 지금 `_fill` — 입을 막고 심는다
+
+        before_loud, before_quiet = pane_text(loud), pane_text(quiet)
+        assert "본시험 NEEDLE" in before_quiet, before_quiet
+        assert quiet.pty is not None, "이 시험이 재려던 구멍이 없다(패널에 pty 가 없다)"
+
+        # 두 셸에 같은 한 줄을 준다 — 이 상자의 **진짜 셸이 진짜 pty 로** 되돌려주는
+        # 바이트라, Windows 배너가 화면에 닿는 길과 정확히 같은 길이다.
+        for p in (loud, quiet):
+            p.pty.write(b"echo PYTMUXHUSH\r")
+
+        if not await wait_for(lambda: pane_text(loud) != before_loud):
+            skip("이 상자의 셸이 pty 로 아무것도 안 되돌린다 — 대조군이 안 선다")
+
+        # ⑴ 입을 막은 패널의 화면은 **한 글자도** 안 움직였다.
+        assert pane_text(quiet) == before_quiet, pane_text(quiet)
+        # ⑵ 그래서 검색이 여전히 그 줄을 찾는다 — 다섯이 잃었던 것이 이것이다.
+        res = await srv.search_all_panes(sess, "NEEDLE")
+        assert quiet.id in {it["pane"] for it in res["items"]}, res["items"]
     finally:
         await teardown(srv, task, sock)
 

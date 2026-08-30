@@ -225,6 +225,7 @@ impl BlockList {
             | Action::ShowPlugins
             | Action::ToggleClock
             | Action::ShowSummary
+            | Action::ShowCursor
             | Action::SelectBlocks
             | Action::FontScale { .. }
             | Action::FontScaleReset
@@ -313,7 +314,7 @@ impl BlockList {
             Action::ToggleClaudeDetail => false,
             // 스크롤 모드 진입은 입력 모드의 전이다(`keys::interpret`). 블록 목록과
             // 무관하므로 여기서는 아무 일도 안 일어난다.
-            Action::EnterScroll | Action::ToggleScroll => false,
+            Action::EnterScroll => false,
         }
     }
 }

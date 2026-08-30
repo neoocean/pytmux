@@ -125,7 +125,13 @@ fn fake_launcher(tag: &str, message: &str, code: i32) -> (PathBuf, PathBuf) {
     let (name, body) = if cfg!(windows) {
         (
             "fake.cmd",
-            format!("@echo off\r\necho {message} 1>&2\r\nexit /b {code}\r\n"),
+            // 그 자리에서 코드페이지를 UTF-8 로 세운다. 없으면 이 시험은 **한국어
+            // Windows 에서 늘 떨어진다**(실측 2026-08-24): 이 파일은 UTF-8 로 쓰이는데
+            // `cmd.exe` 는 콘솔 코드페이지(CP949)로 읽어 `echo` 가 깨진 바이트를 내고,
+            // 단언은 "사유가 사라졌다"로 운다. 제품이 아니라 **하네스**의 결함인데
+            // Windows 게이트에 상시 빨간 줄을 남기고 있었다 — 늘 붉은 줄 하나는 다음
+            // 세션이 스위트 전체를 "원래 그런 것"으로 읽게 만든다.
+            format!("@echo off\r\n@chcp 65001 >nul\r\necho {message} 1>&2\r\nexit /b {code}\r\n"),
         )
     } else {
         (

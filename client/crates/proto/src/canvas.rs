@@ -100,6 +100,18 @@ impl BlockFill {
 /// ⚠ 없는 동안 그 글자들은 종전대로 폴백 글꼴로 그려졌고, 그것이 곧 pytmux-55 가 고친
 /// 바로 그 결함(진폭이 칸너비의 정수배가 아니라 **행마다 어긋난다**)이다. 곧 표에서
 /// 빠진 것은 「안 그려진다」가 아니라 **「예전 버그를 그대로 겪는다」**였다.
+///
+/// ★ **짐작이 아니라 쟀다**(2026-08-24). 도는 `claude`(v2.1.241)의 시작 화면을 pty 로 떠서
+/// 그 격자를 코드포인트로 덤프하니 마스코트가 쓰는 글자는 여섯이었다 —
+/// `▀`(U+2580) · `█`(U+2588) · `▐`(U+2590) · `▛`(U+259B) · `▜`(U+259C) · `▝`(U+259D).
+/// 뒤의 셋이 사분면이고 **스무 칸 중 여덟 칸**이 그것이다 — 표가 좁던 동안 그만큼이
+/// 폴백 글꼴로 갔다는 뜻이라 제보의 *"행마다 가로로 밀린다"* 와 맞는다.
+/// braille(U+28xx)·팔분면(U+1FB00)은 **한 글자도 안 나왔다** — 그 범위까지 넓힐 까닭이
+/// 지금은 없다.
+///
+/// 그 캡처는 `tests/fixtures/claude_mascot.json` 이 쥐고, 재는 자리는
+/// `tests/mascot_conformance.rs` 다. ⛔ 그 픽스처에는 생성기가 없다(도는 claude 가
+/// 있어야 나온다) — 다시 뜨는 법은 그 테스트 머리말에 적혀 있다.
 pub const BLOCK_FILLS: &[(char, &[BlockFill])] = &[
     ('▀', &[BlockFill::rect(0., 0., 1., 0.5)]),
     ('▁', &[BlockFill::rect(0., 7. / 8., 1., 1.)]),
@@ -158,15 +170,46 @@ pub fn block_fills(ch: char) -> Option<&'static [BlockFill]> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cell {
     pub ch: char,
+    /// 이 글자에 **얹히는** 폭 0 글자들 — 변이 선택자(U+FE0E·U+FE0F) · ZWJ(U+200D) ·
+    /// 결합 표시. 보통 비어 있다.
+    ///
+    /// # 왜 셀이 «글자 하나»면 안 되나 (pytmux-407)
+    ///
+    /// 그 글자들은 앞 글자와 **한 덩어리로 셰이퍼에 들어가야** 제 모습이 된다.
+    /// `⚠`+U+FE0F 를 갈라 넣으면 `⚠` 만 홀로 셰이퍼에 가고 **흑백 텍스트 표현**으로
+    /// 그려진다 — 색 이모지가 아니다.
+    ///
+    /// 갈래를 나눈 이유(칸을 하나 더 쓰지 않는 이유): 폭 0 은 **칸을 안 먹는다**.
+    /// 종전에는 이 글자가 제 칸을 차지해 뒤따르는 글자가 한 칸씩 밀렸다.
+    ///
+    /// ⛔ 여기에 폭 0 이 아닌 글자를 넣지 않는다 — 그러면 그 글자가 화면에서 사라진다
+    /// (칸을 안 먹는데 그려지기는 하는 자리가 된다).
+    pub marks: String,
     pub style: CellStyle,
     /// 넓은 글자가 차지한 뒤쪽 칸인가. 줄을 만들 때 건너뛴다.
     pub continuation: bool,
+}
+
+impl Cell {
+    /// 이 칸이 그리는 **글**(글자 + 얹힌 것들). 보통은 글자 하나다.
+    ///
+    /// 그리는 쪽은 이것을 통째로 셰이퍼에 넘긴다 — 갈라 넘기면 위 머리말의 그 증상이다.
+    pub fn text(&self) -> String {
+        if self.marks.is_empty() {
+            return self.ch.to_string();
+        }
+        let mut out = String::with_capacity(1 + self.marks.len());
+        out.push(self.ch);
+        out.push_str(&self.marks);
+        out
+    }
 }
 
 impl Default for Cell {
     fn default() -> Self {
         Self {
             ch: ' ',
+            marks: String::new(),
             style: CellStyle::default(),
             continuation: false,
         }
@@ -227,6 +270,9 @@ impl Canvas {
         }
         if let Some(cell) = self.cell_mut(x, y) {
             cell.ch = ch;
+            // 새 글자로 갈았으니 앞 글자에 얹혀 있던 것은 남으면 안 된다 — 남기면
+            // 엉뚱한 글자에 변이 선택자가 붙는다.
+            cell.marks.clear();
             cell.style = style;
             cell.continuation = false;
         }
@@ -246,6 +292,30 @@ impl Canvas {
             for run in row {
                 let style = CellStyle::from_map(&run.style);
                 for ch in run.text.chars() {
+                    // ★ **폭 0 은 칸을 안 먹고 앞 글자에 얹힌다**(pytmux-407 · 389).
+                    //   종전에는 제 칸을 차지해 ⑴ 뒤따르는 글자가 한 칸씩 밀리고
+                    //   ⑵ `⚠` 가 변이 선택자와 갈려 **흑백**으로 그려졌다.
+                    //   ⛔ 앞 칸이 없으면(줄 첫 글자) 버린다 — 얹을 자리가 없는 표시를
+                    //      제 칸에 그리면 그것이 화면에 없는 글자가 된다.
+                    if crate::compose::char_advance(ch) == 0 {
+                        if cx > 0 {
+                            let prev = x + cx - 1;
+                            // 넓은 글자의 **본체**에 얹는다(연속 칸이 아니라).
+                            let at = if self.cells[ty]
+                                .get(prev)
+                                .is_some_and(|c| c.continuation)
+                                && prev > 0
+                            {
+                                prev - 1
+                            } else {
+                                prev
+                            };
+                            if let Some(cell) = self.cells[ty].get_mut(at) {
+                                cell.marks.push(ch);
+                            }
+                        }
+                        continue;
+                    }
                     if cx >= w {
                         break;
                     }
@@ -256,12 +326,14 @@ impl Canvas {
                     let wide = char_cells(ch) == 2;
                     self.cells[ty][tx] = Cell {
                         ch,
+                        marks: String::new(),
                         style,
                         continuation: false,
                     };
                     if wide && cx + 1 < w && tx + 1 < self.cols {
                         self.cells[ty][tx + 1] = Cell {
                             ch: ' ',
+                            marks: String::new(),
                             style,
                             continuation: true,
                         };
@@ -306,12 +378,14 @@ impl Canvas {
         };
         self.cells[y][x] = Cell {
             ch: merged,
+            marks: String::new(),
             style,
             continuation: false,
         };
         if char_cells(ch) == 2 && x + 1 < self.cols {
             self.cells[y][x + 1] = Cell {
                 ch: ' ',
+                marks: String::new(),
                 style,
                 continuation: true,
             };
@@ -355,9 +429,19 @@ impl Canvas {
             if cx >= self.cols {
                 break;
             }
+            // 여기도 폭 0 은 앞 글자에 얹는다(pytmux-407 · `put_row_runs` 와 같은 규칙).
+            if crate::compose::char_advance(ch) == 0 {
+                if cx > 0
+                    && let Some(cell) = self.cells[y].get_mut(cx - 1)
+                {
+                    cell.marks.push(ch);
+                }
+                continue;
+            }
             let wide = char_cells(ch) == 2;
             self.cells[y][cx] = Cell {
                 ch,
+                marks: String::new(),
                 style,
                 continuation: false,
             };
@@ -365,6 +449,7 @@ impl Canvas {
             if wide && cx < self.cols {
                 self.cells[y][cx] = Cell {
                     ch: ' ',
+                    marks: String::new(),
                     style,
                     continuation: true,
                 };
@@ -387,9 +472,14 @@ impl Canvas {
             if cell.continuation {
                 continue;
             }
+            // 얹힌 것(변이 선택자 등)도 **함께** 나간다 — 빼면 이 줄을 다시 받는 쪽이
+            // 색 이모지를 잃는다(pytmux-407).
             match runs.last_mut() {
-                Some((text, style)) if *style == cell.style => text.push(cell.ch),
-                _ => runs.push((cell.ch.to_string(), cell.style)),
+                Some((text, style)) if *style == cell.style => {
+                    text.push(cell.ch);
+                    text.push_str(&cell.marks);
+                }
+                _ => runs.push((cell.text(), cell.style)),
             }
         }
         runs

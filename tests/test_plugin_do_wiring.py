@@ -245,6 +245,16 @@ def _resolve_id(node, fn, consts):
     return ("?", ast.dump(node)[:60])
 
 
+#: 「키 표를 짓는 함수」 ↔ 「그 함수가 낼 수 있는 do 전수 상수」.
+#:
+#: 이 자는 소스를 **읽지 부르지 않는다**(모듈 머리말 §"왜 부르지 않고 읽나"). 그래서
+#: 표를 함수가 지으면 값이 안 보이고, 안 보이는 것을 통과시키면 그 판의 do 는 이 게이트
+#: 밖으로 나간다 — 그것이 이 파일이 막으려는 바로 그 부류다. 짝을 손으로 적는 대신
+#: 자동으로 넓히지 않는 이유도 같다: 이름만으로 넓히면 남의 동명 함수를 끌어온다
+#: (`_emitters` 의 공장 처리가 같은 함정을 이미 적어 뒀다).
+_KEY_FACTORIES = {"_hub_keys": "_HUB_KEY_DOS"}
+
+
 def _resolve_keys(node, fn, consts):
     """스펙의 `keys` → `(글자로 푼 do 들, 매개변수 자리들, 못 푼 사유들)`.
 
@@ -265,6 +275,25 @@ def _resolve_keys(node, fn, consts):
     if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
         # `keys or {}` — 뜻은 앞엣것이 진다(뒤는 "안 주면 빈 표").
         return _resolve_keys(node.values[0], fn, consts)
+    # ★ **키 표 공장**(`keys=_hub_keys(sid, {…})`) — 함수가 짓는 표라 읽어서는 값이
+    #   안 보인다. 그렇다고 「못 푼다」로 두면 그 판의 do 를 **아무도 안 재게** 되므로,
+    #   공장마다 「낼 수 있는 do 전수」 상수를 짝지어 그것을 푼다. 표가 자라면 그 상수도
+    #   같이 자라야 하고(그 강제는 `test_plugin_screen.py` 가 양방향으로 잰다), 상수가
+    #   없으면 여기서 운다.
+    #   ⛔ 이름을 «알아서» 넓히지 않는다 — 짝은 아래 표 한 곳이다.
+    if isinstance(node, ast.Call) and _call_name(node) in _KEY_FACTORIES:
+        roster = _KEY_FACTORIES[_call_name(node)]
+        val = consts.get(roster)
+        if val is None:
+            return (set(), [], [f"키 표 공장 {_call_name(node)}() 의 전수 {roster} 를 못 찾는다"])
+        got = _names_of(val)
+        # 공장에 **함께 넘긴 리터럴 표**(`{"enter": "apply"}`)도 이 판의 do 다.
+        for arg in list(node.args[1:]) + [kw.value for kw in node.keywords]:
+            sub, subp, subu = _resolve_keys(arg, fn, consts)
+            got |= sub
+            if subp or subu:
+                return (got, subp, subu)
+        return (got, [], [])
     if isinstance(node, ast.Dict):
         got, params, unres = set(), [], []
         for v in node.values:
@@ -360,7 +389,11 @@ def _emitters(rel, tree, consts):
                     continue
                 got, sub, u = _resolve_keys(arg, None, consts)
                 if sub or u:
-                    unres.append(f"{at} — {fn.name}() 의 keys 를 못 푼다")
+                    # ⚠ **속 사유를 함께 싣는다**. 종전에는 "keys 를 못 푼다" 한 줄만
+                    #    남아서, 왜 못 푸는지(상수를 못 찾나·모양이 낯서나)를 알려면
+                    #    조사기를 손으로 다시 돌려야 했다 — 실측 2026-08-25.
+                    why = "; ".join(u) if u else "매개변수 자리가 남았다"
+                    unres.append(f"{at} — {fn.name}() 의 keys 를 못 푼다({why})")
                     bad = True
                     break
                 here |= got

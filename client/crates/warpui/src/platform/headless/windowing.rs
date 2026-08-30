@@ -209,6 +209,11 @@ impl platform::Window for Window {
 
     fn set_titlebar_height(&self, _height: f64) {}
 
+    fn titlebar_height(&self) -> f64 {
+        // 헤드리스 창에는 머리줄이 없다 — 말한 것도 물어볼 것도 없다.
+        0.
+    }
+
     fn supports_transparency(&self) -> bool {
         false
     }

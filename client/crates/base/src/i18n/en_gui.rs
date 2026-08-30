@@ -4,6 +4,8 @@
 //! (중복 키 금지 — 첫 등장 파일에만 둔다). 여기에는 GUI 에만 있는 원문이 남는다.
 
 pub static EN: &[(&str, &str)] = &[
+    // ── 빈 상태(pytmux-405) ──
+    ("찾는 중…", "Searching…"),
     // 플러그인 표면(Tier A) — 아직 화면이 없는 기여를 눌렀을 때.
     (
         "플러그인 명령 {name} 은 이 클라에 아직 화면이 없습니다 — 터미널 클라(pytmux)에서 쓰세요",
@@ -143,4 +145,17 @@ pub static EN: &[(&str, &str)] = &[
     ),
     // ── session_view.rs — render_search_results(pytmux-27) ──
     ("검색 결과가 없다", "No search results"),
+    // ── session_view.rs — 커서 판(pytmux-375) ──
+    ("미리보기", "Preview"),
+    // 두께 줄이 `block` 에서 흐린 이유. 값 대신 **왜 없는지**를 적는 자리라, 영어도
+    // 「반전한다」를 그대로 옮긴다 — 그것이 두께를 줄 자리가 없는 진짜 이유다.
+    (
+        "채운 네모는 칸을 반전한다 — 두께를 줄 자리가 없다",
+        "the filled block inverts the cell — there is no edge to thicken",
+    ),
+    // ── session_view.rs · 고른 글꼴이 이 상자에 없을 때(pytmux-408 ③) ──
+    (
+        "글꼴 «{name}» 이 이 상자에 없다 — 기본 글꼴로 그린다",
+        "font «{name}» is not on this box — drawing with the default",
+    ),
 ];

@@ -341,3 +341,61 @@ fn a_narrow_run_is_unchanged_by_the_wide_char_rule() {
     assert_eq!(badge.len(), 1, "{runs:?}");
     assert_eq!(badge[0].0, "[EN]");
 }
+
+// ── 문자소 군집 (pytmux-407) ──────────────────────────────────────────────────
+
+
+
+#[test]
+fn a_variation_selector_rides_the_letter_instead_of_taking_a_cell() {
+    // 두 가지가 한꺼번에 걸려 있던 자리다(pytmux-407):
+    //  (1) 그 글자가 **제 칸을 먹어** 뒤따르는 글자가 한 칸씩 밀렸다.
+    //  (2) 경고 기호가 선택자와 **갈려** 셰이퍼에 홀로 가 흑백으로 그려졌다.
+    let mut c = Canvas::new(10, 1);
+    c.blit_pane(&plain("A\u{26a0}\u{fe0f}B"), 0, 0, 10, 1);
+    assert_eq!(c.cell(0, 0).unwrap().ch, 'A');
+    assert_eq!(c.cell(1, 0).unwrap().ch, '\u{26a0}');
+    assert_eq!(c.cell(2, 0).unwrap().ch, 'B', "선택자가 칸을 먹어 줄이 밀렸다");
+    // 그 칸의 **글**은 둘이 붙은 한 덩어리다 — 갈라 넘기면 색 이모지가 흑백이 된다.
+    assert_eq!(c.cell(1, 0).unwrap().text(), "\u{26a0}\u{fe0f}");
+    // 다시 내보낼 때도 잃지 않는다(복사·검색·재직렬화가 이 길을 탄다).
+    assert!(
+        c.row_text(0).contains("\u{26a0}\u{fe0f}"),
+        "다시 내보내며 선택자를 잃었다: {:?}",
+        c.row_text(0)
+    );
+}
+
+#[test]
+fn a_zero_width_char_with_nothing_to_ride_is_dropped() {
+    // 대조군 — 줄 맨 앞의 폭 0 글자는 얹힐 데가 없다. 제 칸에 그리면 그것이
+    // **화면에 없는 글자**가 되고 칸 산수도 어긋난다.
+    let mut c = Canvas::new(4, 1);
+    c.blit_pane(&plain("\u{fe0f}X"), 0, 0, 4, 1);
+    assert_eq!(c.cell(0, 0).unwrap().ch, 'X', "맨 앞 폭 0 글자가 칸을 먹었다");
+    assert!(c.cell(0, 0).unwrap().marks.is_empty());
+}
+
+#[test]
+fn a_mark_rides_the_body_of_a_wide_letter_not_its_continuation() {
+    // 넓은 글자는 칸 둘을 쓰고 뒤 칸은 **연속 셀**이다. 얹을 곳은 본체다 —
+    // 연속 셀에 얹으면 그 줄을 다시 만들 때 `row_runs` 가 건너뛰어 사라진다.
+    let mut c = Canvas::new(6, 1);
+    c.blit_pane(&plain("\u{ac00}\u{fe0f}Z"), 0, 0, 6, 1);
+    assert_eq!(c.cell(0, 0).unwrap().ch, '\u{ac00}');
+    assert_eq!(c.cell(0, 0).unwrap().text(), "\u{ac00}\u{fe0f}", "본체에 안 얹혔다");
+    assert!(c.cell(1, 0).unwrap().continuation);
+    assert_eq!(c.cell(2, 0).unwrap().ch, 'Z');
+    assert!(c.row_text(0).contains("\u{ac00}\u{fe0f}"), "{:?}", c.row_text(0));
+}
+
+#[test]
+fn writing_a_new_letter_into_a_cell_drops_the_marks_that_rode_the_old_one() {
+    // 안 지우면 **엉뚱한 글자에** 변이 선택자가 붙는다 — 그 칸만 다시 그려지는
+    // 프레임에서 조용히 일어난다.
+    let mut c = Canvas::new(4, 1);
+    c.blit_pane(&plain("\u{26a0}\u{fe0f}"), 0, 0, 4, 1);
+    assert!(!c.cell(0, 0).unwrap().marks.is_empty());
+    c.put_cell(0, 0, 'Q', CellStyle::default());
+    assert_eq!(c.cell(0, 0).unwrap().text(), "Q");
+}

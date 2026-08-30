@@ -216,7 +216,20 @@ def main():
                 time.sleep(0.2)
             # 여기서부터가 «재방출»이다 — 앞의 echo 응답은 세지 않는다.
             chunks.clear()
-            pty.resize(120, 50)
+            # ☠ **이름도 인자 순서도 여기서 한 번 틀렸다**(2026-08-23 실측 · GHA
+            #   32640590840·32637285906 여섯 장 전부):
+            #     [5] … 못 쟀다 — AttributeError("'_OwnedConPty' object has no
+            #                                     attribute 'resize'")
+            #   `_OwnedConPty` 에 `resize` 는 **없다** — 있는 것은 `set_winsize` 이고
+            #   그 인자는 **(rows, cols)** 라 `resize(cols, rows)` 와 **뒤집혀 있다**
+            #   (`pty_backend.set_winsize` 가 안에서 다시 `cp.resize(cols, rows)` 로
+            #   되뒤집으며 「주의: (cols, rows) 순서」라고 적어 둔 그 자리다).
+            #   ⛔ 그래서 `except Exception` 이 이것을 삼켜 두 호스트 × 파이썬 셋이
+            #      **한 번도 재방출을 안 자극한 채** 「못 쟀다」로만 나왔다. 그 갈래가
+            #      「겹침 없음」과 구별되게 지어 둔 덕에 거짓 초록은 아니었지만,
+            #      **[5] 는 배선된 날부터 지금까지 한 번도 안 돌았다.**
+            #   ⇒ 폭만 200 → 120 으로 줄인다(행은 그대로 50 — 자극은 «폭»이다).
+            pty.set_winsize(50, 120)
             deadline = time.time() + 4
             while time.time() < deadline:
                 if "관리됩니다" in b"".join(chunks).decode("utf-8", "replace"):
@@ -230,7 +243,7 @@ def main():
                    " (advisory)"
                    % (len(seen2), len(dup2),
                       (" [%s]" % "".join(dup2)) if dup2 else "", word))
-            pty.resize(200, 50)
+            pty.set_winsize(50, 200)   # 되돌린다 (rows, cols)
         except Exception as exc:                      # noqa: BLE001 (진단 스텝)
             report("[5] 리페인트 재방출(pytmux-208): 못 쟀다 — %r (advisory)" % (exc,))
 

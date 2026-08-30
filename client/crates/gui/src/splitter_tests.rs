@@ -109,6 +109,35 @@ fn a_grid_of_no_rows_never_drops() {
     assert_eq!(overlay.seg_drop(0), 0.);
 }
 
+// ── 커서 잉크(`cursor_ink` · pytmux-375) ─────────────────────────────────────
+//
+// 커서를 그리는 자리가 둘이 됐다: 캔버스 위의 진짜 커서(`paint_cursor`)와 커서 판의
+// **견본 한 칸**(`session_view::cursor_sample`). 「어느 변을 긋나」를 두 곳에 적으면
+// 판이 보여 주는 그림과 실제 커서가 갈리고, 그 판의 존재 이유가 「바꾸는 즉시 **맞게**
+// 보이는 것」이라 그 갈라짐은 이 기능을 통째로 무의미하게 만든다. 그래서 표는 하나이고
+// 여기서 그 표를 못박는다.
+
+#[test]
+fn the_cursor_ink_table_is_what_both_drawings_read() {
+    use CursorInk::{Edges, Fill};
+    let want = [
+        // 외곽선 네모 — 네 변 다.
+        (CursorStyle::Hollow, Edges { top: true, left: true, bottom: true, right: true }),
+        // 밑줄 — 아랫변 하나.
+        (CursorStyle::Underline, Edges { top: false, left: false, bottom: true, right: false }),
+        // 세로선 — **왼쪽** 하나(글자 앞에 선다).
+        (CursorStyle::Bar, Edges { top: false, left: true, bottom: false, right: false }),
+        // 채운 네모는 변이 아니다 — 캔버스가 그 칸을 **반전**해 낸다.
+        (CursorStyle::Block, Fill),
+    ];
+    for (style, ink) in want {
+        assert_eq!(cursor_ink(style), ink, "{style:?} 의 잉크가 표와 다르다");
+    }
+    // 기본값이 종전 모양이라는 사실도 함께 못박는다 — 이 표가 뒤집히면 「고를 수 있게」가
+    // 아니라 「기본이 바뀌었다」가 된다.
+    assert_eq!(CursorStyle::default(), CursorStyle::Hollow);
+}
+
 /// 산수만 재는 자리라 자식은 아무것도 안 그리는 빈 위젯이면 된다.
 fn probe_overlay(rows: u16) -> SplitterOverlay {
     SplitterOverlay::new(

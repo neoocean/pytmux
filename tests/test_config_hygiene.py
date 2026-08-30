@@ -20,9 +20,13 @@
     (헬퍼만 단언하면 호출부를 지워도 통과한다 — 이 저장소가 말하는 «공허 통과»)
   · `check_all.py::child_env` 의 `hermetic.isolate_config()` 한 줄을 지우면
     → test_the_combined_gate_hands_the_guard_to_its_children 실패
+  · `check_all.py::child_env` 의 `env["PYTHON"] = sys.executable` 한 줄을 지우면
+    → test_the_combined_gate_hands_its_own_python_to_shell_gates 실패
+    (같은 함수가 쥔 넷째 — 갈리는 것이 «설정»이 아니라 «파이썬»일 뿐이다. pytmux-383)
 """
 import contextlib
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -157,6 +161,51 @@ async def test_user_config_is_not_written():
             "사용자 설정 파일의 mtime 이 움직였다"
 
 
+async def test_a_busy_config_file_is_retried_not_lost():
+    """설정 쓰기가 **한 번의 PermissionError 로 사라지지 않는다**.
+
+    실측(2026-08-24 · 이 Windows 상자): 방금 쓴 임시 파일을 바꿔치기할 때 `os.replace` 가
+    `[WinError 5] Access is denied` 로 죽었다(3회 중 1회 · 픽스처 생성기가 그 경로를 지난다).
+    우리 코드 잘못이 아니라 **다른 프로세스가 그 순간 그 파일을 쥐고 있는 것**이고(보안
+    에이전트·인덱서) 창은 밀리초다. 한 번만 시도하면 사용자에게는 `set` 이 조용히 안 먹는다.
+
+    ⛔ 끝까지 안 되면 **예외를 올려 보내야** 한다 — 삼키면 "저장했다"는 거짓말이 된다.
+    """
+    import os as _os
+
+    tmpdir = tempfile.mkdtemp()
+    target = os.path.join(tmpdir, "config")
+    try:
+        real = _os.replace
+        calls = {"n": 0}
+
+        def flaky(src, dst):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise PermissionError(5, "Access is denied")
+            return real(src, dst)
+
+        with harness.patched(_os, replace=flaky):
+            keymap.set_config_option("mouse", "off", target)
+        assert calls["n"] == 2, f"되풀이하지 않았다(호출 {calls['n']}회)"
+        with open(target, encoding="utf-8") as fh:
+            assert "mouse off" in fh.read(), "되풀이했는데 값이 안 들어갔다"
+
+        def always(src, dst):
+            raise PermissionError(5, "Access is denied")
+
+        with harness.patched(_os, replace=always):
+            try:
+                keymap.set_config_option("mouse", "on", target)
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError("끝까지 막혔는데 성공한 척했다")
+    finally:
+        import shutil as _sh
+        _sh.rmtree(tmpdir, ignore_errors=True)
+
+
 async def test_isolate_config_is_idempotent_and_overrides_the_shell():
     """멱등 + 셸 값 무시 — 개발자 셸이 `PYTMUX_CONFIG` 를 export 해 뒀어도 덮는다.
 
@@ -222,3 +271,38 @@ async def test_the_combined_gate_hands_the_guard_to_its_children():
     # 같은 함수가 `NO_COLOR` 도 거둔다 — 자식 env 를 쥔 자리가 하나라는 것이 이 함수의 값이다.
     with _env(NO_COLOR="1", PYTMUX_CONFIG=None, PYTMUX_TEST_CONFIG_ISOLATED=None):
         assert "NO_COLOR" not in check_all.child_env()
+
+
+async def test_the_combined_gate_hands_its_own_python_to_shell_gates():
+    """합본 게이트가 **자기 인터프리터**를 자식에게 넘긴다(pytmux/pytmux-383 · child_env ⑷).
+
+    위 시험이 ⑶ 을 재는 것과 같은 부류다 — 다만 이번에 갈린 것은 «설정»이 아니라
+    «파이썬»이다. 셸 게이트(`check_licenses.sh`·`build_release.sh`)는 자기가 파이썬을
+    다시 찾으므로, 게이트가 `PYTHON` 을 안 넘기면 그 스텝만 이 상자의 `python3` 로
+    떨어진다. 2026-08-23 에 그 이름이 Windows Store 앱 별칭이라 「라이선스 경계」가
+    **1.0초 만에 FAIL** 이었다(재배포 고지를 한 줄도 안 재고).
+
+    ⛔ **`os.environ` 을 그대로 둔 채 재면 공허하게 통과한다** — 개발자 셸에 `PYTHON`
+    이 export 돼 있으면 `dict(os.environ)` 이 그 키를 그대로 싣는다. 그래서 «맨 셸»
+    모양(키가 아예 없다)으로 돌린다.
+    """
+    with _env(PYTHON=None, PYTMUX_PYTHON=None):
+        # 대조군 — 맨 복사본은 그 키를 안 싣는다. 즉 셸 게이트는 이름을 스스로 다시
+        # 찾는다. 이 대조군이 없으면 아래 본시험이 «아무 일도 안 하는 코드»를 통과시킨다.
+        assert "PYTHON" not in dict(os.environ)
+        env = check_all.child_env()
+
+    assert env.get("PYTHON") == sys.executable, env.get("PYTHON")
+    assert os.path.isabs(env["PYTHON"]), (
+        "이름만 넘겼다 — 자식의 PATH 가 다르면 다른 인터프리터로 떨어진다", env["PYTHON"])
+
+    # 셸이 심어 둔 값은 **덮는다**. 게이트가 도는 자와 셸 게이트가 쓰는 자가 갈리면
+    # 그 갈림 자체가 다음 함정이고(스텝마다 다른 파이썬으로 잰다), 셸의 그 값이 바로
+    # 이번에 물린 별칭일 수 있다.
+    with _env(PYTHON="python3", PYTMUX_PYTHON=None):
+        assert check_all.child_env().get("PYTHON") == sys.executable
+
+    # 그리고 그것은 «실제로 도는» 파이썬 3 이다 — 이름이 아니라 답으로 판정한다.
+    got = subprocess.run([env["PYTHON"], "-c", "import sys; print(sys.version_info[0])"],
+                         capture_output=True, text=True)
+    assert got.returncode == 0 and got.stdout.strip() == "3", (got.returncode, got.stdout)

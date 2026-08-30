@@ -1699,6 +1699,10 @@ impl crate::platform::Window for Window {
     fn set_titlebar_height(&self, height: f64) {
         self.titlebar_height.set(height as f32);
     }
+
+    fn titlebar_height(&self) -> f64 {
+        self.titlebar_height.get() as f64
+    }
 }
 
 impl platform::WindowContext for Window {

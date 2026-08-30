@@ -43,6 +43,26 @@ WRAP_GUARD_SEC = 0.4
 _DEFAULT_MODE = frozenset((mo.DECAWM, mo.DECTCEM))
 
 
+def _attaches_to_previous(char: str) -> bool:
+    """폭 0 인 이 글자가 **앞 칸의 글자에 얹히나**(pytmux-407).
+
+    # 왜 `unicodedata.combining()` 이 아닌가 (실측 2026-08-26)
+
+    그 함수는 「결합 문자인가」가 아니라 **정규화 결합 «클래스»**(0~254)를 돌려준다.
+    악센트(U+0301)는 230 이라 참으로 읽히지만 **변이 선택자**(U+FE0E·U+FE0F)와
+    **ZWJ**(U+200D)는 클래스가 **0** 이다 — 앞 글자에 얹히는 글자인데도 거짓이 됐고,
+    그래서 그 글자들이 아래 `else` 로 떨어져 **줄의 나머지를 통째로 버렸다**
+    (`|A⚠️B| tail` → `|A⚠`).
+
+    판정은 **범주**로 한다: `Mn`(비간격 표시) · `Me`(둘러싸는 표시) · `Cf`(서식 문자 —
+    ZWJ·ZWNJ 가 여기다). 폭 0 이라는 사실은 부르는 쪽이 이미 봤다.
+
+    ⛔ 폭 0 이라고 전부 얹지는 않는다 — 그 밖의 것(제어 문자 등)은 건너뛴다. 얹으면
+    셀의 글이 화면에 없는 글자를 물고 다니고, 그것을 복사·검색이 그대로 집는다.
+    """
+    return unicodedata.category(char) in ("Mn", "Me", "Cf")
+
+
 class Char(NamedTuple):
     """pyte.screens.Char 와 동형인 셀 모델(필드·기본값 동일).
 
@@ -321,7 +341,7 @@ class _NativeBase:
                 if self.cursor.x + 1 < self.columns:
                     line[self.cursor.x + 1] = \
                         self.cursor.attrs._replace(data="")
-            elif char_width == 0 and unicodedata.combining(char):
+            elif char_width == 0 and _attaches_to_previous(char):
                 if self.cursor.x:
                     last = line[self.cursor.x - 1]
                     normalized = unicodedata.normalize(
@@ -339,7 +359,15 @@ class _NativeBase:
                     # 재그리기(prefix r) 전까지 안 고쳐진다 — dirty 퍼저가 잡았다.
                     self.dirty.add(self.cursor.y - 1)
             else:
-                break
+                # ⛔ **여기서 `break` 하면 그 줄의 나머지를 통째로 버린다**(pytmux-407).
+                #    pyte 에서 물려받은 손인데, 실측(2026-08-26)으로 `|A⚠️B| tail` 이
+                #    `|A⚠` 로 잘렸다 — 색이 아니라 **내용 손실**이다. 못 그리는 글자
+                #    하나 때문에 뒤따르는 멀쩡한 글자를 버릴 이유가 없고, 실제 단말도
+                #    그것을 **건너뛸 뿐** 스트림을 끊지 않는다.
+                #
+                # ⚠ 커서도 안 움직인다(`char_width > 0` 이 아니다) — 이 갈래로 오는 것은
+                #    폭이 0 이거나 음수(못 찍는 글자)뿐이다.
+                continue
             if char_width > 0:
                 self.cursor.x = min(self.cursor.x + char_width, self.columns)
         self.dirty.add(self.cursor.y)

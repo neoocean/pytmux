@@ -1060,7 +1060,7 @@ impl Element for Text {
         );
         // Record the source string for the headless drawing oracle — the glyphs
         // pushed above cannot be mapped back to characters (Scene::record_text).
-        ctx.scene.record_text(&self.text, bounds);
+        ctx.scene.record_text(&self.text, bounds, self.text_color);
 
         if let Some(ranges) = self.calculate_point_ranges(ctx.current_selection) {
             for (start_point, end_point) in ranges {

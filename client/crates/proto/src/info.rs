@@ -23,6 +23,52 @@ use crate::SessionState;
 /// 탭 하나 — `(제목, 줄들)`.
 pub type InfoTab = (&'static str, Vec<String>);
 
+/// 그 탭에서 **할 수 있는 것** 하나 — 정본 `client_status_tabs` 가 주는
+/// `(키, 라벨, 콜백)` 중 앞 둘이다.
+///
+/// # 왜 콜백을 안 드나
+///
+/// 정본은 세 번째 칸에 파이썬 함수를 담는다. 우리는 못 담는다 — 캡처 토글은 **서버로
+/// 나가는 명령**이고 폴더 열기는 **OS 호출**이라, 그 둘을 쥔 것은 뷰(와 링크)뿐이고
+/// `proto` 는 서버에 무엇을 보낼지까지만 안다. 그래서 여기서 드는 것은 **무엇이 있나**
+/// 이고 **무엇을 하나**는 뷰가 `key` 로 갈라 든다(키 표와 클릭이 같은 자리를 지난다).
+///
+/// # ⛔ 이 목록을 줄 글로 그리지 마라 (pytmux-373 ⑶)
+///
+/// 종전에는 [`capture_lines`] 가 `[c] … · [o] …` 를 **줄 하나로** 얹었다. 그래서 그
+/// 둘은 정본에서 **고를 수 있는 항목**인데 우리에게는 흐린 글자였고, 키를 직접 치는
+/// 수밖에 없었다 — 꼬리줄의 `↑↓ 항목` 도 그동안 거짓이었다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InfoAction {
+    /// 핫키(정본과 같은 글자).
+    pub key: char,
+    /// 목록에 그릴 말 — 정본과 **같은 문구**다(`[c] 캡처 켜기/끄기`).
+    pub label: &'static str,
+}
+
+/// REC 탭이 **몇 번째인가**(없으면 `None`).
+///
+/// ⛔ 이 판정을 두 곳에 적지 마라 — [`tabs`] 가 세우는 차례와 [`tab_actions`] 가 세는
+/// 차례가 갈리면 `[c]`/`[o]` 가 **엉뚱한 탭**에 붙는다. 그래서 한 함수가 쥔다.
+fn rec_tab(state: &SessionState) -> Option<usize> {
+    // status 에 `capture` 칸이 오면 rec 플러그인이 돌고 있다는 뜻이고, 그때 자리는
+    // 파이썬처럼 맨 앞이다.
+    state.flags().capture.is_some().then_some(0)
+}
+
+/// `tab` 번째 탭에서 할 수 있는 것들 — 정본 `InfoTabsScreen._actions[ti]` 동형.
+///
+/// 없는 탭이면 빈 목록이다(그 탭에는 동작 줄이 안 선다).
+pub fn tab_actions(state: &SessionState, tab: usize) -> Vec<InfoAction> {
+    if rec_tab(state) != Some(tab) {
+        return Vec::new();
+    }
+    vec![
+        InfoAction { key: 'c', label: t("[c] 캡처 켜기/끄기") },
+        InfoAction { key: 'o', label: t("[o] 기록 폴더 열기") },
+    ]
+}
+
 /// 서버가 아직 대답 안 한 자리에 적는 말. 빈 줄로 두면 "정보가 없다"로 읽힌다.
 const WAITING: &str = "서버에 묻는 중…";
 
@@ -35,7 +81,7 @@ pub fn tabs(state: &SessionState, endpoint: &str, now: f64) -> Vec<InfoTab> {
     // REC 탭은 **rec 서버 플러그인이 있을 때만** 있다 — status 에 `capture` 칸이 오면
     // 그 플러그인이 돌고 있다는 뜻이다(파이썬 delete-to-disable 동형: 플러그인을
     // 지우면 탭이 통째로 빠진다). 자리는 파이썬처럼 맨 앞이다.
-    if state.flags().capture.is_some() {
+    if rec_tab(state).is_some() {
         tabs.push((t("출력 캡처(REC)"), capture_lines(state)));
     }
     tabs.push((t("서버"), server_lines(state, endpoint, now)));
@@ -48,7 +94,7 @@ fn capture_lines(state: &SessionState) -> Vec<String> {
     let flags = state.flags();
     let on = flags.capture == Some(true);
     let head = if on { t("상태: ON (캡처 중)") } else { t("상태: OFF") };
-    let mut lines = if !on {
+    let lines = if !on {
         vec![head.to_owned(), t("(캡처 꺼짐 — REC 미표시)").to_owned()]
     } else if flags.capture_path.is_empty() {
         vec![head.to_owned(), t("(캡처 파일 준비 중…)").to_owned()]
@@ -71,10 +117,9 @@ fn capture_lines(state: &SessionState) -> Vec<String> {
             tf("탭 매핑: {path}", &[("path", dir.as_str())]),
         ]
     };
-    // 파이썬은 [c]/[o] 를 클릭 줄로 얹는다 — 우리 팝업은 읽기 전용 목록이라 키 안내를
-    // 줄로 싣는다(동작 자체는 뷰가 c/o 키에서 처리한다).
-    lines.push(String::new());
-    lines.push(t("[c] 캡처 켜기/끄기 · [o] 기록 폴더 열기").to_owned());
+    // ⛔ **`[c]`/`[o]` 를 줄로 얹지 않는다**(pytmux-373 ⑶). 정본
+    // (`rec/clientside.py::capture_info_lines`)도 안 얹는다 — 그 둘은 줄이 아니라
+    // **동작**이고([`tab_actions`]) 팝업이 고를 수 있는 항목으로 그린다.
     lines
 }
 

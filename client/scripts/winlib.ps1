@@ -156,3 +156,62 @@ function Show-AppWindowCandidates {
   param([Parameter(Mandatory = $true)][int]$ProcessId)
   [PtWin.Api]::Candidates([uint32]$ProcessId) | ForEach-Object { $_.ToString() }
 }
+
+Add-Type -Namespace PtWin -Name Fg -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+[DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool altTab);
+[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+
+/// 창을 **정말로** 앞으로 올린다. 올라갔으면 true.
+///
+/// # 왜 `SetForegroundWindow` 한 줄로는 안 되나 (실측 2026-08-25 · 에이전트 셸)
+///
+/// Windows 는 포커스 도둑질을 막으려고 **전경 잠금**을 건다: 부르는 프로세스가 지금
+/// 전경이 아니고 최근 입력도 없으면 `SetForegroundWindow` 는 **조용히 거절**되고
+/// 창은 작업표시줄에서 깜빡이기만 한다. 사람이 앉아 있는 세션에서는 방금 누른 키가
+/// 잠금을 풀어 주므로 이 자리가 안 드러난다 — 그런데 **에이전트 셸에는 그 입력이
+/// 없다.** 그래서 `capture_window.ps1` 이 "대상 창이 앞에 없다(전경='SWITCH')" 로
+/// 떨어졌고, 그것은 하네스 고장이 아니라 **전경 잠금**이었다.
+/// ⛔ 그 문구를 "앱이 안 떴다"로 읽지 말 것 — pytmux-32 가 같은 부류로 오독됐다.
+///
+/// 푸는 길 둘을 **차례로** 쓴다:
+///  ⑴ `keybd_event` 로 ALT 를 눌렀다 뗀다 — 이 프로세스에 「최근 입력」이 생겨
+///     잠금이 풀린다. ALT 를 고른 이유는 **글자를 안 남기기** 때문이다(아무 키나
+///     쓰면 그 글자가 앞 창의 입력칸에 찍힌다).
+///  ⑵ 그래도 안 되면 `SwitchToThisWindow` — Alt+Tab 이 쓰는 길이라 잠금 밖이다.
+///
+/// 남의 창을 내리지 않는다(최상위 고정은 부르는 쪽의 몫이다).
+public static bool Raise(IntPtr h, int settleMs) {
+  const byte VK_MENU = 0x12;
+  const uint KEYEVENTF_KEYUP = 0x0002;
+  ShowWindow(h, 9 /*SW_RESTORE*/);
+  if (SetForegroundWindow(h) && GetForegroundWindow() == h) return true;
+  keybd_event(VK_MENU, 0, 0, UIntPtr.Zero);
+  keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+  SetForegroundWindow(h);
+  System.Threading.Thread.Sleep(settleMs);
+  if (GetForegroundWindow() == h) return true;
+  SwitchToThisWindow(h, true);
+  System.Threading.Thread.Sleep(settleMs);
+  return GetForegroundWindow() == h;
+}
+'@
+
+<#
+.SYNOPSIS
+  창을 앞으로 올린다(전경 잠금까지 푼다). 못 올리면 $false.
+.DESCRIPTION
+  ⛔ **여기 한 벌이다** — 여덟 스크립트가 각자 `SetForegroundWindow` 를 부르면
+  에이전트 셸에서 여덟 곳이 따로 떨어진다(`Get-AppWindow` 를 한 벌로 모은 것과 같은
+  이유 · pytmux-32). 까닭·실측은 `[PtWin.Fg]::Raise` 머리말.
+#>
+function Set-AppWindowForeground {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][IntPtr]$Hwnd,
+    [int]$SettleMs = 250
+  )
+  return [PtWin.Fg]::Raise($Hwnd, $SettleMs)
+}

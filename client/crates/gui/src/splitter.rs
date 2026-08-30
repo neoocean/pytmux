@@ -133,6 +133,58 @@ pub struct Block {
     pub color: ColorU,
 }
 
+/// 레터박스 — **내 창이 공유 격자보다 클 때** 남는 L자 띠(pytmux-381).
+///
+/// # 왜 필요한가
+///
+/// 판 하나 = pty 하나 = 격자 하나다. 여러 클라가 같은 탭을 볼 때 격자는 정책
+/// (`window-size`)이 정한 **한 크기**이고, 그보다 큰 창에는 오른쪽·아래에 남는 자리가 생긴다.
+/// 정본 TUI 는 그 자리를 **무광(matte)** 으로 칠해 「의도된 여백」으로 만든다
+/// (`clientio.py::_composite` 의 `lb_w`/`lb_h` — 안 칠하던 동안 「공간이 생겨 안 사라진다」는
+/// 보고가 났고 그 처방이 이것이다). GUI 에는 그 개념이 아예 없어 **창 바탕이 그대로**
+/// 드러났다(제보 2026-08-24 · 사용자가 고른 갈래 ⓕ = 「GUI 를 TUI 와 같게」).
+///
+/// ⛔ 「각자 자기 화면 크기로 그린다」는 이것으로 **안 채워진다** — 그건 판마다 pty 가
+/// 따로여야 하는 일이고 이 제품(미러링)의 뜻과 다르다(그 판단은 pytmux-381 본문).
+/// 여기서 없애는 것은 **어색함**이다: 남는 자리가 「깨진 그림」이 아니라 여백으로 읽힌다.
+pub struct Matte {
+    /// 라이브 영역의 오른쪽 경계(칸) — 이 값 이상이 띠다.
+    pub live_cols: u16,
+    /// 라이브 영역의 아래 경계(칸).
+    pub live_rows: u16,
+    /// 내 창이 담는 칸 수.
+    pub cols: u16,
+    pub rows: u16,
+    pub color: ColorU,
+}
+
+/// 한/영 배지 — GUI 는 이것을 **글자가 아니라 그림**으로 그린다(pytmux-392)./// 한/영 배지 — GUI 는 이것을 **글자가 아니라 그림**으로 그린다(pytmux-392).
+///
+/// # 왜 그림인가
+///
+/// 정본은 격자 안에 살아서 배지를 `[한]`·`[EN]` 네 칸의 **글자**로 찍는다 — 그러면 그
+/// 칸의 터미널 글자가 사라진다(격자에 쓰는 것 말고 다른 길이 없다). GUI 는 캔버스 위에
+/// 떠서 그릴 수 있으니 같은 뜻을 **글자를 지우지 않고** 말할 수 있다(pytmux-185 가 허용하는
+/// 갈림 ⓑ 픽셀 그림). 그리고 어느 칸에 앉을지는 «비어 있나»를 보고 고른다
+/// ([`base::ime_badge::badge_spot`]) — 그 판정은 UI 를 모르는 자리에 있다.
+///
+/// 모양은 이 앱에 이미 있는 **토글 알약**의 어휘다: 손잡이가 **왼쪽이면 한글**,
+/// **오른쪽이면 영문**. 글자를 하나도 안 쓰므로 「텍스트로 표시하지 말라」는 요청을 지키고,
+/// 색은 정본이 정한 의미 이름을 그대로 쓴다(한=success · EN=primary — `cells.py::_THEME`).
+pub struct ImeBadge {
+    /// 왼쪽 끝 칸(캔버스 좌표).
+    pub x: u16,
+    pub y: u16,
+    /// 차지하는 칸 수.
+    pub cells: u16,
+    /// 손잡이가 왼쪽인가(= 한글 모드).
+    pub left: bool,
+    /// 알약 바탕.
+    pub track: ColorU,
+    /// 손잡이.
+    pub knob: ColorU,
+}
+
 /// 블록 선택 모드에서 **고른 블록**의 칸 범위(pytmux-18) — 캔버스 셀 좌표.
 ///
 /// 뷰가 이미 뷰포트에 맞춰 잘라서 준다([`SessionView::block_mark`](crate::session_view)) —
@@ -160,6 +212,12 @@ pub struct Cursor {
     pub style: CursorStyle,
     /// 무슨 색으로(설정 `cursor-color`). `None` 이면 테마의 포커스색이다.
     pub color: Option<ColorU>,
+    /// 선의 **두께**(픽셀 · 설정 `cursor-thickness` · `pytmux/pytmux-375` ⓑ).
+    ///
+    /// ⛔ 여기에 기본값을 적지 마라 — 정본은 [`base::config::Config::cursor_thickness`]
+    /// 한 곳이고, 이 구조체는 그 값을 **나르기만** 한다. 두 곳에 적으면 설정을 안 만진
+    /// 사람의 화면과 만진 사람의 화면이 다른 규칙으로 그려진다.
+    pub thickness: f32,
 }
 
 /// 커서 모양(설정 `cursor-style` — `base::config::CURSOR_STYLES` 와 같은 어휘).
@@ -182,13 +240,61 @@ pub enum CursorStyle {
     Bar,
 }
 
+/// 커서 한 칸을 **무엇으로** 칠하나 — 모양 하나가 뜻하는 그림.
+///
+/// # 왜 갈라 뒀나 (`pytmux/pytmux-375` ⓐ)
+///
+/// 커서를 그리는 자리가 둘이 됐다: 캔버스 위의 진짜 커서([`SplitterOverlay::paint_cursor`])
+/// 와 커서 판의 **견본 한 칸**(`gui::session_view::render_cursor`). 「어느 변을 긋나」를
+/// 두 곳에 적으면 판이 보여 주는 그림과 실제 커서가 갈리고, 그 판의 존재 이유가
+/// 「바꾸는 즉시 **맞게** 보이는 것」이라 그 갈라짐은 이 기능을 통째로 무의미하게 만든다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorInk {
+    /// 참인 변만 두께만큼 긋는다.
+    Edges {
+        top: bool,
+        left: bool,
+        bottom: bool,
+        right: bool,
+    },
+    /// 칸을 통째로 채운다 — 캔버스에서는 그 칸을 **반전**하는 것으로 난다
+    /// (그래서 오버레이는 이 갈래에서 아무것도 안 그린다).
+    Fill,
+}
+
+/// 모양 → 잉크. **여기가 그 표의 유일한 자리다.**
+#[must_use]
+pub const fn cursor_ink(style: CursorStyle) -> CursorInk {
+    match style {
+        CursorStyle::Hollow => CursorInk::Edges {
+            top: true,
+            left: true,
+            bottom: true,
+            right: true,
+        },
+        CursorStyle::Underline => CursorInk::Edges {
+            top: false,
+            left: false,
+            bottom: true,
+            right: false,
+        },
+        CursorStyle::Bar => CursorInk::Edges {
+            top: false,
+            left: true,
+            bottom: false,
+            right: false,
+        },
+        CursorStyle::Block => CursorInk::Fill,
+    }
+}
+
 /// 패널 오른쪽 **외곽선 위**에 얹는 표시용 스크롤바(§10-21ⓨ2).
 ///
 /// 칸을 안 먹는다 — 테두리를 실제 선으로 그리는 덕에 그 선 위에 겹쳐 그릴 수 있고,
 /// 캔버스 격자를 안 건드리니 서버에 보고하는 행·열도 안 바뀐다.
 ///
-/// 조작용 터치 스크롤바(`base::scrollbar::chars`)와 **다른 것**이다: 저건 한 열을 먹고
-/// 탭을 받는다. 섞으면 touch-scroll 을 끈 사람에게 표시까지 사라진다.
+/// ⛔ 종전에 있던 **조작용** 터치 스크롤바(한 열을 먹고 탭을 받던 것)와 **다른 물건**
+/// 이었고, 그쪽만 걷었다(pytmux-377). 이것은 남는다 — 제보가 요청한 것은 표시다.
 pub struct ScrollHint {
     /// 패널 **테두리**의 오른쪽 열과 안쪽 위/아래(셀 좌표).
     pub x: u16,
@@ -264,11 +370,11 @@ const STRIKE_AT: f32 = 0.58;
 /// 표시용 스크롤바의 두께. 테두리(1.5px)보다 굵어야 **선 위에 얹힌 것**으로 읽힌다.
 const HINT_PX: f32 = 3.;
 
-/// 커서 테두리의 두께.
-const CURSOR_PX: f32 = 2.;
-
-/// 고른 블록 테두리의 두께(pytmux-18). 커서(2px)보다 얇다 — 커서는 **한 칸**이라
+/// 고른 블록 테두리의 두께(pytmux-18). 커서(기본 2px)보다 얇다 — 커서는 **한 칸**이라
 /// 굵어야 보이고, 이건 여러 줄짜리 상자라 같은 굵기면 화면을 지배한다.
+///
+/// ⚠ 커서 쪽은 이제 상수가 아니라 설정이다(`cursor-thickness` · `pytmux/pytmux-375`) —
+/// 이 값과의 대소는 **기본값에 대해서만** 참이고, 굵게 준 커서는 이것보다 굵다.
 const PICK_PX: f32 = 1.;
 
 /// 고른 블록의 **왼쪽 띠** 두께. 테두리보다 굵어야 "여기서부터 여기까지가 한 덩어리"로
@@ -352,6 +458,10 @@ pub struct SplitterOverlay {
     /// 지금은 이 값을 캔버스가 받아 **아랫변을 여기까지 내려 긋는다** — 상자가 남는
     /// 자리를 채우고, 위아래 여백이 다시 반 칸씩으로 같아진다.
     slack: f32,
+    /// 한/영 배지(없으면 안 그린다 — 상태 미상·비 Windows).
+    ime: Option<ImeBadge>,
+    /// 레터박스 띠(없으면 안 그린다 — 내 창이 공유 격자와 같거나 작다).
+    matte: Option<Matte>,
     /// 이번 레이아웃에서 **받은** 크기. ⛔ 자식 것을 그대로 돌려주면 안 된다 — 부모
     /// `Flex` 는 이 값으로 다음 형제의 자리를 잡아, 빈 높이만큼 상태줄이 겹쳐 앉는다.
     size: Option<Vector2F>,
@@ -384,6 +494,8 @@ impl SplitterOverlay {
             rules,
             probe_id,
             rows,
+            ime: None,
+            matte: None,
             slack: 0.,
             size: None,
             origin: None,
@@ -401,6 +513,78 @@ impl SplitterOverlay {
         } else {
             0.
         }
+    }
+
+    /// 레터박스 띠를 얹는다(pytmux-381). 없으면 종전 그대로 아무것도 안 그린다.
+    pub fn with_matte(mut self, matte: Option<Matte>) -> Self {
+        self.matte = matte;
+        self
+    }
+
+    /// 남는 L자를 무광으로 칠한다 — **하단 띠는 전폭, 그 위는 우측 띠만**.
+    ///
+    /// 모양의 근거는 정본 한 줄이다: `x_from = 0 if yy >= lb_h else lb_w`
+    /// (`clientio.py::_composite`). 두 사각형으로 그리는 것은 같은 뜻이고, 칸마다 칠하는
+    /// 대신 면 둘이면 되기 때문이다(격자 위 그림이 아니라 픽셀 위 그림이라 가능하다).
+    ///
+    /// ⛔ **라이브 영역은 안 건드린다.** 그 안의 패널·테두리·글자는 그대로 두고 밖만 칠한다 —
+    /// 정본이 같은 자리에서 그렇게 한다(안 그러면 이 띠가 화면을 먹는다).
+    fn paint_matte(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        let Some(m) = self.matte.as_ref() else { return };
+        let live_w = m.live_cols as f32 * cw;
+        let live_h = m.live_rows as f32 * ch;
+        let full_w = m.cols as f32 * cw;
+        let full_h = m.rows as f32 * ch;
+        let mut band = |x0: f32, y0: f32, w: f32, h: f32| {
+            if w <= 0.5 || h <= 0.5 {
+                return;
+            }
+            ctx.scene
+                .draw_rect_without_hit_recording(RectF::new(
+                    vec2f(origin.x() + x0, origin.y() + y0),
+                    vec2f(w, h),
+                ))
+                .with_background(Fill::Solid(m.color));
+        };
+        // 우측 띠 — 라이브 영역의 오른쪽, **라이브 높이까지만**.
+        band(live_w, 0., full_w - live_w, live_h);
+        // 하단 띠 — 라이브 영역 아래, **전폭**.
+        band(0., live_h, full_w, full_h - live_h);
+    }
+
+    /// 한/영 배지를 얹는다(pytmux-392). 없으면 종전 그대로 아무것도 안 그린다.
+    ///
+    /// 생성자 인자를 늘리지 않고 빌더로 두는 이유: 이 오버레이의 인자는 이미 열하나이고,
+    /// 그 목록에 열두째를 더하면 **부르는 자리마다 위치를 세어야** 한다.
+    pub fn with_ime(mut self, ime: Option<ImeBadge>) -> Self {
+        self.ime = ime;
+        self
+    }
+
+    /// 한/영 배지 — 알약 하나와 손잡이 하나. **글자는 없다**(pytmux-392).
+    ///
+    /// 세로로는 칸 높이의 가운데 70% 를 쓴다: 칸을 꽉 채우면 위아래 글자 줄에 붙어
+    /// 「글자를 안 가린다」는 이 배지의 뜻이 흐려진다.
+    fn paint_ime(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        let Some(b) = self.ime.as_ref() else { return };
+        let w = b.cells as f32 * cw;
+        let h = (ch * 0.7).max(6.);
+        let x0 = origin.x() + b.x as f32 * cw;
+        let y0 = origin.y() + b.y as f32 * ch + (ch - h) / 2.;
+        let radius = CornerRadius::with_all(Radius::Pixels(h / 2.));
+        ctx.scene
+            .draw_rect_without_hit_recording(RectF::new(vec2f(x0, y0), vec2f(w, h)))
+            .with_background(Fill::Solid(b.track))
+            .with_corner_radius(radius);
+        // 손잡이는 알약 안쪽에 여백(높이의 1/6)을 두고 앉는다 — 붙이면 알약 테두리와
+        // 손잡이가 한 덩어리로 보여 «어느 쪽인가»가 안 읽힌다.
+        let pad = h / 6.;
+        let d = h - pad * 2.;
+        let kx = if b.left { x0 + pad } else { x0 + w - pad - d };
+        ctx.scene
+            .draw_rect_without_hit_recording(RectF::new(vec2f(kx, y0 + pad), vec2f(d, d)))
+            .with_background(Fill::Solid(b.knob))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(d / 2.)));
     }
 
     /// 블록 문자 칸들을 사각형으로. 비율(`BlockFill`)을 칸 크기에 곱할 뿐이다 —
@@ -505,34 +689,41 @@ impl SplitterOverlay {
     ///
     /// # 굵기를 모양마다 안 나누는 이유
     ///
-    /// 셋 다 [`CURSOR_PX`] 한 값이다. 밑줄만 굵게·세로선만 얇게 같은 손을 대면
-    /// 「커서」가 모양마다 다른 무게로 보여, 모양을 바꾼 것이 아니라 **다른 것**으로
-    /// 바뀐 것처럼 읽힌다.
+    /// 셋 다 [`Cursor::thickness`] 한 값이다(설정 `cursor-thickness`). 밑줄만 굵게·
+    /// 세로선만 얇게 같은 손을 대면 「커서」가 모양마다 다른 무게로 보여, 모양을 바꾼
+    /// 것이 아니라 **다른 것**으로 바뀐 것처럼 읽힌다.
+    ///
+    /// ⚠ 2026-08-24(`pytmux/pytmux-375`)에 그 값이 상수에서 설정으로 옮겨 갔을 뿐,
+    /// **한 값**이라는 규칙은 그대로다 — 옮긴 것이지 뒤집은 것이 아니다.
     fn paint_cursor(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
         let Some(cur) = &self.cursor else { return };
+        // 캔버스가 이미 그 칸을 반전해 그렸다 — 여기서 또 칠하면 그 글자를 덮는다.
+        let CursorInk::Edges { top, left, bottom, right } = cursor_ink(cur.style) else {
+            return;
+        };
         let color = cur.color.unwrap_or(theme::FOCUS);
         let x0 = origin.x() + cur.x as f32 * cw;
         let y0 = origin.y() + cur.y as f32 * ch;
+        // ⚠ 칸보다 굵은 선은 **칸 밖으로 새어** 옆 글자를 덮는다. 설정의 위 끝(6px)이
+        //   보통 칸(≈9×20px)보다 작아 평소엔 안 걸리지만, 글자 배율을 크게 줄이면
+        //   칸이 그 아래로 내려간다 — 그때 자르는 자리가 여기다.
+        let t = cur.thickness.clamp(1., cw.min(ch));
         let mut line = |rect: RectF| {
             ctx.scene
                 .draw_rect_without_hit_recording(rect)
                 .with_background(Fill::Solid(color));
         };
-        match cur.style {
-            CursorStyle::Hollow => {
-                line(RectF::new(vec2f(x0, y0), vec2f(cw, CURSOR_PX)));
-                line(RectF::new(vec2f(x0, y0 + ch - CURSOR_PX), vec2f(cw, CURSOR_PX)));
-                line(RectF::new(vec2f(x0, y0), vec2f(CURSOR_PX, ch)));
-                line(RectF::new(vec2f(x0 + cw - CURSOR_PX, y0), vec2f(CURSOR_PX, ch)));
-            }
-            CursorStyle::Underline => {
-                line(RectF::new(vec2f(x0, y0 + ch - CURSOR_PX), vec2f(cw, CURSOR_PX)));
-            }
-            CursorStyle::Bar => {
-                line(RectF::new(vec2f(x0, y0), vec2f(CURSOR_PX, ch)));
-            }
-            // 캔버스가 이미 그 칸을 반전해 그렸다 — 여기서 또 칠하면 그 글자를 덮는다.
-            CursorStyle::Block => {}
+        if top {
+            line(RectF::new(vec2f(x0, y0), vec2f(cw, t)));
+        }
+        if bottom {
+            line(RectF::new(vec2f(x0, y0 + ch - t), vec2f(cw, t)));
+        }
+        if left {
+            line(RectF::new(vec2f(x0, y0), vec2f(t, ch)));
+        }
+        if right {
+            line(RectF::new(vec2f(x0 + cw - t, y0), vec2f(t, ch)));
         }
     }
 
@@ -621,6 +812,8 @@ impl Element for SplitterOverlay {
             && self.blocks.is_empty()
             && self.cursor.is_none()
             && self.pick.is_none()
+            && self.ime.is_none()
+            && self.matte.is_none()
         {
             return;
         }
@@ -631,8 +824,12 @@ impl Element for SplitterOverlay {
         if !(cw.is_finite() && ch.is_finite()) || cw <= 0.5 || ch <= 0.5 {
             return;
         }
+        // 레터박스가 **가장 먼저** — 남는 자리의 바탕이라 그 위에 무엇이든 얹힌다.
+        self.paint_matte(origin, cw, ch, ctx);
         // 블록이 맨 먼저 — 패널 **안**의 그림이라 크롬(테두리·바)이 그 위를 덮는 것이 맞다.
         self.paint_blocks(origin, cw, ch, ctx);
+        // 한/영 배지는 **글자 위에** 뜬다 — 그것이 이 배지가 글자를 안 지우는 방법이다.
+        self.paint_ime(origin, cw, ch, ctx);
         // 테두리를 **먼저** — 스플리터 바는 그 위에 얹혀야 잡는 자리가 또렷하다.
         self.paint_frames(origin, cw, ch, ctx);
         for bar in &self.bars {

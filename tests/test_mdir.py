@@ -1210,3 +1210,68 @@ async def test_both_clients_count_the_same_directory_the_same_way():
             finally:
                 shutil.disk_usage = real
         await _with_app(body)
+
+
+# ---- 서버: 「패널로 보내기」(정본 F4) — pytmux-173 -------------------------
+#
+# ⛔ **이 자리를 재는 시험이 하나도 없었다.** `cd` 갈래는 패널에 아무것도 안 써도
+# `plugin_screen_close` 를 늘 돌려주므로 **겉보기가 성공과 똑같다** — 화면은 닫히고
+# 아무 말도 안 남는다. 그래서 `pane.write` 오타(= 프로덕션에 없는 메서드)가 여기서
+# 살아남았다. ncd 쪽 같은 자리는 `tests/test_ncd_tree.py` 가 잰다.
+
+class _Pty:
+    """패널의 pty — 받은 바이트만 들고 있는다."""
+
+    def __init__(self):
+        self.written = b""
+
+    def write(self, data):
+        self.written += data
+
+
+class _PanePair:
+    """패널 한 짝. ⛔ **가짜는 `pane` 이 아니라 `pane.pty` 에 단다**(pytmux-173) —
+    `pytmuxlib.model.Pane` 에는 `write` 가 없다. 전수 오라클은
+    `tests/test_pane_write_typo.py`."""
+
+    def __init__(self):
+        self.pty = _Pty()
+
+
+class _Win:
+    def __init__(self, pane):
+        self.active_pane = pane
+
+
+class _Sess:
+    def __init__(self, pane):
+        self.active_window = _Win(pane)
+
+
+async def test_send_to_pane_actually_types_the_cd():
+    from pytmuxlib.plugins.mdir import PLUGIN
+    with tempfile.TemporaryDirectory() as td:
+        pane = _PanePair()
+        resp = PLUGIN.plugin_screen(
+            object(), _Sess(pane),
+            {"id": "mdir", "do": "cd", "row": 0, "state": {"mdir": {"path": td}}},
+        )
+        assert resp == {"t": "plugin_screen_close", "id": "mdir"}, resp
+        typed = pane.pty.written.decode("utf-8")
+        # 셸 방언은 **이 서버의 OS** 가 정한다 — 그 판정은 `_cd_command` 한 곳이다.
+        assert typed == _cd_command(td), (typed, _cd_command(td))
+
+
+async def test_send_to_pane_survives_a_pane_without_a_pty():
+    """`pane.pty` 는 `None` 일 수 있다(`model.py` 의 `self.pty = None` · `reinit` 직후).
+    그때 터지면 `plugin_screen_close` 가 안 나가서 **화면이 안 닫힌다** — 오타 때와
+    똑같은 증상이다."""
+    from pytmuxlib.plugins.mdir import PLUGIN
+    with tempfile.TemporaryDirectory() as td:
+        pane = _PanePair()
+        pane.pty = None
+        resp = PLUGIN.plugin_screen(
+            object(), _Sess(pane),
+            {"id": "mdir", "do": "cd", "row": 0, "state": {"mdir": {"path": td}}},
+        )
+        assert resp == {"t": "plugin_screen_close", "id": "mdir"}, resp

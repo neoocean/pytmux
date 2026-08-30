@@ -196,8 +196,30 @@ def run(ctx) -> None:
 
 def _rel(path: str) -> str:
     """결함 본문에 싣는 프레임 경로. ⛔ **절대경로를 싣지 않는다** — 런마다 달라지는 값이
-    본문에 들어가면 트래커의 같은 이슈가 매번 다른 본문으로 갱신된다."""
-    return os.path.relpath(path, ROOT)
+    본문에 들어가면 트래커의 같은 이슈가 매번 다른 본문으로 갱신된다.
+
+    ★ **드라이브가 갈려도 죽지 않는다**(2026-08-25 실측): 프레임은 런 슬롯
+    (`%TEMP%` = `C:`) 아래 나고 `ROOT` 는 작업본(`D:`) 이라 Windows 에서
+    `os.path.relpath` 가 `ValueError: path is on mount 'C:', start on mount 'D:'`
+    로 **터진다** — 그러면 판정 한 줄을 쓰려다 시나리오가 통째로 넘어진다
+    (test_qa_layer 의 T3 오라클 4건이 그래서 붉었다). 슬롯은 어차피 런마다
+    다른 이름이니 그 경우엔 **끝 두 조각**만 싣는다(`shots/01-first.png`).
+
+    구분자도 `/` 로 굳힌다 — 안 그러면 같은 결함이 OS 마다 다른 본문이 돼
+    트래커에서 갱신될 때마다 흔들린다."""
+    try:
+        rel = os.path.relpath(path, ROOT)
+    except ValueError:          # 다른 드라이브 — 상대경로가 아예 없다
+        rel = os.path.join(*_tail(path, 2))
+    if rel.startswith(os.pardir + os.sep) or rel == os.pardir:
+        rel = os.path.join(*_tail(path, 2))
+    return rel.replace(os.sep, "/")
+
+
+def _tail(path: str, n: int) -> list:
+    """경로의 끝 `n` 조각(모자라면 있는 만큼)."""
+    parts = [q for q in os.path.normpath(path).split(os.sep) if q and not q.endswith(":")]
+    return parts[-n:] or [os.path.basename(path) or path]
 
 
 def _judged(ctx, st, s, shots_dir, name, keys=None):

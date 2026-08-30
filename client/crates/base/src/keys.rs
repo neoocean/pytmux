@@ -146,10 +146,25 @@ impl InputMode {
     ///
     /// 이름을 뷰가 아니라 여기서 정하는 이유는 키 표와 같다: 두 뷰가 각자 이름을 지으면
     /// 같은 모드가 화면마다 달라 보인다.
+    /// # 왜 `[esc]` 가 아니라 할 일을 적나 (pytmux-380)
+    ///
+    /// 종전 값은 `"[esc]"` 네 글자였고, 그 자리에서 사용자가 알 수 있는 것은 *"무언가
+    /// 모드에 들어와 있다"* 뿐이었다. 정본은 같은 자리에서 **그 모드가 무엇을 할 수
+    /// 있는지**를 말한다(`CMD(←↑↓→ 이동, : 명령)`) — 모달 상태의 표식은 「들어와 있다」가
+    /// 아니라 「나가는 길·쓰는 길」을 광고해야 값이 있다.
+    ///
+    /// ⚠ **번역을 타야 한다** — 이 문자열은 한국어 원문이 곧 키다([`crate::i18n`]).
+    /// 종전 `[esc]` 는 낱말이 아니라 기호라 카탈로그에 줄이 없었고, en 로케일에서도 그대로
+    /// 나왔다. 뷰는 이 값을 **`t()` 로 감싸서** 그린다.
+    ///
+    /// 나머지 셋(`[prefix]`·`[block]`·`[scroll]`)은 정본에 대응하는 문구가 없어 종전 표기를
+    /// 그대로 둔다 — 지어낸 문구를 정본 문구인 척 둘 수는 없다.
     pub fn badge(self) -> Option<&'static str> {
         match self {
             InputMode::Normal => None,
-            InputMode::Command => Some("[esc]"),
+            // 정본 `i18n.py` 의 `ui.cmd_mode_badge` 와 **같은 문구**다(꼬리 공백은 칩이
+            // 패딩으로 내므로 뺀다 — 정본은 세그먼트라 공백으로 자리를 벌린다).
+            InputMode::Command => Some("CMD(←↑↓→ 이동, : 명령)"),
             InputMode::Scroll => Some("[scroll]"),
             InputMode::Prefix => Some("[prefix]"),
             InputMode::Block => Some("[block]"),
@@ -233,6 +248,13 @@ pub fn parse_token(token: &str) -> Option<(Key, Mods)> {
         // 작성창(`esc Insert`)을 연출하려면 이 키가 토큰으로 있어야 한다 — 사용자
         // 가이드 스크린샷이 이 화면만 못 찍는 구멍이 있었다(2026-07-30).
         "insert" => (Key::Insert, Mods::NONE),
+        // 목록을 **굴린 뒤의 그림**은 이 넷 없이는 못 찍는다(pytmux-374 ⑴ — 설정 판
+        // 오른쪽 막대가 자리를 옮긴 모습이 그것이다). `insert` 와 같은 사유이고,
+        // 맥에서는 창에 키를 넣을 다른 길이 없다(`take_frame_dump` 문서).
+        "home" => (Key::Home, Mods::NONE),
+        "end" => (Key::End, Mods::NONE),
+        "pageup" => (Key::PageUp, Mods::NONE),
+        "pagedown" => (Key::PageDown, Mods::NONE),
         _ => {
             // `f1`~`f12`(pytmux-125) — 하네스가 이 키를 못 넣으면 **mdir 의 F-키가 든
             // 화면은 영영 못 찍는다**(맥에서는 창에 키를 넣을 길이 따로 없다 —

@@ -34,6 +34,13 @@
    "pwrap": "bottom"
   }
  },
+ "code_placed": {
+  "ComposePromptScreen": [
+   "_pane_w",
+   "_pane_x",
+   "_prompt_row"
+  ]
+ },
  "prompt_order": [
   "pcand",
   "prow",

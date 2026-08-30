@@ -93,6 +93,7 @@ def main():
         sys.exit(f"{path} 에서 화면 정렬을 하나도 못 찾았다 — 뽑는 방법이 틀렸다")
 
     overrides = _anchor_overrides(os.path.abspath(args.pytmux))
+    replaced = _code_placed(src)
     payload = {
         "_comment": "python3 scripts/gen_screen_anchor_fixture.py 로 생성. 출처 = "
                     "pytmuxlib/clientscreens.py 의 CSS(align/dock)와 "
@@ -101,6 +102,8 @@ def main():
         "anchors": dict(sorted(anchors.items())),
         "overrides": {k: dict(sorted(v.items())) for k, v in sorted(overrides.items())},
         "docks": dict(sorted(docks.items())),
+        # ★ CSS 의 `align` **위에서 코드가 자리를 다시 잡는** 판(아래 `_code_placed`).
+        "code_placed": dict(sorted(replaced.items())),
         "prompt_order": _prompt_order(src),
     }
     with open(args.out, "w", encoding="utf-8") as fh:
@@ -114,6 +117,39 @@ def main():
           f"({' · '.join(f'{k} {n}' for k, n in sorted(by.items()))}) "
           f"· 덮어쓰기 {n_over} · dock {len(docks)} "
           f"· 프롬프트 차례 {payload['prompt_order']}")
+
+
+# ── CSS 위에서 «코드가» 자리를 다시 잡는 판 ─────────────────────────────────
+#
+# ⛔ **`align` 만 읽으면 정본을 잘못 읽는다**(pytmux-370). `ComposePromptScreen` 의 CSS 는
+#    `align: center bottom` 인데, 그 화면은 `on_mount` 에서 **활성 패널의 안쪽 x·폭과
+#    커서(프롬프트) 행**으로 margin 을 다시 계산해 판을 그 줄에 세운다. 즉 CSS 의 `bottom`
+#    은 「바닥에 붙인다」가 아니라 「바닥에서 위로 띄우는 기준」이고, 실제 자리는 **커서
+#    줄**이다.
+#
+#    이 한 낱말을 놓친 대가가 그대로 제보로 왔다: GUI 가 `bottom` 을 곧이곧대로 읽어 창
+#    맨 아래 전폭 판으로 그렸고, 사용자는 *"gui는 완전히 별도 위치에 팝업이 나타난다"* 고
+#    적었다. 픽스처가 CSS 만 뽑는 한 그 갈림은 **게이트를 그대로 통과한다**.
+#
+# 그래서 「코드가 다시 잡는다」를 **실측으로** 뽑는다 — 그 클래스 본문에서 자리를 정하는
+# 재료(패널 x/폭 · 프롬프트 행)를 실제로 쓰는지 본다. 손으로 적은 목록이 아니라서, 정본이
+# 그 계산을 걷어내면 이 표에서 저절로 사라지고 대조가 따라 움직인다.
+_PLACE_MARKS = ("_prompt_row", "_pane_x", "_pane_w")
+
+
+def _code_placed(src):
+    """`클래스 → 자리를 다시 잡을 때 쓰는 재료들`. 안 쓰면 그 클래스는 표에 없다."""
+    out = {}
+    parts = re.split(r"^class\s+(\w+)\(", src, flags=re.M)
+    for name, body in zip(parts[1::2], parts[2::2]):
+        # `styles.margin` 을 직접 주는 자리가 있어야 «다시 잡는» 것이다 — 재료만 들고
+        # 아무것도 안 하는 클래스를 세면 표가 거짓말이 된다.
+        if not re.search(r"styles\.margin\s*=", body):
+            continue
+        used = sorted(m for m in _PLACE_MARKS if m in body)
+        if used:
+            out[name] = used
+    return out
 
 
 # ── 호출이 CSS 를 뒤집는 자리 ──────────────────────────────────────────────

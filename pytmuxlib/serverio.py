@@ -609,7 +609,7 @@ class ServerIOMixin:
         으로 자동 폴백한다.
 
         scroll(라이브에서 위로 올라간 행수)은 **0 이 아닐 때만** `scr` 로 싣는다 —
-        터치 스크롤바(touch-scroll)가 썸 위치/점프 거리를 계산하는 데 쓴다. 라이브
+        Rust GUI 의 **표시용** 스크롤바(pytmux-25)가 썸 위치를 계산하는 데 쓴다. 라이브
         (=거의 모든 프레임)에서는 필드가 아예 안 붙어 대역폭·와이어 골든이 불변이다."""
         prev = client._sent_rows.get(pane_id)
         client._sent_rows[pane_id] = rows

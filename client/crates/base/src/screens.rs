@@ -35,8 +35,25 @@ pub enum Anchor {
     Top,
     /// 화면 한가운데. 고르러 여는 판.
     Middle,
-    /// 화면 바닥에 붙는다. 치던 흐름의 연장(`:` 프롬프트·팔레트·작성창).
+    /// 화면 바닥에 붙는다. 치던 흐름의 연장(`:` 프롬프트·팔레트).
     Bottom,
+    /// **활성 패널의 커서 줄**에 선다 — 판이 그 줄을 덮고 위로 자란다.
+    ///
+    /// # 왜 「바닥」이 아닌가 (pytmux-370)
+    ///
+    /// 정본 `ComposePromptScreen` 의 CSS 는 `align: center bottom` 이라 오래 «바닥»으로
+    /// 읽혔다. 그런데 그 화면은 `on_mount` 에서 **활성 패널의 안쪽 x·폭과 프롬프트
+    /// 행**으로 margin 을 다시 계산한다 — CSS 의 `bottom` 은 「바닥에 붙인다」가 아니라
+    /// 「바닥에서 위로 띄우는 기준」이고 실제 자리는 **커서 줄**이다.
+    ///
+    /// 그 한 낱말을 놓친 대가가 제보 그대로다: GUI 가 창 맨 아래 전폭 판으로 그렸고
+    /// 사용자는 *"gui는 완전히 별도 위치에 팝업이 나타난다"* 고 적었다. 스크롤을 올렸거나
+    /// 패널이 여럿이면 「바닥」과 「커서 줄」은 전혀 다른 자리다.
+    ///
+    /// ⚠ 이 값을 쓰는 뷰는 **패널 안쪽 사각형과 그 안 커서 행**이 필요하다. 못 재면
+    /// [`Anchor::Bottom`] 으로 내려가는 것이 옳다 — 자리를 짐작해 그리면 그 그림이 새
+    /// 거짓말이 된다.
+    AtPaneCursor,
 }
 
 /// 떠 있을 수 있는 화면.
@@ -153,6 +170,22 @@ pub enum Screen {
     /// 자리를 비운 사이에 대화가 이어지는」 상태라, 클릭 한 번에 뒤집히면 이번엔
     /// **모르고 꺼 버리는** 자리가 생긴다. 그래서 판이 한 번 선다.
     Autoresume,
+    /// **커서 판**(`esc :` → `cursor` · GUI 전용 · pytmux-375).
+    ///
+    /// 모양·두께·색·깜빡임·주기 다섯을 한 자리에 모으고 **바꾸는 즉시 보이는**
+    /// 견본 한 칸을 함께 그린다. 설정 화면의 「표시」 분류를 찾아 내려가지 않아도
+    /// 되게 하는 입구이고, 무엇보다 설정 판이 캔버스의 커서를 덮어 **바꾸면서
+    /// 결과를 못 보던** 자리를 판 안의 견본으로 푼다(제보 2026-08-23).
+    ///
+    /// 손은 [`Screen::Settings`] 와 **같다**(↑↓ 줄 · ←→ 값 · Enter 바꾸기 ·
+    /// Esc 닫기 · Enter 가 판을 안 닫는다). 같은 `press_settings` 를 타는 것이
+    /// 그 계약이다 — 값 고르는 코드를 판마다 새로 적으면 두 판이 다르게 낡는다.
+    /// 갈리는 것은 `Tab` 하나뿐이다(이 판에는 분류가 없다).
+    ///
+    /// ⛔ **모르는 키가 이 판을 닫으면 안 된다**(pytmux-374·273 이 걸린 함정) —
+    /// `press_settings` 의 `_ => Consumed` 팔이 그것을 지키고, 그 사실은
+    /// `proto/tests/interaction.rs` 가 실제로 눌러서 잰다.
+    Cursor,
 }
 
 impl Screen {
@@ -193,6 +226,7 @@ impl Screen {
                 Screen::Settings => 21,
                 Screen::Summary => 22,
                 Screen::SearchResults => 23,
+                Screen::Cursor => 25,
             }
         }
         const ALL: &[Screen] = &[
@@ -221,6 +255,7 @@ impl Screen {
             Screen::Summary,
             Screen::SearchResults,
             Screen::Autoresume,
+            Screen::Cursor,
         ];
         // 중복·자리 어긋남은 여기서 잡는다(빠짐은 위 match 가 이미 막았다).
         debug_assert!(
@@ -254,6 +289,8 @@ impl Screen {
             Screen::Version => "버전",
             Screen::RestartCheck => "재시작 점검",
             Screen::Autoresume => "자동 재개",
+            // GUI 전용 판(pytmux-375) — 정본에 짝이 없어 옮겨 올 문구도 없다.
+            Screen::Cursor => "커서",
             Screen::ShellOutput => "셸 결과",
             Screen::MergeRemote => "원격 탭 머지",
             // 파이썬 `compose.title` 과 같은 문구다.
@@ -298,7 +335,10 @@ impl Screen {
     pub fn anchor(self) -> Anchor {
         match self {
             // 치던 흐름의 연장 — 정본 `align: center bottom`.
-            Screen::Prompt | Screen::Commands | Screen::Compose => Anchor::Bottom,
+            Screen::Prompt | Screen::Commands => Anchor::Bottom,
+            // 작성창만 그 위에서 **코드가 자리를 다시 잡는다**(위 `AtPaneCursor` 머리말 ·
+            // 픽스처의 `code_placed` 가 정본에서 그 사실을 실측으로 뽑는다).
+            Screen::Compose => Anchor::AtPaneCursor,
             // 읽는 판 — 정본은 전부 범용 `InfoScreen`(`align: center top`)으로 띄운다.
             // 우리는 화면 종류가 제목·키 안내를 들고 있어 갈래를 나눴을 뿐, 자리는 같다.
             Screen::Keys
@@ -333,7 +373,12 @@ impl Screen {
             // 요약은 **훑는 판**이다 — 목록이라 고르러 여는 판과 같은 자리가 맞다.
             | Screen::Summary
             // 검색 결과도 **고르러 여는 판**이다(목록 → Enter 로 그 자리로).
-            | Screen::SearchResults => Anchor::Middle,
+            | Screen::SearchResults
+            // 커서 판도 **고르는 판**이다 — 설정 화면과 같은 손이니 같은 자리다.
+            // ⚠ 정본에 짝이 없어 앵커 픽스처가 대조할 것이 없다(`canon_class` 가
+            //   `None` 이라 적합성 테스트가 이 줄을 건너뛴다) — 그래서 근거는
+            //   「같은 손을 가진 판과 같은 자리」 하나뿐이고, 그것을 여기 적는다.
+            | Screen::Cursor => Anchor::Middle,
         }
     }
 
@@ -436,6 +481,10 @@ impl Screen {
             | Screen::Autoresume => "InfoScreen",
             // 정본에 짝이 없다 — 이 구역은 GUI 만 갖고 있던 것이다(§10-21ⓓ).
             Screen::Summary => return None,
+            // 정본에 짝이 없다 — 정본의 커서는 **호스트 단말의 하드웨어 커서**라
+            // 모양·색·깜빡임을 저쪽이 가질 수가 없다(`pytmux-161` · `SETTINGS_OURS`
+            // 가 같은 근거를 설정 다섯에 대해 적는다). 판이 있을 리도 없다.
+            Screen::Cursor => return None,
             Screen::Tabs => "TabSwitcherScreen",
             Screen::Tree => "ChooseTreeScreen",
             Screen::Buffers => "ChooseBufferScreen",
@@ -476,6 +525,9 @@ impl Screen {
             Screen::Confirm => "(←→ 고르기 · Enter 확정 · y/n · Esc 취소)",
             Screen::Commands => "(치면 좁혀진다 · ←→ 분류 · ↑↓ 고르기 · Enter 실행 · Esc 취소)",
             Screen::Settings => "(↑↓ 고르기 · ←→ 값 · Tab 카테고리 · Enter 바꾸기 · Esc 닫기)",
+            // 설정 화면과 같은 손인데 **분류가 없어** `Tab` 칸만 뺀다 — 안내에 적힌
+            // 키가 안 먹으면 도움말이 없느니만 못하다(이 함수 머리말).
+            Screen::Cursor => "(↑↓ 고르기 · ←→ 값 · Enter 바꾸기 · Esc 닫기)",
             // Space 도 받는 것은 파이썬 클라와 같다 — 체크박스 목록의 손버릇이다.
             Screen::Plugins => "(↑↓ 고르기 · Enter/Space 켜고끄기 · Esc 닫기)",
             // 안내도 스펙이 준다(플러그인이 자기 키를 안다) — 이건 폴백이다.
@@ -496,7 +548,10 @@ impl Screen {
             Screen::Compose => {
                 "(Enter 전송 · Shift+Enter 줄바꿈 · Esc 메뉴 · Shift+방향키/Ctrl+A 선택)"
             }
-            Screen::InfoTabs => "(←→ 탭 · ↑↓ 스크롤 · Esc 닫기)",
+            // 정본 `screen.infotabs_sub` 와 **같은 말**이다(pytmux-373 ⑵) — 종전의
+            // `↑↓ 스크롤` 은 우리 판이 실제로 하던 일이었지만 정본과 갈린 자리였고,
+            // 이제 둘 다 «항목» 이다. 괄호는 이 판들의 우리 쪽 문법이다.
+            Screen::InfoTabs => "(←→ 탭·닫기[x] · ↑↓ 항목 · Enter/Esc 닫기)",
             Screen::Summary => "(아무 키나 닫기 · ↑↓ 스크롤)",
             // 진짜 안내(상한·누락 상류)는 회신이 준다 — 이건 회신 오기 전의 폴백.
             Screen::SearchResults => "(↑↓ 고르기 · Enter 이동 · Esc 취소)",
@@ -602,6 +657,8 @@ pub enum Prompt {
     /// 커서 색 이름(`pytmux/pytmux-161`). 상태줄 색과 **같은 표기**이고, 빈 값이면
     /// 테마 그대로다.
     CursorColor,
+    /// 고정폭 글꼴 이름(pytmux-408) — 빈 값이면 자동.
+    FontFamily,
     /// `set <옵션> <값>` 한 줄.
     SetOption,
     /// `<이벤트> <명령>` 또는 `-u <이벤트>` — 이벤트 훅 걸기(`set-hook`).
@@ -773,6 +830,7 @@ impl Prompt {
             Prompt::StatusBg => "상태줄 배경색 (예: blue · brightblack · 비우면 테마):",
             Prompt::StatusFg => "상태줄 글자색 (비우면 테마):",
             Prompt::CursorColor => "커서 색 (예: blue · brightblack · #ff8800 · 비우면 테마):",
+            Prompt::FontFamily => "고정폭 글꼴 (예: Cascadia Mono · Consolas · 비우면 자동):",
             Prompt::SetOption => "설정 (예: mouse off · prefix C-a):",
             // 물음에 **발화하는 이벤트 이름을 적는다** — 목록을 따로 열지 않고도
             // 무엇을 걸 수 있는지 보이게 하는 자리다.
@@ -853,6 +911,27 @@ pub struct Screens {
     /// 스크롤과 따로 두는 이유는 목록 화면의 `selected` 와 같다 — **탭을 바꾸면 스크롤이
     /// 0으로 돌아가야** 하고, 둘을 한 값으로 쓰면 그 규칙을 적을 자리가 없다.
     info_tab: usize,
+    /// 정보 팝업의 `←→` 포커스가 **오른쪽 위 닫기 `[x]`** 에 와 있나(pytmux-373 ⑵·⑷).
+    ///
+    /// 정본 `InfoTabsScreen` 의 `_sel` 이 `0..N-1 = 탭 · N = [x]` 한 값으로 도는 것을
+    /// 여기서는 **탭 번호와 이 깃발 둘**로 나눠 든다. 한 값으로 들면 그 값이 탭 수를
+    /// 알아야 하는데 탭 수는 뷰만 안다(REC 탭은 플러그인이 있을 때만 선다) — 지금도
+    /// 접기는 [`wrap_info_focus`](Screens::wrap_info_focus) 가 뷰에게서 받아서 한다.
+    info_close: bool,
+    /// `←→` 를 **어느 쪽으로** 눌렀나(아직 안 옮긴 한 칸). `-1`·`0`·`+1`.
+    ///
+    /// ⛔ 여기서 곧장 옮기지 못하는 이유: 한 바퀴가 몇 칸인지(`탭 수 + 1`)를 core 가
+    /// 모른다. 그래서 **방향만 적어 두고** 접기는 [`wrap_info_focus`] 가 뷰에게서 탭
+    /// 수를 받아 한다. 종전에는 `usize::MAX` 를 "0에서 왼쪽으로 넘었다"의 표식으로 썼는데,
+    /// 자리가 셋(`탭`·`[x]`·넘침)이 되자 **같은 표식이 두 뜻**이 됐다.
+    info_move: i8,
+    /// 정보 팝업을 **막 열었거나 탭을 막 바꿨다** — 커서를 아직 못 놓았다는 표식.
+    ///
+    /// 정본은 커서를 **첫 내용 줄**에 놓는다("정보가 먼저 보이게" — 동작 단추 위가
+    /// 아니다). 그 자리는 동작이 몇 개인지에 달렸고 그 수는 뷰만 안다. 그래서 여기서는
+    /// "아직 안 놓았다"만 들고, 자리는 [`place_info_cursor`](Screens::place_info_cursor)
+    /// 가 뷰에게서 그 수를 받아 정한다.
+    info_fresh: bool,
     /// 팔레트에서 펴 있는 카테고리 탭(0 = `전체`, 그 뒤가 [`crate::PALETTE_CATS`]).
     ///
     /// `info_tab` 과 갈라 두는 이유: 두 화면이 같은 값을 쓰면 팔레트를 닫았다 열 때 정보
@@ -1029,24 +1108,78 @@ impl Screens {
     pub fn open_info_tabs(&mut self) {
         self.open(Screen::InfoTabs);
         self.info_tab = 0;
+        self.info_close = false;
+        self.info_move = 0;
+        self.info_fresh = true;
     }
 
-    /// 탭 수에 맞춰 **접는다**(자르는 것이 아니라 순환). 몇 개인지 아는 것은 그리는
-    /// 쪽이라 여기서 받는다(목록 화면의 `clamp_selection` 과 같은 규약).
+    /// `←→` 포커스가 **닫기 `[x]`** 에 와 있나(pytmux-373 ⑷).
+    pub fn info_close_focused(&self) -> bool {
+        self.info_close
+    }
+
+    /// 정보 팝업의 **몇 번째 줄**에 커서가 있나 — 동작 단추와 내용 줄을 잇달아 센 자리다.
+    pub fn info_row(&self) -> usize {
+        self.selected
+    }
+
+    /// `←→` 포커스를 **탭 `len` 개 + 닫기 `[x]` 한 자리**에 맞춰 한 칸 옮긴다.
     ///
-    /// 양쪽으로 도는 것이 요점이다. 탭이 둘뿐일 때 끝에서 막히면 어느 쪽 화살표가 살아
-    /// 있는지 매번 시험해야 한다 — 인자 폼의 값 순환과 같은 이유다.
-    pub fn wrap_info_tab(&mut self, len: usize) {
+    /// 몇 개인지 아는 것은 그리는 쪽이라 여기서 받는다(목록 화면의 `clamp_selection`,
+    /// 플러그인 판의 `set_plugin_grid` 와 같은 규약). 자리 셈은 정본
+    /// `InfoTabsScreen._sel` 과 같다: `0..len-1` = 탭 · `len` = `[x]` · 한 바퀴 순환.
+    ///
+    /// 양쪽으로 도는 것이 요점이다 — 탭이 둘뿐일 때 끝에서 막히면 어느 쪽 화살표가
+    /// 살아 있는지 매번 시험해야 한다.
+    ///
+    /// ⛔ 종전 이름은 `wrap_info_tab` 이었고 **아무도 안 불렀다**(GUI 는 렌더에서
+    /// `info_tab().min(len-1)` 로 잘랐다). 그 자름은 접기가 아니라서, 오른쪽 끝에서
+    /// `→` 를 몇 번 더 누르면 `info_tab` 만 커지고 화면은 안 움직였고 그 뒤 `←` 를
+    /// 눌러도 한참 제자리였다. 이제 **키를 받은 자리와 프레임마다** 부른다(pytmux-373).
+    pub fn wrap_info_focus(&mut self, len: usize) {
         if len == 0 {
             self.info_tab = 0;
+            self.info_close = false;
+            self.info_move = 0;
             return;
         }
-        // `Left` 가 0에서 아래로 내려가면 `usize::MAX` 로 표시해 둔다(여기서만 뜻이 있다).
-        self.info_tab = if self.info_tab == usize::MAX {
-            len - 1
-        } else {
-            self.info_tab % len
+        let slots = len + 1;    // 탭 `len` 개 + `[x]` 하나
+        let now = if self.info_close { len } else { self.info_tab.min(len - 1) };
+        let slot = match self.info_move {
+            m if m > 0 => (now + 1) % slots,
+            m if m < 0 => (now + slots - 1) % slots,
+            _ => now,
         };
+        self.info_move = 0;
+        self.info_close = slot == len;
+        if self.info_close {
+            return;    // 내용은 그대로 두고 `[x]` 만 강조한다(정본과 같다)
+        }
+        if self.info_tab != slot {
+            // 탭이 실제로 바뀌었으면 스크롤·커서를 되돌린다 — 안 그러면 짧은 탭이
+            // **빈 화면**으로 뜨고, 커서가 없는 줄을 가리킨다.
+            self.scroll = 0;
+            self.info_fresh = true;
+            self.info_tab = slot;
+        }
+    }
+
+    /// 정보 팝업의 커서를 **줄 수에 맞춘다** — 막 열렸으면 첫 내용 줄에 놓는다.
+    ///
+    /// `actions` 는 그 탭의 동작 단추 수(목록 맨 위에 선다), `rows` 는 단추까지 포함한
+    /// 전체 줄 수다. 정본이 커서를 `lv.index = len(acts)` 로 놓는 그 자리와 같다.
+    pub fn place_info_cursor(&mut self, actions: usize, rows: usize) {
+        if rows == 0 {
+            self.selected = 0;
+            self.info_fresh = false;
+            return;
+        }
+        if self.info_fresh {
+            self.selected = actions.min(rows - 1);
+            self.info_fresh = false;
+        } else {
+            self.selected = self.selected.min(rows - 1);
+        }
     }
 
     /// 지금 작성창의 버퍼(떠 있을 때만).
@@ -1489,8 +1622,11 @@ impl Screens {
                 _ => ScreenKey::Consumed,
             });
         }
-        // 설정·플러그인은 목록형이지만 `Enter` 가 화면을 안 닫는다(위 참조).
-        if matches!(self.top(), Some(Screen::Settings | Screen::Plugins)) {
+        // 설정·플러그인·커서 판은 목록형이지만 `Enter` 가 화면을 안 닫는다(위 참조).
+        if matches!(
+            self.top(),
+            Some(Screen::Settings | Screen::Plugins | Screen::Cursor)
+        ) {
             return Some(self.press_settings(key));
         }
         // ★ 자동 재개 판의 `a` — 정본 `open_autoresume_info` 의 `hide_key="a"` 그대로다
@@ -1627,43 +1763,73 @@ impl Screens {
 }
 
 impl Screens {
-    /// 정보 팝업의 키(패리티 `InfoTabsScreen`). **←→ 탭 · ↑↓ 스크롤 · 그 외 닫기.**
+    /// 정보 팝업의 키(패리티 `InfoTabsScreen`).
+    /// **←→ 탭 + 닫기 `[x]` · ↑↓ 항목 · Enter 실행/닫기 · 그 외 닫기.**
     ///
-    /// 탭을 바꾸면 **스크롤을 0으로 되돌린다** — 안 그러면 긴 탭을 훑다 옆 탭으로 갔을 때
-    /// 짧은 그 탭이 빈 화면으로 보인다(스크롤이 내용보다 아래에 있다).
+    /// # ↑↓ 가 스크롤이 아니라 «항목» 이다 (pytmux-373 ⑵·⑶)
     ///
-    /// 탭은 **순환한다**. 파이썬도 그렇고, 탭이 둘뿐일 때 끝에서 막히면 어느 쪽 화살표가
-    /// 살아 있는지 매번 시험해야 한다.
+    /// 정본은 이 판의 본문이 `ListView` 라 `↑↓` 가 **항목 커서**를 옮기고, 맨 위 항목
+    /// 둘이 `▸ [c] 캡처 켜기/끄기`·`▸ [o] 기록 폴더 열기` 라는 **누를 수 있는 줄**이다.
+    /// 우리는 그것을 흐린 글자 한 줄로 그리고 `↑↓` 는 글을 굴렸다 — 그래서 꼬리줄의
+    /// `↑↓ 항목` 이 거짓이었고, 그 둘을 **키로 직접 치는 수밖에** 없었다.
+    ///
+    /// 커서가 예산 밖으로 나가면 뷰가 그만큼 굴린다(플러그인 목록 판과 같은 처방) —
+    /// 곧 굴리기가 사라진 것이 아니라 **커서의 부수 효과**가 됐다.
+    ///
+    /// # 자리 셈
+    ///
+    /// 줄 수를 아는 것은 뷰다(탭마다 다르다). 그래서 여기서는 **한 칸씩 올리고 내리기만**
+    /// 하고, 범위 맞추기는 [`place_info_cursor`](Screens::place_info_cursor) 가,
+    /// `←→` 의 접기는 [`wrap_info_focus`](Screens::wrap_info_focus) 가 뷰에게서 수를
+    /// 받아 한다(목록 화면의 `clamp_selection` 과 같은 규약).
     fn press_info_tabs(&mut self, key: Key) -> ScreenKey {
         match key {
+            // ⛔ **여기서 옮기지 않는다** — 한 바퀴가 몇 칸인지는 뷰만 안다. 방향만
+            //    적어 두고 `wrap_info_focus` 가 접는다(그 함수의 머리말).
             Key::Right | Key::Tab => {
-                self.info_tab += 1;
-                self.scroll = 0;
+                self.info_move = 1;
                 ScreenKey::Consumed
             }
             Key::Left | Key::BackTab => {
-                // 0에서 왼쪽으로 가면 **마지막 탭**이어야 하는데, 탭 수를 아는 것은 뷰다.
-                // `usize` 라 음수가 없으므로 큰 값을 표식으로 두고 뷰의 `wrap_info_tab`
-                // 이 끝으로 접게 한다 — 그 접기가 곧 순환이다.
-                self.info_tab = self.info_tab.checked_sub(1).unwrap_or(usize::MAX);
-                self.scroll = 0;
+                self.info_move = -1;
                 ScreenKey::Consumed
             }
             Key::Up => {
-                self.scroll = self.scroll.saturating_sub(1);
+                self.selected = self.selected.saturating_sub(1);
                 ScreenKey::Consumed
             }
             Key::Down => {
-                self.scroll += 1;
+                self.selected += 1;
                 ScreenKey::Consumed
             }
             Key::PageUp => {
-                self.scroll = self.scroll.saturating_sub(PAGE);
+                self.selected = self.selected.saturating_sub(PAGE);
                 ScreenKey::Consumed
             }
             Key::PageDown => {
-                self.scroll += PAGE;
+                self.selected += PAGE;
                 ScreenKey::Consumed
+            }
+            Key::Home => {
+                self.selected = 0;
+                ScreenKey::Consumed
+            }
+            Key::End => {
+                // 끝이 몇 번째인지는 뷰가 안다 — `place_info_cursor` 가 잘라 준다.
+                self.selected = usize::MAX;
+                ScreenKey::Consumed
+            }
+            // `[x]` 에 포커스가 있으면 닫고, 아니면 **뷰가 판정한다**: 고른 줄이 동작
+            // 단추면 그 동작을 돌리고(판은 그대로), 그냥 줄이면 닫는다(정본과 같은 손).
+            // ⛔ 여기서 닫아 버리면 동작 단추를 눌러도 판이 사라져 결과를 볼 곳이 없다.
+            // 정본은 `enter` 와 `space` 를 같은 팔에 둔다 — 목록에서 손이 가는 두 키다.
+            Key::Enter | Key::Char(' ') => {
+                if self.info_close {
+                    self.close_top();
+                    ScreenKey::Closed
+                } else {
+                    ScreenKey::Applied(self.selected)
+                }
             }
             _ => {
                 self.close_top();
@@ -1783,6 +1949,9 @@ pub enum PanelTarget {
     PaletteTab(usize),
     /// Status 판(정보 탭) `i` 번째. 키로는 `←→` 가 같은 일을 한다(pytmux-9 ⑶).
     InfoTab(usize),
+    /// Status 판의 **닫기** — 오른쪽 위 `[x]` 와 바닥 「닫기」 막대 둘이 같은 표적이다
+    /// (정본 `itclose`·`itclosebtn` · pytmux-373 ⑵·⑷).
+    InfoClose,
     /// 지금 층의 `row` 번째 줄(메뉴·목록형).
     Row(usize),
     /// 확인 화면의 버튼([`CONFIRM_YES`]/[`CONFIRM_NO`]).
@@ -1872,10 +2041,21 @@ impl Screens {
             }
             PanelTarget::InfoTab(i) => {
                 // 탭 수는 뷰가 안다(내용이 정한다 — REC 탭은 플러그인이 있을 때만 선다).
-                // 그래서 여기서는 자리만 세우고, 범위 맞추기는 `wrap_info_tab` 이 한다.
+                // 그래서 여기서는 자리만 세우고, 범위 맞추기는 `wrap_info_focus` 가 한다.
                 self.info_tab = i;
+                self.info_close = false;
+                self.info_move = 0;
                 self.scroll = 0;    // 다른 탭의 스크롤 자리를 물려받으면 빈 화면이 뜬다
+                self.info_fresh = true;    // 커서도 그 탭의 첫 내용 줄로
                 PanelEffect::Moved
+            }
+            // 오른쪽 위 `[x]` 와 바닥 「닫기」 막대 — **평소 `Enter` 경로**를 그대로 탄다
+            // (클릭에만 있는 지름길을 안 만든다). 포커스를 먼저 그리로 옮기므로 그
+            // `Enter` 는 위 갈래에서 닫기가 된다.
+            PanelTarget::InfoClose => {
+                self.info_close = true;
+                self.info_move = 0;
+                PanelEffect::Enter
             }
             PanelTarget::Row(row) => {
                 self.selected = row;
@@ -2037,14 +2217,52 @@ impl Screens {
     /// `Tab`/`Shift+Tab` 은 **카테고리 이동**이다(파이썬 설정 화면과 같은 동선 —
     /// `screen.settings_sub` 힌트의 "Tab/클릭 카테고리"). 줄 하나씩이 아니라 다음
     /// 카테고리의 첫 줄로 뛴다: 34줄을 Tab 으로 훑는 손은 없다.
+    ///
+    /// # 모르는 키는 «닫기» 가 아니라 «삼키기» 다 (pytmux-374 ⑵)
+    ///
+    /// 정본 `SettingsScreen.on_key` 가 `event.stop()` 하는 키는 넷뿐이고
+    /// (`escape` · `enter` · `left`/`right` · `tab`/`shift+tab`) **그 밖의 키는 멈추지
+    /// 않는다** — 그대로 Textual `ListView` 로 흘러가고, 판이 닫히는 일은 없다.
+    /// 곧 「제 것 아닌 키가 판을 닫는다」는 정본 규약이 아니고, pytmux-273 이
+    /// `press_list` 에서 쓸고 간 것도 같은 부류다. 설정·플러그인은 그 **위에서**
+    /// 갈라져 나와(`press` 의 `Screen::Settings | Screen::Plugins` 분기) 그 처방 밖에
+    /// `_ => close_top()` 이 그대로 남아 있었다.
+    ///
+    /// # `Home`·`End`·`PageUp`·`PageDown` (pytmux-374 ⑶)
+    ///
+    /// 닫기만 끊으면 이 넷은 **죽은 채로** 남는다(제보가 신고한 것이 그 상태다).
+    /// 정본에서 이 넷을 처리하는 것은 `ListView`(→ `ScrollableContainer`)의 기본
+    /// 바인딩이고, 거기서는 **커서가 아니라 글이** 움직인다(`scroll_home`·`scroll_end`·
+    /// `page_up`·`page_down` — 목록 커서 `index` 는 제자리다).
+    ///
+    /// ⚠ **여기서는 커서를 옮긴다 — 정본과 한 칸 다르고, 그것이 이 화면에서 가능한
+    /// 유일한 «같은 그림»이다.** 우리 판에는 커서와 따로 사는 스크롤이 없다: 보이는
+    /// 창은 `selected` 에서 파생된다(`render_settings` 의 `start`). 굳이 스크롤 값을
+    /// 하나 더 만들면 「`End` 로 끝까지 갔는데 `←→` 는 화면 밖 옛 줄의 값을 바꾼다」가
+    /// 되고, 그건 정본의 손을 베낀 대가로 이 화면을 못 쓰게 만드는 쪽이다.
+    ///
+    /// ⛔ **위쪽 상한은 여기서 안 건다** — 줄 수를 아는 것은 그리는 쪽이다
+    /// (`Screen::Plugins` 의 목록은 서버가 나르고 core 는 안 든다). `press_info_tabs`
+    /// 와 같은 규약으로 `End` 는 `usize::MAX` 를 두고 가고, 뷰가 `clamp_selection` 으로
+    /// 접는다(GUI `settle_settings_cursor`).
     fn press_settings(&mut self, key: Key) -> ScreenKey {
         match key {
             Key::Down => {
-                self.selected += 1;
+                // `End` 가 두고 간 `usize::MAX` 위에서 또 눌릴 수 있다 — 접는 것은 뷰라
+                // 여기서는 넘치지만 않으면 된다.
+                self.selected = self.selected.saturating_add(1);
                 ScreenKey::Consumed
             }
             Key::Up => {
                 self.selected = self.selected.saturating_sub(1);
+                ScreenKey::Consumed
+            }
+            // ★ 커서 판에는 **분류가 없다**(다섯 줄이 한 무리다 · pytmux-375).
+            //   아래 분류 이동은 `selected` 를 **설정 화면 전체 목록의 색인**으로 읽는데,
+            //   이 판의 `selected` 는 0~4 (판 안 줄 번호)라 그대로 태우면 커서와 아무
+            //   상관 없는 설정으로 선택이 튄다. 안내에도 `Tab` 이 없으므로 **삼킨다**
+            //   (닫지 않는다 — 머리말 ⑵).
+            Key::Tab | Key::BackTab if self.top() == Some(Screen::Cursor) => {
                 ScreenKey::Consumed
             }
             // 분류 이동은 **플러그인 줄까지 포함한** 목록 위에서 돈다 — 안 그러면
@@ -2065,10 +2283,31 @@ impl Screens {
             // Space 는 체크박스 목록의 손버릇이다(파이썬 플러그인 화면과 같다). 설정
             // 화면에서도 같은 뜻이라 갈라 두지 않는다.
             Key::Enter | Key::Char(' ') => ScreenKey::Applied(self.selected),
-            _ => {
+            Key::Home => {
+                self.selected = 0;
+                ScreenKey::Consumed
+            }
+            Key::End => {
+                // 끝이 몇 번째인지는 뷰가 안다(위 머리말 · `press_info_tabs` 와 같다).
+                self.selected = usize::MAX;
+                ScreenKey::Consumed
+            }
+            Key::PageUp => {
+                self.selected = self.selected.saturating_sub(PAGE);
+                ScreenKey::Consumed
+            }
+            Key::PageDown => {
+                self.selected = self.selected.saturating_add(PAGE);
+                ScreenKey::Consumed
+            }
+            Key::Escape => {
                 self.close_top();
                 ScreenKey::Closed
             }
+            // 정본이 **멈추는** 키는 여섯뿐이고(`escape`·`enter`·`←→`·`tab`/`shift+tab`)
+            // 나머지는 흘려보낸다 — 흘려보낸 키가 판을 닫지는 않는다(머리말 ⑵).
+            // 목록형이 `press_list` 에서 하는 것과 같은 팔이다.
+            _ => ScreenKey::Consumed,
         }
     }
 }

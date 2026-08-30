@@ -15,6 +15,7 @@ import os
 import tempfile
 
 import harness  # noqa: F401  (sys.path 주입)
+from run import skip
 
 _pkg = importlib.import_module("pytmuxlib.plugins.ncd")
 PLUGIN = _pkg.PLUGIN
@@ -113,14 +114,33 @@ async def test_the_spec_declares_the_keys_that_move_the_tree():
         assert spec["keys"].get("c") == "cd", spec["keys"]
 
 
-class _Pane:
-    """패널 한 짝 — 받은 바이트만 들고 있는다."""
+class _Pty:
+    """패널의 pty — 받은 바이트만 들고 있는다."""
 
     def __init__(self):
         self.written = b""
 
     def write(self, data):
         self.written += data
+
+
+class _Pane:
+    """패널 한 짝. **글자가 들어가는 자리는 `pane.pty` 다.**
+
+    ☠ **가짜를 `pane` 에 달지 마라**(pytmux-173). 종전 이 클래스는 `write` 를 **자기가**
+    들고 있었는데, 프로덕션의 `Pane`(`pytmuxlib/model.py`)에는 그런 메서드가 **없다** —
+    즉 가짜가 프로덕션에 없는 이름을 지어내 준 것이고, 그래서 아래 두 시험은 「Enter 가
+    패널에 cd 를 친다」를 재고 있다고 믿으면서 **늘 초록**이었고 라이브는 **늘**
+    `AttributeError` 로 터졌다(라이브 로그 실측 2026-08-23). 루트 CLAUDE.md 가 경고하는
+    *공허 통과*의 표본이다.
+
+    ⛔ 여기에 `write` 를 다시 달면 그 공허 통과가 그대로 되살아난다. 「프로덕션에 없는
+    이름을 가짜가 만들지 않는가」를 저장소 전수로 재는 자리는
+    `tests/test_pane_write_typo.py` 다.
+    """
+
+    def __init__(self):
+        self.pty = _Pty()
 
 
 class _Win:
@@ -150,7 +170,7 @@ async def test_enter_actually_types_the_cd_into_the_active_pane():
             {"id": "ncd", "do": "into", "row": 0, "input": target, "state": {}},
         )
         assert resp == {"t": "plugin_screen_close", "id": "ncd", "input": target}, resp
-        typed = pane.written.decode("utf-8")
+        typed = pane.pty.written.decode("utf-8")
         assert typed.endswith("\r"), f"엔터가 안 붙었다 — 셸이 명령을 실행하지 않는다: {typed!r}"
         assert target in typed, f"고른 경로가 안 실렸다: {typed!r}"
         # 셸 방언은 **이 서버의 OS** 가 정한다(클라의 것을 쓰면 Windows 클라가 macOS
@@ -168,7 +188,7 @@ async def test_an_into_without_a_path_does_not_pretend_it_worked():
         object(), _Sess(pane),
         {"id": "ncd", "do": "into", "row": 0, "input": "", "state": {}},
     )
-    assert pane.written == b"", pane.written
+    assert pane.pty.written == b"", pane.pty.written
     assert resp["t"] == "plugin_screen_close", resp
 
 
@@ -183,8 +203,24 @@ async def test_the_c_key_types_a_cd_too():
             object(), _Sess(pane),
             {"id": "ncd", "do": "cd", "row": 0, "input": target, "state": {}},
         )
-        typed = pane.written.decode("utf-8")
+        typed = pane.pty.written.decode("utf-8")
         assert target in typed and typed.endswith("\r"), typed
+
+
+async def test_an_into_survives_a_pane_without_a_pty():
+    """`pane.pty` 는 `None` 일 수 있다(`model.py` 의 `self.pty = None` · `reinit` 직후).
+    거기서 터지면 `plugin_screen_close` 가 안 나가서 **화면이 안 닫힌다** — 오타 때와
+    똑같은 증상이라, 고치면서 넣은 가드를 여기서 잰다(pytmux-173)."""
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        pane = _Pane()
+        pane.pty = None
+        resp = PLUGIN.plugin_screen(
+            object(), _Sess(pane),
+            {"id": "ncd", "do": "into", "row": 0,
+             "input": os.path.join(td, "a"), "state": {}},
+        )
+        assert resp["t"] == "plugin_screen_close", resp
 
 
 async def test_the_label_stays_data():
@@ -390,7 +426,16 @@ async def test_windows_keeps_the_drive_we_stand_on_even_if_the_listing_misses_it
 
 
 async def test_posix_still_has_exactly_one_root():
-    """⛔ 드라이브 층을 **없는 곳에 만들지 않는다** — POSIX 는 뿌리가 하나다."""
+    """⛔ 드라이브 층을 **없는 곳에 만들지 않는다** — POSIX 는 뿌리가 하나다.
+
+    ⚠ 위 형제들과 달리 이 시험은 **진짜 파일시스템**을 본다(`_windows()` 같은 픽스처가
+    없다) — 재려는 것이 "이 OS 에 드라이브가 없으면 층도 없다"이므로 OS 를 흉내내면
+    그 자리에서 답을 심어 버린다. 그래서 Windows 에서는 **잴 것이 없다**: 이 상자에는
+    드라이브가 실제로 여럿이고(C/D/R/Z) 그 층은 설계대로다. 그쪽 계약을 재는 것은
+    바로 위 `test_windows_lists_every_drive_as_a_sibling_at_the_top` 이다(pytmux-396).
+    """
+    if os.name == "nt":
+        skip("POSIX 전용(진짜 파일시스템을 본다 — Windows 는 드라이브 층이 정상이다)")
     with tempfile.TemporaryDirectory() as td:
         _mktree(td)
         spec, mine = _tree(td)

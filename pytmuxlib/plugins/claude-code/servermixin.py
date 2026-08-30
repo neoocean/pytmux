@@ -23,7 +23,7 @@ import subprocess
 
 from pytmuxlib import ipc, proc, pty_backend
 from pytmuxlib.protocol import write_msg   # 세션 종료 시 클라 auto_token_log 푸시
-from . import tokens, transcript, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러그인 소속(물리 이전)
+from . import fullscreen, tokens, transcript, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러그인 소속(물리 이전)
 from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_feedback_prompt, fmt_long_turn_badge,
                      fmt_unknown_update,
@@ -366,6 +366,69 @@ class ServerClaudeMixin:
                     _a.create_task(self._send_to(c, dict(msg)))
         except Exception:       # noqa: BLE001 — 알림이 자동재개를 죽이면 안 된다
             pass
+
+    def _notice_fullscreen_off(self):
+        """claude 가 스스로 끈 fullscreen 을 **한 번** 말한다(pytmux-415 ⑶).
+
+        claude 는 fullscreen 을 끌 때 stderr 알림을 **딱 한 번** 내고 그 뒤로는
+        조용히 classic 으로 돈다. 그래서 사용자는 스크롤 프롬프트 바와 「클릭해서
+        점프」가 **없어진 것**만 겪고 이유를 못 본다(제보 2026-08-28). 여기서 그
+        사실을 상태줄로 끌어올린다.
+
+        ⛔ **고치지 않는다 — 세고 말한다.** 남의 설정 파일을 pytmux 가 쓰지 않는다.
+        되살리는 것은 사용자가 claude 에서 `/tui fullscreen` 을 치는 일이다.
+
+        래치는 기록의 `at`(끈 시각) **하나뿐**이다 — 그 시각을 한 번 말했으면 다시
+        안 말하고, 시각이 바뀌면(=다시 트립) 다시 말한다. claude 를 여러 번 띄우는
+        것이 정상 작업이라 새 세션마다 말하면 그것이 곧 소음이다.
+
+        ⛔ **기록이 없을 때 래치를 «풀지» 않는다.** 처음엔 「걷으면 래치도 푼다」로
+        적었는데, 뮤테이션 반증에서 그 줄을 지워도 아무 오라클이 안 울었다 — 재보니
+        **이득이 없고 해가 있었다**. 진짜 새 트립은 `at` 이 새 밀리초라 래치 없이도
+        말해지고(그것을 재는 것이 test_a_new_trip_speaks_again), 반대로
+        `read_auto_disabled` 는 파일을 못 읽으면(claude 가 그 순간 다시 쓰는 중 등)
+        **일시적으로 None** 을 준다 — 그때 래치를 풀면 다음 경계에서 **이미 말한 그
+        트립을 또 말한다**. 없는 이득 대신 있는 소음만 남는 교환이었다.
+        「걷으면 사라진다」는 래치가 아니라 아래 `rec is None → return` 이 만든다.
+
+        알림 실패가 세션 경계 회계를 죽이면 안 되므로 전 경로 best-effort."""
+        try:
+            rec = fullscreen.read_auto_disabled()
+            if rec is None:
+                return                # 걷혔다(또는 못 읽었다) — 말할 것이 없다
+            if self._fullscreen_off_said == rec["at_ms"]:
+                return
+            self._fullscreen_off_said = rec["at_ms"]
+            note = getattr(self, "_notice_msg", None)
+            if note is None:
+                return
+            # 서버발 표면이라 문구를 여기서 짓지 않고 **키+인자**로 보낸다(클라가
+            # 번역 — [[server-pushed-surface-cannot-call-t]]). 인자는 전부 **값**이라
+            # 로케일을 안 탄다(버전 문자열·시각·횟수).
+            msg = note(
+                "ccmsg.fullscreen_off",
+                "Claude fullscreen 이 꺼져 있습니다 — 스크롤 프롬프트 바와 "
+                "«클릭해서 점프»가 안 뜹니다. claude 에서 /tui fullscreen 으로 "
+                "되살리세요(claude {ver} · {when} · 스트라이크 {strikes})",
+                severity="warn", ver=rec["version"],
+                when=self._fmt_fullscreen_at(rec["at_ms"]),
+                strikes=rec["strikes"])
+            import asyncio as _a
+            for c in list(getattr(self, "clients", ())):
+                if getattr(c, "session", None) is not None:
+                    _a.create_task(self._send_to(c, dict(msg)))
+        except Exception:       # noqa: BLE001 — 알림이 세션 경계를 죽이면 안 된다
+            pass
+
+    @staticmethod
+    def _fmt_fullscreen_at(at_ms) -> str:
+        """끈 시각(epoch ms)을 사람이 읽는 지역시로. 0/이상값이면 빈 문자열."""
+        if not at_ms:
+            return ""
+        try:
+            return time.strftime("%Y-%m-%d %H:%M", time.localtime(at_ms / 1000.0))
+        except (ValueError, OSError, OverflowError):
+            return ""
 
     # ---- 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청 2026-06-12,
     # 지속화 2026-06-15) ----
@@ -1806,6 +1869,10 @@ class ServerClaudeMixin:
                 if self.usage_refresh_sec > 0:
                     self._schedule_usage_refresh(
                         self._USAGE_NEW_SESSION_DELAY)
+            # pytmux-415 ⑶: claude 가 **스스로 끈** fullscreen 을 사용자에게 말한다.
+            # 새 세션 경계에서만 본다 — 이 순간이 「지금 뜬 claude 가 classic 이다」가
+            # 확정되는 자리고, 프레임마다 설정 파일을 읽을 이유가 없다.
+            self._notice_fullscreen_off()
             # 시작 규칙 주입 예약(#27): 새 Claude 세션이 뜨면 다음 idle(입력
             # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
             if self.claude_rules.strip():
@@ -2578,6 +2645,9 @@ class ServerClaudeMixin:
         self._usage_ts = None
         # S6 T5: 이벤트 트리거 갱신 예약 핸들(call_later) — 중복 예약 방지 디바운스.
         self._usage_probe_handle = None
+        # pytmux-415 ⑶: claude 가 fullscreen 을 끈 기록 중 **이미 말한** 것의 at(ms).
+        # None = 아직 안 말했다(또는 기록이 걷혀 되돌렸다). _notice_fullscreen_off 참조.
+        self._fullscreen_off_said = None
 
     @property
     def tokens_log_path(self) -> str:

@@ -1084,6 +1084,130 @@ fn the_blink_period_is_clamped_not_dropped() {
     assert_eq!(Config::parse("set cursor-blink-interval 250").cursor_blink_ms, 250);
 }
 
+// ── 커서 두께(`pytmux/pytmux-375` ⓑ) ─────────────────────────────────────────
+//
+// 「닿기는 하나」는 위 `every_setting_row_reaches_something_that_reads_it` 가 이미
+// 잰다(설정 화면 → 파일 → 파서 왕복). 여기서 재는 것은 그 축이 **못 보는 것** 셋:
+// 잘못 적힌 값이 어떻게 접히나 · 판이 모으는 다섯 줄이 실제로 있나 · 그리고 아래
+// 「화면에 적는 글이 도로 읽히나」다.
+
+#[test]
+fn the_cursor_thickness_is_clamped_not_dropped() {
+    // 범위 밖 때문에 설정 파일을 통째로 못 읽는 일은 없어야 한다
+    // (`inactive-dim-ratio`·`cursor-blink-interval` 과 같은 규칙).
+    assert_eq!(Config::parse("set cursor-thickness 0").cursor_thickness, CURSOR_THICKNESS_LO);
+    assert_eq!(Config::parse("set cursor-thickness 99").cursor_thickness, CURSOR_THICKNESS_HI);
+    assert_eq!(Config::parse("set cursor-thickness 3.5").cursor_thickness, 3.5);
+    // 못 읽는 글자는 그 줄만 버린다 — 기본값이 남는다(커서가 사라지면 안 된다).
+    assert_eq!(
+        Config::parse("set cursor-thickness 굵게").cursor_thickness,
+        Config::default().cursor_thickness
+    );
+}
+
+#[test]
+fn the_cursor_thickness_default_keeps_todays_screen() {
+    // ★ 이 이슈가 부탁한 것은 「고를 수 있게」이지 「기본을 바꿔라」가 아니다.
+    //   종전 상수(`splitter.rs` 의 `CURSOR_PX`)가 2px 였으므로 기본도 2px 다.
+    assert_eq!(Config::default().cursor_thickness, 2.);
+}
+
+#[test]
+fn the_cursor_panel_rows_all_exist() {
+    // 판은 키 이름으로 줄을 모은다(색인이 아니라 — `CURSOR_SETTINGS` 머리말). 그래서
+    // 이름 하나가 오타이거나 `SETTINGS` 에서 그 줄이 사라지면 **판에서 조용히 빠진다**.
+    for (row, key) in CURSOR_SETTINGS.iter().enumerate() {
+        let at = cursor_setting_row(row).unwrap_or_else(|| panic!("{key} 를 설정 표에서 못 찾았다"));
+        assert_eq!(SETTINGS[at].key, *key, "{row}번째 줄이 다른 설정을 가리킨다");
+    }
+    assert_eq!(cursor_setting_row(CURSOR_SETTINGS.len()), None, "없는 줄이 무언가를 가리킨다");
+    // 빈 목록은 「전부 통과」로 보인다 — 통과가 아니라 고장이다.
+    assert!(CURSOR_SETTINGS.len() >= 5, "커서 판의 줄이 줄었다: {}", CURSOR_SETTINGS.len());
+}
+
+#[test]
+fn the_thickness_row_goes_dim_only_on_block() {
+    // ⚠ 판정은 **줄 하나**에만 걸린다 — 모양을 바꿨다고 다른 줄까지 흐려지면 그건
+    //   "안 먹는다"가 아니라 "화면이 고장 났다"로 읽힌다.
+    for (row, key) in CURSOR_SETTINGS.iter().enumerate() {
+        let dim_on_block = !cursor_row_applies(row, "block");
+        assert_eq!(dim_on_block, *key == "cursor-thickness", "{key} 의 판정이 틀렸다");
+        for style in CURSOR_STYLES.iter().filter(|s| **s != "block") {
+            assert!(cursor_row_applies(row, style), "{key} 가 {style} 에서 흐려졌다");
+        }
+    }
+}
+
+/// ☠ 숫자 줄의 `←→` 는 **지금 값의 한 걸음**이어야 한다 (pytmux-393).
+///
+/// 종전 오라클(`a_number_setting_shows_a_value_it_can_read_back`)은 *"화면에 적는 글이
+/// 도로 읽히나"* 를 쟀다. 그때는 [`setting_pick_dir`] 이 실제로 그 글자를 되읽었기
+/// 때문이고, 그래서 `font-scale` 의 `"1.0×"` 는 **예외 목록에 사유와 함께** 적혀
+/// 있었다 — 「결함을 미룬다」는 선언이었다.
+///
+/// 이제 걸음은 [`number_value`] 가 **날 값**에서 뗀다. 그러면 재야 할 것은 표시의
+/// 형식이 아니라 **행동**이다: `→` 한 번이 `지금 값 + step` 인가. 표시에 단위를 붙여도
+/// 이 자는 안 운다 — 그것이 이 고침의 요지다(그 대가로 옛 예외 목록은 사라졌다).
+///
+/// ⛔ 이 자는 [`SETTINGS`] 의 `Number` **전수**를 돈다. `number_value` 에 줄을 안 더한
+/// 새 숫자 설정은 여기서 이름과 함께 죽는다 — 그 설정의 `←→` 가 값을 아래 끝으로
+/// 떨어뜨리기 전에.
+#[test]
+fn every_number_row_steps_from_its_own_value() {
+    // 값을 전부 **아래 끝이 아닌 곳**에 놓는다. `lo` 에 두면 「글자를 되읽다 죽고 lo 로
+    // 떨어지는」 옛 결함의 답과 정답이 겹쳐 오라클이 공허해진다.
+    let values = SettingValues {
+        inactive_dim_ratio: 0.30,
+        font_scale: 1.4,
+        mouse_drag_threshold: 7,
+        status_interval: 20,
+        cursor_blink_ms: 700,
+        cursor_thickness: 2.5,
+        ..base_values()
+    };
+    let mut checked = 0;
+    for (row, setting) in SETTINGS.iter().enumerate() {
+        let SettingKind::Number { lo, hi, step } = setting.kind else {
+            continue;
+        };
+        checked += 1;
+        let now = number_value(setting.key, &values).unwrap_or_else(|| {
+            panic!(
+                "{} 가 `number_value` 표에 없다 — `←→` 가 그 값을 아래 끝으로 떨어뜨린다",
+                setting.key
+            )
+        });
+        assert!(
+            (now - lo).abs() > f32::EPSILON,
+            "{}: 이 시험이 값을 아래 끝에 뒀다 — 옛 결함의 답과 겹쳐 오라클이 공허하다",
+            setting.key
+        );
+        for forward in [true, false] {
+            let step_to = if forward { now + step } else { now - step };
+            let want = if step_to > hi + f32::EPSILON {
+                lo
+            } else if step_to < lo - f32::EPSILON {
+                hi
+            } else {
+                step_to
+            };
+            match setting_pick_dir(row, &values, forward) {
+                Some(SettingPick::SetNumber(key, got)) => {
+                    assert_eq!(key, setting.key, "다른 줄의 키를 냈다");
+                    assert!(
+                        (got - want).abs() < 1e-4,
+                        "{}: `{}` 한 걸음이 {got} 다 — 지금 값 {now} 에서 뗀 {want} 여야 한다",
+                        setting.key,
+                        if forward { "→" } else { "←" }
+                    );
+                }
+                other => panic!("{}: 숫자 줄이 SetNumber 를 안 냈다: {other:?}", setting.key),
+            }
+        }
+    }
+    assert!(checked >= 5, "숫자 설정이 하나도 안 세어졌다 — 통과가 아니라 고장이다");
+}
+
 #[test]
 fn the_blink_period_is_written_as_an_integer() {
     // ⛔ `250.00` 은 파서가 `u16` 으로 못 읽어 **그 줄이 조용히 무시된다** — 증상은

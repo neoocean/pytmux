@@ -17,6 +17,75 @@
 //! 를 우리 표는 `Auto-resume`, 정본은 `auto-resume` 로 적고 있었다).
 
 pub static EN: &[(&str, &str)] = &[
+    // ── claude-code · 토큰 판들의 **꼬리줄**(pytmux-371 · 글자 키 광고) ──
+    //
+    // ★ 이 다섯은 위·아래의 짧은 꼬리줄과 **원문이 다르다**: 뒤에 이 판이 무는 글자
+    //   키가 붙어 있다(`p세션 · l한도 · o머신 · s시나리오 · u/usage`). 정본 토큰
+    //   팝업이 같은 자리에 같은 것을 적고, 그 줄이 곧 「이 판에서 무엇을 할 수 있나」의
+    //   전부라 영어로 안 뜨면 조작이 통째로 안 읽힌다.
+    // ⛔ 짧은 원문(글자 키가 없는 것)을 지우면 안 된다 — 다른 플러그인 판들이 아직
+    //    그 꼬리줄을 쓴다(`mdir`·`ncd` 등). 둘 다 표에 있어야 한다.
+    (
+        "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
+    ),
+    (
+        "↑↓ 스크롤 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ scroll · Esc close · p session · l limit · o machine · s scenario · u /usage",
+    ),
+    (
+        // ⚠ 기간 판이 **계층 트리**가 되면서 버킷 고르개가 사라졌다(pytmux-371 ①) —
+        //   꼬리줄도 그 손을 적는다. 없어진 조작을 광고하면 그것도 거짓말이다.
+        "↑↓ 이동 · Enter/←→ 펼침·접힘 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move · Enter/←→ expand·collapse · Esc close · p session · l limit · \
+         o machine · s scenario · u /usage",
+    ),
+    (
+        "↑↓ 이동 · Enter 날짜 펼침·접힘 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move · Enter expand/collapse a day · Esc close · p session · l limit · \
+         o machine · s scenario · u /usage",
+    ),
+    (
+        "↑↓ 이동 · Enter 적용(/model 주입) · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move · Enter apply (injects /model) · Esc close · p session · l limit · \
+         o machine · s scenario · u /usage",
+    ),
+    // ── claude-code · 기간별·세션별 판(pytmux-371 ①②) ──
+    ("토큰 사용량 · 기간별", "Token usage · by period"),
+    ("토큰 사용량 · 세션별", "Token usage · by session"),
+    (
+        "↑↓ 이동 · Enter 로 기간 단위 고르기 · Esc 닫기",
+        "↑↓ move · Enter to pick the period unit · Esc close",
+    ),
+    ("시간 단위로 보기", "Show by hour"),
+    ("일 단위로 보기", "Show by day"),
+    ("주 단위로 보기", "Show by week"),
+    ("월 단위로 보기", "Show by month"),
+    ("기간별 →", "By period →"),
+    ("세션별 →", "By session →"),
+    // ── claude-code · 경고 이력 판(pytmux-371 ⑤) + 판을 잇는 줄 ──
+    ("Claude 경고 이력", "Claude warning history"),
+    ("Claude 경고 이력 →", "Claude warning history →"),
+    ("↑↓ 이동 · Enter 날짜 펼침·접힘 · Esc 닫기",
+     "↑↓ move · Enter expand/collapse a day · Esc close"),
+    ("쌓인 Claude 경고가 없습니다.", "No Claude warnings recorded."),
+    (
+        "이 서버는 경고 이력을 안 쌓습니다(claude-code 플러그인 필요).",
+        "This server keeps no warning history (needs the claude-code plugin).",
+    ),
+    ("머신별 총계 →", "By machine →"),
+    ("일별 집계 →", "Daily totals →"),
+    // ── claude-code · 판을 잇는 줄(pytmux-371 ④) ──
+    ("모델·컨텍스트 고르기 →", "Pick model/context →"),
+    ("한도(/usage) 보기 →", "Show limits (/usage) →"),
+    // ── claude-code · 띠 끝의 액션 배지 = ⑥ 자동재개 설정(pytmux-371 ⑥) ──
+    ("시나리오 설정 →", "Scenario settings →"),
+    // ── claude-code · 머신별 토큰 판(pytmux-371 ③) ──
+    ("토큰 사용량 · 머신별 (Σ{tok})", "Token usage · by machine (Σ{tok})"),
+    (
+        "아직 다른 머신에서 온 기록이 없습니다(동기화를 켜면 채워집니다).",
+        "No records from other machines yet (turn sync on to fill this).",
+    ),
     ("  ◀ 현재", "  ◀ current"),
     (" …", " …"),
     (" ⏎", " ⏎"),
@@ -44,6 +113,8 @@ pub static EN: &[(&str, &str)] = &[
     ("<드라이브>", "<DRIVE>"),
     ("<상위>", "<UP>"),
     ("?%/5h 사용", "?%/5h used"),
+    ("Claude fullscreen 이 꺼져 있습니다 — 스크롤 프롬프트 바와 «클릭해서 점프»가 안 뜹니다. claude 에서 /tui fullscreen 으로 되살리세요(claude {ver} · {when} · 스트라이크 {strikes})",
+     "Claude's fullscreen renderer is off — the scrolled-prompt bar and click-to-jump are gone. Run /tui fullscreen in claude to bring it back (claude {ver} · {when} · {strikes} strikes)"),
     ("Claude 모델·컨텍스트", "Claude model/context"),
     ("Claude 사용 한도 (/usage)", "Claude usage limit (/usage)"),
     ("Claude 설정", "Claude settings"),

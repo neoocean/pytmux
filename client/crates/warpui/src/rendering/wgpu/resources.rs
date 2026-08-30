@@ -865,9 +865,25 @@ fn create_surface_config(
     config.format = config.format.remove_srgb_suffix();
 
     let caps = surface.get_capabilities(adapter);
-    // COPY_SRC is only needed to support integration test frame capture via
-    // request_frame_capture. It is not required for normal rendering.
-    #[cfg(feature = "integration_tests")]
+    // `request_frame_capture` 가 드로어블을 읽으려면 표면에 `COPY_SRC` 가 있어야 한다.
+    //
+    // ⛔ **`integration_tests` 피처 뒤에 두면 안 된다**(pytmux/pytmux-407 부수 · 실측
+    //    2026-08-25). 이 저장소에서 그 캡처는 시험 전용이 아니라 **라이브 확인의 정본
+    //    경로**다(`gui/src/main.rs` 의 `--frame-dump` 머리말: *"드로어블 텍스처를 앱이
+    //    직접 읽으면 화면도 권한도 필요 없다"*). 그런데 배포 이진에는 그 피처가 없으니
+    //    **늘 죽었다**:
+    //
+    //        wgpu error: Validation Error
+    //          Usage flags TextureUsages(RENDER_ATTACHMENT) of Texture with
+    //          '<Surface Texture>' label do not contain required usage flags
+    //          TextureUsages(COPY_SRC)
+    //
+    //    맥은 wgpu 가 아니라 Metal 경로라 안 걸렸고(그래서 저쪽에서만 덤프가 됐다),
+    //    Windows 는 이 한 줄 때문에 **라이브 화면을 한 번도 못 떴다** — 그 사실이
+    //    「이 상자에서는 라이브 확인이 불가능하다」로 오래 읽혔다.
+    //
+    // ⚠ 평상시 렌더링에 필요한 플래그는 아니지만, **지원할 때만** 켜므로(아래 조건)
+    //    못 켜는 어댑터에서 이 줄이 새 실패를 만들지는 않는다.
     if caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
         config.usage |= wgpu::TextureUsages::COPY_SRC;
     }

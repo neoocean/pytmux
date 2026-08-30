@@ -145,8 +145,11 @@ $title = [WinCap]::Title($hwnd)
 
 # 앞으로 올린다. 가려진 창을 화면에서 뜨면 **남의 창이 찍힌다** — 조용히 틀린 그림이라
 # 리포트만 보면 안 보인다.
-[void][WinCap]::ShowWindow($hwnd, 9)   # SW_RESTORE
-[void][WinCap]::SetForegroundWindow($hwnd)
+# ★ 전경 승격은 **winlib 한 벌**이 한다(`Set-AppWindowForeground`) — 에이전트 셸처럼
+#   「최근 입력이 없는」 프로세스에서는 `SetForegroundWindow` 가 조용히 거절되고, 그러면
+#   아래 검사가 "대상 창이 앞에 없다" 로 떨어진다. 그건 하네스 고장이 아니라 전경
+#   잠금이다(까닭·실측 = `winlib.ps1` 의 `[PtWin.Fg]::Raise` 머리말).
+[void](Set-AppWindowForeground -Hwnd $hwnd -SettleMs $SettleMs)
 Start-Sleep -Milliseconds $SettleMs
 
 # ★ 앞으로 **올라갔는지 확인**한다. SetForegroundWindow 는 실패해도 조용하고(포커스
@@ -171,8 +174,7 @@ $madeTopmost = $false
 for ($try = 0; $try -lt 3; $try++) {
   $mid = [WinCap]::TopAt(($r.Left + [int]($w / 2)), ($r.Top + [int]($h / 2)))
   if ($mid -eq $hwnd) { break }
-  [void][WinCap]::ShowWindow($hwnd, 9)
-  [void][WinCap]::SetForegroundWindow($hwnd)
+  [void](Set-AppWindowForeground -Hwnd $hwnd -SettleMs $SettleMs)
   if ($try -ge 1) {
     # 전경 요청이 거절당하는 경우(사용자 창이 위에 있을 때) — 내 창만 올린다.
     [WinCap]::Topmost($hwnd, $true)

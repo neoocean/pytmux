@@ -135,3 +135,28 @@ async def test_replay_is_identical_through_gzip_capture():
         assert a == b, "gzip 투명 해제 결과가 원본 재생과 다르다"
         assert "한글ABC" not in a and "漢字" in a, \
             "CR 덮어쓰기가 재생에 반영돼야 한다(공허 통과 방지)"
+
+
+#: 이 파일 안에서만 쓰는 글자 상수(위 코퍼스 원문과 섞이지 않게).
+NEWLINE = "\n"
+CR_LF = "\r\n"
+
+async def test_the_corpus_lines_survive_their_zero_width_characters():
+    """골든이 **내용 손실을 얼려 두고 있었다**(pytmux-407 · 2026-08-26).
+
+    ⛔ 해시만 얼리면 «무엇이 얼었는지»를 아무도 안 본다. 이 코퍼스 둘은 폭 0 글자를
+    품고 있는데, 종전 서버 격자는 그 글자를 만나면 **그 줄의 나머지를 통째로 버렸다** —
+    그래서 이모지 줄이 경고 기호에서 잘린 채 얼어 있었고 해시는 초록이었다.
+
+    그 해시를 다시 구울 때 「무엇이 맞는 그림인가」를 사람이 눈으로 정하는 대신
+    **여기 적어 둔다** — 다음에 이 골든이 흔들리면 이 시험이 먼저 운다.
+    """
+    for key in ("emoji_and_box", "combining_zero_width"):
+        line = _frames(_SYNTH[key].encode(), 40, 4).split(NEWLINE)[0]
+        assert line.strip(), f"{key}: 아무것도 안 그렸다"
+        # 코퍼스 원문에서 **폭 0 글자 뒤에 오는 것**이 살아 있어야 한다.
+        tail = _SYNTH[key].rstrip(CR_LF).split()[-1]
+        assert tail in line, f"{key}: 폭 0 글자 뒤가 잘렸다({tail!r}): {line!r}"
+    # 그리고 변이 선택자 자체를 잃지 않는다(색 이모지의 조건).
+    line = _frames(_SYNTH["emoji_and_box"].encode(), 40, 4).split(NEWLINE)[0]
+    assert "⚠️" in line, f"변이 선택자를 잃었다: {line!r}"

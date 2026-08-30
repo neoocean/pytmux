@@ -221,3 +221,67 @@ async def test_notice_file_is_present_and_generated():
     body = _read(os.path.join(ROOT, "client", "THIRD-PARTY-NOTICES.md"))
     assert "손으로 고치지 않는다" in body
     assert tpn.listed_crates(body), "크레이트 표가 비었다 — 고지가 아무것도 안 담고 있다"
+
+
+# ── 안 풀린 심링크(pytmux-416) ───────────────────────────────────────────────
+#
+# Windows 에서 심링크 권한이 없으면 git 은 심링크를 **대상 경로 한 줄이 든 보통 파일**로
+# 푼다. 그 한 줄이 「MIT 전문」 자리에 실리면 **법적 고지가 고지를 안 한다.** 게다가
+# POSIX 에서 구우면 전문이 들어가 상자마다 다른 파일이 구워진다(재발 엔진).
+
+
+def _crate(tmp, name, body, sibling=None):
+    """크레이트 디렉터리 하나를 짓는다 → 그 안의 `name` 절대경로."""
+    pkg = os.path.join(tmp, "pkg")
+    os.makedirs(pkg, exist_ok=True)
+    if sibling is not None:
+        with open(os.path.join(tmp, sibling[0]), "w", encoding="utf-8") as fh:
+            fh.write(sibling[1])
+    path = os.path.join(pkg, name)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    return path
+
+
+async def test_an_unresolved_symlink_is_followed():
+    """대상이 있으면 **전문**을 싣는다 — 그래야 POSIX 와 Windows 가 같은 파일을 굽는다."""
+    import tempfile
+    real = "Copyright (c) 2012-2013 Mozilla Foundation\n\nPermission is hereby granted"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _crate(tmp, "LICENSE-MIT", "../LICENSE-MIT",
+                      sibling=("LICENSE-MIT", real))
+        assert tpn.text_of(path) == real, "심링크를 안 따라갔다 — 껍데기가 실린다"
+
+
+async def test_a_broken_symlink_neither_invents_nor_ships_the_shell():
+    """대상이 없으면(read-fonts 0.22.7) ⛔ 지어내지도, 껍데기를 싣지도 않는다."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _crate(tmp, "LICENSE-MIT", "../LICENSE-MIT")
+        got = tpn.text_of(path)
+        assert got != "../LICENSE-MIT", "껍데기가 전문인 척 실렸다(416 의 원래 증상)"
+        assert "Permission is hereby granted" not in got, (
+            "표준 문안을 지어 붙였다 — MIT 는 저작권 줄이 본문의 일부라 "
+            "그렇게 하면 저작권자를 발명하는 것이 된다")
+        assert "../LICENSE-MIT" in got, "무슨 일이 있었는지를 안 적었다"
+
+
+async def test_a_real_one_line_notice_is_not_mistaken_for_a_link():
+    """⛔ 대조군 — 한 줄짜리 **진짜 고지**를 심링크로 오독하면 그 고지가 사라진다.
+
+    「공백이 없다」만으로 가르면 무는 함정이다. 판정은 **마지막 조각이 라이선스 파일
+    이름인가**까지 본다.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        for body in ("This software is released into the public domain.",
+                     "Unlicense", "MIT"):
+            path = _crate(tmp, "LICENSE", body)
+            assert tpn.text_of(path) == body, f"한 줄짜리 고지를 잃었다: {body!r}"
+
+
+async def test_the_shipped_notice_carries_no_link_shell():
+    """게시된 고지에 **경로 한 줄짜리 전문**이 하나도 없나(pytmux-416 의 오라클)."""
+    body = _read(os.path.join(ROOT, "client", "THIRD-PARTY-NOTICES.md"))
+    shells = [l for l in body.splitlines() if l.strip().startswith("../LICEN")]
+    assert not shells, f"전문 자리에 껍데기가 남았다: {shells}"

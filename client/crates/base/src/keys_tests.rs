@@ -243,6 +243,15 @@ fn the_harness_token_table_can_press_a_function_key() {
 }
 
 #[test]
+fn the_harness_token_table_can_press_the_page_keys() {
+    // 같은 사유(pytmux-374 ⑴) — 목록을 굴린 뒤의 그림은 이 넷 없이는 못 찍는다.
+    assert_eq!(super::parse_token("home"), Some((Key::Home, Mods::NONE)));
+    assert_eq!(super::parse_token("end"), Some((Key::End, Mods::NONE)));
+    assert_eq!(super::parse_token("pageup"), Some((Key::PageUp, Mods::NONE)));
+    assert_eq!(super::parse_token("pagedown"), Some((Key::PageDown, Mods::NONE)));
+}
+
+#[test]
 fn a_shifted_letter_is_written_with_the_shift_prefix() {
     // 이 규칙이 문법의 전부다. 어기면 GUI 는 패닉하고(디버그) 릴리스에서는 그 키가
     // 영영 안 먹는다 — 후자가 더 나쁘다.

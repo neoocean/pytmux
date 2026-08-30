@@ -150,6 +150,10 @@ cargo test                              # 워크스페이스 전체
   목록과 정확히 일치해야 한다. 새 크레이트를 넣었으면 ALLOWED + `PROVENANCE.md` §2 표를
   같이 갱신한다. **결과가 비면 통과가 아니라 고장**이다(경로 표기 차이로 한 줄도 못 잡고
   rc 0 이던 회귀가 있었다 — 빈 결과는 실패로 떨어뜨리는 가드가 들어가 있다).
+  ★ 외부 의존·배포 고지(pytmux-193)는 파이썬(`scripts/third_party_notices.py`)이 재고,
+  그 파이썬을 고르는 법은 저장소 뿌리의 `scripts/pick_python.sh` 한 자리다 —
+  ⛔ `command -v python3` 으로 고르지 않는다(Windows Store 앱 별칭이 그 관문을
+  통과한다 · pytmux-383). `build_release.sh`/`.ps1` 도 같은 차례를 본다.
 - `scripts/check_windows.sh` — 크로스 컴파일로 두 번째 OS 가 조용히 썩는 것을 막는다
   (링크는 안 하지만 cfg 분기·타입은 전부 검사).
 - `crates/proto/tests/parity.rs` — **패리티 래칫.** 표면 하나를 덮으면 그

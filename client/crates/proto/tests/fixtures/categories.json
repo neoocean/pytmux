@@ -24,8 +24,12 @@
     "claude-token-account": "Claude",
     "claude-token-debug": "Claude",
     "claude-token-log": "Claude",
+    "claude-token-machines": "Claude",
+    "claude-token-period": "Claude",
+    "claude-token-sessions": "Claude",
     "claude-token-sync": "Claude",
     "claude-usage": "Claude",
+    "claude-warn-history": "Claude",
     "clear-history": "복사/버퍼",
     "clock-mode": "설정/기타",
     "close-calendar": "설정/기타",
@@ -177,7 +181,6 @@
     "strip-box-drawing": "입력",
     "synchronize-panes": "동작",
     "tab-bar": "표시",
-    "touch-scroll": "입력",
     "vt-parser": "동작",
     "win-mouse-motion": "동작",
     "window-size": "동작"
@@ -381,6 +384,26 @@
       "cat": "Claude"
     },
     {
+      "name": "claude-token-period",
+      "desc": "Claude 토큰 사용량 — 기간별(시/일/주/월) 총계·막대(별칭 token-period)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-token-sessions",
+      "desc": "Claude 토큰 사용량 — 세션별 총계·막대(별칭 token-sessions)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-warn-history",
+      "desc": "Claude 경고 이력 — 날짜별로 접었다 펴는 목록(별칭 claude-warns·warn-history)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-token-machines",
+      "desc": "Claude 토큰 사용량 — 원산지 머신별 총계·막대(별칭 token-machines · 동기화를 켰을 때 어디서 온 값인지)",
+      "cat": "Claude"
+    },
+    {
       "name": "claude-usage",
       "desc": "그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도 갱신(별칭 usage)",
       "cat": "Claude"
@@ -537,7 +560,12 @@
     "claude-sessions",
     "claude-settings",
     "claude-token-log",
+    "claude-token-machines",
+    "claude-token-period",
+    "claude-token-sessions",
     "claude-usage",
+    "claude-warn-history",
+    "claude-warns",
     "clock",
     "clock-mode",
     "close-cal",
@@ -562,12 +590,16 @@
     "prompt-history",
     "prompts",
     "submitted",
+    "token-machines",
+    "token-period",
+    "token-sessions",
     "token-viewer",
     "usage",
     "usage-clock",
     "usage-limits",
     "usage-panel",
-    "usage-view"
+    "usage-view",
+    "warn-history"
   ],
   "plugin_settings": [
     {
@@ -621,7 +653,6 @@
     "mouse-drag-copy",
     "mouse-drag-threshold",
     "copy-unwrap",
-    "touch-scroll",
     "mode-keys",
     "alt-scroll",
     "ambiguous-width",

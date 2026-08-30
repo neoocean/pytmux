@@ -25,6 +25,14 @@ struct Fx {
     /// 클래스 CSS 를 **호출이 뒤집는** 자리 — `클래스` → {`title` → 앵커}(§10-21ⓐ3).
     overrides: BTreeMap<String, BTreeMap<String, String>>,
     docks: BTreeMap<String, BTreeMap<String, String>>,
+    /// CSS 의 `align` **위에서 코드가 자리를 다시 잡는** 클래스 → 그때 쓰는 재료들.
+    ///
+    /// ⛔ 이것이 없으면 이 게이트는 정본을 **잘못 읽는다**(pytmux-370). 작성창의 CSS 는
+    /// `align: center bottom` 인데 `on_mount` 가 활성 패널의 x·폭과 프롬프트 행으로
+    /// margin 을 다시 계산한다 — 즉 CSS 의 `bottom` 은 「바닥에 붙인다」가 아니라
+    /// 「바닥에서 위로 띄우는 기준」이다. CSS 한 낱말만 보던 동안 GUI 가 창 맨 아래
+    /// 전폭 판으로 그렸고, 그 갈림이 이 게이트를 **그대로 통과했다**.
+    code_placed: BTreeMap<String, Vec<String>>,
     prompt_order: Vec<String>,
 }
 
@@ -84,6 +92,13 @@ fn parse(word: Option<&str>, what: &str) -> Anchor {
 /// 덮어쓰기를 안 보면 `InfoScreen` 으로 뜨는 판이 전부 위라고 읽는다. 정본은 짧은 판
 /// (`version`)만 `center=True` 로 가운데 세운다.
 fn want(fx: &Fx, class: &str, variant: Option<&str>) -> Anchor {
+    // ★ **코드가 다시 잡는 판이 먼저다**(pytmux-370). CSS 의 `align` 은 그 판에서
+    //   「바닥에서 위로 띄우는 기준」일 뿐이라, 그것을 자리로 읽으면 정본을 잘못 읽는다.
+    //   무엇을 재료로 쓰는지는 생성기가 정본에서 **실측으로** 뽑는다(`_code_placed`) —
+    //   정본이 그 계산을 걷어내면 이 표에서 저절로 사라지고 대조가 따라 움직인다.
+    if fx.code_placed.contains_key(class) {
+        return Anchor::AtPaneCursor;
+    }
     if let Some(name) = variant {
         let over = fx.overrides.get(class).and_then(|m| m.get(name));
         return parse(
@@ -99,6 +114,31 @@ fn the_fixture_is_not_empty() {
     let fx = fixture();
     assert!(!fx.anchors.is_empty(), "앵커가 비었다 — 통과가 아니라 고장이다");
     assert!(!fx.prompt_order.is_empty(), "프롬프트 차례가 비었다");
+}
+
+/// ★ 「코드가 다시 잡는다」가 **비면 고장이다**.
+///
+/// 이 표가 비면 위 `want` 는 종전처럼 CSS 만 읽고, 그러면 작성창이 다시 「바닥」으로
+/// 판정된다 — 게이트가 조용히 눈을 감는 그 자리다(빈 결과를 통과로 두지 않는 규율).
+#[test]
+fn the_code_placed_table_is_not_empty_and_names_what_it_reads() {
+    let fx = fixture();
+    assert!(
+        !fx.code_placed.is_empty(),
+        "코드가 자리를 다시 잡는 판이 하나도 없다 — 통과가 아니라 뽑는 방법이 틀렸다"
+    );
+    for (class, marks) in &fx.code_placed {
+        assert!(
+            !marks.is_empty(),
+            "{class} 가 무엇으로 자리를 잡는지 안 적혔다 — 근거 없는 예외가 된다"
+        );
+    }
+    // 그리고 그 판은 우리 쪽에서도 **그 자리**여야 한다.
+    assert!(
+        fx.code_placed.contains_key("ComposePromptScreen"),
+        "작성창이 표에서 빠졌다 — 정본이 커서 줄 계산을 걷어냈나?"
+    );
+    assert_eq!(Screen::Compose.anchor(), Anchor::AtPaneCursor);
 }
 
 #[test]

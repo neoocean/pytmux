@@ -77,15 +77,6 @@ pub struct Config {
     /// 줄바꿈이 딸려 오는데, 붙여넣는 곳의 폭은 다르므로 그 줄바꿈은 뜻이 없다 —
     /// 오히려 문단을 조각낸다. 규칙은 `proto::unwrap`(정본 추출).
     pub copy_unwrap: bool,
-    /// 스크롤 모드에서 **탭으로 쓰는 스크롤 UI** 를 띄울까(기본 켜짐 — 정본과 같다).
-    ///
-    /// # 왜 기본이 켜짐인가
-    ///
-    /// 이것을 필요로 하는 사람은 **휠이 안 오는 단말**을 쓰는 사람인데(iPhone Blink 등 —
-    /// 스와이프를 단말이 자기 스크롤백으로 소비한다), 그 사람에게는 이 UI 가 스크롤백에
-    /// 닿는 **유일한 길**이다. 켜져 있어야 발견되고, 필요 없으면 끄면 된다
-    /// (`set touch-scroll off`). 라이브 화면은 안 건드린다 — 스크롤 모드에서만 그린다.
-    pub touch_scroll: bool,
     /// 단말의 **대체 스크롤 모드**(DECSET 1007)를 끌까(기본 켜짐 = 끈다).
     ///
     /// # 왜 이 설정이 있나
@@ -156,6 +147,23 @@ pub struct Config {
     /// 줄로 조용히 넘긴다(`keymap.load_config` 의 if/elif 는 모르는 옵션을 버린다 —
     /// 확인함). 이 갈림은 패리티 표에 **`iv`** 로 선언한다.
     pub font_scale: f32,
+    /// 고정폭 글꼴 이름(빈 값 = 자동 — `mono_font::CANDIDATES` 의 첫 성공).
+    ///
+    /// # 왜 설정이 필요했나 (제보 2026-08-26 · `pytmux/pytmux-408`)
+    ///
+    /// 종전에는 코드에 박힌 후보 목록의 첫 성공을 **말없이** 썼다. 그래서 Windows 에서는
+    /// 언제나 `Consolas` 였는데, 이 상자의 Windows Terminal 은 `fontFace` 를 안 적어
+    /// 기본값 `Cascadia Mono` 로 돈다 — 같은 사람이 정본(TUI)과 GUI 에서 **다른 글자
+    /// 모양**을 봤다. 후보 순서도 함께 고쳤지만(그쪽이 뿌리다) 상자마다 깔린 글꼴이
+    /// 달라 목록만으로는 못 맞춘다.
+    ///
+    /// ★ 값의 어휘가 **상자마다 다르므로** 열거가 아니라 자유 입력이다(`cursor-color` 와
+    /// 같은 자리). 적었는데 그 글꼴이 없으면 후보로 떨어지되 **조용히 넘어가지 않는다**
+    /// (`mono_font::pick_preferred` 의 셋째 값).
+    ///
+    /// `font-scale` 과 같은 **GUI 전용 키**다 — 파이썬 파서가 모르는 줄로 넘긴다.
+    /// 패리티 표에 `iv` 로 선언한다.
+    pub font_family: String,
     /// 커서의 **모양**([`CURSOR_STYLES`] 중 하나 · 기본 `hollow`).
     ///
     /// # 왜 설정이 필요했나 (제보 2026-08-08 · `pytmux/pytmux-161`)
@@ -183,6 +191,27 @@ pub struct Config {
     /// 단말 관례(`cursor blink rate`)가 그쪽이고, 「500ms 커서」라고 하면 보통 초당
     /// 한 번 깜빡이는 것을 뜻한다.
     pub cursor_blink_ms: u16,
+    /// 커서 선의 **두께**(픽셀 · [`CURSOR_THICKNESS_LO`]~[`CURSOR_THICKNESS_HI`], 기본 2).
+    ///
+    /// # 왜 「높이」가 아니라 「두께」인가 (`pytmux/pytmux-375` ⓑ)
+    ///
+    /// 제보의 낱말은 「높이」였다. 그런데 그 말이 가리키는 픽셀은 **모양마다 다른 변**이다 —
+    /// `underline` 은 밑줄의 세로 두께, `bar` 는 세로선의 **가로** 두께, `hollow` 는 외곽선
+    /// 굵기다. 「높이」로 이름 지으면 넷 중 하나(`bar`)에서 이름과 실제가 어긋난다.
+    /// 셋을 한 낱말로 옳게 덮는 것은 **두께**뿐이라 그 이름으로 둔다.
+    ///
+    /// # 왜 모양마다 안 나누나
+    ///
+    /// [`crate::keymap`] 밖의 이야기지만 그 판단은 이미 GUI 안에 적혀 있었다 —
+    /// `gui/src/splitter.rs::paint_cursor` 의 「굵기를 모양마다 안 나누는 이유」가
+    /// 그것이다: *밑줄만 굵게·세로선만 얇게* 같은 손을 대면 「커서」가 모양마다 다른
+    /// 무게로 보여, 모양을 바꾼 것이 아니라 **다른 것**으로 바뀐 것처럼 읽힌다.
+    /// 그 규칙을 값으로 옮기는 것이지 뒤집는 것이 아니므로 **한 값 하나**다.
+    ///
+    /// ⚠ `block` 에는 **적용할 자리가 없다** — 채운 네모는 오버레이가 아니라 캔버스가
+    /// 그 칸을 **반전**해 그리는 것이라(같은 자리의 주석) 반전에 두께를 줄 수 없다.
+    /// 커서 판은 그 줄을 흐리게 두고 왜 그런지 적는다(`gui` 의 `render_cursor`).
+    pub cursor_thickness: f32,
 }
 
 /// 커서 모양의 어휘. **첫 값이 기본**이다(종전 동작 = 외곽선 네모).
@@ -197,6 +226,53 @@ pub struct Config {
 /// 각자 어휘를 적으면 화면에 없는 값을 파일로는 넣을 수 있게 된다.
 pub static CURSOR_STYLES: &[&str] = &["hollow", "block", "underline", "bar"];
 
+/// 커서 판(`Screen::Cursor` · `pytmux/pytmux-375` ⓐ)이 **모으는 줄**과 그 차례.
+///
+/// # 왜 판이 따로 있나
+///
+/// 이 다섯에 닿는 길이 설정 화면의 「표시」 분류를 찾아 내려가는 것뿐이었다. 커서만
+/// 만지려는 사람에게 먼 길이고, 무엇보다 **바꾸면서 결과를 못 본다** — 커서는 캔버스에
+/// 있는데 설정 판이 그 위를 덮는다(제보 2026-08-23).
+///
+/// # 왜 키 이름이지 색인이 아닌가
+///
+/// [`SETTINGS`] 안의 자리는 그 표를 고칠 때마다 움직인다. 색인을 박아 두면 그 표에 줄
+/// 하나를 끼우는 것만으로 이 판이 **말없이 다른 설정을 보이게** 된다. 이름으로 들면
+/// 그때 나는 것은 잘못된 화면이 아니라 [`cursor_setting_row`] 의 `None` 이고, 그것은
+/// 오라클이 잡는다(`the_cursor_panel_rows_all_exist`).
+///
+/// 차례는 **사람이 만지는 차례**다 — 모양을 고르고, 그 모양의 두께를 정하고, 색을 주고,
+/// 깜빡임을 켠 다음에야 주기가 뜻을 갖는다.
+pub static CURSOR_SETTINGS: &[&str] = &[
+    "cursor-style",
+    "cursor-thickness",
+    "cursor-color",
+    "cursor-blink",
+    "cursor-blink-interval",
+];
+
+/// 커서 판의 `row` 번째 줄이 [`SETTINGS`] 의 몇 번째 줄인가.
+///
+/// 이 한 겹이 있어야 커서 판이 설정 화면과 **같은 집행 경로**(`setting_pick_dir` →
+/// `SettingPick`)를 탄다. 판마다 값 고르는 코드를 새로 적으면 그 둘은 반드시 다르게
+/// 낡는다 — 이 저장소가 이미 두 번 만든 갈라짐이다(`apply_setting_pick` 머리말).
+#[must_use]
+pub fn cursor_setting_row(row: usize) -> Option<usize> {
+    let key = CURSOR_SETTINGS.get(row)?;
+    SETTINGS.iter().position(|s| s.key == *key)
+}
+
+/// 커서 판의 `row` 번째 줄이 **지금 뜻이 있나**.
+///
+/// `block` 은 채운 네모라 캔버스가 그 칸을 **반전**해 그린다 — 반전에는 두께를 줄 자리가
+/// 없다. 그 줄을 지우면 모양을 바꿀 때마다 판의 줄 수가 달라지고(그것이 pytmux-373 이
+/// 신고한 바로 그 흔들림이다), 값을 몰래 죽이면 사용자는 **안 먹는 줄을 계속 누른다.**
+/// 그래서 줄은 그대로 두고 **흐리게** 두며 왜 그런지 판이 말한다.
+#[must_use]
+pub fn cursor_row_applies(row: usize, style: &str) -> bool {
+    CURSOR_SETTINGS.get(row) != Some(&"cursor-thickness") || style != "block"
+}
+
 /// 깜빡임 반주기의 아래·위 끝과 한 걸음(밀리초).
 ///
 /// 아래를 100ms 로 막는 이유: 그보다 빠르면 깜빡임이 아니라 **떨림**이고, 광과민성이
@@ -205,6 +281,19 @@ pub static CURSOR_STYLES: &[&str] = &["hollow", "block", "underline", "bar"];
 pub const CURSOR_BLINK_LO: f32 = 100.;
 pub const CURSOR_BLINK_HI: f32 = 2000.;
 pub const CURSOR_BLINK_STEP: f32 = 100.;
+
+/// 커서 선 두께의 아래·위 끝과 한 걸음(픽셀 · `pytmux/pytmux-375` ⓑ).
+///
+/// 아래를 1px 로 막는 이유: 0 은 「얇다」가 아니라 **안 보인다**이고, 그러면 커서를
+/// 되돌릴 입구까지 화면에서 사라진다(`font-scale` 의 아래 끝과 같은 사정이다).
+/// 위를 6px 로 막는 이유: 그보다 굵으면 `hollow` 의 네 변이 서로 만나 칸이 통째로
+/// 칠해져 **그 칸의 글자를 못 읽는다** — 그건 `block` 이 반전으로 푸는 문제라
+/// 여기서 흉내 내면 같은 그림을 두 길로 만드는 셈이다.
+/// 걸음이 0.5 인 것은 이 값이 픽셀이라 한 걸음이 눈에 보여야 하고, 레티나에서
+/// 반 픽셀이 실제로 갈리기 때문이다.
+pub const CURSOR_THICKNESS_LO: f32 = 1.;
+pub const CURSOR_THICKNESS_HI: f32 = 6.;
+pub const CURSOR_THICKNESS_STEP: f32 = 0.5;
 
 /// 글자 배율의 아래·위 끝과 한 걸음.
 ///
@@ -248,7 +337,6 @@ impl Default for Config {
             claude_command: "claude".to_owned(),
             strip_box_drawing: true,
             copy_unwrap: true,
-            touch_scroll: true,
             alt_scroll: true,
             set_titles: false,
             set_titles_string: "#S:#I:#W".to_owned(),
@@ -266,10 +354,12 @@ impl Default for Config {
             hooks: crate::hooks::Hooks::default(),
             lang: String::new(),
             font_scale: 1.0,
+            font_family: String::new(),
             cursor_style: CURSOR_STYLES[0].to_owned(),
             cursor_color: String::new(),
             cursor_blink: false,
             cursor_blink_ms: 500,
+            cursor_thickness: 2.,
         }
     }
 }
@@ -467,7 +557,6 @@ impl Config {
                 }
                 "strip-box-drawing" => config.strip_box_drawing = on_off(value),
                 "copy-unwrap" => config.copy_unwrap = on_off(value),
-                "touch-scroll" => config.touch_scroll = on_off(value),
                 "alt-scroll" => config.alt_scroll = on_off(value),
                 "set-titles" => config.set_titles = on_off(value),
                 // 빈 값도 뜻이 있다("제목을 비운다") — 되돌리기로 바꾸지 않는다.
@@ -510,6 +599,10 @@ impl Config {
                         config.font_scale = scale.clamp(FONT_SCALE_LO, FONT_SCALE_HI);
                     }
                 }
+                // 글꼴 이름은 **그대로 받는다** — 무엇이 이 상자에 있는지는 글꼴 캐시가
+                // 알고, 없는 이름이면 후보로 떨어지며 그 사실을 말한다(`cursor-color` 와
+                // 같은 규칙: 유효성은 푸는 쪽이 안다).
+                "font-family" => config.font_family = value.trim().to_owned(),
                 // 모르는 모양은 **버린다**(기본 `hollow` 로 남는다) — 오타 하나로
                 // 커서가 사라지면 무엇이 잘못됐는지 알 수 없다(`remote-title` 과 같은
                 // 판정이다).
@@ -531,6 +624,14 @@ impl Config {
                     if let Ok(n) = value.parse::<u32>() {
                         config.cursor_blink_ms =
                             n.clamp(CURSOR_BLINK_LO as u32, CURSOR_BLINK_HI as u32) as u16;
+                    }
+                }
+                // 범위 밖은 **자른다**(버리지 않는다) — `inactive-dim-ratio` 와 같은
+                // 규칙이다. 못 읽는 글자면 그 줄만 무시하고 기본값이 남는다.
+                "cursor-thickness" => {
+                    if let Ok(px) = value.parse::<f32>() {
+                        config.cursor_thickness =
+                            px.clamp(CURSOR_THICKNESS_LO, CURSOR_THICKNESS_HI);
                     }
                 }
                 _ => {}
@@ -622,8 +723,6 @@ pub struct SettingValues {
     pub strip_box_drawing: bool,
     /// 복사할 때 접힌 줄을 펼까(설정 파일).
     pub copy_unwrap: bool,
-    /// 탭으로 쓰는 스크롤 UI 를 띄울까(설정 파일).
-    pub touch_scroll: bool,
     pub alt_scroll: bool,
     /// 창(또는 단말) 제목을 세션 상태로 갱신할까(파이썬 `set-titles`, 기본 꺼짐).
     ///
@@ -638,11 +737,15 @@ pub struct SettingValues {
     pub inactive_dim_ratio: f32,
     /// 앱 전체 글자 배율(설정 파일 — GUI 만의 줄, §10-21ⓐ).
     pub font_scale: f32,
-    /// 커서 모양·색·깜빡임(설정 파일 — GUI 만의 넷, `pytmux/pytmux-161`).
+    /// 고정폭 글꼴 이름(설정 파일 — GUI 만의 줄, pytmux-408). 빈 값 = 자동.
+    pub font_family: String,
+    /// 커서 모양·두께·색·깜빡임(설정 파일 — GUI 만의 다섯,
+    /// `pytmux/pytmux-161` + 두께는 `pytmux/pytmux-375`).
     pub cursor_style: String,
     pub cursor_color: String,
     pub cursor_blink: bool,
     pub cursor_blink_ms: u16,
+    pub cursor_thickness: f32,
     pub mode_keys: String,
     pub mouse_drag_threshold: u16,
     pub ambiguous_width: String,
@@ -680,18 +783,19 @@ impl Default for SettingValues {
             claude_command: String::new(),
             strip_box_drawing: false,
             copy_unwrap: false,
-            touch_scroll: false,
             alt_scroll: false,
             set_titles: false,
             set_titles_string: String::new(),
             inactive_dim_ratio: 0.0,
             font_scale: 1.0,
+            font_family: String::new(),
             // 모양은 **빈 값으로 두지 않는다** — 설정 화면의 값 칸이 비면 `?` 로 보이고,
             // 그건 "모르는 값"과 구분되지 않는다(`Config::default` 와 같은 기본값).
             cursor_style: CURSOR_STYLES[0].to_owned(),
             cursor_color: String::new(),
             cursor_blink: false,
             cursor_blink_ms: 500,
+            cursor_thickness: 2.,
             mode_keys: String::new(),
             mouse_drag_threshold: 1,
             ambiguous_width: String::new(),
@@ -740,6 +844,12 @@ pub const SETTINGS: &[Setting] = &[
             step: FONT_SCALE_STEP,
         },
     },
+    // ★ 같은 부류의 GUI 전용 줄(pytmux-408). 값이 상자마다 다른 이름이라 **자유 입력**이다.
+    Setting {
+        key: "font-family",
+        cat: "표시",
+        kind: SettingKind::Text(Prompt::FontFamily),
+    },
     // ★ **GUI 만의 넷이다**(`pytmux/pytmux-161`) — 정본의 커서는 **호스트 단말의
     //   하드웨어 커서**라 모양·색·깜빡임을 그 단말이 정한다(파이썬 클라는 자리만
     //   `app.cursor_position` 으로 옮긴다). `font-scale` 과 같은 부류라, 갈림은
@@ -748,6 +858,17 @@ pub const SETTINGS: &[Setting] = &[
         key: "cursor-style",
         cat: "표시",
         kind: SettingKind::ConfigEnum(CURSOR_STYLES),
+    },
+    // ★ **다섯째**(`pytmux/pytmux-375` ⓑ) — 제보의 「높이」다. 이름을 「두께」로 둔
+    //   이유와 `block` 에 자리가 없는 사정은 [`Config::cursor_thickness`] 가 쥔다.
+    Setting {
+        key: "cursor-thickness",
+        cat: "표시",
+        kind: SettingKind::Number {
+            lo: CURSOR_THICKNESS_LO,
+            hi: CURSOR_THICKNESS_HI,
+            step: CURSOR_THICKNESS_STEP,
+        },
     },
     Setting {
         key: "cursor-color",
@@ -819,11 +940,6 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "copy-unwrap",
-        cat: "입력",
-        kind: SettingKind::ConfigToggle,
-    },
-    Setting {
-        key: "touch-scroll",
         cat: "입력",
         kind: SettingKind::ConfigToggle,
     },
@@ -1047,8 +1163,11 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("inactive-dim-ratio", "흐리게 세기"),
     // 정본에 이 줄이 없다(GUI 만의 설정) → `NO_CANON_LABEL` 에 사유와 함께 적어 뒀다.
     ("font-scale", "글자 크기 배율"),
+    // 정본에 이 줄도 없다(GUI 만의 설정 · pytmux-408) → `NO_CANON_LABEL`.
+    ("font-family", "고정폭 글꼴"),
     // 정본에 짝이 있을 수 없는 넷(호스트 단말이 커서를 그린다) → `NO_CANON_LABEL`.
     ("cursor-style", "커서 모양"),
+    ("cursor-thickness", "커서 두께(px)"),
     ("cursor-color", "커서 색"),
     ("cursor-blink", "커서 깜빡임"),
     ("cursor-blink-interval", "커서 깜빡임 주기(ms)"),
@@ -1061,7 +1180,6 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("mouse-drag-threshold", "드래그 인정 최소 이동(칸)"),
     ("ambiguous-width", "모호폭 문자 처리"),
     ("copy-unwrap", "복사 시 접힌 줄 펴기"),
-    ("touch-scroll", "탭으로 쓰는 스크롤 UI"),
     ("mode-keys", "복사 모드 키"),
     ("strip-box-drawing", "붙여넣기 테두리 제거"),
     ("alt-scroll", "휠 스크롤백(1007)"),
@@ -1228,7 +1346,6 @@ impl Setting {
             "claude-command" => values.claude_command.clone(),
             "strip-box-drawing" => on(values.strip_box_drawing),
             "copy-unwrap" => on(values.copy_unwrap),
-            "touch-scroll" => on(values.touch_scroll),
             "alt-scroll" => on(values.alt_scroll),
             "set-titles" => on(values.set_titles),
             "mode-keys" => values.mode_keys.clone(),
@@ -1245,11 +1362,16 @@ impl Setting {
             "inactive-dim-ratio" => format!("{:.2}", values.inactive_dim_ratio),
             // 배율은 한 자리면 충분하다(걸음이 0.1) — `1.00` 은 자릿수만 늘어 읽기 나쁘다.
             "font-scale" => format!("{:.1}×", values.font_scale),
+            // 빈 값은 "안 정했다" = 후보에서 자동으로 고른다(`cursor-color` 와 같은 결).
+            "font-family" => auto_or(&values.font_family),
             "cursor-style" => values.cursor_style.clone(),
             // 빈 값은 "안 정했다" = 테마 그대로다(`status-bg` 와 같은 자리).
             "cursor-color" => theme_or(&values.cursor_color),
             "cursor-blink" => on(values.cursor_blink),
             "cursor-blink-interval" => values.cursor_blink_ms.to_string(),
+            // 단위를 붙여도 된다 — 걸음은 `number_value` 가 날 값에서 뗀다(pytmux-393).
+            // 여기 값이 화면 글자와 같은 형식이어야 할 이유는 이제 없다.
+            "cursor-thickness" => format!("{:.1}", values.cursor_thickness),
             // 링크 줄은 값이 없다 — `…` 로 "여기서 다른 화면이 열린다"를 알린다.
             "list-keys" | "plugins" => "…".to_string(),
             // 값의 주인은 런타임 로케일이다 — 서버도 `SettingValues` 도 모른다.
@@ -1306,7 +1428,9 @@ pub fn setting_pick_dir(
         // 다음 값을 **여기서** 골라 뷰에 넘긴다 — 뷰가 목록을 순회하면 두 뷰가 갈린다.
         SettingKind::Link(action) => SettingPick::Act(action),
         SettingKind::Number { lo, hi, step } => {
-            let now = setting.value(values).parse::<f32>().unwrap_or(lo);
+            // ⛔ 화면 글자를 되읽지 않는다 — 단위가 붙으면 파싱이 죽고 값이 말없이
+            //    아래 끝으로 떨어진다(`number_value` 머리말 · pytmux-393).
+            let now = number_value(setting.key, values).unwrap_or(lo);
             let next = if forward { now + step } else { now - step };
             // 양끝에서 반대쪽으로 감는다 — 0.0 에서 왼쪽이 막히면 "안 먹는다"로 읽힌다.
             let next = if next > hi + f32::EPSILON {
@@ -1412,10 +1536,6 @@ pub fn flip_config(key: &str, now: &Config) -> Option<(Config, std::io::Result<P
             next.copy_unwrap = !now.copy_unwrap;
             next.copy_unwrap
         }
-        "touch-scroll" => {
-            next.touch_scroll = !now.touch_scroll;
-            next.touch_scroll
-        }
         "alt-scroll" => {
             next.alt_scroll = !now.alt_scroll;
             next.alt_scroll
@@ -1454,6 +1574,35 @@ pub fn number_text(key: &str, value: f32) -> String {
     }
 }
 
+/// 설정 파일의 숫자 옵션 하나를 **날 값으로** 읽는다. 모르는 키면 `None`.
+///
+/// # 왜 있나 (pytmux-393)
+///
+/// 종전에는 `setting_pick_dir` 의 `Number` 팔이 지금 값을 **화면 글자에서** 되읽었다
+/// (`setting.value(values).parse::<f32>().unwrap_or(lo)`). 화면 글자는 사람이 읽는
+/// 것이라 단위가 붙는데(`font-scale` 은 `"1.0×"`), 그러면 파싱이 죽고 `unwrap_or(lo)`
+/// 가 **아래 끝**을 넣는다 — `→` 한 번이 언제나 `lo + step` 이 되어 배율이 바닥으로
+/// 떨어졌다. 오류는 안 뜬다(실측 2026-08-24).
+///
+/// 그 함정은 `cursor-thickness` 에 `px` 를 못 붙이게 막는 ⛔ 주석까지 낳았다 — 즉
+/// **표시가 값의 형식에 인질로 잡혀 있었다.** 여기서 값을 따로 읽으면 그 사슬이
+/// 끊어지고, 표시는 표시대로 자유로워진다.
+///
+/// ⛔ [`set_number`] 와 **같은 표를 든다**(놓는 키 == 읽는 키). 한쪽에만 줄을 더하면
+/// 그 설정은 `←→` 가 아래 끝으로 떨어지므로, `every_number_row_steps_from_its_own_value`
+/// 가 [`SETTINGS`] 의 `Number` 전수에 대해 둘이 맞는지 잰다.
+pub fn number_value(key: &str, values: &SettingValues) -> Option<f32> {
+    Some(match key {
+        "inactive-dim-ratio" => values.inactive_dim_ratio,
+        "font-scale" => values.font_scale,
+        "mouse-drag-threshold" => f32::from(values.mouse_drag_threshold),
+        "status-interval" => f32::from(values.status_interval),
+        "cursor-blink-interval" => f32::from(values.cursor_blink_ms),
+        "cursor-thickness" => values.cursor_thickness,
+        _ => return None,
+    })
+}
+
 /// 설정 파일의 숫자 옵션 하나를 놓는다.
 pub fn set_number(
     key: &str,
@@ -1468,6 +1617,9 @@ pub fn set_number(
         "status-interval" => next.status_interval = value.clamp(1.0, 60.0) as u16,
         "cursor-blink-interval" => {
             next.cursor_blink_ms = value.clamp(CURSOR_BLINK_LO, CURSOR_BLINK_HI) as u16
+        }
+        "cursor-thickness" => {
+            next.cursor_thickness = value.clamp(CURSOR_THICKNESS_LO, CURSOR_THICKNESS_HI)
         }
         _ => return None,
     }
@@ -1496,6 +1648,19 @@ pub fn prompt_key(prompt: Prompt) -> Option<&'static str> {
         .iter()
         .find(|s| matches!(s.kind, SettingKind::Text(p) if p == prompt))
         .map(|s| s.key)
+}
+
+/// 빈 값이면 「(자동)」 — [`theme_or`] 의 「(테마)」와 **가른다**(pytmux-408).
+///
+/// 둘을 한 낱말로 뭉치면 거짓말이 된다: 색의 빈 값은 *테마가 정한다*이고, 글꼴의 빈 값은
+/// *후보 목록에서 이 상자에 있는 것을 고른다*다. 화면에서 「(테마)」를 본 사람은 테마를
+/// 찾으러 간다.
+fn auto_or(name: &str) -> String {
+    if name.is_empty() {
+        crate::i18n::t("(자동)").to_owned()
+    } else {
+        name.to_owned()
+    }
 }
 
 /// 빈 색 이름은 "안 정했다" = 테마 그대로다. `?` 로 적으면 **모르는 값**처럼 보인다.
@@ -1528,6 +1693,7 @@ pub fn set_config(
         "status-fg" => next.status_fg = value.to_owned(),
         "cursor-style" => next.cursor_style = value.to_owned(),
         "cursor-color" => next.cursor_color = value.to_owned(),
+        "font-family" => next.font_family = value.trim().to_owned(),
         _ => return None,
     }
     Some((next, Config::write_option(key, value)))
@@ -1566,7 +1732,6 @@ const OPT_ALIASES: &[(&str, &[&str])] = &[
     ("mouse-drag-copy", &["mouse_drag_copy"]),
     ("mouse-drag-threshold", &["mouse_drag_threshold"]),
     ("strip-box-drawing", &["strip_box_drawing"]),
-    ("touch-scroll", &["touch_scroll"]),
     ("lang", &["language"]),
 ];
 

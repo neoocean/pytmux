@@ -55,10 +55,42 @@ use crate::{mono_font, theme, titlebar};
 
 /// 서버 팔레트의 구체 값. 이름은 `NamedColor` 와 1:1 이다.
 ///
-/// 값은 tokyonight 계열(이 클라의 데모 뷰가 이미 쓰던 배색)에서 골랐다. 근거는 취향이
-/// 아니라 **한 벌로 유지하는 것**이다 — 두 화면이 같은 앱 안에서 다른 팔레트를 쓰면 그게
-/// 곧 결함처럼 보인다.
-mod palette {
+/// # 어느 표인가 — **xterm 표준 16색** (pytmux-187 · 사람의 결정 2026-08-24)
+///
+/// `SGR 30–37`·`90–97` 열여섯 칸은 **xterm 의 기본 표**를 그대로 놓는다.
+///
+/// 제보는 *"GUI 가 TUI 와 다른 색으로 그린다"* 였는데, 그 「같은 색」에 **«그대로»라는
+/// 값이 없었다**. 정본(TUI)은 16색을 자기가 그리지 않는다 — SGR 코드를 호스트 단말에
+/// 넘기고 **그 단말의 배색**(제보 환경 = Windows Terminal 기본 Campbell)이 RGB 를
+/// 정한다. GUI 는 단말 안이 아니라 창이라 그 표를 읽을 길이 없다. ⇒ 두 클라는 같은 표를
+/// 다르게 매핑한 것이 **아니라 애초에 다른 표를 봤다**. 매핑 결함이 아니므로 「고치면
+/// 같아진다」가 아니고, **어느 표를 기본으로 삼나**가 갈림길이었다.
+///
+/// 갈래 셋을 pytmux-391 로 물었다 — ⓐ xterm 표준으로 바꾼다 · ⓑ tokyonight 를 두고 이
+/// 축을 «허용되는 갈림»으로 닫는다 · ⓒ 설정으로 뺀다. **사람이 ⓐ 를 골랐다**: 단말
+/// 기본 배색이 대개 이 표에서 파생되므로 「정본이 의미의 권위」에 가장 가깝다.
+/// ⚠ 그 값은 **창 배색이 통째로 달라지는 것**이고, 그 경고가 선택지에 적힌 채로 골랐다.
+///
+/// ⛔ **여기서 눈대중으로 한 톨도 옮기지 마라.** 이 열여섯 값의 근거는 취향이 아니라
+/// 「xterm 의 표와 같다」 하나다 — 한 칸이라도 흔들리면 그 근거가 통째로 사라지고 다음
+/// 사람은 무엇이 결정이고 무엇이 표류인지 못 가린다.
+/// `the_sixteen_colors_are_the_xterm_standard_table` 이 열여섯 칸을 전수로 잰다.
+/// 배색이 마음에 안 들면 값을 흔들 일이 아니라 **표를 고르는 갈림길을 다시 여는** 일이다.
+///
+/// ⚠ **바뀐 것은 그 열여섯 칸뿐이다.** 창 바탕(`BG`)·본문(`FG`)·흐린 글자(`DIM`)·
+/// 고른 줄(`SELECTED_BG`)은 크롬(`crate::theme`)과 한 벌이라 그대로 tokyonight 다 —
+/// 사람이 답한 물음이 「SGR 30–37·90–97 을 어느 표로 삼을까」였고 그 넷은 그 칸이 아니다.
+///
+/// # 옛 표가 남긴 것 (지우지 않는다)
+///
+/// tokyonight 판에서 이 이슈가 잡은 결함이 둘이고 **부류가 다르다** — ⑴ `BR_MAGENTA` 가
+/// `MAGENTA` 와 **같은 값**이라 SGR 35·95 가 한 색으로 붙던 것(CL 72731) ⑵ 밝은 노랑·
+/// 밝은 청록이 제 기준색보다 **도리어 어둡던** 것(SGR 93·96 이 33·36 보다 어둡게 그려져
+/// 강조가 뜻과 반대였다). xterm 표는 그 둘 다 구조적으로 없지만 **오라클은 그대로 산다**
+/// — 그 둘은 팔레트 취향 밖의 성질이라 표를 갈아도 물음이 그대로다
+/// (`the_sixteen_palette_names_are_sixteen_colors` ·
+/// `the_bright_half_of_every_pair_is_actually_brighter`).
+pub(crate) mod palette {
     use warpui::color::ColorU;
 
     const fn c(r: u8, g: u8, b: u8) -> ColorU {
@@ -67,61 +99,69 @@ mod palette {
 
     pub const BG: ColorU = c(0x1a, 0x1b, 0x26);
     pub const FG: ColorU = c(0xc0, 0xca, 0xf5);
-    pub const DIM: ColorU = c(0x56, 0x5f, 0x89);
+    /// 흐린 글자 — 꼬리줄(판 바닥 안내)·부속 칸·비활성 안내가 이 색이다.
+    ///
+    /// # 왜 밝혔나 (pytmux-372)
+    ///
+    /// 종전 값(`#565f89`)은 판 표면 대비 **2.51:1** 로 본문 기준(4.5:1)에 크게 못 미쳤다 —
+    /// 그런데 이 색이 지고 있던 글자는 *장식*이 아니라 **그 판에서 무슨 키를 누르는지**
+    /// 였다(꼬리줄). 안 읽히는 안내는 없는 안내다. 지금은 **5.19:1** 이다.
+    ///
+    /// 「흐리다」는 역할은 그대로다: 본문(`FG`)이 여전히 이 색보다 **2배 밝다**. 흐림은
+    /// 절대 밝기가 아니라 본문과의 **차이**로 읽히므로, 둘의 간격이 남아 있으면 뜻이 산다.
+    ///
+    /// ⚠ 한 단 아래(`#7f88b3`)는 계산상 4.4996:1 로 **기준선에 걸터앉는다** — 부동소수 한
+    /// 톨로 게이트가 갈리는 값을 토큰으로 두지 않는다(그 시험이 실제로 그렇게 떨어졌다).
+    pub const DIM: ColorU = c(0x8b, 0x93, 0xbd);
     /// 활성 탭 배경. 데모 뷰가 쓰던 선택 배경과 같은 값이다.
-    pub const SELECTED_BG: ColorU = c(0x28, 0x34, 0x57);
+    ///
+    /// [`crate::theme::ACTIVE`] 와 **같은 값이라야 한다** — 두 표에 같은 뜻이 갈라져 있고
+    /// (캔버스 쪽 이름 / 크롬 쪽 이름), 값이 갈리면 같은 «고른 줄»이 화면마다 달라진다.
+    /// 사유·밝기 근거는 그쪽 문서에 있다(pytmux-372).
+    pub const SELECTED_BG: ColorU = c(0x37, 0x46, 0x72);
 
-    pub const BLACK: ColorU = c(0x15, 0x16, 0x1e);
-    pub const RED: ColorU = c(0xf7, 0x76, 0x8e);
-    pub const GREEN: ColorU = c(0x9e, 0xce, 0x6a);
-    pub const YELLOW: ColorU = c(0xe0, 0xaf, 0x68);
-    pub const BLUE: ColorU = c(0x7a, 0xa2, 0xf7);
-    pub const MAGENTA: ColorU = c(0xbb, 0x9a, 0xf7);
-    pub const CYAN: ColorU = c(0x7d, 0xcf, 0xff);
-    pub const WHITE: ColorU = c(0xa9, 0xb1, 0xd6);
+    // ── xterm 표준 16색 ──────────────────────────────────────────────────────
+    //
+    // 값은 xterm 의 기본 리소스(`XTerm-col.ad` / `charproc.c`)이고 X11 색이름을 함께
+    // 적어 둔다 — 다음 사람이 「이게 정말 그 표인가」를 밖에서 대조할 수 있어야 한다.
+    // ⛔ 여기에 손으로 값을 고르는 자리는 없다(위 모듈 문서).
 
-    pub const BR_BLACK: ColorU = c(0x41, 0x48, 0x68);
-    pub const BR_RED: ColorU = c(0xff, 0x7a, 0x93);
-    pub const BR_GREEN: ColorU = c(0xb9, 0xf2, 0x7c);
-    /// ⚠ 기준 노랑보다 **어두웠다** — 사유와 고친 방법은 [`BR_CYAN`] 문서에 함께 있다.
-    pub const BR_YELLOW: ColorU = c(0xff, 0xb3, 0x86);
-    pub const BR_BLUE: ColorU = c(0x7d, 0xa6, 0xff);
-    /// ☠ **`MAGENTA` 와 같은 값이면 안 된다**(pytmux-187).
+    /// xterm `color0` = X11 `black`.
+    pub const BLACK: ColorU = c(0x00, 0x00, 0x00);
+    /// xterm `color1` = X11 `red3`.
+    pub const RED: ColorU = c(0xcd, 0x00, 0x00);
+    /// xterm `color2` = X11 `green3`.
+    pub const GREEN: ColorU = c(0x00, 0xcd, 0x00);
+    /// xterm `color3` = X11 `yellow3`.
+    pub const YELLOW: ColorU = c(0xcd, 0xcd, 0x00);
+    /// xterm `color4` = X11 `blue2`.
+    pub const BLUE: ColorU = c(0x00, 0x00, 0xee);
+    /// xterm `color5` = X11 `magenta3`.
+    pub const MAGENTA: ColorU = c(0xcd, 0x00, 0xcd);
+    /// xterm `color6` = X11 `cyan3`.
+    pub const CYAN: ColorU = c(0x00, 0xcd, 0xcd);
+    /// xterm `color7` = X11 `gray90`.
+    pub const WHITE: ColorU = c(0xe5, 0xe5, 0xe5);
+
+    /// xterm `color8` = X11 `gray50`.
+    pub const BR_BLACK: ColorU = c(0x7f, 0x7f, 0x7f);
+    /// xterm `color9` = X11 `red`.
+    pub const BR_RED: ColorU = c(0xff, 0x00, 0x00);
+    /// xterm `color10` = X11 `green`.
+    pub const BR_GREEN: ColorU = c(0x00, 0xff, 0x00);
+    /// xterm `color11` = X11 `yellow`.
+    pub const BR_YELLOW: ColorU = c(0xff, 0xff, 0x00);
+    /// xterm `color12` = `rgb:5c/5c/ff`.
     ///
-    /// tokyonight 의 터미널 표는 밝은 마젠타를 마젠타와 **같은 값**으로 둔다. 편집기
-    /// 배색에서는 아무 문제가 없지만 여기는 터미널이라 그 한 줄이 **SGR 35 와 95 를 한
-    /// 색으로 붙인다** — 밝은 쪽으로 강조한 글자가 강조 전과 똑같이 그려지고, 화면에서는
-    /// "색이 좀 안 맞나?" 정도로만 보인다. 정본(TUI)은 호스트 단말의 표를 쓰므로 그 둘이
-    /// 갈리고, 그래서 **같은 바이트가 두 클라에서 다른 그림**이 된다.
-    ///
-    /// 값은 지어낸 것이 아니라 [`MAGENTA`] 를 흰 쪽으로 섞어 **한 단 올린 것**이다 —
-    /// 이 표에서 다섯 짝(검정·빨강·초록·파랑·흰색)이 그 모양이다. 채도를 올리는 쪽(더
-    /// 진한 보라)은 안 골랐다: 이 색은 이미 HSV 의 V 가 0.97 이라 더 밝게 하는 길이 흰
-    /// 쪽뿐이고, 채도를 올리면 밝은 쪽이 도리어 어두워져 "밝게"라는 뜻과 반대가 된다.
-    ///
-    /// ★ **나머지 두 짝도 같은 결함이었다**(pytmux-187 · 2026-08-23 실측). 종전 주석은
-    /// *"값이 겹치지는 않아서 안 건드렸다"* 였는데, 겹침이 아니라 **뒤집힘**이 문제였다 —
-    /// 재 보니 밝은 노랑과 밝은 청록은 각각 제 기준색보다 **더 어두웠다**:
-    ///
-    /// | 짝 | 기준 L | 밝은 L |
-    /// |---|---|---|
-    /// | 노랑 `#e0af68` → `#ff9e64` | 180.3 | **174.4** |
-    /// | 청록 `#7dcfff` → `#0db9d7` | 193.0 | **150.6** |
-    ///
-    /// 곧 `SGR 93`·`96`(밝게 강조)이 `33`·`36` 보다 **어둡게** 그려졌다 — 강조가 뜻과
-    /// 반대로 나온 것이고, 밝은 마젠타 때와 **같은 부류**다.
-    ///
-    /// ⛔ 이 판정에는 팔레트 취향이 안 섞인다: 어느 표를 고르든 「밝은 쪽이 더 밝다」는
-    /// 지켜져야 한다. 그래서 **「어느 팔레트인가」(pytmux-187 의 남은 물음)를 기다리지
-    /// 않고** 고쳤다. `the_bright_half_of_every_pair_is_actually_brighter` 가 여덟 짝을
-    /// 전부 잰다.
-    ///
-    /// 값은 [`BR_MAGENTA`] 와 **같은 방법**이다 — 그 색을 흰 쪽으로 한 단 올렸다.
-    /// 노랑은 종전 밝은 값이 주황 쪽으로 돈 색인데, **그 색상은 그대로 두고 밝기만**
-    /// 올렸다(색상까지 되돌리면 그건 팔레트를 고르는 일이고 이 이슈의 남은 절반이다).
-    pub const BR_MAGENTA: ColorU = c(0xd7, 0xb6, 0xff);
-    pub const BR_CYAN: ColorU = c(0x9a, 0xda, 0xff);
-    pub const BR_WHITE: ColorU = c(0xc0, 0xca, 0xf5);
+    /// ⚠ **X11 `blue` 가 아니다** — xterm 이 이 한 칸만 손으로 밝힌다(순 파랑은 어두운
+    /// 바탕에서 안 읽힌다). 「밝은 쪽이 더 밝다」가 여기서 성립하는 것도 그 덕이다.
+    pub const BR_BLUE: ColorU = c(0x5c, 0x5c, 0xff);
+    /// xterm `color13` = X11 `magenta`.
+    pub const BR_MAGENTA: ColorU = c(0xff, 0x00, 0xff);
+    /// xterm `color14` = X11 `cyan`.
+    pub const BR_CYAN: ColorU = c(0x00, 0xff, 0xff);
+    /// xterm `color15` = X11 `white`.
+    pub const BR_WHITE: ColorU = c(0xff, 0xff, 0xff);
 }
 
 /// 원격 탭 표시색. 파이썬 클라(`clientutil::REMOTE_PINK`)·TUI 와 같은 값이다 —
@@ -133,6 +173,45 @@ const REMOTE_PINK: ColorU = ColorU { r: 0xff, g: 0x5f, b: 0xd7, a: 0xff };
 /// 두 값인 이유: 활성/비활성이 한 색이면 원격 탭 안에서 **어느 패널이 키를 받는지**가
 /// 사라진다. 로컬이 파랑 두 단(밝은/어두운)으로 그 일을 하는 것과 같은 자리다.
 const REMOTE_PINK_DIM: ColorU = ColorU { r: 0xaf, g: 0x5f, b: 0x87, a: 0xff };
+
+/// 비활성 탭의 **Claude 작업 완료** 알림색(정본 `TabBar.render_line` 의 `done_st`).
+///
+/// 값은 눈대중이 아니라 정본에서 그대로 옮겼다 — `theme_color("warning")` 이고 이 앱은
+/// 테마를 안 바꾸므로 언제나 textual-dark 의 `#FEA62B` 다
+/// (`clientutil::_THEME_FALLBACK["warning"]`). 두 클라가 같은 뜻을 다른 색으로 말하면
+/// 그것이 곧 결함이라, [`REMOTE_PINK`] 와 같은 이유로 여기 값을 못박는다.
+///
+/// ⚠ **이미 뜻이 박힌 색과 겹치면 안 된다**: [`theme::FOCUS`](crate::theme::FOCUS) 는
+/// "키보드가 이것을 고르고 있다", [`theme::INVERT_BG`](crate::theme::INVERT_BG) 는
+/// "이 상태가 켜져 있다"다 — 셋 다 다른 값이라야 세 뜻이 한 그림이 되지 않는다
+/// (`theme.rs` 가 그 둘을 굳이 갈라 둔 이유를 주석에 적어 뒀다).
+///
+/// 탭바 바탕([`theme::SURFACE`](crate::theme::SURFACE) `#16161e`) 위 대비는 **9.17:1**
+/// 이다(WCAG 상대휘도 · `an_amber_tab_label_is_readable_on_the_tab_strip` 가 잰다).
+///
+/// ★ **`esc` 모드 표식 칩도 같은 값을 쓴다**(pytmux-380 · [`mode_chip`](SessionView::mode_chip)).
+/// 우연이 아니다 — 정본의 `accent` 와 `warning` 이 textual-dark 에서 **같은 색**이고, 이
+/// 앱에서 그 둘은 한 역할(「알림·주의」)이다. 그래서 상수를 둘로 늘리지 않고 이 하나를
+/// 두 자리가 쓴다 — 값이 하나인데 이름이 둘이면 다음 사람이 한쪽만 고친다.
+const CLAUDE_DONE_AMBER: ColorU = ColorU { r: 0xfe, g: 0xa6, b: 0x2b, a: 0xff };
+
+
+/// 한/영 배지를 다시 묻는 주기. **정본과 같은 값**이다(`plugins/ime-indicator/__init__.py`
+/// 의 `si(0.05, …)`).
+///
+/// # 왜 0.3초가 아닌가 (pytmux-378)
+///
+/// 종전 값은 300ms 였고 주석의 근거는 *"창 밖 프로세스(입력기 창)에 메시지를 보내는 일이라
+/// 30Hz 로 두드릴 일이 아니고, 사람이 한/영을 바꾼 것을 0.3초 안에 보면 충분하다"* 였다.
+/// 앞 절반은 여전히 옳지만(30Hz 로 두드리지 않는다 — 20Hz 다) **뒤 절반이 제보로
+/// 반증됐다**: 정본을 옆에 두고 쓰면 6배 차이가 눈에 걸린다(사용자 2026-08-23).
+///
+/// 그 걱정이 값을 과하게 만든 것이지 걱정 자체가 틀린 것은 아니었다 — 그런데 **정본이 같은
+/// 창 밖 질의를 50ms 로 이미 하고 있고**(그쪽은 ctypes 왕복이라 더 비싸다) 문제가 없다.
+/// 그래서 「우리가 정한 값」이 아니라 **정본의 값**을 쓴다: 이 배지는 두 클라가 같은 사실을
+/// 같은 속도로 말해야 하는 자리이고, 값이 갈리면 그 갈림이 곧 제보가 된다.
+/// 두 클라가 갈리지 않는지는 `tests/test_plugin_ime_indicator.py` 가 두 파일을 대조해 잰다.
+const IME_PERIOD: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// 이 뷰가 [`BorderTint`](base::tint::BorderTint) 를 그리는 색.
 ///
@@ -152,6 +231,12 @@ fn tint_color(tint: base::tint::BorderTint, active: bool) -> Option<ColorU> {
 }
 
 /// proto 색 → 이 뷰의 색. 셀 스타일과 상태줄이 **같은 표**를 쓴다.
+///
+/// ⚠ **그 「같은 표」가 값을 치른다**(pytmux-412). 열여섯 칸이 xterm 표준으로 갈리면서
+/// 크롬의 의미색(심각도·블록·툴 상태)도 함께 갈렸는데, 그 자리들은 **SGR 30–37·90–97 이
+/// 아니라** 우리가 읽히라고 고른 값이다 — 어두운 바탕 위에서 `RED` 가 6.46:1 → 2.93:1 로
+/// 떨어졌고 그것을 재는 오라클이 없어 전량 초록으로 지나갔다. 갈래(크롬에 자기 상수를
+/// 주나 · 이대로 두나)는 사람이 고를 일이라 pytmux-412 에 세워 뒀다.
 fn to_gui_color(color: &CellColor) -> ColorU {
     match *color {
         CellColor::Rgb { r, g, b } => ColorU { r, g, b, a: 0xff },
@@ -395,6 +480,12 @@ pub struct SessionView {
     /// 입력기를 마지막으로 물어본 시각. **매 프레임 묻지 않는다** — 창 밖 프로세스에
     /// 메시지를 보내는 일이라, 30Hz 로 두드리면 그만큼 남의 입력기 창을 괴롭힌다.
     last_ime: Instant,
+    /// 「배지는 내가 그린다」를 이 연결에서 이미 알렸나(pytmux-392).
+    ///
+    /// 연결마다 다시 알린다 — 사실은 `ClientConn.plugin_state` 에 매달려 **연결이 끊기면
+    /// 함께 사라진다**(`servercmd::_cmd_client_fact` 문서). 안 다시 알리면 재접속 뒤
+    /// 서버가 글자 런을 다시 보내 그림과 겹친다.
+    told_ime_render: bool,
     /// 이벤트 훅의 **가장자리**를 재는 자(패리티 G8u). 상태가 아니라 전이에 발화한다.
     hook_watch: base::hooks::HookWatcher,
     /// 드라이런 회신을 기다리는 재시작(있으면 그 종류).
@@ -498,7 +589,22 @@ pub struct SessionView {
     /// 창 배율이 바뀔 때뿐이고, 그때는 다음 프레임에 곧 따라온다(첫 프레임에는 아직
     /// 없어 종전 배치로 그린다).
     cell_px: std::cell::Cell<Option<(f32, f32)>>,
+    /// 캔버스 왼쪽·위 여백과 창 크기(px) — 전부 **잰 값**이다(`report_size`).
+    ///
+    /// `cell_px` 만으로는 판을 캔버스 **안 어느 칸**에 세울 수 없다: 칸 크기는 알아도
+    /// 캔버스가 창의 어디서 시작하는지를 모르기 때문이다. 작성창을 커서 줄에 세우는
+    /// 자리(pytmux-370 · [`Anchor::AtPaneCursor`])가 그 값을 처음으로 요구했다.
+    canvas_px: std::cell::Cell<Option<CanvasBox>>,
+    /// 카운트다운을 마지막으로 그린 **초**(pytmux-371 ④). 초가 바뀔 때만 다시 그린다.
+    countdown_secs: i64,
     font: FamilyId,
+    /// 지금 **깔려 있는** 글꼴 이름(설정 `font-family` 의 값 그대로 · 빈 값 = 자동).
+    ///
+    /// 설정이 이것과 갈리면 [`pump`](Self::pump) 가 다시 깐다(pytmux-408 ④) — 설정을
+    /// 바꾸고 **재시작해야 보인다면 그 설정 화면은 반쪽이다**(`flip_config` 가 같은
+    /// 이유로 그 자리에서 반영한다). 글꼴 등록에는 `ctx` 가 필요해 대답을 받는 자리
+    /// (`apply_answer`)에서는 못 하고, `ctx` 를 쥔 프레임 진입에서 화해시킨다.
+    font_want: String,
     /// 크롬(탭·팝업 틀·상태줄) 글꼴 — 가변폭. 못 찾으면 `font`(고정폭) 그대로다.
     /// 캔버스는 항상 `font` 로 그린다(격자는 고정폭이 계약이다).
     ui_font: FamilyId,
@@ -561,18 +667,49 @@ impl PalettePick {
     }
 }
 
+/// 캔버스가 창의 **어디에 얼마만큼** 그려졌나(px). 전부 렌더가 남긴 자리표에서 **잰 값**
+/// 이다 — 이 파일의 규율 그대로, 계산하면 렌더와 어긋난다.
+#[derive(Debug, Clone, Copy)]
+struct CanvasBox {
+    /// 캔버스 첫 칸의 왼쪽 x.
+    left: f32,
+    /// 캔버스 첫 줄의 위 y.
+    top: f32,
+    /// 창 너비(지금은 안 쓰지만 자리표 한 벌로 묶어 둔다 — 따로 재면 두 값이 갈린다).
+    #[allow(dead_code)]
+    win_w: f32,
+    /// 창 높이. 바닥에서 위로 띄우는 여백을 여기서 뺀다.
+    win_h: f32,
+}
+
 impl SessionView {
     pub fn new(link: ServerLink, ctx: &mut ViewContext<Self>) -> Self {
         // 고정폭 + 보조 글꼴. 규칙은 `mono_font` 한 곳이다(데모 뷰와 같은 것을 부른다).
         // 크롬 글꼴(가변폭)은 같은 캐시에 더 깐다 — 없으면 고정폭으로 그린다.
-        let (font, ui_font) = warpui::fonts::Cache::handle(ctx).update(ctx, |cache, _| {
-            let mono = mono_font::install(cache);
-            (mono, theme::install_ui(cache).unwrap_or(mono))
+        // ★ **설정을 여기서 한 번 읽는다**(pytmux-408). 글꼴은 창이 서기 전에 정해지는데
+        //   `with_fonts` 가 설정을 읽는 자리는 그보다 뒤다 — 그 차례 때문에 `font-family`
+        //   가 첫 프레임에 안 먹으면 「적었는데 다음 기동에나 먹는다」가 된다.
+        //   ⚠ `Config::load` 는 파일 한 번 읽기라 두 번 불러도 값이 같다(순수).
+        let want = base::Config::load().font_family;
+        let (font, ui_font, missed) = warpui::fonts::Cache::handle(ctx).update(ctx, |cache, _| {
+            let (mono, missed) = mono_font::install_preferred(cache, &want);
+            (mono, theme::install_ui(cache).unwrap_or(mono), missed)
         });
         // 키를 받으려면 포커스가 있어야 한다. 없으면 이벤트가 이 뷰까지 오지 않고,
         // 증상은 "창은 떴는데 아무 키도 안 먹는다"다(데모 뷰가 이미 같은 줄을 갖는다).
         ctx.focus_self();
-        Self::with_fonts(link, font, ui_font)
+        let mut view = Self::with_fonts(link, font, ui_font);
+        view.font_want = want;
+        // ⛔ **조용히 넘어가지 않는다**(pytmux-408 ③). 「적었는데 아무 일도 안 일어난다」가
+        //    이 부류에서 제일 나쁜 결과다 — 사용자는 자기 오타인지 앱이 무시한 것인지 못
+        //    가린다. 떨어진 것은 맞지만 **무엇이 없었는지**는 말한다.
+        if let Some(want) = missed {
+            view.state.note_notice(base::i18n::tf(
+                "글꼴 «{name}» 이 이 상자에 없다 — 기본 글꼴로 그린다",
+                &[("name", &want)],
+            ));
+        }
+        view
     }
 
     /// 창 문맥 **없이** 세운다 — 글꼴만 밖에서 받는다.
@@ -599,7 +736,6 @@ impl SessionView {
         let config = base::Config::load();
         let mut state = SessionState::new();
         state.set_inactive_dim(config.inactive_dim, config.inactive_dim_ratio);
-        state.set_touch_scroll(config.touch_scroll);
         // 폭 판정은 프로세스 전역이다(compose::set_ambiguous_wide 문서 참조).
         proto::compose::set_ambiguous_wide(config.ambiguous_width == "wide");
         let arghist = proto::arghist::ArgHist::for_socket(link.socket());
@@ -631,6 +767,7 @@ impl SessionView {
             ime_badge: None,
             preedit: String::new(),
             last_ime: Instant::now(),
+            told_ime_render: false,
             hook_watch: Default::default(),
             pending_restart: None,
             last_title: None,
@@ -656,7 +793,10 @@ impl SessionView {
             // 아직 안 쟀다 — 첫 프레임은 종전 배치로 그리고, 자리표가 남는 즉시 격자를
             // 잡는다(§10-21ⓙ).
             cell_px: std::cell::Cell::new(None),
+            canvas_px: std::cell::Cell::new(None),
+            countdown_secs: 0,
             font,
+            font_want: String::new(),
             ui_font,
             claude: Vec::new(),
             claude_mode: None,
@@ -972,7 +1112,6 @@ impl SessionView {
                 // prefix 모드는 **키 하나만** 붙잡는다(tmux 와 같다).
                 if after_prefix {
                     self.mode.reset();
-                    self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
                 }
                 self.apply_action(action);
                 return true;
@@ -995,21 +1134,19 @@ impl SessionView {
         }
         let screen_before = self.screens.top();
         // 정보 팝업의 REC 탭에서 [c]/[o] 는 **동작 키**다(G9u — TUI 와 같은 표).
-        if screen_before == Some(Screen::InfoTabs)
-            && mods == base::Mods::NONE
-            && self.screens.info_tab() == 0
-            && self.state.flags().capture.is_some()
-        {
-            match key {
-                base::Key::Char('c') => {
-                    self.pending.push(Outgoing::Command(Command::SetCapture));
-                    return true;
-                }
-                base::Key::Char('o') => {
-                    proto::info::open_capture_dir(&self.state.flags().capture_path);
-                    return true;
-                }
-                _ => {}
+        //
+        // ⛔ **무엇이 있나는 `proto` 한 곳이 쥔다**(pytmux-373 ⑶). 종전에는 이 자리가
+        //    `info_tab() == 0` 과 `capture.is_some()` 을 **직접** 적어 판정을 두 벌로
+        //    들고 있었고, 그래서 같은 둘이 목록에는 항목으로 안 섰다.
+        if screen_before == Some(Screen::InfoTabs) && mods == base::Mods::NONE {
+            let picked = self.screens.info_tab();
+            if let base::Key::Char(ch) = key
+                && proto::info::tab_actions(&self.state, picked)
+                    .iter()
+                    .any(|a| a.key == ch)
+            {
+                self.run_info_action(ch);
+                return true;
             }
         }
         // 팔레트는 **확정과 동시에 필터가 지워진다** — 고른 줄이 어느 항목인지 알려면
@@ -1058,6 +1195,14 @@ impl SessionView {
             self.screens.set_plugin_grid(per_col, cols);
         }
         if let Some(outcome) = self.screens.press(key, mods) {
+            // ★ 정보 팝업은 **자리 맞추기가 먼저다** — `←→` 가 넘긴 자리를 접고 `↑↓` 가
+            //   민 커서를 자른 뒤라야 아래 `Applied` 가 **실재하는 줄**을 가리킨다.
+            self.settle_info_tabs();
+            // 설정·플러그인 판도 같다(pytmux-374 ⑶) — `End`·`PageDown` 이 두고 간 자리를
+            // 여기서 접어야 뒤따르는 `Applied`/`AppliedDir` 이 실재하는 줄을 가리킨다.
+            self.settle_settings_cursor();
+            // 플러그인 글 판도 같다(pytmux-184 ⑵) — 끝에서 더 눌러 둔 만큼 `↑` 가 헛돈다.
+            self.settle_plugin_scroll();
             // 고른 것을 **뷰가 해석한다** — core 는 목록의 내용을 모른다(그 경계 덕에
             // 목록 화면이 늘어도 core 는 그대로다).
             match outcome {
@@ -1217,6 +1362,11 @@ impl SessionView {
                 }
                 // 설정 화면 — 고른 줄이 토글이면 평소 액션 경로로, 값을 받는 줄이면
                 // 물음을 띄운다. **화면은 그대로 있다**(그게 Applied 다).
+                // 정보 팝업의 `Enter` — 동작 줄이면 돌리고(판 유지), 아니면 닫는다.
+                // ⚠ 값(`row`)이 아니라 **접힌 뒤의 커서**를 본다(위 `settle_info_tabs`).
+                ScreenKey::Applied(_) if screen_before == Some(Screen::InfoTabs) => {
+                    self.run_info_row();
+                }
                 ScreenKey::Applied(row) if screen_before == Some(Screen::Plugins) => {
                     if let Some(command) = self.plugin_toggle(row) {
                         self.pending.push(Outgoing::Command(command));
@@ -1225,8 +1375,17 @@ impl SessionView {
                 // `Enter` 는 앞으로, `←→` 는 방향대로 — 값을 고르는 길은 **한 벌**이다.
                 ScreenKey::Applied(row) | ScreenKey::AppliedDir(row, _) => {
                     let forward = !matches!(outcome, ScreenKey::AppliedDir(_, false));
-                    let pick =
-                        base::config::setting_pick_dir(row, &self.setting_values(), forward);
+                    // ⚠ `screen_before` 를 보고 옮긴다 — 이 팔에 닿을 때 판은 아직
+                    //   그대로지만(둘 다 `Enter` 로 안 닫힌다) 판정의 근거를 «누른
+                    //   순간의 판»으로 두는 편이 다음 사람에게 덜 위험하다.
+                    let pick = Self::settings_row(screen_before, row, &self.config)
+                        .and_then(|row| {
+                            base::config::setting_pick_dir(
+                                row,
+                                &self.setting_values(),
+                                forward,
+                            )
+                        });
                     self.apply_setting_pick(pick);
                 }
                 // 플러그인이 물은 것을 **취소**했다 — 아무 일도 안 일어나고, 그 스펙은
@@ -1284,7 +1443,6 @@ impl SessionView {
         }
         // 모드 전이는 core 의 상태기계가 끝낸다. 여기서는 결과를 프레임으로 옮기기만 한다.
         let outcome = self.mode.press_in(&self.config.mode_keys, key, mods);
-        self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
         // 블록 모드를 벗어나면 고른 것도 **같이** 버린다 — 안 버리면 강조가 화면에 남아
         // "아직 고르는 중"이라고 말하는데 키는 이미 패널로 간다(esc 모드에서 크롬
         // 포커스를 같이 푸는 것과 같은 규율. 자리도 나란히 둔다).
@@ -1355,13 +1513,11 @@ impl SessionView {
             ChromeKey::Stay(action) => Some(self.apply_action(action)),
             ChromeKey::Done(action) => {
                 self.mode.reset();
-                self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
                 self.chrome.reset();
                 Some(self.apply_action(action))
             }
             ChromeKey::Leave => {
                 self.mode.reset();
-                self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
                 self.chrome.reset();
                 Some(true)
             }
@@ -1422,6 +1578,21 @@ impl SessionView {
     #[cfg(test)]
     pub(crate) fn cell_px_for_test(&self) -> Option<(f32, f32)> {
         self.cell_px.get()
+    }
+
+    /// 시험이 **잰 값을 대신 넣는** 자리(헤드리스에는 자리표가 없다).
+    ///
+    /// ⛔ 프로덕션은 절대 안 부른다 — 자리표에서 재는 것이 규율이고, 여기 값을 심는 것은
+    ///    「그때 이렇게 쟀다면」을 재현하기 위한 것뿐이다. 그래서 `#[cfg(test)]` 다.
+    #[cfg(test)]
+    pub(crate) fn note_canvas_box_for_test(&self, left: f32, top: f32, win_w: f32, win_h: f32) {
+        self.canvas_px.set(Some(CanvasBox { left, top, win_w, win_h }));
+    }
+
+    /// 작성창 자리 산수의 결과(시험이 읽는다).
+    #[cfg(test)]
+    pub(crate) fn pane_cursor_box_for_test(&self) -> Option<(f32, f32, f32)> {
+        self.pane_cursor_box()
     }
 
     /// 깜빡임 한 틱(`pytmux/pytmux-161`). `expired` 면 **반주기가 지난 것으로 치고** 부른다.
@@ -1516,19 +1687,6 @@ impl SessionView {
                 self.screens.ask(Prompt::MoveTab, "");
                 return true;
             }
-            // 터치 스크롤 `⇕` 배지 — **뒤집는다**(TUI 와 같은 규칙). 나올 때 라이브
-            // 맨 아래로 되돌리는 것까지 같다.
-            Action::ToggleScroll => {
-                if self.mode.mode() == InputMode::Scroll {
-                    self.mode.reset();
-                    self.state.set_scroll_mode(false);
-                    self.scroll(base::keys::ScrollAmount::Bottom);
-                } else {
-                    self.mode.enter_scroll();
-                    self.state.set_scroll_mode(true);
-                }
-                return true;
-            }
             // 캔버스 위에서 블록 하나를 고른다(pytmux-18). 들어갈지 말지는 **여기서**
             // 정한다 — core 는 그 패널에 블록이 있는지 모른다(`ModeState::enter_block`).
             Action::SelectBlocks => {
@@ -1539,7 +1697,6 @@ impl SessionView {
                 // 어느 입구로 왔든(스크롤 모드 `/`·메뉴) 물음이 닫힌 뒤는 스크롤
                 // 모드다(파이썬 `_prompt_done` 의 `mode = "scroll"` — TUI 와 같다).
                 self.mode.enter_scroll();
-                self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
                 self.screens.ask(Prompt::SearchScrollback, "");
                 return true;
             }
@@ -1556,6 +1713,8 @@ impl SessionView {
             // 서버가 채우는 탭(버전)이 있어 **열면서 함께 청한다**(TUI 와 같다).
             Action::ShowInfoTabs => {
                 self.screens.open_info_tabs();
+                // 커서를 **첫 내용 줄**에 놓는다(정본과 같다 — 동작 단추 위가 아니다).
+                self.settle_info_tabs();
                 self.pending
                     .push(Outgoing::Command(Command::RequestVersion));
                 return true;
@@ -1568,6 +1727,12 @@ impl SessionView {
             }
             Action::ShowSettings => {
                 self.screens.open(Screen::Settings);
+                return true;
+            }
+            // 커서 판(pytmux-375). 값은 설정 화면과 **같은 다섯**이고 새로 지은 것은
+            // 화면이다 — 왜 화면이 따로 서는지는 `render_cursor` 가 적는다.
+            Action::ShowCursor => {
+                self.screens.open(Screen::Cursor);
                 return true;
             }
             // 좌하단 `[자동재개]` 표식을 눌러 여는 판(pytmux-183). **뒤집지 않는다** —
@@ -1610,8 +1775,7 @@ impl SessionView {
                 self.mode.set_prefix(self.config.prefix);
                 self.state
                     .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
-                self.state.set_touch_scroll(self.config.touch_scroll);
-                self.state.note_notice(t("설정을 다시 읽었다"));
+                        self.state.note_notice(t("설정을 다시 읽었다"));
                 return true;
             }
             // 지금 탭이 원격이 아니면 **합칠 대상이 없다** — 빈 화면을 띄우는 대신
@@ -2003,7 +2167,11 @@ impl SessionView {
         };
         let mut x = cur.x as usize;
         for ch in self.preedit.chars() {
-            let cells = proto::compose::char_cells(ch).max(1);
+            let cells = proto::compose::char_advance(ch);
+            // 폭 0 은 칸을 안 먹는다(pytmux-389) — 캔버스 셀은 글자 하나라 놓을 데가 없다.
+            if cells == 0 {
+                continue;
+            }
             if x + cells > right {
                 break;
             }
@@ -2120,7 +2288,6 @@ impl SessionView {
             return false;
         }
         self.mode.enter_block();
-        self.state.set_scroll_mode(false);
         self.block_pick = Some((pane, count - 1));
         true
     }
@@ -2261,7 +2428,6 @@ impl SessionView {
     pub fn handle_paste(&mut self, text: &str) -> bool {
         self.mode.reset();
         self.drop_block_pick_unless_selecting();
-        self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
         if text.is_empty() {
             return false;
         }
@@ -2623,19 +2789,6 @@ impl SessionView {
             return false;
         }
         let (x, y) = at;
-        // ★ 터치 스크롤바 탭이 **선택 드래그보다 먼저**다 — 그 열에서 시작한 탭은
-        // 선택이 아니라 스크롤 조작이다(정본·TUI 와 같은 순서). 존은 스크롤 모드에서만
-        // 생기므로 평소 모드에는 영향이 없다.
-        if let Some(zone) = self.state.touch_scroll_zone()
-            && x as usize == zone.x
-            && (y as usize) >= zone.y
-            && (y as usize) < zone.y + zone.h
-        {
-            if let Some(frame) = self.state.touch_scroll_tap(y as usize - zone.y) {
-                self.pending.push(Outgoing::Scroll(frame));
-            }
-            return true;
-        }
         // ★ 오버레이가 광고한 자리(달력의 `‹`/`›`)가 먼저다 — 화살표를 그려 놓고
         // 클릭이 안 먹으면 그 화살표가 거짓말이 된다. **뜻은 우리가 모른다**: 서버가
         // 준 이름을 그대로 되돌려 보내고, 다음 셀 프레임이 답이다.
@@ -3092,6 +3245,14 @@ impl SessionView {
         let footer_px = ctx
             .element_position_by_id(Self::FOOTER_PROBE)
             .map_or(0., |f| f.height() * self.footer_lines() as f32);
+        // 판을 캔버스 안 어느 칸에 세울지 아는 데 필요하다(pytmux-370). 같은 자리표에서
+        // 함께 뽑는다 — 두 번 재면 두 값이 갈린다.
+        self.canvas_px.set(Some(CanvasBox {
+            left: probe.origin_x(),
+            top: probe.origin_y(),
+            win_w: bounds.width(),
+            win_h: bounds.height(),
+        }));
         let Some((cols, rows)) =
             Self::grid_for(probe, bounds.width(), bounds.height(), footer_px)
         else {
@@ -3171,8 +3332,39 @@ impl SessionView {
     ///
     /// 이벤트 루프가 매 프레임 부른다. **초가 안 바뀌면 false** 라 30Hz 루프가 매 프레임
     /// repaint 를 걸지 않는다 — 시계 하나 때문에 화면 전체를 30배로 그릴 이유는 없다.
+    /// 지금(epoch 초). 시계가 뒤로 가면 0 — 그 창에서는 카운트다운을 안 그린다.
+    fn now_secs() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64)
+    }
+
+    /// 떠 있는 판에 **카운트다운 줄이 있으면** 초마다 다시 그린다(pytmux-371 ④).
+    ///
+    /// # 왜 조건이 붙나
+    ///
+    /// `true` 를 돌려주면 화면 **전체**를 다시 그린다(`tick_cursor_blink` 머리말과 같은
+    /// 값). 카운트다운이 없는 평상시에도 초당 한 번 전 세션을 다시 그릴 이유가 없다 —
+    /// 그래서 그 줄이 실제로 떠 있을 때만 센다.
+    fn tick_countdown(&mut self) -> bool {
+        if self.screens.top() != Some(Screen::PluginView) {
+            return false;
+        }
+        let now = Self::now_secs();
+        let live = self
+            .state
+            .plugin_screen()
+            .is_some_and(|spec| spec.rows.iter().any(|r| r.countdown(now).is_some()));
+        if !live {
+            return false;
+        }
+        // 초가 바뀐 프레임에서만 dirty 다(같은 초에 여러 번 그리면 값이 그대로다).
+        !std::mem::replace(&mut self.countdown_secs, now).eq(&now)
+    }
+
     pub fn tick_clock(&mut self) -> bool {
         let mut dirty = false;
+        dirty |= self.tick_countdown();
         // RTT ping(G9u) — 그림은 안 바뀌니 dirty 를 안 세운다(TUI 와 같은 규칙).
         if let Some(ping) = self.pinger.tick() {
             self.pending.push(ping);
@@ -3234,14 +3426,24 @@ impl SessionView {
 
     /// 입력기 배지를 새로 물어본다. 바뀌었으면 `true`(다시 그린다).
     ///
-    /// 0.3초에 한 번만 묻는다: 창 밖 프로세스(입력기 창)에 메시지를 보내는 일이라 30Hz
-    /// 로 두드릴 일이 아니고, 사람이 한/영을 바꾼 것을 0.3초 안에 보면 충분하다.
+    /// 주기는 [`IME_PERIOD`] — **정본과 같은 값**이다(pytmux-378).
     fn tick_ime(&mut self) -> bool {
-        const PERIOD: std::time::Duration = std::time::Duration::from_millis(300);
-        if self.last_ime.elapsed() < PERIOD {
+        if self.last_ime.elapsed() < IME_PERIOD {
             return false;
         }
         self.last_ime = std::time::Instant::now();
+        // ★ **「배지는 내가 그린다」를 먼저 알린다**(pytmux-392). 이 사실이 서버에 서면
+        //   `ime-indicator` 플러그인이 이 클라에게 글자 런을 **안 보낸다** — 우리는 같은
+        //   자리에 그림을 그리므로 런이 오면 겹친다. 판정을 플러그인 한 곳에 두려는 것이고
+        //   (런을 문구로 알아보고 지우는 길은 규칙을 두 벌로 만든다), 사실은 연결에 매달려
+        //   있으니 **연결마다** 다시 알린다.
+        if !self.told_ime_render {
+            self.told_ime_render = true;
+            self.pending.push(Outgoing::Command(Command::ClientFact {
+                name: "ime_render".to_owned(),
+                value: Some("client".to_owned()),
+            }));
+        }
         self.report_ime(crate::ime::badge())
     }
 
@@ -3266,7 +3468,38 @@ impl SessionView {
         true
     }
 
+    /// 설정의 글꼴과 **지금 깔린 것**을 맞춘다 → 다시 깔았나(pytmux-408 ④).
+    ///
+    /// # 왜 프레임 진입인가
+    ///
+    /// 글꼴 등록에는 `ctx` 가 필요한데, 값이 바뀌는 자리(설정 화면의 대답·`:set`·
+    /// `source-file`)는 전부 `ctx` 가 없는 경로다. 값 바꾸는 자리마다 `ctx` 를 끌고
+    /// 들어가면 그 셋이 각자 글꼴을 깔게 되고, 하나만 빠지면 **어떤 길로 바꿨느냐에 따라
+    /// 먹기도 안 먹기도** 한다. 그래서 「바뀌었으면 맞춘다」 한 곳으로 모은다.
+    ///
+    /// 비교는 문자열 하나라 매 프레임 돌아도 값이 없다시피 하고, 같으면 캐시를 안 건드린다.
+    fn reconcile_font(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        if self.config.font_family == self.font_want {
+            return false;
+        }
+        let want = self.config.font_family.clone();
+        let (font, missed) = warpui::fonts::Cache::handle(ctx)
+            .update(ctx, |cache, _| mono_font::install_preferred(cache, &want));
+        self.font = font;
+        self.font_want = want;
+        // 셀 크기가 글꼴을 타므로 자리표를 버린다 — 다음 프레임이 다시 잰다.
+        self.cell_px.set(None);
+        if let Some(name) = missed {
+            self.state.note_notice(base::i18n::tf(
+                "글꼴 «{name}» 이 이 상자에 없다 — 기본 글꼴로 그린다",
+                &[("name", &name)],
+            ));
+        }
+        true
+    }
+
     pub fn pump(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        let font_changed = self.reconcile_font(ctx);
         let (dirty, clip) = self.pump_messages();
         // 클립보드 쓰기는 창 계층의 일이라 여기 남는다(아래 절반이 창을 모르는 이유).
         if let Some(text) = clip {
@@ -3275,6 +3508,7 @@ impl SessionView {
             ctx.clipboard().write(content);
         }
         self.report_size(ctx);
+        let dirty = dirty || font_changed;
         // ★ 제목은 **창이 있는 판에서만** 세운다(`pump_headless` 에는 창이 없다). 크기
         // 보고와 같은 자리다 — 그 둘이 이 판에만 있는 이유가 같다.
         self.refresh_title(ctx);
@@ -3304,6 +3538,10 @@ impl SessionView {
                 .push(Outgoing::Command(Command::RequestRedraw));
         }
         dirty |= self.pump_claude();
+        // ★ 정보 팝업의 자리는 **프레임마다** 맞춘다(pytmux-373 ⑶). 키·클릭만으로는
+        //   모자란다 — 그 판의 줄 수는 서버가 바꾼다(RTT 표본이 오면 서버 탭이 그만큼
+        //   길어진다). 안 맞추면 커서가 없는 줄을 가리킨 채 `Enter` 를 기다린다.
+        self.settle_info_tabs();
         self.flush_outgoing();
         // 첫 캔버스가 생긴 순간을 한 번만 남긴다. **창을 볼 수 없는 자리에서 유일한
         // 관측점**이다 — "붙었다"(소켓)와 "그릴 것이 왔다"(프레임)는 다른 사건이고,
@@ -3577,6 +3815,50 @@ impl SessionView {
             .finish()
     }
 
+    /// **판 바닥의 안내줄** — 이 줄만 접힌다(pytmux-371 ⓐ).
+    ///
+    /// 판 폭은 화면이 정하고 내용이 못 정한다(pytmux-158). 그 규칙 아래에서 긴 안내줄은
+    /// 아래 `Clipped` 의 «마지막 그물»에 걸려 **오른쪽이 통째로 잘렸다** — 실측
+    /// (2026-08-30 · 1280x800 · 배율 1.5) Period 판이 `… · o machine · s scenari` 에서
+    /// 끊겨 `u /usage` 가 사라졌고, Warn 판은 `s scena` 에서 끊겼다. Machine·Session·
+    /// Limit 은 안내가 짧아 우연히 들어맞아서, **화면마다 다르게 잘렸다.**
+    ///
+    /// ⛔ 이것은 미관이 아니다. pytmux-185 계약에서 **꼬리줄이 광고하는 조작이 곧 그
+    /// 화면의 최소 요건**이라(pytmux-371 이 요건표를 그 줄로 적었다), 광고가 안 보이면
+    /// 요건이 사라진다. 잘린 자리에 `…` 를 넣는 길(elide)도 있지만 그건 **잃은 것을
+    /// 정직하게 말할 뿐** 여전히 잃는다.
+    ///
+    /// 그래서 판을 넓히지 않고(폭 규칙을 지킨다) 이 줄만 [`soft_wrap`] 을 켠다 —
+    /// [`Text::new_inline`] 은 `soft_wrap: false` 이고 [`Text::new`] 는 참이 기본이다.
+    /// 넘치면 아래로 한 줄 접히고 판이 그만큼만 높아진다.
+    fn hint_text(
+        &self,
+        s: impl Into<String>,
+        font: FamilyId,
+        size: f32,
+        color: ColorU,
+    ) -> Box<dyn Element> {
+        Text::new(s.into(), font, self.scaled(size)).with_color(color).finish()
+    }
+
+    /// 같은 크롬 글자인데 **굵기를 고른다**. 정본이 굵게 쓰는 자리(탭 완료 알림
+    /// `done_st`·모드 표식)를 같은 무게로 그리기 위한 것이다.
+    fn ui_text_weighted(
+        &self,
+        s: impl Into<String>,
+        size: f32,
+        color: ColorU,
+        bold: bool,
+    ) -> Box<dyn Element> {
+        Text::new_inline(s.into(), self.ui_font, self.scaled(size))
+            .with_color(color)
+            .with_style(Properties {
+                weight: if bold { Weight::Bold } else { Weight::Normal },
+                style: FontStyle::Normal,
+            })
+            .finish()
+    }
+
     /// 배율을 바꾼 뒤 한 마디. **값을 그대로 보인다** — 배율은 "지금 몇 배인가"가
     /// 유일한 상태이고, 화면에서 그것을 읽을 다른 자리가 (설정 화면 말고는) 없다.
     fn note_font_scale(&mut self) {
@@ -3617,6 +3899,41 @@ impl SessionView {
     /// `_THEME = {"한": "success", "EN": "primary"}` 와 같은 이름이다.
     /// ⚠ 여기서 `theme::resolve` 를 안 쓰고 팔레트를 직접 집으면 pytmux-16 이 재발한다
     /// (`primary` 가 표에 없어 `[EN]` 이 통째로 안 보였다).
+    /// 비율 하나를 **가로 막대**로(pytmux-371 ③ · 스펙의 `bar` = 천분율).
+    ///
+    /// 트랙(빈 부분)까지 그리는 이유: 막대만 그리면 «작은 값»과 «없는 값»이 같은 그림이
+    /// 된다. 트랙이 있으면 그 줄이 전체의 얼마인지 눈이 바로 잡는다.
+    ///
+    /// 색은 [`theme::INVERT_BG`](crate::theme::INVERT_BG) — 정본이 막대에 쓰는 `primary`
+    /// 의 뜻이고, 이 테마에서 그 뜻을 지는 파랑이다.
+    fn ratio_bar(&self, permille: u16) -> Box<dyn Element> {
+        const W: f32 = 120.;
+        const H: f32 = 8.;
+        let radius = warpui::elements::CornerRadius::with_all(
+            warpui::elements::Radius::Pixels(H / 2.),
+        );
+        // 0 이어도 **한 픽셀은 남긴다** — 0 과 «막대 없음」을 화면에서 갈라 준다.
+        let filled = (W * f32::from(permille.min(1000)) / 1000.).max(1.);
+        let fill = ConstrainedBox::new(
+            Rect::new()
+                .with_background_color(theme::INVERT_BG)
+                .with_corner_radius(radius)
+                .finish(),
+        )
+        .with_width(filled)
+        .with_height(H)
+        .finish();
+        let track = Container::new(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_child(fill)
+                .finish(),
+        )
+        .with_background_color(theme::HOVER)
+        .with_corner_radius(radius);
+        ConstrainedBox::new(track.finish()).with_width(W).with_height(H).finish()
+    }
+
     fn ime_chip(&self) -> Option<Box<dyn Element>> {
         let label = self.ime_badge?;
         // 정본 플러그인과 **같은 의미 이름**. 모르는 이름이면 안 칠하는 대신 안 그린다 —
@@ -3626,9 +3943,38 @@ impl SessionView {
             proto::session::theme::Resolution::Color(c) => to_gui_color(&c),
             _ => return None,
         };
+        // ★ **글자가 아니라 그림이다**(pytmux-392) — 캔버스 배지와 **같은 어휘**를 쓴다:
+        //   알약 + 손잡이, 손잡이가 왼쪽이면 한글. 두 자리(캔버스·판)가 같은 모양이라야
+        //   같은 뜻으로 읽힌다(pytmux-14 가 문구를 하나로 못박은 것과 같은 이유이고,
+        //   여기서는 «문구» 자리에 «모양» 이 온 것이다).
+        let (w, h) = (18., 10.);
+        let pad = h / 6.;
+        let d = h - pad * 2.;
+        let knob = Rect::new()
+            .with_background_color(palette::BLACK)
+            .with_corner_radius(warpui::elements::CornerRadius::with_all(
+                warpui::elements::Radius::Percentage(50.),
+            ));
+        let knob = ConstrainedBox::new(knob.finish()).with_width(d).with_height(d).finish();
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        // 한글이면 손잡이가 왼쪽, 영문이면 오른쪽 — 자리가 곧 상태다.
+        row = if label == "한" {
+            row.with_child(knob).with_child(Expanded::new(1., Empty::new().finish()).finish())
+        } else {
+            row.with_child(Expanded::new(1., Empty::new().finish()).finish()).with_child(knob)
+        };
+        let track = ConstrainedBox::new(
+            Container::new(row.finish())
+                .with_horizontal_padding(pad)
+                .finish(),
+        )
+        .with_width(w)
+        .with_height(h)
+        .finish();
         Some(
-            Container::new(self.text(format!("[{label}]"), 13., theme::INVERT_FG))
-                .with_horizontal_padding(4.)
+            Container::new(track)
                 .with_background_color(bg)
                 .with_corner_radius(theme::PILL_RADIUS)
                 .finish(),
@@ -3662,6 +4008,31 @@ impl SessionView {
             .with_horizontal_padding(8.)
             .with_vertical_padding(2.)
             .with_background_color(theme::INVERT_BG)
+            .with_corner_radius(theme::PILL_RADIUS)
+            .finish()
+    }
+
+    /// 모드 표식 칩. **번역을 타고**, `esc` 모드만 정본의 색으로 그린다.
+    ///
+    /// # 왜 [`chip_on`](Self::chip_on) 이 아닌가 (pytmux-380)
+    ///
+    /// `chip_on` 은 파랑 반전([`theme::INVERT_BG`])이고 정본의 `esc` 모드 표식은
+    /// **호박색 반전 + 검은 굵은 글자**다(`clientwidgets.py`: `bgcolor=tc("accent")` ·
+    /// `color="black"` · `bold=True`). 파랑은 이 테마에서 **선택·강조**의 색이라(탭 활성
+    /// 배경 계열) 모달 상태가 그 색을 쓰면 "무언가 골라져 있다"로 읽힌다 — 정본이 굳이
+    /// 경고색을 고른 이유가 그것이다.
+    ///
+    /// 나머지 모드(`[prefix]`·`[block]`)는 정본에 짝이 없어 종전 반전 칩 그대로다.
+    /// **갈림을 색으로 남기는 것**이기도 하다: 정본과 맞춘 자리와 우리가 지은 자리가
+    /// 화면에서 구별된다.
+    fn mode_chip(&self, mode: InputMode, badge: &'static str) -> Box<dyn Element> {
+        if mode != InputMode::Command {
+            return self.chip_on(t(badge));
+        }
+        Container::new(self.ui_text_weighted(t(badge), 11., palette::BLACK, true))
+            .with_horizontal_padding(8.)
+            .with_vertical_padding(2.)
+            .with_background_color(CLAUDE_DONE_AMBER)
             .with_corner_radius(theme::PILL_RADIUS)
             .finish()
     }
@@ -3779,6 +4150,19 @@ impl SessionView {
     /// ⚠ 그 함정을 코드가 **이미 알고 있었다** — `palette_item` 의 *"안쪽 열의 행간은
     /// 판의 것과 같은 상수다"* 가 행간은 맞췄는데, 바로 다음 줄의 *"패딩은 줄마다다"*
     /// 가 패딩을 안 맞췄다. 두 곳이 각자 짓는 한 다음 판에서 또 갈린다.
+    ///
+    /// # ⛔ [`pad_rows`](Self::pad_rows) 를 쓰는 판은 **내용 줄도** 이걸 지난다 (pytmux-373 ⑴)
+    ///
+    /// pytmux-369 는 팔레트 **하나만** 고쳤다. 나머지 셋(Status·알림·플러그인 글)은
+    /// 내용 줄을 맨 `text`/`mono_row` 로 두고 채움 줄만 이 상자를 썼고, 그래서 한 판의
+    /// 높이가 `예산 × 한 줄 + (예산 - 그린 줄) × 2px` 였다 — **줄 수는 상수인데 픽셀이
+    /// 내용을 탔다.** Status 판은 탭마다 줄 수가 달라 그것이 곧 "탭을 바꾸면 판이
+    /// 들썩인다"로 보였다(제보 2026-08-23).
+    ///
+    /// ⚠ 제보 분석은 뿌리를 **폴백 글꼴의 줄 높이**로 짚었는데 그쪽은 아니다 —
+    /// [`Text`](warpui::elements::Text) 의 높이는 `글자 크기 × line_height_ratio` 라
+    /// 글리프가 어느 글꼴에서 오든 같다(`warpui_core` 의 `Line::height`). 진폭(가로)만
+    /// 글꼴을 타고 세로는 안 탄다 — 그래서 남은 원인은 이 2px 하나다.
     fn panel_row_box(&self, child: Box<dyn Element>) -> Box<dyn Element> {
         Container::new(child).with_uniform_padding(1.).finish()
     }
@@ -4109,7 +4493,6 @@ impl SessionView {
         }
         self.session_edit = Some(base::SessionEdit::new(&self.state.status_ctx().session));
         self.mode.reset();
-        self.state.set_scroll_mode(false);
         self.chrome.reset();
         true
     }
@@ -4178,7 +4561,10 @@ impl SessionView {
             }
             // 낱말을 직접 찍었다 — 자리는 뷰가 알고 **값은 core 가 고른다**.
             PanelEffect::Pick { row, index } => {
-                let pick = base::config::setting_pick_at(row, &self.setting_values(), index);
+                let pick = Self::settings_row(self.screens.top(), row, &self.config)
+                    .and_then(|row| {
+                        base::config::setting_pick_at(row, &self.setting_values(), index)
+                    });
                 self.apply_setting_pick(pick);
             }
             // 판 안 단추 — 팔레트·키가 이미 가는 그 길이다(지름길이 아니다).
@@ -4186,6 +4572,8 @@ impl SessionView {
                 self.apply_action(action);
             }
         }
+        // 탭을 눌러 옮겼으면 커서도 그 탭에 맞춘다(키 경로가 `press` 뒤에 하는 그 일).
+        self.settle_info_tabs();
         true
     }
 
@@ -4322,9 +4710,33 @@ impl SessionView {
         let spot = self.chrome.spot(&ctx);
         // 라벨(번호 포함)은 proto 가 만든다 — 번호는 **목록 전체**가 정한다(시각 순서).
         let labels = self.state.tabs().labels(&self.config.remote_title);
-        for (i, tab) in tabs.iter().enumerate() {
-            // 원격은 분홍 — 파이썬 클라·TUI 와 같은 관습이다(`clientutil::REMOTE_PINK`).
-            let fg = if tab.remote { REMOTE_PINK } else { palette::FG };
+        // ★ **고정(핀) 탭은 뒤로 모인다**(pytmux-62 · 정본 `_visual_tab_order`).
+        //
+        //   정본은 탭바를 `[비고정…] [+] ‖ [고정…]` 으로 그린다 — 고정한 탭이 제자리에
+        //   남아 있으면 «고정했다»는 사실이 **글리프 하나(`*`)뿐**이고, 그 하나는 이름
+        //   글자들 사이에 묻힌다(제보 2026-08-24: *"gui에서는 핀이 반영되지 않는다"* —
+        //   `*` 는 오고 있었다). 자리와 구분자가 그 사실을 말하게 한다.
+        //
+        //   ⚠ 번호는 이미 시각 순서다(`Tabs::labels` → `visual_numbers`) — 그리는 순서만
+        //     그 번호를 안 따르고 있었다. 곧 «보이는 순서 = 번호» 가 깨져 있었다.
+        let order: Vec<usize> = (0..tabs.len())
+            .filter(|&i| !tabs[i].pinned)
+            .chain((0..tabs.len()).filter(|&i| tabs[i].pinned))
+            .collect();
+        let pinned_from = tabs.iter().filter(|t| !t.pinned).count();
+        for (slot, &i) in order.iter().enumerate() {
+            let tab = &tabs[i];
+            // 고정 구역이 시작하는 자리에 `+` 와 구분자를 끼운다 — 정본의 차례다.
+            if slot == pinned_from {
+                row = row.with_child(self.plus_button(tabs.len(), spot));
+                row = row.with_child(self.pin_separator());
+            }
+            // 색은 [`tab_label_color`](Self::tab_label_color) 한 자리에서(정본 사슬 순서).
+            let fg = Self::tab_label_color(tab);
+            // ★ **굵기도 정본을 따른다**(pytmux-376 의 남은 반쪽). 그 함수의 ⚠ 주석은
+            //   *"크롬 글자에는 굵기 갈래가 아예 없다"* 였는데, `ui_text_weighted` 가
+            //   생기면서 그 전제가 사라졌다 — 정본 `done_st` 는 `bold=True` 다.
+            let bold = !tab.active && tab.claude_done;
             let focused = spot == Some(base::TabSpot::Tab(i));
             // 드래그 중 드롭 대상은 포커스와 같은 강조 — "놓으면 여기로 간다".
             let drop_here = self.tab_drag_over == Some(i) && self.tab_drag != Some(i);
@@ -4332,7 +4744,7 @@ impl SessionView {
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(6.)
-                .with_child(self.ui_text(labels[i].clone(), 13., fg));
+                .with_child(self.ui_text_weighted(labels[i].clone(), 13., fg, bold));
             // 닫기 × 는 **활성 탭 안**에 산다 — 뜻은 종전의 `[x]`(활성 탭 닫기, 확인
             // 화면을 지난다)와 같고 자리만 탭 안으로 들어왔다. 자리 색인도 종전
             // 그대로(탭들+1)라 상태줄 색인이 안 밀린다.
@@ -4359,12 +4771,76 @@ impl SessionView {
         }
         // ★ `+` 는 **항상** 그린다. 포커스가 왔을 때만 나타나면 그 자리가 있는지
         // 모르는 사람은 영영 못 찾는다(파이썬 탭바도 `[+]` 를 늘 달고 있다).
-        row = row.with_child(self.plus_button(tabs.len(), spot));
+        // ⚠ 고정 탭이 있으면 위 루프가 **고정 구역 앞에서** 이미 그렸다(정본의 차례).
+        if pinned_from == tabs.len() {
+            row = row.with_child(self.plus_button(tabs.len(), spot));
+        }
         // 띠 전체 — 캔버스보다 가라앉은 표면 위에 탭이 떠 있다(Warp 의 탭 띠).
         Container::new(row.finish())
             .with_background_color(theme::SURFACE)
             .with_uniform_padding(4.)
             .with_corner_radius(theme::TAB_RADIUS)
+            .finish()
+    }
+
+    /// 탭 라벨의 **글자색** — 정본 `TabBar.render_line` 의 갈래 순서 그대로다.
+    ///
+    /// # 왜 뷰가 아니라 함수인가
+    ///
+    /// 헤드리스 프레임에는 글꼴이 없어 글자 색이 안 남는다(`PaintedText` 는 글과 자리만
+    /// 쥔다) — 그리는 자리에 `if` 로 두면 **아무도 못 재는 판정**이 된다. 빼 두면
+    /// `frame_segments` 처럼 오라클이 직접 부른다.
+    ///
+    /// # 정본과의 대조 (`clientwidgets.py::TabBar.render_line`)
+    ///
+    /// | 정본 갈래 | 정본 스타일 | 여기 |
+    /// |---|---|---|
+    /// | `active` | 파랑 배경(원격은 분홍 배경) | 배경 [`theme::ACTIVE`](crate::theme::ACTIVE) — 글자는 안 바꾼다 |
+    /// | `claude_done` | `done_st` = 주황 글자 + bold | [`CLAUDE_DONE_AMBER`] |
+    /// | `remote` | 분홍 글자 | [`REMOTE_PINK`] |
+    /// | 그 밖 | 기본 전경 | `palette::FG` |
+    ///
+    /// ⛔ **`claude_done` 이 `remote` 보다 앞이다** — 정본이 그 순서다. 뒤집으면 원격
+    /// 탭에서 Claude 가 끝난 것이 조용해진다.
+    ///
+    /// ★ **활성 탭은 안 물들인다.** 정본도 `active` 갈래가 `claude_done` 보다 **앞**이라
+    /// 활성 탭은 배경이 말한다 — 그리고 활성 탭은 지금 보고 있는 탭이라 "바뀌었다"를
+    /// 색으로 알릴 까닭이 애초에 없다.
+    ///
+    /// ⛔ **`bell`·`activity` 는 여기서 색을 안 바꾼다 — 정본이 안 바꾼다**(pytmux-376).
+    /// 그 둘을 색으로 가르는 것은 정본에서 **하단 상태줄의 창 목록**이지 탭바가 아니고,
+    /// 탭바에서 두 클라가 지금 말하는 것은 글리프(`!`·`#`)뿐이라 이미 같다. 여기에만
+    /// 색을 더하면 고치는 것이 아니라 **새 갈림을 만드는** 것이다(pytmux-185 ④ — 갈림은
+    /// 선언해야 하고, 이 부류는 허용된 셋 어디에도 안 든다). 탭바에서도 벨/활동을 색으로
+    /// 말하게 할지는 **두 클라를 함께** 바꾸는 결정이라 사람 몫이다.
+    ///
+    /// ★ **정본의 bold 도 이제 함께 온다**(2026-08-24). 종전 이 자리에는 *"크롬 글자는
+    /// 굵기 갈래가 아예 없다"* 고 적혀 있었는데, [`ui_text_weighted`](Self::ui_text_weighted)
+    /// 가 생기면서 그 전제가 사라졌다 — 굵기는 **부르는 자리**가 같은 조건으로 정한다
+    /// (`!active && claude_done`). 이 함수가 색만 쥐는 것은 그대로다: 색은 오라클이 직접
+    /// 부를 수 있는 순수 판정이고, 굵기는 그리는 자리의 인자다.
+    fn tab_label_color(tab: &proto::tabs::Tab) -> ColorU {
+        if tab.active {
+            // 원격은 분홍 — 파이썬 클라·TUI 와 같은 관습이다(`clientutil::REMOTE_PINK`).
+            if tab.remote { REMOTE_PINK } else { palette::FG }
+        } else if tab.claude_done {
+            CLAUDE_DONE_AMBER
+        } else if tab.remote {
+            REMOTE_PINK
+        } else {
+            palette::FG
+        }
+    }
+
+
+    /// 고정(핀) 구역의 왼쪽 구분자 `‖`(정본 `TabBar.PIN_SEP` · pytmux-62).
+    ///
+    /// 정본은 이 글자를 `primary` 색 굵게로 그린다. 우리도 같은 뜻을 쓰되 값은 이 테마의
+    /// 강조색이다 — 구분자는 **경계**를 말하는 것이라 글자보다 흐리면 경계가 안 보이고,
+    /// 탭 이름보다 튀면 이름을 읽는 데 방해가 된다.
+    fn pin_separator(&self) -> Box<dyn Element> {
+        Container::new(self.ui_text_weighted("‖", 13., theme::INVERT_BG, true))
+            .with_horizontal_padding(6.)
             .finish()
     }
 
@@ -4444,8 +4920,6 @@ impl SessionView {
 
     fn badge_is_on(&self, badge: base::Badge) -> bool {
         match badge {
-            // 스크롤 모드에 들어와 있으면 켜짐 — 그 배지가 그것을 드나드는 스위치다.
-            base::Badge::TouchScroll => self.mode.mode() == InputMode::Scroll,
             base::Badge::Notices
             | base::Badge::Host
             | base::Badge::Clock
@@ -4751,7 +5225,7 @@ impl SessionView {
         //   배지를 두는 자리이고, 감시류([벨감시]·[활동감시])가 2026-07-30 에 같은
         //   이유로 먼저 내려온 곳이다. 반전 칩이라 종전(노란 글자)보다 눈에 띈다.
         if let Some(badge) = self.mode.mode().badge() {
-            left = left.with_child(self.chip_on(badge));
+            left = left.with_child(self.mode_chip(self.mode.mode(), badge));
         }
         for badge in &badges {
             // ★ **알림은 오른쪽 무리의 머리로 간다**(pytmux-367 · 정본 `_render_main`
@@ -5340,7 +5814,10 @@ impl SessionView {
                     //   글자 그림이 온다 — 한도 막대(`█▏▎…░`)가 그렇고, 그 글자들은
                     //   폴백 글꼴에서 와 진폭이 다르다. 통짜로 넘기면 막대 길이가
                     //   행마다 어긋나 보이고, 그건 **값을 잘못 읽게 만드는** 어긋남이다.
-                    column = column.with_child(self.mono_row(&line, 13., palette::FG));
+                    // 채움 줄과 **같은 상자**다(pytmux-373 ⑴) — 여기도 `pad_rows` 로
+                    // 줄 수를 맞추므로, 상자를 빼면 그 맞춤이 픽셀에서 깨진다.
+                    column = column
+                        .with_child(self.panel_row_box(self.mono_row(&line, 13., palette::FG)));
                 }
                 column = self.pad_rows(column, drawn, budget);
             }
@@ -5368,10 +5845,32 @@ impl SessionView {
                             .with_width(220.)
                             .finish(),
                         );
+                    // ★ **비율이 오면 막대로 그린다**(pytmux-371 ③). 정본은 같은 뜻을
+                    //   `█` 글자로 그리는데(격자라 그 길뿐이다) 여기는 면이다 — 사용자
+                    //   지시대로 «GUI 기반 인터페이스»이고, 서버는 비율만 싣는다.
+                    //
+                    //   ⚠ **칸보다 먼저** 그린다: 이름 상자가 고정 폭이라 막대의 x 가
+                    //   줄마다 같아지고, 그래야 여러 줄이 **막대 차트로** 읽힌다(칸 뒤에
+                    //   두면 칸 길이에 따라 막대가 들쭉날쭉해져 길이 비교가 안 된다).
+                    //   막대가 없는 줄(계정·신선도)은 그 자리가 비어 칸이 앞으로 온다 —
+                    //   그 줄은 비교 대상이 아니라 설명이라 그래도 된다.
+                    if let Some(permille) = item.bar {
+                        line = line.with_child(self.ratio_bar(permille));
+                    }
                     // 칸은 플러그인이 **적은 말**이라 우리 로케일로 다시 읽는다
                     // (이름은 자료라 그대로 — `PluginRow::say_cols`).
                     for col in item.say_cols() {
                         line = line.with_child(self.text(col, 12., palette::DIM));
+                    }
+                    // ★ **카운트다운**(pytmux-371 ④) — 정본 `[한도]` 탭이 다음 리셋까지를
+                    //   큰 글자로 센다. 서버는 **언제인지**만 싣고(`until`) 남은 시간은
+                    //   여기서 굴린다 — 글자를 받아 그리면 초마다 프레임이 와야 한다.
+                    //
+                    //   ⚠ 지난 시각이면 아무것도 안 그린다(`countdown` 이 `None`). `0:00:00`
+                    //   이 굳어 있으면 그것이 「지금 리셋된다」로 읽히는데, 실은 실측이
+                    //   낡았다는 뜻이고 그 사실은 판의 신선도 줄이 따로 말한다.
+                    if let Some(left) = item.countdown(Self::now_secs()) {
+                        line = line.with_child(self.text(left, 15., palette::FG));
                     }
                     let boxed = Container::new(line.finish()).with_uniform_padding(1.);
                     column = column.with_child(self.clickable_panel(
@@ -5528,7 +6027,11 @@ impl SessionView {
     /// 넘치면 조용히 잘려 no-silent-caps 를 어긴다).
     fn render_search_results(&self, column: Flex) -> Flex {
         let Some(sr) = self.state.search_results() else {
-            return column;
+            // ★ **판이 침묵하지 않는다**(pytmux-405). 회신이 아직 없으면 종전에는 머리줄만
+            //   있는 **빈 상자**가 떴다 — 사용자에게 그것은 「고장」과 구별되지 않는다.
+            //   결과가 0건인 경우(`items.is_empty()`)는 아래에서 이미 말하고 있었고,
+            //   빠져 있던 것은 **아직 안 온 경우**다.
+            return column.with_child(self.text(t("찾는 중…"), 13., palette::DIM));
         };
         let mut column = column;
         let notes = sr.notes();
@@ -5648,7 +6151,6 @@ impl SessionView {
         };
         self.pending.push(Outgoing::Command(cmd));
         self.mode.enter_scroll();
-        self.state.set_scroll_mode(self.mode.mode() == InputMode::Scroll);
     }
 
     /// 팔레트 필터 한 벌 — **이름 또는 설명**으로 거른다(정본과 같은 규칙).
@@ -6048,6 +6550,8 @@ impl SessionView {
             Ok(fresh) => {
                 self.link = fresh;
                 self.ended = None;
+                // 사실은 연결에 매달려 있다 — 새 연결에는 다시 알려야 한다(pytmux-392).
+                self.told_ime_render = false;
                 self.state
                     .note_notice(tf("다시 붙었다: {socket}", &[("socket", &socket)]));
             }
@@ -6089,15 +6593,28 @@ impl SessionView {
     /// ⛔ 안 말하면 **보이는 줄과 잡히는 띠가 어긋난다**: 배율을 키우면 줄만 두꺼워지고
     /// 아래쪽 절반은 안 끌리며, 배율을 줄이면 탭바 위쪽이 끌린다(탭이 안 눌린다).
     ///
-    /// `refresh_title` 과 같은 모양이다 — **값이 실제로 바뀐 때만** 창을 두드린다.
+    /// ⛔ **「창은 한 번 말하면 안 잊는다」를 가정하지 않는다**(pytmux-365 후보 ①).
+    ///
+    /// 종전에는 `refresh_title` 과 같은 모양이었다 — 우리가 마지막으로 말한 값을 기억해
+    /// **그 값이 바뀔 때만** 창을 두드렸다. 그 손은 창이 값을 잊는 경로가 **하나라도**
+    /// 있으면 그 뒤로 영영 다시 안 말한다는 뜻이고, 증상은 「머리줄을 끌어도 창이 안
+    /// 움직인다」다(전체 화면 왕복 뒤 · 창 자원 재생성 뒤).
+    ///
+    /// 이제 **창에게 물어본다**. 우리 기억이 아니라 창이 실제로 쓰는 값과 견주므로,
+    /// 잊는 경로가 새로 생겨도 다음 프레임에 저절로 되돌아온다 — 가정이 아니라 관측이다.
+    /// 비용은 프레임마다 getter 한 번이다.
     fn refresh_titlebar_band(&mut self, ctx: &mut ViewContext<Self>) {
         let band = titlebar::band_height(self.config.font_scale);
-        if self.titlebar_band == Some(band) {
+        let Some(window) = ctx.windows().platform_window(ctx.window_id()) else {
+            return; // 창이 없다 — 다음 프레임에 다시 본다(기억을 굳히지 않는다)
+        };
+        // 정수 픽셀로 견준다 — 왕복이 부동소수 끝자리를 흔들어도 매 프레임 두드리지
+        // 않게(그러면 이 함수가 조용한 프레임을 시끄러운 프레임으로 만든다).
+        if (window.titlebar_height() as f32 - band).abs() < 0.5 {
+            self.titlebar_band = Some(band);
             return;
         }
-        if let Some(window) = ctx.windows().platform_window(ctx.window_id()) {
-            window.set_titlebar_height(band as f64);
-        }
+        window.set_titlebar_height(band as f64);
         self.titlebar_band = Some(band);
     }
 
@@ -6143,12 +6660,34 @@ impl SessionView {
 
     /// 탭으로 나뉜 정보 팝업(패리티 `InfoTabsScreen`). 내용은 `proto` 가 만든다 —
     /// TUI 와 **같은 줄**이라야 같은 팝업이다.
+    ///
+    /// # 판의 짜임 — 정본과 같은 넷 (pytmux-373 ⑵)
+    ///
+    /// **탭줄 + 오른쪽 위 `[x]`** · **고를 수 있는 동작 줄**(`▸ [c] …`) · 내용 줄 ·
+    /// **바닥 「닫기」 막대**. 종전에는 가운데 둘이 통째로 없었다 — 닫는 자리도, 동작을
+    /// 고르는 자리도 없었고, `[c]`/`[o]` 는 `proto` 가 얹어 준 **흐린 글자 한 줄**이라
+    /// 키를 직접 치는 수밖에 없었다. 그래서 꼬리줄의 `↑↓ 항목` 이 거짓이었고, 남는
+    /// 자리는 아래가 통째로 비어 보였다(제보의 표 넷째·다섯째 줄).
+    ///
+    /// # 굴리기는 커서의 **부수 효과**다
+    ///
+    /// 정본 본문은 `ListView` 라 `↑↓` 가 항목 커서를 옮기고 화면은 따라 굴린다. 여기서도
+    /// 커서(`screens.info_row()`)가 예산 밖으로 나가면 그만큼 시작 줄을 민다 — 플러그인
+    /// 목록 판이 쓰는 그 처방과 같다. 범위 맞추기는 `settle_info_tabs` 한 곳이 한다.
     fn render_info_tabs(&self, column: Flex) -> Flex {
         let tabs = proto::info::tabs(&self.state, self.link.socket(), self.pinger.now());
         if tabs.is_empty() {
             return column;
         }
         let picked = self.screens.info_tab().min(tabs.len() - 1);
+        // 이 탭에서 **할 수 있는 것** — 목록 맨 위에 누를 수 있는 줄로 선다(정본과 같은 차례).
+        let actions = proto::info::tab_actions(&self.state, picked);
+        let lines = &tabs[picked].1;
+        let rows = actions.len() + lines.len();
+        let close_on = self.screens.info_close_focused();
+        // 커서는 여기서 **자르기만** 한다(안 자르면 없는 줄을 가리킨다) — 자리를 정하는
+        // 것은 `settle_info_tabs` 다. 렌더는 `&self` 라 상태를 못 고친다.
+        let cursor = self.screens.info_row().min(rows.saturating_sub(1));
         // ★ **진짜 탭**이다(pytmux-9 ⑶). 종전에는 배경 상자를 씌운 글자였고, 제보는
         //   *"TUI 출력을 그대로 가져오고 있는데 진짜 탭으로 그려야 한다"* 였다.
         //   문법은 팔레트 분류탭·크롬 탭바와 **같은 것**을 쓴다(알약 · hover · 클릭) —
@@ -6179,23 +6718,233 @@ impl SessionView {
                 boxed.finish(),
             ));
         }
+        // ★ **클릭 표적 색인은 한 프레임 안에서 안 겹쳐야 한다**(hover 상태 풀의 열쇠다).
+        //   탭 `n` 개 → `[x]` 가 `n` → 본문 줄이 `n+1+row` → 바닥 막대가 마지막.
+        let close_i = tabs.len();
+        let head = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(warpui::elements::MainAxisAlignment::SpaceBetween)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(bar.finish())
+            .with_child(self.clickable_panel(
+                close_i,
+                base::PanelTarget::InfoClose,
+                self.info_close_chip(close_on || self.panel_hovered(close_i)),
+            ))
+            .finish();
         let mut column =
-            column.with_child(Container::new(bar.finish()).with_padding_bottom(4.).finish());
-        // ★ **여기만 예산이 없었다**(§10-21ⓐ2⑴) — `skip` 은 있는데 `take` 가 없어
-        //   탭마다 줄 수가 다르면 판이 그때그때 커졌다 작아졌고, 긴 탭에서는 창을
-        //   넘길 수도 있었다. 다른 판과 같은 규칙으로 자르고 남으면 채운다.
-        let budget = self.panel_budget().saturating_sub(1);
+            column.with_child(Container::new(head).with_padding_bottom(4.).finish());
+        // 판이 쓰는 줄은 **탭줄 1 + 본문 예산 + 바닥 막대 1** 이다. 셋을 안 빼면 그만큼
+        // 판이 아래로 넘친다(다른 판이 구역 선을 예산에 세는 것과 같은 규율).
+        let budget = self.panel_budget().saturating_sub(2);
+        // 커서가 예산 밖이면 그만큼 민다 — 이것이 「굴리기」의 전부다.
+        let start = (cursor + 1).saturating_sub(budget);
+        let body_i = close_i + 1;
         let mut drawn = 0usize;
-        for line in tabs[picked].1.iter().skip(self.screens.scroll()).take(budget) {
+        for row in start..rows {
+            if drawn >= budget {
+                break;
+            }
             drawn += 1;
-            // ★ **격자에 못박아** 그린다(pytmux-9 ⑵). 이 줄들은 글자 그림이다 —
-            //   RTT 그래프의 세로 막대(`▁▂▃…`)·축(`┤┄─`)이 전부 비 ASCII 라 폴백
-            //   글꼴에서 오고, 그 글꼴의 진폭은 고정폭 글꼴과 다르다. 한 줄을 통짜로
-            //   셰이퍼에 넘기면 칸이 조금씩 밀려 **그래프가 축과 어긋나 보인다**.
-            //   캔버스 줄이 쓰는 규칙(`grid_segments` + 칸너비 못박기)을 그대로 쓴다.
-            column = column.with_child(self.mono_row(line, 13., palette::FG));
+            let on = row == cursor && !close_on;
+            let child: Box<dyn Element> = match actions.get(row) {
+                // 동작 줄 — 정본은 `▸ ` 를 앞에 붙여 목록 맨 위에 **버튼처럼** 둔다.
+                // ⚠ 색은 **이 이슈의 몫이 아니다**(pytmux-372 가 팝업 전반의 대비를 든다) —
+                //    여기서는 이미 있는 토큰만 쓴다: 바탕보다 가라앉은 판(=단추)과
+                //    다른 판이 이미 쓰는 고른 줄 색.
+                Some(act) => Container::new(Self::full_row(
+                    self.panel_row_box(self.mono_row(&format!("▸ {}", act.label), 13., palette::FG)),
+                ))
+                .with_background_color(if on { palette::SELECTED_BG } else { theme::HOVER })
+                .finish(),
+                None => {
+                    // ★ **격자에 못박아** 그린다(pytmux-9 ⑵). 이 줄들은 글자 그림이다 —
+                    //   RTT 그래프의 세로 막대(`▁▂▃…`)·축(`┤┄─`)이 전부 비 ASCII 라 폴백
+                    //   글꼴에서 오고, 그 글꼴의 진폭은 고정폭 글꼴과 다르다. 한 줄을 통짜로
+                    //   셰이퍼에 넘기면 칸이 조금씩 밀려 **그래프가 축과 어긋나 보인다**.
+                    //   캔버스 줄이 쓰는 규칙(`grid_segments` + 칸너비 못박기)을 그대로 쓴다.
+                    //
+                    // ⛔ **판의 줄 상자를 지나야 한다**(pytmux-373 ⑴). 맨 `mono_row` 로 두면
+                    //    이 줄이 채움 줄(`pad_rows` — 같은 상자를 쓴다)보다 **2px 낮아**,
+                    //    줄 수는 예산으로 같은데 픽셀 합이 `(예산 - 그린 줄) × 2` 만큼 달라진다.
+                    //    탭마다 줄 수가 다르므로 그것이 곧 **탭을 바꿀 때 판이 들썩이는** 것이다.
+                    let boxed = self.panel_row_box(self.mono_row(
+                        &lines[row - actions.len()],
+                        13.,
+                        palette::FG,
+                    ));
+                    if on {
+                        Container::new(Self::full_row(boxed))
+                            .with_background_color(palette::SELECTED_BG)
+                            .finish()
+                    } else {
+                        boxed
+                    }
+                }
+            };
+            column = column.with_child(self.clickable_panel(
+                body_i + row,
+                base::PanelTarget::Row(row),
+                child,
+            ));
         }
-        self.pad_rows(column, drawn, budget)
+        let column = self.pad_rows(column, drawn, budget);
+        // 바닥 「닫기」 막대 — 정본 `#itclosebtn` 과 같은 자리다. 위 `[x]` 와 **별개로**
+        // 두는 이유도 정본과 같다: 좁은 화면·긴 목록에서 손이 닿는 곳에 하나가 더 있다.
+        column.with_child(self.clickable_panel(
+            body_i + rows,
+            base::PanelTarget::InfoClose,
+            self.info_close_bar(close_on || self.panel_hovered(body_i + rows)),
+        ))
+    }
+
+    /// 판 **가로 가득**을 차지하는 한 줄 — 고른 줄·단추의 배경이 글자 폭에서 끊기지
+    /// 않게 한다(정본 `#itbody ListItem Label { width: 1fr }`).
+    ///
+    /// ⚠ 배경만 넓히는 것이지 **높이는 안 건드린다** — 그 값은 `panel_row_box` 한 곳이
+    /// 정한다(pytmux-373 ⑴).
+    fn full_row(child: Box<dyn Element>) -> Box<dyn Element> {
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_child(child)
+            .finish()
+    }
+
+    /// 판 오른쪽 위의 닫기 `[x]`(정본 `#itclose`).
+    ///
+    /// `hot` 은 **`←→` 포커스가 왔거나 마우스가 올라왔을 때**다 — 정본은 그 둘을 다른
+    /// 색으로 가르지만(`-focus` = `$warning`), 우리는 "지금 이걸 누르면 닫힌다"라는 한
+    /// 가지 사실만 말하면 되므로 한 색이다.
+    fn info_close_chip(&self, hot: bool) -> Box<dyn Element> {
+        Container::new(self.ui_text("[x]", 12., if hot { palette::FG } else { palette::RED }))
+            .with_horizontal_padding(6.)
+            .with_vertical_padding(2.)
+            .with_corner_radius(theme::TAB_RADIUS)
+            .with_background_color(if hot { theme::CLOSE_HOVER } else { theme::HOVER })
+            .finish()
+    }
+
+    /// 판 바닥의 「닫기」 막대(정본 `#itclosebtn`) — 가로 가득·가운데.
+    ///
+    /// 한 줄 높이는 다른 줄과 **같은 상자**가 정한다(`panel_row_box`) — 여기만 따로
+    /// 지으면 판 높이가 또 줄 수와 갈린다(pytmux-373 ⑴).
+    fn info_close_bar(&self, hot: bool) -> Box<dyn Element> {
+        Container::new(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_main_axis_alignment(warpui::elements::MainAxisAlignment::Center)
+                .with_child(self.panel_row_box(self.ui_text(t("닫기"), 13., palette::FG)))
+                .finish(),
+        )
+        .with_background_color(if hot { theme::CLOSE_HOVER } else { theme::SURFACE })
+        .finish()
+    }
+
+    /// 정보 팝업의 **자리를 맞춘다** — `←→` 포커스 접기와 `↑↓` 커서 자르기 둘 다.
+    ///
+    /// # 왜 뷰가 부르나
+    ///
+    /// 탭이 몇 개인지(REC 탭은 플러그인이 있을 때만 선다)도, 그 탭에 줄이 몇인지도
+    /// **뷰만 안다**. core 는 한 칸씩 올리고 내리기만 하고 범위는 여기서 받는다 —
+    /// 플러그인 판이 `set_plugin_grid` 로, 목록 판이 `clamp_selection` 으로 하는 그 규약이다.
+    ///
+    /// ⛔ 렌더에서 못 한다(`&self`). 그래서 **키를 받은 자리와 클릭을 받은 자리** 둘에서
+    /// 부른다 — 그 둘이 이 판의 상태를 바꾸는 전부다.
+    fn settle_info_tabs(&mut self) {
+        if self.screens.top() != Some(Screen::InfoTabs) {
+            return;
+        }
+        let tabs = proto::info::tabs(&self.state, self.link.socket(), self.pinger.now());
+        self.screens.wrap_info_focus(tabs.len());
+        let picked = self.screens.info_tab().min(tabs.len().saturating_sub(1));
+        let actions = proto::info::tab_actions(&self.state, picked).len();
+        let rows = actions + tabs.get(picked).map_or(0, |(_, l)| l.len());
+        self.screens.place_info_cursor(actions, rows);
+    }
+
+    /// 플러그인 **글 판**의 스크롤을 내용 길이 안으로 되돌린다(pytmux-184 ⑵).
+    ///
+    /// # 왜 뷰가 부르나
+    ///
+    /// 위 [`settle_info_tabs`](Self::settle_info_tabs) 와 같은 규약이다 — 몇 줄인지 아는
+    /// 것은 그리는 쪽이고, `Screens::press` 의 `Key::Down`/`PageDown` 은 core 라 이 스펙의
+    /// 줄 수를 모른다(그래서 상한 없이 더하기만 한다).
+    ///
+    /// ⛔ **그리는 자리가 이미 자르는데 왜 또 접나.** [`render_plugin_view`]
+    /// (Self::render_plugin_view) 의 `min(max_scroll)` 은 **보이는 것**만 자른다 —
+    /// 그래서 판이 통째로 비는 증상(제보의 3번째 스크린샷)은 멎었다. 그러나 core 의
+    /// `scroll` 은 그대로 자라므로, 끝에서 스무 번 더 누른 뒤의 `↑` 는 **스무 번
+    /// 헛돈다**: 그림은 안 움직이는데 키는 먹은 것이라, 사용자에게는 "이 판은 위로 안
+    /// 간다"로 보인다(`settle_settings_cursor` 가 적어 둔 것과 같은 증상이다).
+    ///
+    /// ⚠ 목록형(`is_list`)은 자리를 `selected` 가 들고 `settle_settings_cursor` 계열이
+    /// 접는다 — 여기서는 글 판만 본다.
+    fn settle_plugin_scroll(&mut self) {
+        if self.screens.top() != Some(Screen::PluginView) {
+            return;
+        }
+        let budget = self.panel_budget();
+        let Some(lines) = self.state.plugin_screen().and_then(|spec| {
+            (spec.kind == "text")
+                .then(|| Self::join_sections(&spec.say_sections()).lines().count())
+        }) else {
+            return;
+        };
+        self.screens.clamp_scroll(lines.saturating_sub(budget));
+    }
+
+    /// 설정·플러그인 판의 커서를 **줄 수 안으로** 되돌린다(pytmux-374 ⑶).
+    ///
+    /// # 왜 뷰가 부르나
+    ///
+    /// 위 [`settle_info_tabs`](Self::settle_info_tabs) 와 같은 규약이다 — 끝이 몇
+    /// 번째인지 아는 것은 그리는 쪽이다. 설정 줄 수는 core 도 알지만(`settings_len`)
+    /// **플러그인 관리자의 목록은 서버가 나르고 core 는 안 든다**(`state.plugins()`), 그래서
+    /// 두 판이 한 `press_settings` 를 쓰는 한 자르는 자리는 여기 하나라야 한다.
+    ///
+    /// ⛔ **`End` 만의 일이 아니다** — `Down`·`PageDown` 도 위쪽 상한을 안 걸고 지나므로
+    /// 안 접으면 아래에서 넘긴 만큼 `Up` 이 **헛돈다**(그림은 그대로인데 키가 안 먹는
+    /// 것으로 보인다). 종전에는 그 넷이 전부 판을 닫아 이 자리가 드러날 일이 없었다.
+    fn settle_settings_cursor(&mut self) {
+        let rows = match self.screens.top() {
+            Some(Screen::Settings) => self.screens.plugins().settings_len(),
+            Some(Screen::Plugins) => self.state.plugins().len(),
+            // 커서 판은 줄 수가 **정적**이다(설정 다섯 · pytmux-375) — 그래도 접는 자리는
+            // 여기 하나라야 한다(세 판이 한 `press_settings` 를 쓴다 · 위 머리말).
+            Some(Screen::Cursor) => base::config::CURSOR_SETTINGS.len(),
+            _ => return,
+        };
+        self.screens.clamp_selection(rows);
+    }
+
+    /// 정보 팝업에서 **고른 줄을 실행한다**(`Enter`·클릭 · 정본 `_run_action` 동형).
+    ///
+    /// 동작 줄이면 그 동작을 돌리고 **판은 그대로 둔다**(결과를 그 자리에서 봐야 한다).
+    /// 그냥 내용 줄이면 정본과 같이 닫는다.
+    fn run_info_row(&mut self) {
+        let tabs = proto::info::tabs(&self.state, self.link.socket(), self.pinger.now());
+        let picked = self.screens.info_tab().min(tabs.len().saturating_sub(1));
+        let actions = proto::info::tab_actions(&self.state, picked);
+        match actions.get(self.screens.info_row()) {
+            Some(act) => self.run_info_action(act.key),
+            None => {
+                self.screens.close_top();
+            }
+        }
+    }
+
+    /// 동작 하나를 키로 돌린다 — **핫키와 항목 클릭이 같은 자리를 지난다**.
+    ///
+    /// ⛔ 두 길이 각자 적으면 하나만 고쳐진다(이 판에서 실제로 그랬다: `[c]`/`[o]` 는
+    /// 키에만 있고 목록에는 없었다).
+    fn run_info_action(&mut self, key: char) {
+        match key {
+            'c' => self.pending.push(Outgoing::Command(Command::SetCapture)),
+            'o' => {
+                proto::info::open_capture_dir(&self.state.flags().capture_path);
+            }
+            _ => {}
+        }
     }
 
     /// 여러 줄 작성창(패리티 `e_ins` · `ComposePromptScreen`). TUI 와 같은 그림이다.
@@ -6275,16 +7024,17 @@ impl SessionView {
             claude_command: self.config.claude_command.clone(),
             strip_box_drawing: self.config.strip_box_drawing,
             copy_unwrap: self.config.copy_unwrap,
-            touch_scroll: self.config.touch_scroll,
             alt_scroll: self.config.alt_scroll,
             set_titles: self.config.set_titles,
             set_titles_string: self.config.set_titles_string.clone(),
             inactive_dim_ratio: self.config.inactive_dim_ratio,
             font_scale: self.config.font_scale,
+            font_family: self.config.font_family.clone(),
             cursor_style: self.config.cursor_style.clone(),
             cursor_color: self.config.cursor_color.clone(),
             cursor_blink: self.config.cursor_blink,
             cursor_blink_ms: self.config.cursor_blink_ms,
+            cursor_thickness: self.config.cursor_thickness,
             mode_keys: self.config.mode_keys.clone(),
             status_left: self.config.status_left.clone(),
             status_right: self.config.status_right.clone(),
@@ -6336,7 +7086,6 @@ impl SessionView {
         // 이번 판에 바로 먹는다 — 설정을 바꾸고 재시작해야 한다면 그 화면은 반쪽이다.
         self.state
             .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
-        self.state.set_touch_scroll(self.config.touch_scroll);
         if let Err(err) = written {
             self.state
                 .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())]));
@@ -6405,8 +7154,7 @@ impl SessionView {
                 self.mode.set_prefix(self.config.prefix);
                 self.state
                     .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
-                self.state.set_touch_scroll(self.config.touch_scroll);
-                self.state.note_notice(format!("set {option} {value}"));
+                        self.state.note_notice(format!("set {option} {value}"));
             }
             Err(err) => self
                 .state
@@ -6495,7 +7243,6 @@ impl SessionView {
         // 누른다.
         self.state
             .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
-        self.state.set_touch_scroll(self.config.touch_scroll);
         if let Err(err) = written {
             self.state
                 .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())]));
@@ -6612,7 +7359,9 @@ impl SessionView {
                 proto::session::Severity::Ok => palette::GREEN,
                 proto::session::Severity::Info => palette::FG,
             };
-            column = column.with_child(self.text(notice.line(), 13., color));
+            // 채움 줄과 **같은 상자**다(pytmux-373 ⑴) — 안 씌우면 알림이 하나 늘 때마다
+            // 판이 2px 씩 자란다.
+            column = column.with_child(self.panel_row_box(self.text(notice.line(), 13., color)));
         }
         // ⓥ — 끝에 가까워져 남은 줄이 적어도 판은 그대로다.
         self.pad_rows(column, drawn, budget.saturating_sub(1))
@@ -6920,15 +7669,12 @@ impl SessionView {
         let mut ids = PanelIds::default();
         let values = self.setting_values();
         let plugins = self.screens.plugins();
-        // 줄 목록은 **코어 뒤에 플러그인**이다(정본 `settings_order` 와 같은 차례).
-        let rows = plugins.settings_rows();
-        let selected = self.screens.selected().min(rows.len().saturating_sub(1));
+        // 보이는 창(고른 줄·첫 줄·줄 수·전체)은 **한 자리**에서 잰다 — 오른쪽 막대가
+        // 같은 값을 봐야 「막대가 가리키는 자리」와 「실제로 보이는 줄」이 안 갈린다.
+        let (selected, start, budget, total) = self.settings_window();
         let mut list = Flex::column().with_main_axis_size(MainAxisSize::Min).with_spacing(2.);
         let mut cat = String::new();
-        // 판 예산 안에서 고른 줄이 보이게 창을 민다(N5) — 34개 전열이면 판이 창을 넘는다.
-        let budget = self.panel_budget();
-        let start = (selected + 1).saturating_sub(budget);
-        for row in start..rows.len().min(start + budget) {
+        for row in start..total.min(start + budget) {
             let Some(setting) = plugins.setting_at(row) else {
                 continue;
             };
@@ -6989,17 +7735,231 @@ impl SessionView {
             }
             list = list.with_child(boxed.finish());
         }
-        column.with_child(
-            Flex::row()
+        let body = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_spacing(10.)
+            .with_child(self.settings_sidebar(base::config::settings_cat_of(selected), &mut ids))
+            .with_child(list.finish())
+            .finish();
+        // ★ 오른쪽 **표시용 스크롤바**(pytmux-374 ⑴ · 정본 `#sets` 의
+        //   `scrollbar-color: $accent` 자리). 그릴 것이 없으면 core 가 `None` 을 준다.
+        column.with_child(match self.settings_scroll() {
+            Some((thumb_start, thumb_len)) => {
+                PanelScrollBar::new(body, thumb_start, thumb_len).finish()
+            }
+            None => body,
+        })
+    }
+
+    /// 설정 판의 **보이는 창** — `(고른 줄, 창의 첫 줄, 창의 줄 수, 전체 줄 수)`.
+    ///
+    /// ⛔ **두 곳에서 재지 않는다** — 그리는 쪽과 스크롤바가 각자 셈하면 「막대는 끝을
+    /// 가리키는데 목록은 아직 중간」 같은 조용한 어긋남이 난다(그 막대는 자리를 말하려고
+    /// 그리는 것이라, 틀린 자리를 말하면 없느니만 못하다).
+    ///
+    /// 창을 미는 규칙은 「고른 줄이 창의 **마지막**에 오게」다(N5) — 아래로 내려갈 때
+    /// 한 줄씩 따라 붙고, 위로 올라가면 `start` 가 0 에서 멎는다.
+    fn settings_window(&self) -> (usize, usize, usize, usize) {
+        // 줄 목록은 **코어 뒤에 플러그인**이다(정본 `settings_order` 와 같은 차례).
+        let total = self.screens.plugins().settings_len();
+        let budget = self.panel_budget();
+        let selected = self.screens.selected().min(total.saturating_sub(1));
+        (selected, (selected + 1).saturating_sub(budget), budget, total)
+    }
+
+    /// 설정 판 오른쪽 막대의 `(썸 시작, 썸 길이)` — 트랙을 1.0 으로 본 값.
+    ///
+    /// **값의 주인은 core 다**(`base::scrollbar::list_fraction`) — 캔버스 패널의 막대와
+    /// 같은 산수를 쓰고, 여기서는 그 값을 픽셀로 옮기기만 한다.
+    fn settings_scroll(&self) -> Option<(f64, f64)> {
+        let (_, start, budget, total) = self.settings_window();
+        base::scrollbar::list_fraction(budget, total, start)
+    }
+
+    /// 시험용 관측점 — 창 없이 「지금 막대가 어디를 가리키나」를 묻는다.
+    #[cfg(test)]
+    pub(crate) fn settings_scroll_for_test(&self) -> Option<(f64, f64)> {
+        self.settings_scroll()
+    }
+
+    /// 판 안 줄 번호 → **설정 표(`SETTINGS`)의 줄 번호**. 그 줄이 지금 안 먹으면 `None`.
+    ///
+    /// # 왜 한 함수인가 (`pytmux/pytmux-375`)
+    ///
+    /// 커서 판은 설정 다섯만 모은 판이라 그 판의 `row` 는 0~4 이고, 값을 고르는 표
+    /// (`setting_pick_dir`·`setting_pick_at`)가 아는 것은 `SETTINGS` 의 색인이다. 그
+    /// 사이를 옮기는 자리가 둘이 되면 **키 경로와 마우스 경로가 다르게 낡는다** —
+    /// [`apply_setting_pick`](Self::apply_setting_pick) 이 적어 둔 그 사고를 여기서
+    /// 되풀이하지 않으려고 진입 둘이 이 함수 하나를 지난다.
+    ///
+    /// 설정·플러그인 판에서는 판 안 번호가 곧 표의 번호라 그대로 돌려준다.
+    fn settings_row(
+        screen: Option<Screen>,
+        row: usize,
+        config: &base::config::Config,
+    ) -> Option<usize> {
+        if screen != Some(Screen::Cursor) {
+            return Some(row);
+        }
+        // ⛔ `block` 의 두께 줄은 **적용할 자리가 없다**. 여기서 안 막으면 화면은 아무
+        //    반응이 없는데 설정 파일만 조용히 움직인다 — 판이 그 줄을 흐리게 그려 놓고
+        //    값은 바뀌는 것이 가장 나쁜 조합이다.
+        if !base::config::cursor_row_applies(row, &config.cursor_style) {
+            return None;
+        }
+        base::config::cursor_setting_row(row)
+    }
+
+    /// 커서 판(`cursor` · `pytmux/pytmux-375` ⓐ) — 설정 다섯 + **견본 한 칸**.
+    ///
+    /// # 왜 설정 화면을 그냥 쓰면 안 되나
+    ///
+    /// 값도 같은 다섯이고 손도 같다(`press_settings` 를 함께 탄다). 갈리는 것은
+    /// **보이는 것**이다: 설정 판은 캔버스를 덮어 커서를 가리므로 «바꾸면서 결과를
+    /// 못 본다»(제보 2026-08-23). 그리고 그 다섯에 닿는 길이 「표시」 분류를 찾아
+    /// 내려가는 것뿐이었다. 새로 지은 것은 **화면이지 값이 아니다.**
+    ///
+    /// # 왜 견본이 판 «안» 인가
+    ///
+    /// 「판을 커서 안 가리는 자리에 세운다」는 길도 있었는데, 커서는 캔버스 어디에나
+    /// 있을 수 있어 그 자리가 상수가 아니다 — 판이 커서를 피해 다니게 만들면
+    /// pytmux-373 이 신고한 「판 기하가 내용에 따라 움직인다」를 새로 만드는 셈이다.
+    /// 견본은 언제나 같은 자리, 같은 크기다.
+    ///
+    /// # 높이가 안 흔들린다
+    ///
+    /// 줄이 **언제나 다섯**이고(안 먹는 줄도 지우지 않고 흐리게 둔다) 견본 칸은
+    /// `ConstrainedBox` 로 못박혀 두께를 키워도 안 커진다. 그래서 이 판은 `pad_rows`
+    /// 없이도 늘 같은 높이다(pytmux-373 ⑴ 이 요구한 성질).
+    fn render_cursor(&self, column: Flex) -> Flex {
+        let mut ids = PanelIds::default();
+        let values = self.setting_values();
+        let rows = base::config::CURSOR_SETTINGS.len();
+        let selected = self.screens.selected().min(rows.saturating_sub(1));
+        let mut list = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_spacing(2.);
+        for row in 0..rows {
+            // 이름으로 찾는다 — 색인을 박아 두면 `SETTINGS` 에 줄 하나를 끼우는 것만으로
+            // 이 판이 말없이 다른 설정을 보인다(`CURSOR_SETTINGS` 머리말).
+            let Some(setting) =
+                base::config::cursor_setting_row(row).and_then(|at| base::config::SETTINGS.get(at))
+            else {
+                continue;
+            };
+            let applies = base::config::cursor_row_applies(row, &self.config.cursor_style);
+            let name_id = ids.next();
+            let name_color = if !applies {
+                palette::DIM
+            } else if self.panel_hovered(name_id) {
+                palette::CYAN
+            } else {
+                palette::FG
+            };
+            let mut line = Flex::row()
                 .with_main_axis_size(MainAxisSize::Min)
-                .with_cross_axis_alignment(CrossAxisAlignment::Start)
-                .with_spacing(10.)
-                .with_child(
-                    self.settings_sidebar(base::config::settings_cat_of(selected), &mut ids),
-                )
-                .with_child(list.finish())
-                .finish(),
-        )
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(8.)
+                .with_child(self.clickable_panel(
+                    name_id,
+                    base::PanelTarget::SettingRow(row),
+                    // 이름칸 폭을 못박아 값칸의 세로줄을 맞춘다(설정 판과 같은 손이되
+                    // 이 판은 사이드바가 없어 조금 좁다).
+                    ConstrainedBox::new(
+                        Flex::row()
+                            .with_main_axis_size(MainAxisSize::Min)
+                            .with_child(self.ui_text(
+                                base::config::setting_label(setting.key).to_owned(),
+                                13.,
+                                name_color,
+                            ))
+                            .finish(),
+                    )
+                    .with_width(150.)
+                    .finish(),
+                ));
+            line = if applies {
+                self.value_widget(line, &setting.display(&values), row, &mut ids)
+            } else {
+                // ⛔ 안 먹는 줄에 **누를 것**을 두지 않는다 — 눌러도 아무 일이 없는
+                //    화살표는 「고장 났다」로 읽힌다. 값 대신 **왜 없는지**를 적는다.
+                line.with_child(self.ui_text(
+                    t("채운 네모는 칸을 반전한다 — 두께를 줄 자리가 없다"),
+                    12.,
+                    palette::DIM,
+                ))
+            };
+            let mut boxed = Container::new(line.finish())
+                .with_horizontal_padding(6.)
+                .with_vertical_padding(1.)
+                .with_corner_radius(theme::TAB_RADIUS);
+            if row == selected {
+                boxed = boxed.with_background_color(theme::ACTIVE);
+            }
+            list = list.with_child(boxed.finish());
+        }
+        column
+            .with_child(self.cursor_sample())
+            .with_child(list.finish())
+    }
+
+    /// 커서 견본 한 칸 — **지금 설정 그대로** 그린다.
+    ///
+    /// # 어느 것도 흉내가 아니다
+    ///
+    /// 모양은 [`splitter::cursor_ink`](crate::splitter::cursor_ink) 가, 색은 진짜 커서와
+    /// 같은 `proto::status::color` 가, 깜빡임은 같은 `blink_on` 이 정한다. 「어느 변을
+    /// 긋나」를 여기서 다시 적으면 판이 보여 주는 그림과 실제 커서가 갈리고, 그러면 이
+    /// 판의 존재 이유(「바꾸는 즉시 **맞게** 보인다」)가 통째로 사라진다.
+    ///
+    /// 칸 크기도 **캔버스의 진짜 칸**이다 — 견본이 실제보다 크거나 작으면 두께를 고르는
+    /// 판단 자체가 어긋난다. 아직 못 쟀으면(첫 프레임) 보통 값으로 그리고 한 프레임 뒤에
+    /// 제자리로 온다(`mono_row` 와 같은 처방).
+    fn cursor_sample(&self) -> Box<dyn Element> {
+        use crate::splitter::CursorInk;
+        let (cw, ch) = self.cell_px.get().unwrap_or((9., 20.));
+        let color = proto::status::color(&self.config.cursor_color)
+            .map(convert)
+            .unwrap_or(theme::FOCUS);
+        let ink = crate::splitter::cursor_ink(Self::cursor_style(&self.config.cursor_style));
+        // 칸보다 굵은 선은 칸 밖으로 샌다 — 자르는 규칙도 진짜 커서와 같다.
+        let width = self.config.cursor_thickness.clamp(1., cw.min(ch));
+        let cell = Container::new(Empty::new().finish());
+        // 깜빡임의 「안 보임」 반주기에는 **아무것도 안 그린다** — 판에서만 늘 보이면
+        // 그 값을 켜 놓고 결과를 못 보는 자리가 다시 생긴다.
+        let cell = match ink {
+            _ if !self.blink_on => cell.with_background_color(palette::BG),
+            CursorInk::Fill => cell.with_background_color(color),
+            CursorInk::Edges {
+                top,
+                left,
+                bottom,
+                right,
+            } => cell.with_background_color(palette::BG).with_border(
+                Border::new(width)
+                    .with_sides(top, left, bottom, right)
+                    .with_border_color(color),
+            ),
+        };
+        let sample = ConstrainedBox::new(cell.finish())
+            .with_width(cw)
+            .with_height(ch)
+            .finish();
+        // 견본을 «글자 옆»에 둔다 — 커서는 늘 글 끝에 있고, 맨 칸 하나만 띄우면
+        // 두께가 실제 글자에 대해 얼마나 굵은지가 안 보인다.
+        let row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(10.)
+            .with_child(self.ui_text(t("미리보기"), 11., palette::DIM))
+            .with_child(self.text("$ pytmux", 13., palette::FG))
+            .with_child(sample)
+            .finish();
+        Container::new(row)
+            .with_padding_bottom(8.)
+            .with_border(Border::bottom(1.).with_border_color(theme::BORDER))
+            .finish()
     }
 
     /// 인자 폼(패리티 G8v). 내용(줄 글자)은 TUI 와 한 벌(core `row_text`)이고, 고른
@@ -7249,7 +8209,7 @@ impl SessionView {
             | Prompt::RunShell | Prompt::IfShell | Prompt::DisplayPopup => None,
             // 상태줄 넷과 커서 색은 **설정 파일**이 주인이라 서버에 시킬 일이 없다.
             Prompt::StatusLeft | Prompt::StatusRight | Prompt::StatusBg | Prompt::StatusFg
-            | Prompt::CursorColor => None,
+            | Prompt::CursorColor | Prompt::FontFamily => None,
             // 훅도 클라 안에서 끝난다(`base::hooks`).
             Prompt::SetHook => None,
             Prompt::SetPrefix => None,
@@ -7886,6 +8846,13 @@ impl SessionView {
             .or_else(|| (screen == Screen::Commands).then(|| self.palette_arg_hint()).flatten());
         let mut column = Flex::column()
             .with_main_axis_size(MainAxisSize::Min)
+            // ★ **줄이 판 폭을 채운다**(pytmux-372). 종전에는 줄마다 자연폭이라 고른 줄의
+            //   띠가 **글자 폭만큼만** 칠해졌다 — 정본은 줄 전체를 띠로 채우고, 그 차이가
+            //   제보에서 "시인성이 떨어진다"의 큰 몫이었다(색보다 면적이 먼저 읽힌다).
+            //   판 폭은 아래 `PanelBox` 가 정한 값이라 늘릴 대상이 분명하다.
+            //   ⚠ 정보 판의 줄은 이미 [`full_row`](Self::full_row) 로 채운다(pytmux-373) —
+            //     둘이 겹쳐도 뜻이 같아 그림은 하나다. 그 helper 는 **그 판만** 덮었다.
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_spacing(Self::PANEL_ROW_SPACING)
             .with_child(
                 Container::new(header.finish())
@@ -7904,6 +8871,7 @@ impl SessionView {
             Screen::Prompt | Screen::Confirm => self.render_prompt(column, screen),
             Screen::Commands => self.render_palette(column),
             Screen::Settings => self.render_settings(column),
+            Screen::Cursor => self.render_cursor(column),
             Screen::Plugins => self.render_plugins(column),
             Screen::PluginView => self.render_plugin_view(column),
             Screen::SearchResults => self.render_search_results(column),
@@ -7952,8 +8920,8 @@ impl SessionView {
         // 힌트 줄(판 바닥) — 위 구분선의 짝이다.
         let column = column.with_child(
             Container::new(match spec_hint {
-                Some(h) => self.text(h, 11., palette::DIM),
-                None => self.ui_text(hint, 11., palette::DIM),
+                Some(h) => self.hint_text(h, self.font, 11., palette::DIM),
+                None => self.hint_text(hint, self.ui_font, 11., palette::DIM),
             })
                 .with_padding_top(8.)
                 .with_border(Border::top(1.).with_border_color(theme::BORDER))
@@ -7994,25 +8962,66 @@ impl SessionView {
         //     같은 자리라야 한다(정본 `InfoScreen`).
         //   - 가운데: 고르러 여는 판.
         let anchor = screen.anchor();
-        // 작성창만 **전폭**이다 — 여러 줄을 쓰는 자리인데 바닥에 붙은 작은 상자면 한 줄
-        // 입력처럼 보이고 실제로 쓸 공간도 좁다. `Expanded` 가 가로 남는 공간을 판에 준다.
-        if screen == Screen::Compose {
-            let wide = Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_child(Expanded::new(1., panel).finish())
-                .finish();
-            return Align::new(wide).bottom_center().finish();
-        }
         // 폭은 위에서 이미 못박혔다(`panel_width` · `PanelBox`) — 여기서는 자리만 잡는다.
         // ⛔ 여기에 `ConstrainedBox::with_width` 를 다시 얹지 말 것: 폭을 말하는 자리가
         //    둘이 되고, 둘 중 **아무 일도 안 하는 쪽**이 판을 정하는 것처럼 읽힌다
         //    (그 오독이 pytmux-158 이었다).
+        if anchor == Anchor::AtPaneCursor {
+            return self.place_at_pane_cursor(panel);
+        }
         let aligned = Align::new(panel);
         match anchor {
             Anchor::Bottom => aligned.bottom_center().finish(),
             Anchor::Top => aligned.top_center().finish(),
             Anchor::Middle => aligned.finish(),
+            // 위에서 이미 돌아갔다 — 여기 오면 갈래를 빠뜨린 것이다.
+            Anchor::AtPaneCursor => unreachable!("AtPaneCursor 는 위에서 처리한다"),
         }
+    }
+
+    /// 판을 **활성 패널의 커서 줄**에 세운다(pytmux-370 · 정본 `ComposePromptScreen`).
+    ///
+    /// 정본이 하는 산수를 그대로 옮긴다(`on_mount`):
+    ///
+    /// - 가로 — 패널 **안쪽** x 에 맞추고 폭도 그 패널의 폭이다. 종전에는 창 전폭이라
+    ///   판이 패널 밖으로 삐져나왔다.
+    /// - 세로 — 입력 줄이 프롬프트 줄 **한 칸 아래**에 오게 바닥에서 띄운다. 여러 줄로
+    ///   늘면 그 줄을 고정한 채 **위로** 자란다(그래서 바닥 정렬 + 아래 여백이다).
+    ///
+    /// ⛔ **못 재면 짐작하지 않는다** — 첫 프레임이라 자리표가 없거나 서버가 준 커서가
+    ///    패널 밖이면 종전 자리(바닥 가운데)로 내려간다. 자리를 짐작해 그리면 그 그림이
+    ///    새 거짓말이 되고, 그 부류는 이 저장소가 이미 여러 번 물렸다.
+    fn place_at_pane_cursor(&self, panel: Box<dyn Element>) -> Box<dyn Element> {
+        let Some((left, bottom, width)) = self.pane_cursor_box() else {
+            return Align::new(panel).bottom_center().finish();
+        };
+        let sized = ConstrainedBox::new(panel).with_width(width).finish();
+        Align::new(
+            Container::new(sized)
+                .with_padding_left(left)
+                .with_padding_bottom(bottom)
+                .finish(),
+        )
+        .bottom_left()
+        .finish()
+    }
+
+    /// `(왼쪽 여백, 아래 여백, 판 폭)` px — 전부 **잰 값**에서 나온다. 못 재면 `None`.
+    fn pane_cursor_box(&self) -> Option<(f32, f32, f32)> {
+        let (cell_w, cell_h) = self.cell_px.get()?;
+        let cv = self.canvas_px.get()?;
+        let pane = self.state.active_pane()?;
+        let (cx, cy) = self.state.pane_cursor(pane)?;
+        // `pane_rect` 는 테두리를 뺀 **안쪽**이라 정본의 「패널 안쪽 x·폭」과 같은 값이다.
+        let (px, py, pw, ph) = self.state.pane_rect(pane)?;
+        if cx >= pw || cy >= ph {
+            return None; // 커서가 패널 밖 — 그런 프레임에 자리를 지어내지 않는다
+        }
+        let left = cv.left + px as f32 * cell_w;
+        // 입력 줄이 커서 줄 **바로 아래** 칸에 오게: 판의 아래쪽 끝이 그 줄의 끝이다.
+        let panel_bottom = cv.top + (py + cy + 2) as f32 * cell_h;
+        let bottom = (cv.win_h - panel_bottom).max(0.);
+        Some((left, bottom, (pw as f32 * cell_w).max(cell_w)))
     }
 
     /// 캔버스의 **경계 문자 칸**을 실제 선으로 옮길 목록(2026-07-31 사용자 지시).
@@ -8290,7 +9299,20 @@ impl SessionView {
         let mut ascii = String::new();
         let mut ascii_cells = 0usize;
         for ch in text.chars() {
-            let cells = proto::compose::char_cells(ch).max(1);
+            let cells = proto::compose::char_advance(ch);
+            // ★ **폭 0 글자는 앞 조각에 얹는다**(pytmux-389). 변이 선택자·ZWJ·결합
+            //   표시는 자기 칸이 없다 — 한 칸을 주면 그 줄이 한 칸씩 밀린다. 그리고
+            //   **떼지 않고 붙여야** 셰이퍼가 `⚠`+`U+FE0F` 를 한 조각으로 받는다
+            //   (갈라 놓으면 색 이모지가 흑백 글자로 그려진다).
+            if cells == 0 {
+                if !ascii.is_empty() {
+                    ascii.push(ch);
+                } else if let Some(last) = out.last_mut() {
+                    last.0.push(ch);
+                }
+                // 줄 맨 앞에 온 폭 0 글자는 얹힐 데가 없다 — 버린다(놓을 칸이 없다).
+                continue;
+            }
             // 인쇄 가능한 ASCII 만 이어 붙인다 — 제어문자는 폭이 뭔지 알 수 없다.
             if ch.is_ascii() && !ch.is_ascii_control() {
                 ascii.push(ch);
@@ -8344,12 +9366,26 @@ impl SessionView {
             let mut before_cells = 0usize;
             let mut chars = piece.chars().peekable();
             while let Some(ch) = chars.next() {
-                let w = proto::compose::char_cells(ch).max(1);
+                let w = proto::compose::char_advance(ch);
+                // 폭 0 은 앞 글자에 얹힌다(pytmux-389) — 혼자 떼면 그 글자와 갈라진다.
+                if w == 0 {
+                    before.push(ch);
+                    continue;
+                }
                 if col + before_cells + w > at {
                     if !before.is_empty() {
                         out.push((std::mem::take(&mut before), before_cells));
                     }
-                    out.push((ch.to_string(), w));
+                    // 뗄 글자에 얹힌 것(변이 선택자 등)은 **함께** 뗀다.
+                    let mut pick = ch.to_string();
+                    while let Some(&next) = chars.peek() {
+                        if proto::compose::char_advance(next) != 0 {
+                            break;
+                        }
+                        pick.push(next);
+                        chars.next();
+                    }
+                    out.push((pick, w));
                     let rest: String = chars.collect();
                     if !rest.is_empty() {
                         out.push((rest, cells - before_cells - w));
@@ -8472,6 +9508,86 @@ impl SessionView {
             style: Self::cursor_style(&self.config.cursor_style),
             // 모르는 색 이름이면 `None` = 테마 그대로다(`status-bg` 와 같은 규칙).
             color: proto::status::color(&self.config.cursor_color).map(convert),
+            thickness: self.config.cursor_thickness,
+        })
+    }
+
+    /// 레터박스 — 내 창이 **공유 격자보다 클 때** 남는 L자 띠(pytmux-381).
+    ///
+    /// 정본과 **같은 판정**이다(`clientio.py::_composite` 851~854): 내 뷰가 담는 칸이 공유
+    /// 격자보다 크면 라이브 영역의 오른쪽·아래 경계를 기억하고 그 밖을 무광으로 칠한다.
+    /// 단일 클라(정상 경로)에서는 두 값이 같아 **발동하지 않는다** — 그래서 평소 그림은
+    /// 종전과 한 픽셀도 다르지 않다.
+    ///
+    /// ⚠ 「각자 자기 화면 크기로 그린다」는 이것으로 안 채워진다(판 하나 = pty 하나). 없애는
+    /// 것은 **어색함**이다 — 사용자가 고른 갈래 ⓕ 의 범위가 그것이다.
+    fn letterbox(&self, canvas: &proto::canvas::Canvas) -> Option<crate::splitter::Matte> {
+        let (live_cols, live_rows) = canvas.size();
+        // 내가 서버에 알린 칸 수 = 내 창이 담는 격자(그 값을 보고 서버가 정책을 돌린다).
+        let (cols, rows) = self.size.reported();
+        let (cols, rows) = (usize::from(cols), usize::from(rows));
+        if cols <= live_cols && rows <= live_rows {
+            return None;
+        }
+        Some(crate::splitter::Matte {
+            live_cols: live_cols as u16,
+            live_rows: live_rows as u16,
+            cols: cols.max(live_cols) as u16,
+            rows: rows.max(live_rows) as u16,
+            color: theme::MATTE,
+        })
+    }
+
+    /// 캔버스에 얹을 한/영 배지 — **자리와 색만** 정한다(그림은 오버레이가 그린다).
+    ///
+    /// # 자리 규칙 (pytmux-392)
+    ///
+    /// 기준은 정본과 같다(`plugins/ime-indicator/cells.py`): **커서가 있는 줄**의 활성 패널
+    /// 오른쪽 끝. 새로 더한 것은 **글자를 가리면 비켜서기**이고, 그 판정은 UI 를 모르는
+    /// 자리에 있다([`base::ime_badge::badge_spot`]) — 픽셀 하네스 없이 격자만으로 재려는
+    /// 것이다.
+    ///
+    /// 판이 떠 있으면 캔버스 배지는 안 그린다 — 그때 글자를 받는 곳은 그 판이고, 배지는
+    /// 판 안 입력줄로 간다(pytmux-14 의 규칙 그대로).
+    fn ime_overlay(&self, canvas: &proto::canvas::Canvas) -> Option<crate::splitter::ImeBadge> {
+        if self.screens.top().is_some() {
+            return None;
+        }
+        let label = self.ime_badge?;
+        let pane = self.state.active_pane()?;
+        let (px, py, w, h) = self.state.pane_rect(pane)?;
+        // 줄: 커서가 보이면 그 줄, 아니면 패널의 마지막 줄(정본 `badge_row` 의 셋째 갈래).
+        let row = match self.state.pane_cursor(pane) {
+            Some((_, cy)) if cy < h => py + cy,
+            _ => py + h.saturating_sub(1),
+        };
+        // 배지가 차지하는 칸 수는 정본 문구(`[한]`·`[EN]`)와 **같게** 둔다 — 그림이 글자
+        // 자리를 그대로 쓰면 두 클라에서 「같은 크기의 무언가」가 같은 자리에 선다.
+        const CELLS: usize = 4;
+        let spot = base::ime_badge::badge_spot(
+            usize::from(row),
+            usize::from(px),
+            usize::from(px + w),
+            (usize::from(py), usize::from(py + h)),
+            CELLS,
+            0,
+            |x, y| canvas.cell(x, y).is_none_or(|c| c.ch == ' ' && c.style.bg.is_none()),
+        )?;
+        // 색은 정본이 정한 **의미 이름**을 이 클라의 표에서 푼다(pytmux-16 의 그 자리 —
+        // 표에 없는 이름이면 안 그린다. 검은 글자만 남는 것이 그때의 증상이었다).
+        let name = if label == "한" { "success" } else { "primary" };
+        let track = match proto::session::theme::resolve(name) {
+            proto::session::theme::Resolution::Color(c) => to_gui_color(&c),
+            _ => return None,
+        };
+        Some(crate::splitter::ImeBadge {
+            x: spot.col as u16,
+            y: spot.row as u16,
+            cells: CELLS as u16,
+            // 손잡이가 **왼쪽이면 한글**이다(토글 어휘 — 왼쪽이 «모국어» 쪽).
+            left: label == "한",
+            track,
+            knob: palette::BLACK,
         })
     }
 
@@ -8571,7 +9687,7 @@ impl SessionView {
                 let blank = (frame.contains(&at) && proto::canvas::box_bits(ch).is_some())
                     || blocks.contains(&at);
                 text2.push(if blank { ' ' } else { ch });
-                cx += proto::compose::char_cells(ch).max(1);
+                cx += proto::compose::char_advance(ch);
             }
             let (fg, bg) = colors(&style);
             let props = font_properties(&style);
@@ -8751,6 +9867,8 @@ impl View for SessionView {
                             Self::CELL_PROBE,
                             height as u16,
                         )
+                        .with_ime(self.ime_overlay(&canvas))
+                        .with_matte(self.letterbox(&canvas))
                         .finish(),
                     )
                     .finish(),
@@ -9308,6 +10426,133 @@ struct PanelBox {
     width: f32,
     size: Option<Vector2F>,
     origin: Option<Point>,
+}
+
+/// 떠 있는 판의 목록 오른쪽에 세우는 **표시용 스크롤바**(pytmux-374 ⑴).
+///
+/// # 왜 캔버스의 그것(`splitter::ScrollHint`)을 못 쓰나
+///
+/// 저것은 **셀 격자** 위에 그린다 — `SplitterOverlay` 가 칸 크기를 알고 있어 「테두리
+/// 열의 몇 번째 행」으로 자리를 말할 수 있다. 판은 셀이 아니라 위젯이라 그 좌표가 아예
+/// 없다. 그래서 **자리는 여기서 재고 값은 core 가 준다**(`base::scrollbar::list_fraction`)
+/// — 반올림·썸 하한·「그릴 것이 없다」 판정을 두 벌로 두지 않는 것이 요점이다.
+///
+/// # 왜 폭을 «먹나»
+///
+/// 캔버스 쪽은 테두리 **선 위**에 얹어 칸을 안 먹는다(격자를 건드리면 서버에 보고하는
+/// 행·열이 바뀐다). 판에는 그 제약이 없고, 대신 글자 위에 겹치면 값칸의 오른쪽 끝이
+/// 가려진다 — 그래서 실제로 폭을 차지한다(정본 `#sets` 의 `scrollbar-size-vertical: 2`
+/// 와 같은 자리다).
+///
+/// # 왜 «판의» 오른쪽 끝인가
+///
+/// 목록 열의 오른쪽 끝은 **가장 긴 줄**이 정하므로 필터도 없는 이 판에서조차 값이
+/// 바뀔 때마다 흔들린다. 부모가 준 최대 폭(= `PanelBox` 가 못박은 판 안쪽 폭)에 붙이면
+/// 막대가 언제나 같은 자리에 서고, 그것이 정본 `#sets` 의 오른쪽 가장자리와도 같다.
+struct PanelScrollBar {
+    child: Box<dyn Element>,
+    /// 트랙을 1.0 으로 본 (썸 시작, 썸 길이) — 값은 core 가 정한다.
+    start: f64,
+    len: f64,
+    size: Option<Vector2F>,
+    origin: Option<Point>,
+}
+
+impl PanelScrollBar {
+    /// 막대 자체의 폭과 목록에서 띄우는 간격(px).
+    ///
+    /// 캔버스 쪽 표시 막대(`splitter::HINT_PX` = 3)와 같은 굵기다 — 한 앱 안에서 같은
+    /// 뜻의 표시가 굵기까지 같아야 「같은 것」으로 읽힌다.
+    const BAR_PX: f32 = 3.;
+    const GAP_PX: f32 = 6.;
+    const TAKES: f32 = Self::BAR_PX + Self::GAP_PX;
+
+    fn new(child: Box<dyn Element>, start: f64, len: f64) -> Self {
+        Self { child, start, len, size: None, origin: None }
+    }
+}
+
+impl Element for PanelScrollBar {
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        ctx: &mut LayoutContext,
+        app: &AppContext,
+    ) -> Vector2F {
+        // 아이에게는 막대 몫을 뺀 폭을 준다 — 안 빼면 긴 줄이 막대 밑으로 들어간다.
+        let inner = SizeConstraint::new(
+            vec2f((constraint.min.x() - Self::TAKES).max(0.), constraint.min.y()),
+            vec2f((constraint.max.x() - Self::TAKES).max(0.), constraint.max.y()),
+        );
+        let child = self.child.layout(inner, ctx, app);
+        // 판 안쪽 폭이 유한하면 그것을 쓴다(위 머리말 §왜 판의 오른쪽 끝인가).
+        let width = if constraint.max.x().is_finite() {
+            constraint.max.x()
+        } else {
+            child.x() + Self::TAKES
+        };
+        let size = vec2f(width, child.y());
+        self.size = Some(size);
+        size
+    }
+
+    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &AppContext) {
+        self.child.after_layout(ctx, app);
+    }
+
+    fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
+        self.origin = Some(Point::from_vec2f(origin, ctx.scene.z_index()));
+        self.child.paint(origin, ctx, app);
+        let Some(size) = self.size else {
+            return;
+        };
+        let (w, h) = (size.x(), size.y());
+        if h <= 0. {
+            return;
+        }
+        let x = origin.x() + w - Self::BAR_PX;
+        let bar = |y: f32, height: f32, color: warpui::color::ColorU, ctx: &mut PaintContext| {
+            ctx.scene
+                .draw_rect_without_hit_recording(warpui::geometry::rect::RectF::new(
+                    vec2f(x, y),
+                    vec2f(Self::BAR_PX, height),
+                ))
+                .with_background(warpui::elements::Fill::Solid(color))
+                .with_corner_radius(warpui::elements::CornerRadius::with_all(
+                    warpui::elements::Radius::Percentage(50.),
+                ));
+        };
+        // 트랙 먼저, 그 위에 썸. 트랙이 없으면 「끝까지 내려왔다」와 「막대가 짧다」가
+        // 구별되지 않는다(정본도 `scrollbar-background` 를 따로 칠한다).
+        bar(origin.y(), h, theme::BORDER, ctx);
+        let thumb_h = (h * self.len as f32).max(Self::BAR_PX);
+        // 시작 자리는 **트랙 안에서** 자른다 — 반올림 한 톨이 판 밖으로 새면 그림자
+        // 위에 점이 하나 찍힌다.
+        let thumb_y = origin.y() + (h * self.start as f32).clamp(0., (h - thumb_h).max(0.));
+        bar(thumb_y, thumb_h, theme::FOCUS, ctx);
+    }
+
+    fn size(&self) -> Option<Vector2F> {
+        self.size
+    }
+
+    fn origin(&self) -> Option<Point> {
+        self.origin
+    }
+
+    fn dispatch_event(
+        &mut self,
+        event: &DispatchedEvent,
+        ctx: &mut EventContext,
+        app: &AppContext,
+    ) -> bool {
+        self.child.dispatch_event(event, ctx, app)
+    }
+
+    #[cfg(test)]
+    fn debug_text_content(&self) -> Option<String> {
+        self.child.debug_text_content()
+    }
 }
 
 impl PanelBox {

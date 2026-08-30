@@ -7375,6 +7375,41 @@ async def test_status_claude_usage():
     await _with_app(body)
 
 
+async def test_a_cell_carries_the_whole_grapheme_cluster():
+    """정본 격자의 셀이 **문자소 군집**을 든다(pytmux-407).
+
+    종전에는 폭 0 글자(변이 선택자·ZWJ)를 **버렸다** — 이 격자의 셀이 글자 하나라
+    얹을 자리가 없었기 때문이다(그 사실이 `clientio._composite` 주석에 적혀 있었다).
+    그 대가로 `⚠`+U+FE0F 가 셰이퍼에 홀로 가 **흑백**으로 그려졌다.
+
+    재는 것은 셋이다: ⑴ 얹혔나 ⑵ 칸을 안 먹나(뒤 글자가 안 밀리나)
+    ⑶ 그 셀을 폭 함수에 넣어도 안 죽나(`cluster_cells`).
+    """
+    from pytmuxlib.clientrender import paint_runs
+
+    W = H = 6
+    cells = [[(" ", None) for _ in range(W)] for _ in range(H)]
+    runs = [{"x": 0, "y": 0, "text": "A⚠️B", "style": {}}]
+    paint_runs(cells, runs, W, H, None)
+    assert cells[0][0][0] == "A"
+    assert cells[0][1][0] == "⚠️", repr(cells[0][1][0])
+    assert cells[0][2][0] == "B", "선택자가 칸을 먹어 줄이 밀렸다"
+    # ⛔ 그 셀을 폭 함수에 넣어도 안 죽는다 — 종전 `char_cells` 는 여기서 TypeError 였다.
+    from pytmuxlib.cellwidth import cluster_cells
+    assert cluster_cells(cells[0][1][0]) == 1
+
+
+async def test_a_zero_width_char_at_the_start_of_a_run_is_dropped():
+    """⛔ 대조군 — 얹힐 앞 칸이 없으면 버린다. 제 칸에 그리면 **화면에 없는 글자**가 되고
+    칸 산수도 어긋난다."""
+    from pytmuxlib.clientrender import paint_runs
+
+    W = H = 6
+    cells = [[(" ", None) for _ in range(W)] for _ in range(H)]
+    paint_runs(cells, [{"x": 0, "y": 0, "text": "️X", "style": {}}], W, H, None)
+    assert cells[0][0][0] == "X", "맨 앞 폭 0 글자가 칸을 먹었다"
+
+
 async def test_popup_dims_and_substitutes_emoji():
     # #25: 팝업(모달)이 떠 있으면 본문을 어둡게 칠하고, 컬러로 안 어두워지는 이모지는
     # placeholder(·)로 치환한다. 팝업이 없으면 이모지 원본 그대로.

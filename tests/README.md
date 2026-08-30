@@ -61,6 +61,23 @@ python3 pytmux.py replay --cols 120 cap.raw --ruler
 - ⚠ 실험용으로 **손으로** 클라/서버를 띄울 때는 이 보호 밖이다 — 그때는
   `PYTMUX_HOME=<스크래치>` 와 함께 `<스크래치>/config` 를 빈 파일로 먼저 만든다.
 
+### ⛔ 상자 상태는 env 만이 아니다 — **패널에 붙은 셸**도 그렇다
+
+`server_only()` 이 만든 패널에는 **진짜 PTY 와 진짜 셸**이 붙어 있고, 그 셸이 화면에
+무엇을 찍는지는 상자마다 다르다: POSIX 는 `$SHELL`→`/bin/sh`(대개 조용하다), Windows 는
+`PYTMUX_SHELL`→`COMSPEC`→`cmd.exe`(**배너를 찍고 ConPTY 가 화면을 정리한다**).
+
+⇒ **`pane.feed(...)` 로 심어 두고 재는 시험은 심기 전에 `harness.hush_pane(pane)` 을
+부른다.** 안 부르면 심은 줄이 「내가 안 한 일」에 덮이고, 그 덮임은 루프가 양보하는
+**아무 `await`** 에서나 일어난다 — 리눅스에서는 늘 초록이라 **안 보인다.**
+실측(pytmux/pytmux-384): 전역 검색 시험 다섯이 그렇게 Windows 에서만 늘 빨갰고
+2주 넘게 아무도 그것을 「환경」이라 못 갈랐다.
+
+- 처방과 근거는 `harness.hush_pane` 머리말 **한 곳**이 쥔다(⛔ 리더를 끊는 것이지
+  셸을 죽이는 것이 아니다 · ⛔ 제품의 `await asyncio.sleep(0)` 을 걷어서 고치지 마라).
+- 재는 것은 `test_search_all.py::test_fill_deafens_the_pane_to_its_own_shell`
+  (대조군 포함 — 셸이 pty 로 아무것도 안 돌려주는 상자에서는 세지 않고 skip 한다).
+
 ## 작성 규칙
 
 - 각 테스트는 `async def test_*()` 이며 러너가 **새 asyncio 루프**에서 실행한다.

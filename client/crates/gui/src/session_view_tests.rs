@@ -94,12 +94,18 @@ fn every_palette_entry_is_opaque() {
 /// 잡는다(예: `RED` 를 `BLUE` 자리에 복붙한 것도 여기서 운다). `ALL_NAMED` 자체가 한
 /// 줄을 두 번 적어도 여기서 걸린다 — 같은 색이 두 번 나오기 때문이다.
 ///
-/// # 왜 "밝은 쪽이 더 밝은가"는 안 재나
+/// # 여기서 재는 것은 "겹치면 안 된다" 하나다
 ///
-/// 그건 계약이 아니라 배색 취향이다(Solarized 처럼 그렇지 않은 표가 흔하다). 지금 이
-/// 팔레트도 `BR_CYAN`(#0db9d7)이 `CYAN`(#7dcfff)보다 어둡다 — 재고 싶은 자리이지만
-/// **어느 팔레트를 쓸 것인가**가 정해지기 전에는 이 오라클이 답을 못 정한다(pytmux-187
-/// 이 사람에게 물어 둔 갈림길이다). 여기서는 "겹치면 안 된다"만 못박는다.
+/// 「밝은 쪽이 더 밝은가」는 옆의 `the_bright_half_of_every_pair_is_actually_brighter`
+/// 가 따로 잰다 — 겹침과 뒤집힘은 **부류가 다른 결함**이고(하나는 두 SGR 이 한 색이 되는
+/// 것, 하나는 강조가 뜻과 반대로 그려지는 것), 한 오라클에 얹으면 실패 메시지가 어느
+/// 쪽인지 안 말한다.
+///
+/// ⚠ 이 문단에는 종전에 *"「밝은 쪽이 더 밝은가」는 배색 취향이라 안 잰다 · 지금
+/// 팔레트도 `BR_CYAN`(#0db9d7)이 `CYAN`(#7dcfff)보다 어둡다"* 가 적혀 있었다. **둘 다
+/// 지금은 거짓이다**: 그 유보는 2026-08-23 에 뒤집혔고(어느 표를 고르든 지켜져야 하는
+/// 성질이다) 그 값들도 남아 있지 않다 — 팔레트는 xterm 표준으로 갈렸다(pytmux-187 ·
+/// 사람의 결정 2026-08-24).
 #[test]
 fn the_sixteen_palette_names_are_sixteen_colors() {
     let mut seen: std::collections::BTreeMap<(u8, u8, u8, u8), NamedColor> =
@@ -115,6 +121,59 @@ fn the_sixteen_palette_names_are_sixteen_colors() {
         }
     }
     assert_eq!(seen.len(), ALL_NAMED.len(), "전수를 다 훑지 않았다");
+}
+
+/// ☠ **이 열여섯은 xterm 표준 표다** — 배색 취향이 아니라 **사람이 고른 결정**이다
+/// (pytmux-187 · 갈림길은 pytmux-391 · 2026-08-24).
+///
+/// # 왜 값을 못박나
+///
+/// 이 표를 고른 근거는 「xterm 의 기본 표와 **같다**」 한 줄뿐이다. 한 칸이라도 눈대중으로
+/// 옮기면 그 근거가 통째로 사라지는데, 화면에서는 *"색이 좀 안 맞나?"* 정도로만 보여서
+/// 아무 오라클도 안 운다 — 이 이슈가 정확히 그 부류로 넉 달을 갔다. 그래서 값 자체를
+/// 여기 한 번 더 적어 **밖의 표와 대조 가능한 자리**를 만든다.
+///
+/// ⛔ **여기가 붉다고 이 목록을 「지금 코드에 맞춰」 고치지 마라.** 답은 둘 중 하나다:
+/// ⑴ 팔레트가 표류했다 → **팔레트를 되돌린다** ⑵ 표를 바꾸기로 **사람이 다시 정했다**
+/// → 그때는 이 목록과 `palette` 모듈 문서를 **같은 CL 에서** 옮긴다.
+///
+/// 밖의 근거: xterm 기본 리소스(`XTerm-col.ad` / `charproc.c`)와 X11 `rgb.txt` 의 색이름.
+#[test]
+fn the_sixteen_colors_are_the_xterm_standard_table() {
+    // (SGR, 이름, xterm 리소스 = X11 색이름, 값)
+    let table: [(u16, NamedColor, &str, (u8, u8, u8)); 16] = [
+        (30, NamedColor::Black, "color0 = black", (0x00, 0x00, 0x00)),
+        (31, NamedColor::Red, "color1 = red3", (0xcd, 0x00, 0x00)),
+        (32, NamedColor::Green, "color2 = green3", (0x00, 0xcd, 0x00)),
+        (33, NamedColor::Yellow, "color3 = yellow3", (0xcd, 0xcd, 0x00)),
+        (34, NamedColor::Blue, "color4 = blue2", (0x00, 0x00, 0xee)),
+        (35, NamedColor::Magenta, "color5 = magenta3", (0xcd, 0x00, 0xcd)),
+        (36, NamedColor::Cyan, "color6 = cyan3", (0x00, 0xcd, 0xcd)),
+        (37, NamedColor::White, "color7 = gray90", (0xe5, 0xe5, 0xe5)),
+        (90, NamedColor::BrightBlack, "color8 = gray50", (0x7f, 0x7f, 0x7f)),
+        (91, NamedColor::BrightRed, "color9 = red", (0xff, 0x00, 0x00)),
+        (92, NamedColor::BrightGreen, "color10 = green", (0x00, 0xff, 0x00)),
+        (93, NamedColor::BrightYellow, "color11 = yellow", (0xff, 0xff, 0x00)),
+        (94, NamedColor::BrightBlue, "color12 = rgb:5c/5c/ff", (0x5c, 0x5c, 0xff)),
+        (95, NamedColor::BrightMagenta, "color13 = magenta", (0xff, 0x00, 0xff)),
+        (96, NamedColor::BrightCyan, "color14 = cyan", (0x00, 0xff, 0xff)),
+        (97, NamedColor::BrightWhite, "color15 = white", (0xff, 0xff, 0xff)),
+    ];
+    for (sgr, color, xterm, (r, g, b)) in table {
+        let got = named(color);
+        assert_eq!(
+            (got.r, got.g, got.b),
+            (r, g, b),
+            "SGR {sgr}({color:?})가 xterm `{xterm}`(#{r:02x}{g:02x}{b:02x}) 이 아니라 \
+             #{:02x}{:02x}{:02x} 이다 — 표가 표류했으면 팔레트를 되돌리고, \
+             사람이 표를 다시 정한 것이면 이 목록과 `palette` 문서를 같은 CL 에서 옮긴다",
+            got.r,
+            got.g,
+            got.b
+        );
+    }
+    // ⛔ 목록이 전수인가 — 한 줄을 지우면 위 루프는 조용히 통과한다.
+    assert_eq!(table.len(), ALL_NAMED.len(), "표가 열여섯 칸을 다 안 적었다");
 }
 
 // ── 블록 구역(P4) ────────────────────────────────────────────────────────────
@@ -954,6 +1013,41 @@ fn a_wide_char_is_one_piece_that_owns_two_cells() {
 }
 
 #[test]
+fn a_variation_selector_rides_along_instead_of_taking_a_cell() {
+    // 제보(pytmux-389): 변이 선택자(U+FE0F)가 **자기 칸**을 차지해 그 줄이 한 칸씩
+    // 밀렸고, 덤으로 `⚠`+U+FE0F 가 셰이퍼에 **따로** 들어가 색 이모지가 아니라 흑백
+    // 글자로 그려졌다. 둘은 같은 뿌리다 — 칸을 나눌 때 **폭**을 물었기 때문이다.
+    //
+    // 재는 것 둘: ⑴ 칸의 합이 안 늘어난다 ⑵ 선택자가 **앞 조각에 붙어** 한 조각으로
+    // 셰이퍼에 간다(갈라 놓으면 색이 죽는다).
+    let segs = SessionView::grid_segments("|\u{26a0}\u{fe0f}|");
+    let cells: usize = segs.iter().map(|(_, c)| c).sum();
+    assert_eq!(
+        cells,
+        SessionView::grid_segments("|\u{26a0}|").iter().map(|(_, c)| c).sum::<usize>(),
+        "선택자가 칸을 먹어 줄이 밀렸다: {segs:?}"
+    );
+    assert!(
+        segs.iter().any(|(piece, _)| piece.chars().count() == 2
+            && piece.starts_with('\u{26a0}')
+            && piece.ends_with('\u{fe0f}')),
+        "선택자가 앞 글자와 갈라졌다 — 색 이모지가 흑백으로 그려진다: {segs:?}"
+    );
+}
+
+#[test]
+fn a_zero_width_char_at_the_head_of_a_line_is_dropped_not_given_a_cell() {
+    // 얹힐 앞 글자가 없으면 놓을 칸도 없다. **버리되 칸은 안 준다** — 칸을 주면
+    // 그 줄 전체가 밀리고, 그건 이 결함의 증상 그대로다.
+    let segs = SessionView::grid_segments("\u{fe0f}ab");
+    assert_eq!(
+        segs.iter().map(|(_, c)| c).sum::<usize>(),
+        2,
+        "줄 앞머리의 폭 0 글자가 칸을 먹었다: {segs:?}"
+    );
+}
+
+#[test]
 fn legitimately_repeated_wide_chars_are_not_folded_away() {
     // ⛔ 이 결함의 **유혹적인 오답**이 「연속 중복 접기」다(정본 오라클 머리말 ②).
     //    넣는 순간 표시 결함이 **데이터 결함**으로 바뀐다 — `쓸쓸` 에서 글자가 조용히
@@ -1030,7 +1124,9 @@ fn a_wide_glyph_is_pinned_to_its_cells_without_being_clipped() {
 // ⛔ 이 축에는 **팔레트 취향이 안 섞인다.** 어느 표를 고르든(tokyonight·Campbell·
 //    사용자 것) 밝은 변형은 제 기준색보다 밝아야 한다 — 안 그러면 `SGR 93`·`96`
 //    (밝게 강조)이 `33`·`36` 보다 어둡게 그려져 **강조가 뜻과 반대로** 나온다.
-//    그래서 「어느 팔레트인가」(pytmux-187 의 남은 물음)를 기다리지 않고 잰다.
+//    그래서 「어느 팔레트인가」를 기다리지 않고 쟀다. ★ 그 물음은 그 뒤 **xterm 표준**
+//    으로 답해졌지만(pytmux-187 · 사람의 결정 2026-08-24) 이 오라클은 그대로 산다 —
+//    표가 아니라 표가 지켜야 할 성질을 재기 때문이다. 지금 표에서도 여덟 짝 전부 참이다.
 //
 // 실측(2026-08-23)으로 여덟 짝 중 **둘이 뒤집혀 있었다**(노랑·청록). 밝은 마젠타는
 // 같은 부류가 먼저 잡혀 고쳐진 자리다 — 그때는 「값이 겹친다」로 읽혔고, 이번에
@@ -1070,6 +1166,101 @@ fn the_bright_half_of_every_pair_is_actually_brighter() {
             luminance(br)
         );
     }
+}
+
+/// 두 패널짜리 판 — 활성 패널이 **창 왼쪽 끝이 아니다**(자리 산수를 재려면 필요하다).
+fn layout_two_panes_active_right() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 24, "active": 2,
+        "panes": [
+            {"id": 1, "x": 0, "y": 0, "w": 40, "h": 24, "title": "sh", "active": false},
+            {"id": 2, "x": 41, "y": 0, "w": 39, "h": 24, "title": "sh", "active": true}
+        ]
+    }))
+    .unwrap()
+}
+
+/// 어느 패널의 화면 한 장 — 커서를 그 패널 안 `(cx, cy)` 에 둔다.
+///
+/// 옆의 [`screen_with_cursor`] 는 패널 1 에 못박혀 있어 **활성 패널이 다른** 판을 못
+/// 만든다(자리 산수를 재려면 그 판이 필요하다).
+fn pane_screen_with_cursor(pane: i64, cx: u16, cy: u16) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": pane,
+        "rows": [[["HELLO", {}]]], "cursor": [cx, cy], "wrap": [], "top": 0
+    }))
+    .unwrap()
+}
+
+#[test]
+fn the_compose_panel_stands_on_the_pane_cursor_line_not_at_the_window_bottom() {
+    // 제보(pytmux-370 · 첨부 5장): *"cli 쪽 의도는 현재 커서가 있는 줄에 팝업이 정확히
+    // 나타나는 것입니다. 그런데 gui는 완전히 별도 위치에 팝업이 나타난다"*.
+    //
+    // 정본 `ComposePromptScreen.on_mount` 의 산수를 그대로 옮겼는지 잰다:
+    //  · 가로 — 활성 패널 **안쪽 x** 에 맞추고 폭도 그 패널 폭이다(창 전폭이 아니다).
+    //  · 세로 — 입력 줄이 커서 줄 **한 칸 아래**에 오게 바닥에서 띄운다.
+    //
+    // ⚠ 헤드리스에는 자리표가 없어 칸 크기를 못 잰다 — 그 값을 시험이 대신 넣는다
+    //   (`note_*_for_test`). 재는 것은 «자리표를 어떻게 쓰나»이지 «자리표를 잘 재나»가
+    //   아니다(뒤엣것은 `report_size` 의 몫이다).
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_two_panes_active_right()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(pane_screen_with_cursor(2, 3, 5)))).unwrap();
+    view.pump_headless();
+    view.note_cell_size(10., 20.);
+    view.note_canvas_box_for_test(5., 7., 800., 600.);
+
+    let (left, bottom, width) =
+        view.pane_cursor_box_for_test().expect("자리를 못 쟀다 — 값을 다 넣었는데도");
+    // 왼쪽 = 캔버스 여백 + 패널 안쪽 x(41칸).
+    assert_eq!(left, 5. + 41. * 10., "판이 활성 패널의 왼쪽에 안 붙는다");
+    // 폭 = 그 패널의 폭(39칸). ⛔ 창 전폭(800)이면 종전 그림 그대로다.
+    assert_eq!(width, 39. * 10., "판이 아직 창 전폭이다");
+    // 아래 여백 = 창 높이 - (캔버스 위 여백 + (패널 y + 커서 행 + 2) * 칸높이).
+    // ⚠ **캔버스 위 여백(7)을 빠뜨리면 안 된다** — 캔버스는 창 꼭대기에서 시작하지 않는다
+    //   (탭바가 위에 있다). 그것을 빼먹으면 판이 그만큼 아래로 내려간다.
+    assert_eq!(bottom, 600. - (7. + (0. + 5. + 2.) * 20.), "입력 줄이 커서 줄에 안 선다");
+    assert!(bottom > 0., "바닥에 붙어 버렸다 — 커서 줄을 안 본다");
+}
+
+#[test]
+fn the_compose_panel_falls_back_instead_of_guessing_a_place() {
+    // ⛔ 대조군이자 규율: **못 재면 짐작하지 않는다**(`Anchor::AtPaneCursor` 머리말).
+    //    자리표가 없는 첫 프레임에 자리를 지어내면 그 그림이 새 거짓말이 된다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_two_panes_active_right()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(pane_screen_with_cursor(2, 3, 5)))).unwrap();
+    view.pump_headless();
+    assert!(
+        view.pane_cursor_box_for_test().is_none(),
+        "칸 크기를 아직 못 쟀는데 자리를 지어냈다"
+    );
+    // 커서가 패널 **밖**인 프레임도 같다 — 밀린 자리에 상자를 그리지 않는다.
+    view.note_cell_size(10., 20.);
+    view.note_canvas_box_for_test(5., 7., 800., 600.);
+    tx.send(LinkEvent::Message(Box::new(pane_screen_with_cursor(2, 3, 99)))).unwrap();
+    view.pump_headless();
+    assert!(
+        view.pane_cursor_box_for_test().is_none(),
+        "커서가 패널 밖인데 그 자리에 판을 세운다"
+    );
+}
+
+#[test]
+fn the_view_actually_routes_the_compose_panel_through_that_math() {
+    // ★ 위 둘은 **산수**만 잰다. 그리는 자리가 그 함수를 안 부르면 화면은 종전 그대로인데
+    //   시험은 전부 통과한다(이 파일이 여러 번 물린 「호출 제거」 뮤테이션).
+    let body = source_after("fn render_screen_panel(", 14000);
+    assert!(
+        body.contains("place_at_pane_cursor"),
+        "판을 그리는 자리가 커서 줄 배치를 안 부른다: {body}"
+    );
+    // 그리고 **전폭 `Expanded`** 는 사라졌어야 한다 — 커서 줄에 서면 폭은 패널 폭이다.
+    assert!(
+        !body.contains("Expanded::new(1., panel)"),
+        "작성창이 아직 창 전폭으로 늘어난다"
+    );
 }
 
 #[test]
@@ -1125,6 +1316,26 @@ fn a_filler_row_is_exactly_as_tall_as_a_real_one() {
         helper.contains("with_uniform_padding"),
         "줄 상자가 아무것도 안 한다: {helper}"
     );
+    // ★ **`pad_rows` 를 쓰는 판은 전부** 그 상자를 지나야 한다(pytmux-373 ⑴). 팔레트
+    //   하나만 고쳤던 동안 나머지 셋은 채움 줄보다 2px 낮은 내용 줄을 그렸고, 그것이
+    //   "탭을 바꾸면 판이 들썩인다"였다. Status 판은 아래 픽셀 오라클이 따로 잰다 —
+    //   여기서는 픽셀 오라클이 없는 나머지 둘까지 **한 줄로** 못박는다.
+    for (head, what) in [
+        ("fn render_info_tabs(", "Status 판"),
+        ("fn render_notices(", "알림 판"),
+    ] {
+        let body = source_after(head, 7000);
+        assert!(
+            body.contains("self.panel_row_box("),
+            "{what} 의 내용 줄이 판의 줄 상자를 안 쓴다 — 채움 줄과 2px 씩 어긋난다: {body}"
+        );
+    }
+    // 플러그인 글 판은 함수가 길어 `pad_rows` 앞 구간만 본다(목록 갈래는 제 상자가 있다).
+    let plugin = source_after("let max_scroll = body.lines().count()", 2200);
+    assert!(
+        plugin.contains("self.panel_row_box("),
+        "플러그인 글 판의 내용 줄이 판의 줄 상자를 안 쓴다: {plugin}"
+    );
 }
 
 #[test]
@@ -1177,7 +1388,10 @@ fn the_mode_badge_sits_in_the_bottom_status_bar_not_the_tab_bar() {
     }))
     .unwrap();
     let painted = painted_after(vec![layout_one_pane(), screen], &[(Key::Escape, Mods::NONE)]);
-    let mode_at = painted.iter().position(|t| t.contains("esc"));
+    // 표식 문구는 `InputMode::badge()` 가 쥔다(pytmux-380 에서 `[esc]` → 정본 문구로
+    // 바뀌었다) — 리터럴을 박아 두면 그 자리를 옮길 때마다 이 오라클이 낡는다.
+    let badge = InputMode::Command.badge().expect("표식이 없다");
+    let mode_at = painted.iter().position(|t| t == badge);
     let canvas_at = painted.iter().position(|t| t.contains("HELLO-ORACLE"));
     assert!(mode_at.is_some(), "esc 모드 표식이 프레임에 없다: {painted:?}");
     assert!(canvas_at.is_some(), "캔버스가 없다 — 단언이 공허해진다: {painted:?}");
@@ -1187,26 +1401,17 @@ fn the_mode_badge_sits_in_the_bottom_status_bar_not_the_tab_bar() {
     );
 }
 
-#[test]
-fn a_toggle_badge_says_when_it_is_on() {
-    // ★ 상태는 이미 클라가 안다 — 안 하던 것은 그것을 모양에 싣는 일뿐이었다.
-    let (mut view, tx, _sent) = harness();
-    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
-    view.pump_headless();
-    assert!(
-        !view.badge_is_on_for_test(base::Badge::TouchScroll),
-        "스크롤 모드가 아닌데 켜짐이다"
-    );
-    view.apply_action_for_test(base::Action::ToggleScroll);
-    assert!(
-        view.badge_is_on_for_test(base::Badge::TouchScroll),
-        "스크롤 모드에 들어왔는데 배지가 꺼짐이다(ⓧ)"
-    );
-}
-
+/// ⛔ **지금 배지 넷은 전부 «버튼»이다 — 토글이 하나도 없다**(pytmux-377).
+///
+/// 종전에는 `⇕`(터치 스크롤)가 유일한 토글이었고, 그 옆에 *"켜졌으면 배지가 그렇게
+/// 말한다"*(§10-21ⓧ)를 재는 짝 오라클이 있었다. 그 배지를 걷었으므로 여기 남는 것은
+/// **반쪽뿐**이다 — 누르면 화면이 열리는 버튼은 켜짐을 말할 것이 없다.
+///
+/// ⚠ 토글 배지를 새로 들이면 `badge_is_on` 이 **그것만은 `true`** 로 답해야 하고, 그때
+/// 이 시험은 그 배지를 목록에서 빼고 짝 오라클을 되살리는 자리다(색 규약은 바로 아래
+/// `on_and_picked_are_different_pictures` 가 그대로 지키고 있다).
 #[test]
 fn a_button_badge_is_never_on() {
-    // 누르면 화면이 열리는 **버튼**은 토글이 아니다 — 켜짐을 말할 것이 없다.
     let (view, _tx, _sent) = harness();
     for badge in [base::Badge::Notices, base::Badge::Host, base::Badge::Clock, base::Badge::Calendar] {
         assert!(!view.badge_is_on_for_test(badge), "{badge:?} 가 켜짐으로 나온다");
@@ -1488,6 +1693,136 @@ fn the_cursor_blinks_only_when_asked_and_comes_back_when_it_is_turned_off() {
     view.config.cursor_blink = false;
     assert!(view.tick_cursor_blink_for_test(false), "껐는데 되살리지 않았다");
     assert!(view.cursor_cell().is_some(), "깜빡임을 껐는데 커서가 안 돌아온다");
+}
+
+// ── 커서 판(`cursor` · pytmux-375) ───────────────────────────────────────────
+//
+// 이 판이 새로 만든 것은 **화면이지 값이 아니다**(다섯은 이미 설정 화면에 있었다).
+// 그래서 여기서 재는 것도 화면의 성질 넷이다: 입구가 실제로 여나 · 판이 고른 줄이 그
+// 설정으로 옮겨지나 · 안 먹는 줄이 **정말로 안 먹나** · 제 것 아닌 키가 판을 안 닫나.
+
+/// 커서 판이 떠 있는 뷰. `harness` 를 지나는 이유는 **설정 쓰기를 사물함으로 돌리려고**
+/// 다(이 판의 키가 실제로 설정 파일을 고친다 — 안 돌리면 돌린 사람의 진짜 config 가 바뀐다).
+fn cursor_panel() -> SessionView {
+    let (mut view, _tx, _sent) = harness();
+    view.pump_headless();
+    // ★ **팔레트를 지난다** — 이 판에는 키가 없어서 팔레트가 유일한 입구다. 여기서
+    //   `screens.open` 을 직접 부르면 「입구가 있나」는 한 번도 안 재진다.
+    let entry = base::PALETTE
+        .iter()
+        .find(|e| e.name == "cursor")
+        .expect("팔레트에 `cursor` 가 없다 — 이 판에 들어갈 길이 없다");
+    assert!(view.apply_action(entry.action), "팔레트 줄이 아무 일도 안 했다");
+    assert_eq!(view.screens.top(), Some(Screen::Cursor), "그 줄이 다른 판을 열었다");
+    view
+}
+
+/// 커서 판에서 그 설정 줄이 몇 번째인가.
+fn cursor_row_of(key: &str) -> usize {
+    base::config::CURSOR_SETTINGS
+        .iter()
+        .position(|k| *k == key)
+        .unwrap_or_else(|| panic!("커서 판에 {key} 줄이 없다"))
+}
+
+#[test]
+fn the_palette_is_the_way_into_the_cursor_panel() {
+    let mut view = cursor_panel();
+    // 같은 이름을 다시 부르면 닫힌다(판 토글 — 다른 판과 같은 손이다).
+    let entry = base::PALETTE.iter().find(|e| e.name == "cursor").unwrap();
+    view.apply_action(entry.action);
+    assert_eq!(view.screens.top(), None, "같은 입구를 다시 눌렀는데 안 닫힌다");
+}
+
+#[test]
+fn the_configured_thickness_reaches_the_thing_that_draws_it() {
+    let (mut view, tx, _sent) = harness();
+    for msg in [layout_one_pane(), screen_with_cursor(3, 2)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    // 기본은 종전 상수(`splitter.rs` 의 옛 `CURSOR_PX`)와 같은 2px 다.
+    assert_eq!(view.cursor_cell().expect("커서가 없다").thickness, 2.);
+    view.config.cursor_thickness = 4.5;
+    assert_eq!(
+        view.cursor_cell().expect("두께를 바꿨다고 커서가 사라지면 안 된다").thickness,
+        4.5,
+        "설정한 두께가 그리는 쪽까지 안 간다"
+    );
+}
+
+#[test]
+fn the_cursor_panel_moves_the_setting_its_row_points_at() {
+    let mut view = cursor_panel();
+    // ⚠ 판 안 줄 번호는 0~4 이고 값 표(`SETTINGS`)의 색인은 그것과 **다르다**. 옮기는
+    //   자리가 어긋나면 커서 두께를 누르는데 엉뚱한 설정이 바뀐다 — 그 자리를 잰다.
+    let before = view.config.cursor_thickness;
+    view.screens.select_row(cursor_row_of("cursor-thickness"));
+    view.handle_key(Key::Right, Mods::NONE);
+    assert_eq!(view.screens.top(), Some(Screen::Cursor), "값을 바꿨는데 판이 닫혔다");
+    assert_eq!(
+        view.config.cursor_thickness,
+        before + base::config::CURSOR_THICKNESS_STEP,
+        "→ 가 두께를 한 걸음 안 옮겼다"
+    );
+    // 그리고 **그 줄만** 움직인다 — 옆 줄이 함께 바뀌면 옮기는 자리가 밀린 것이다.
+    let fresh = base::config::Config::default();
+    assert_eq!(view.config.cursor_style, fresh.cursor_style);
+    assert_eq!(view.config.cursor_blink_ms, fresh.cursor_blink_ms);
+
+    // 모양 줄도 같은 길로 움직인다(어휘의 주인은 core 다).
+    view.screens.select_row(cursor_row_of("cursor-style"));
+    view.handle_key(Key::Right, Mods::NONE);
+    assert_eq!(view.config.cursor_style, base::config::CURSOR_STYLES[1]);
+}
+
+#[test]
+fn on_block_the_thickness_row_changes_nothing() {
+    // ☠ 판은 그 줄을 **흐리게** 그린다(지우지 않는다 — 줄 수가 흔들리면 판 높이가
+    //    흔들린다). 그런데 흐리게 그려 놓고 값은 바뀌면 그것이 가장 나쁜 조합이다:
+    //    화면은 아무 반응이 없는데 설정 파일만 조용히 움직인다.
+    let mut view = cursor_panel();
+    view.config.cursor_style = "block".into();
+    let before = view.config.cursor_thickness;
+    view.screens.select_row(cursor_row_of("cursor-thickness"));
+    for key in [Key::Right, Key::Left, Key::Enter] {
+        view.handle_key(key, Mods::NONE);
+        assert_eq!(view.config.cursor_thickness, before, "{key:?} 가 안 먹는 줄을 움직였다");
+        assert_eq!(view.screens.top(), Some(Screen::Cursor), "{key:?} 가 판을 닫았다");
+    }
+    // ⚠ 「안 먹는다」가 「이 판이 멈춘다」는 아니다 — 다른 줄은 그대로 산다.
+    view.screens.select_row(cursor_row_of("cursor-blink"));
+    view.handle_key(Key::Enter, Mods::NONE);
+    assert!(view.config.cursor_blink, "옆 줄까지 함께 죽었다");
+}
+
+#[test]
+fn a_stray_key_leaves_the_cursor_panel_open() {
+    // ⛔ pytmux-374·273 이 걸린 그 함정 — **모르는 키가 판을 닫으면 안 된다**. core 쪽은
+    //    `proto/tests/interaction.rs` 가 재고, 여기서는 **뷰 배선까지 포함한** 키 경로를 잰다.
+    let mut view = cursor_panel();
+    for key in [Key::Function(5), Key::Insert, Key::Tab, Key::BackTab] {
+        view.handle_key(key, Mods::NONE);
+        assert_eq!(view.screens.top(), Some(Screen::Cursor), "{key:?} 가 판을 닫았다");
+    }
+    // `Tab` 은 이 판에 분류가 없어 **삼킨다** — 설정 화면처럼 선택이 튀면 안 된다.
+    assert_eq!(view.screens.selected(), 0, "Tab 이 선택을 옮겼다");
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.screens.top(), None, "Esc 가 안 닫았다");
+}
+
+#[test]
+fn the_cursor_panel_cursor_stays_inside_its_five_rows() {
+    // `End` 는 core 가 `usize::MAX` 를 두고 가고 접는 것은 뷰다(`settle_settings_cursor`).
+    // 안 접으면 아래에서 넘긴 만큼 `↑` 가 헛돈다(그림은 그대로인데 키가 안 먹는 것으로 보인다).
+    let mut view = cursor_panel();
+    let last = base::config::CURSOR_SETTINGS.len() - 1;
+    view.handle_key(Key::End, Mods::NONE);
+    assert_eq!(view.screens.selected(), last, "End 가 끝으로 안 갔다");
+    view.handle_key(Key::PageDown, Mods::NONE);
+    assert_eq!(view.screens.selected(), last, "끝에서 더 내려갔다");
+    view.handle_key(Key::Up, Mods::NONE);
+    assert_eq!(view.screens.selected(), last - 1, "끝에서 ↑ 한 번이 안 먹었다");
 }
 
 // ── 반전할 칸 떼어 내기(`isolate_cell`) ──────────────────────────────────────
@@ -2203,12 +2538,19 @@ fn the_focus_ring_walks_the_badges_in_the_order_they_are_drawn() {
     .unwrap());
     state.note_notice(String::from("무언가"));
     let badges = state.badges();
-    let touch = badges.iter().position(|b| *b == base::Badge::TouchScroll);
-    let notices = badges.iter().position(|b| *b == base::Badge::Notices);
-    assert!(notices.is_some(), "알림이 목록에 없다: {badges:?}");
-    if let (Some(t), Some(n)) = (touch, notices) {
-        assert!(t < n, "포커스 차례가 화면 차례(왼→오)와 어긋난다: {badges:?}");
-    }
+    assert!(
+        badges.contains(&base::Badge::Notices),
+        "알림이 목록에 없다 — 단언이 공허해진다: {badges:?}"
+    );
+    // ⚠ **알림은 언제나 마지막이다.** 종전에는 그 앞에 `⇕`(터치 스크롤)가 있어서 둘의
+    //   자리를 견줬는데, 그 배지를 걷어(pytmux-377) 지금 이 목록에 설 수 있는 것은
+    //   알림 하나뿐이다. 그래도 재는 뜻은 그대로다 — 배지를 새로 들이면서 **뒤에**
+    //   붙이면 그 순간 포커스 차례가 화면 차례(왼→오)와 어긋나고, 여기가 운다.
+    assert_eq!(
+        badges.last(),
+        Some(&base::Badge::Notices),
+        "알림이 마지막이 아니다(새 배지는 그 **앞**에 선다): {badges:?}"
+    );
 }
 
 // ── 퍼올리기 자체 — G8p 가 통째로 빠졌던 자리 ────────────────────────────────
@@ -3262,6 +3604,23 @@ fn painted_after(messages: Vec<ServerMessage>, keys: &[(Key, Mods)]) -> Vec<Stri
     painted_after_setup(messages, keys, |_| {})
 }
 
+/// 위와 같지만 **글자마다 색을 함께** 돌려준다(`(글자, 색)`).
+///
+/// # 왜 색이 따로 필요한가
+///
+/// 이 절의 머리말이 재는 것을 "존재와 순서"로 적어 두었는데, pytmux 의 크롬에는 **색만으로
+/// 말하는 자리**가 여럿이다 — 작업이 끝난 탭(pytmux-376)·모드 표식(pytmux-380)·흐린 꼬리줄.
+/// 글자만 재는 오라클은 "그려졌지만 엉뚱한 색"과 "제대로 그려졌다"를 못 가른다. 그래서
+/// `Scene::record_text` 가 색을 같이 기록하고 여기서 그것을 읽는다.
+fn painted_colors(messages: Vec<ServerMessage>, keys: &[(Key, Mods)]) -> Vec<(String, ColorU)> {
+    painted_scene(messages, keys, |scene| {
+        scene
+            .painted_texts()
+            .map(|t| (t.text.clone(), t.color))
+            .collect()
+    })
+}
+
 /// 위와 같지만 그리기 **직전에** 뷰를 한 번 더 만진다.
 ///
 /// 왜 필요한가: 끊김(`ended`)처럼 **서버 메시지가 아니라 이벤트 루프가** 세우는 상태가
@@ -3349,6 +3708,21 @@ fn painted_y(boxes: &[(String, f32)], needle: &str) -> Option<f32> {
 
 fn painted_contains(painted: &[String], needle: &str) -> bool {
     painted.iter().any(|t| t.contains(needle))
+}
+
+/// **상태줄이 그려진 자리**를 짚는 표식 — 날짜 run(`%Y-%m-%d`)이다.
+///
+/// ⚠ 배지 하나에 매달리지 않는다. 종전에는 `시계` 배지였다가(§10-21ⓑ 로 사라졌다)
+/// `⇕`(터치 스크롤) 배지였는데 그것도 걷었다(pytmux-377) — 두 번 다 표식이 사라지면서
+/// 이 오라클들이 함께 무너졌다. 날짜는 상태줄 **기본 형식**(`status-right` =
+/// `#h %H:%M %Y-%m-%d`)이 늘 싣고, 머신 이름·시각과 달리 **모양이 고정**이라 어디서
+/// 언제 돌려도 같은 방법으로 찾힌다.
+fn looks_like_a_date(text: &str) -> bool {
+    let t = text.trim().as_bytes();
+    t.len() == 10
+        && t[4] == b'-'
+        && t[7] == b'-'
+        && [0, 1, 2, 3, 5, 6, 8, 9].iter().all(|&i| t[i].is_ascii_digit())
 }
 
 #[test]
@@ -3479,9 +3853,8 @@ fn the_disconnect_message_sits_below_the_status_bar_and_opens_the_notice_history
     });
     let msg_at = painted.iter().position(|t| t.contains("연결 종료"));
     let canvas_at = painted.iter().position(|t| t.contains("HELLO-ORACLE"));
-    // 상태줄의 `⇕` 배지가 곧 "상태줄이 그려진 자리"다.
-    // (종전에는 `시계` 배지로 짚었는데 §10-21ⓑ 로 그 배지가 사라졌다 — 표식만 바꾼다.)
-    let status_at = painted.iter().position(|t| t.contains("⇕"));
+    // 상태줄이 그려진 자리는 **날짜 run** 이 짚는다(`looks_like_a_date` 문서).
+    let status_at = painted.iter().position(|t| looks_like_a_date(t));
     assert!(msg_at.is_some(), "끊김 메시지가 프레임에 없다: {painted:?}");
     assert!(
         painted_contains(&painted, "서버가 닫았다"),
@@ -3595,6 +3968,26 @@ const WIN_H: f32 = 600.;
 /// ⇒ pytmux/pytmux-155(Windows 에서 창이 안 끌린다)를 맥에서 조사한 회차가 「머리줄 누름을
 /// 안 먹는다」를 x=400 하나로 재고 넘어간 자리가 정확히 여기다.
 fn mouse_down_handled_xy(x: f32, y: f32, messages: Vec<ServerMessage>) -> bool {
+    mouse_down_handled_in(x, y, (WIN_W, WIN_H), 1., messages)
+}
+
+/// `mouse_down_handled_xy` 와 같은 것을 **창 크기와 배율까지 인자로** 받아 잰다.
+///
+/// ☠ **종전에는 그 둘이 박혀 있었다** — 800x600 · 배율 1.0 한 점. 그런데 이 값을 실제로
+/// 쓰는 판정(`cell_from_event` → `cell_at`)은 **그 프레임의 캔버스 자리표**를 읽어 셀을
+/// 되짚는다. 곧 「머리줄 누름을 안 먹는다」는 성질이 **창 기하에 걸려 있는데** 그 축을
+/// 한 번도 안 쟀다. pytmux/pytmux-365 가 후보 ②로 세운 것이 정확히 그 축이다
+/// (「왕복 뒤 캔버스 기하가 낡으면 머리줄 좌표가 셀로 되짚힌다」).
+///
+/// ⚠ 배율(`build_scene` 의 셋째 인자)은 **장치 배율**이고 머리줄 띠를 정하는
+/// `config.font_scale` 과 다른 값이다 — 둘 다 움직여야 판이 덮인다.
+fn mouse_down_handled_in(
+    x: f32,
+    y: f32,
+    win: (f32, f32),
+    scale: f32,
+    messages: Vec<ServerMessage>,
+) -> bool {
     use warpui::platform::WindowStyle;
     use warpui::{EntityIdSet, Presenter, WindowInvalidation};
     use warpui_core::event::{Event, ModifiersState};
@@ -3615,7 +4008,7 @@ fn mouse_down_handled_xy(x: f32, y: f32, messages: Vec<ServerMessage>) -> bool {
         };
         app.update(move |ctx| {
             presenter.invalidate(invalidation, ctx);
-            let _ = presenter.build_scene(vec2f(WIN_W, WIN_H), 1., None, ctx);
+            let _ = presenter.build_scene(vec2f(win.0, win.1), scale, None, ctx);
             presenter
                 .dispatch_event(
                     Event::LeftMouseDown {
@@ -3629,6 +4022,39 @@ fn mouse_down_handled_xy(x: f32, y: f32, messages: Vec<ServerMessage>) -> bool {
                 .handled
         })
     })
+}
+
+#[test]
+fn the_titlebar_band_is_re_asserted_from_what_the_window_reports() {
+    // 제보(pytmux-365): 전체 화면에 갔다 돌아오면 머리줄을 끌어도 창이 안 움직인다.
+    // 그 이슈가 후보 ①로 세운 자리가 여기다 — 종전 `refresh_titlebar_band` 는
+    // **우리가 마지막으로 말한 값**을 기억해 그 값이 바뀔 때만 창을 두드렸다:
+    //
+    //     if self.titlebar_band == Some(band) { return; }   // ← 창이 «잊었을» 때를 못 본다
+    //
+    // 곧 창이 그 값을 잊는 경로가 하나라도 있으면 그 뒤로 **영영 다시 안 말한다**.
+    // 가정을 관측으로 바꿨는지 잰다.
+    let body = source_after("fn refresh_titlebar_band(", 1400);
+    assert!(
+        body.contains("window.titlebar_height()"),
+        "창에게 안 물어본다 — 「한 번 말하면 안 잊는다」를 다시 가정하고 있다: {body}"
+    );
+    assert!(
+        !body.contains("if self.titlebar_band == Some(band)"),
+        "우리 기억만 보고 일찍 돌아간다 — 창이 잊으면 영영 안 말한다: {body}"
+    );
+    // ⛔ 그리고 **인형이 그 값을 버리면** 이 축을 영영 못 잰다. 종전 테스트 창은
+    //    `fn set_titlebar_height(&self, _height: f64) {}` 였다 — 말한 것이 어디에도
+    //    안 남으니 물어볼 자리가 없었고, 그래서 이 결함이 기계 검증 밖에 있었다.
+    let doll = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../warpui_core/src/platform/test/delegate.rs"
+    ))
+    .expect("테스트 창 소스를 못 읽었다");
+    assert!(
+        doll.contains("self.titlebar_height.set(height)"),
+        "테스트 창이 띠를 다시 버린다 — 이 축이 기계 검증 밖으로 나간다"
+    );
 }
 
 #[test]
@@ -3679,6 +4105,56 @@ fn the_titlebar_is_draggable_across_its_width_except_on_our_window_buttons() {
         assert!(
             mouse_down_handled_xy(mid_of_last_slot, y, vec![]),
             "창 버튼(닫기) 자리의 누름을 뷰가 안 먹었다 — 누르면 창이 끌리고 버튼은 안 먹힌다"
+        );
+    }
+}
+
+/// 머리줄이 **창 기하가 움직여도** 계속 창의 것인가 — pytmux/pytmux-365 후보 ②.
+///
+/// ☠ 위 두 시험은 800x600 · 배율 1.0 **한 판**만 재고, x 훑기는 **패널 없이**(`vec![]`) 돈다.
+/// 그런데 머리줄 누름을 삼킬 수 있는 유일한 자는 `cell_from_event` 이고, 그것은 **패널이
+/// 있을 때만** 그리는 캔버스 자리표를 읽는다. 곧 「삼킬 수 있는 판」이 그 훑기에 한 번도
+/// 안 들어와 있었다.
+///
+/// 이 시험이 재는 것: **창 크기 · 장치 배율 · 캔버스 유무**를 곱해 머리줄 띠 안을 훑고,
+/// 그 전부에서 뷰가 누름을 **안 먹는지** 본다. 하나라도 먹으면 그 판에서 창이 안 끌린다.
+///
+/// ⚠ 실기 재현(마우스로 실제로 끌기)을 대신하지 않는다 — 이것은 「그럴 수 있는 판」을
+/// 좁히는 자다. 실기는 Windows 상자 + 사람 손이 필요하다(그 이슈의 벽).
+#[test]
+fn the_titlebar_stays_the_windows_across_sizes_scales_and_canvas() {
+    let band = crate::titlebar::band_height(1.);
+    let lane = crate::titlebar::reserved_width_for(crate::titlebar::BUTTONS.len());
+
+    // 창 크기: 작은 판 · 기본 판 · 전체화면만 한 판(이 상자 2560x1440 · 맥 레티나 판).
+    let sizes = [(640., 400.), (WIN_W, WIN_H), (2560., 1392.), (3024., 1890.)];
+    // 장치 배율: 1.0 · 1.25 · 1.5(이 Windows 상자) · 2.0(레티나).
+    let scales = [1., 1.25, 1.5, 2.];
+
+    for (w, h) in sizes {
+        for scale in scales {
+            for canvas in [false, true] {
+                let msgs = if canvas { vec![layout_one_pane()] } else { vec![] };
+                // 띠 안을 위·가운데·아래로 훑는다. 아래 끝(band - 1)이 제일 위험하다 —
+                // 캔버스 원점이 한 픽셀이라도 올라오면 그 줄부터 셀로 되짚힌다.
+                for y in [1., band / 2., band - 1.] {
+                    for x in [2., 20., w / 4., w / 2., w - lane - 4.] {
+                        assert!(
+                            !mouse_down_handled_in(x, y, (w, h), scale, msgs.clone()),
+                            "머리줄 누름을 뷰가 먹었다 — 그 판에서 창이 안 끌린다 (창 {w}x{h} · 배율 {scale} · 캔버스 {canvas} · x {x} · y {y} · 띠 {band})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // 양성 짝 — 띠 아래는 캔버스가 있을 때 우리 것이어야 한다. 없으면 위 단언은
+    // "전부 안 먹는다"로 고쳐도 통과한다(판 클릭이 통째로 죽은 채로).
+    for (w, h) in sizes {
+        assert!(
+            mouse_down_handled_in(w / 2., band + 40., (w, h), 1.5, vec![layout_one_pane()]),
+            "캔버스 누름까지 창에게 넘겼다 — 그 판에서 판 클릭·드래그 선택이 죽는다 (창 {w}x{h})"
         );
     }
 }
@@ -4077,6 +4553,480 @@ fn without_a_layout_nothing_is_converted() {
     // 첫 프레임(배치 없음)에 크롬을 지어내면 없는 테두리가 잠깐 번쩍인다.
     let (canvas, _) = framed_canvas();
     assert!(SessionView::frame_segments(&canvas, None, base::tint::BorderTint::Local).is_empty());
+}
+
+// ── 탭 라벨이 «바뀌었다»를 색으로 말하나 (pytmux-376) ────────────────────────
+//
+// 제보: 같은 탭이 정본에서는 주황 글자인데 GUI 는 다른 탭과 같은 색이었다(첨부 2장).
+// 글리프(`!`)는 이미 둘 다 그리고 있었으므로 **빠진 것은 색 하나**였다.
+
+/// 시험용 탭 하나 — 필요한 칸만 세운다.
+fn tab_for_colour(f: impl FnOnce(&mut proto::Tab)) -> proto::Tab {
+    let mut t = proto::Tab {
+        index: 1,
+        name: "구현".into(),
+        ..Default::default()
+    };
+    f(&mut t);
+    t
+}
+
+/// WCAG 상대휘도 대비(pytmux-372 가 쓴 그 방법) — 1.0 ~ 21.0.
+fn contrast_ratio(a: ColorU, b: ColorU) -> f32 {
+    fn lum(c: ColorU) -> f32 {
+        let ch = |v: u8| {
+            let v = v as f32 / 255.;
+            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
+    }
+    let (x, y) = (lum(a), lum(b));
+    let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// ★ 비활성 탭에서 Claude 가 끝났으면 **글자가 주황**이다 — 정본 `done_st` 그대로.
+#[test]
+fn a_finished_claude_tab_says_so_in_amber() {
+    let done = tab_for_colour(|t| t.claude_done = true);
+    let plain = tab_for_colour(|_| {});
+    assert_eq!(SessionView::tab_label_color(&done), CLAUDE_DONE_AMBER);
+    // 대조군이 없으면 "전부 주황"도 통과한다 — 그러면 오라클이 공허하다.
+    assert_eq!(SessionView::tab_label_color(&plain), palette::FG);
+    assert_ne!(CLAUDE_DONE_AMBER, palette::FG, "알림색이 기본색과 같으면 알림이 아니다");
+}
+
+/// 활성 탭은 안 물들인다 — 정본도 `active` 갈래가 `claude_done` 보다 앞이다.
+///
+/// 지금 보고 있는 탭에 "바뀌었다"를 칠하면, 그 색이 뜻하는 «봐야 할 다른 탭»이 흐려진다.
+#[test]
+fn the_tab_you_are_looking_at_keeps_its_label_colour() {
+    let t = tab_for_colour(|t| {
+        t.active = true;
+        t.claude_done = true;
+    });
+    assert_eq!(SessionView::tab_label_color(&t), palette::FG);
+}
+
+/// 원격이면서 Claude 가 끝난 탭은 **주황**이다(정본 갈래 순서: `claude_done` → `remote`).
+///
+/// 뒤집으면 원격 탭에서만 완료 알림이 조용해지고, 그 침묵은 눈으로 못 찾는다.
+#[test]
+fn a_finished_claude_beats_the_remote_pink() {
+    let t = tab_for_colour(|t| {
+        t.remote = true;
+        t.claude_done = true;
+    });
+    assert_eq!(SessionView::tab_label_color(&t), CLAUDE_DONE_AMBER);
+    // 원격만이면 그대로 분홍이라야 §1.7-a 가 산다.
+    let remote = tab_for_colour(|t| t.remote = true);
+    assert_eq!(SessionView::tab_label_color(&remote), REMOTE_PINK);
+}
+
+/// ⛔ 벨·활동은 **탭 라벨 색을 안 바꾼다 — 정본이 안 바꾼다**(pytmux-376 의 남은 절반).
+///
+/// 제보 화면의 주황은 벨이 아니라 `claude_done` 이었다(정본 `TabBar.render_line` 에는
+/// `bell`·`activity` 갈래가 아예 없다 — 그 둘을 색으로 가르는 것은 **하단 상태줄의 창
+/// 목록**이다). 여기에만 색을 더하면 갈림을 **새로 만드는** 것이라, 이 오라클이 그
+/// 판정을 못박는다. 탭바에서도 벨/활동을 색으로 말하게 하려면 **두 클라를 함께** 고친다.
+#[test]
+fn a_bell_or_activity_does_not_repaint_the_tab_label() {
+    let bell = tab_for_colour(|t| t.bell = true);
+    let activity = tab_for_colour(|t| t.activity = true);
+    assert_eq!(SessionView::tab_label_color(&bell), palette::FG);
+    assert_eq!(SessionView::tab_label_color(&activity), palette::FG);
+    // 다만 **글자로는** 이미 말한다 — 그 표식까지 사라지면 이건 침묵이 맞다.
+    assert!(bell.label(2, proto::tabs::FULL_TITLE).ends_with('!'));
+    assert!(activity.label(2, proto::tabs::FULL_TITLE).ends_with('#'));
+}
+
+/// 고른 색이 **그 바탕에서** 읽히나 — 탭바는 캔버스가 아니라 `SURFACE` 위다.
+///
+/// pytmux-372 가 이 앱의 대비가 빠듯하다는 것을 재 놓았다. 비활성 탭은 배경을 안 칠하므로
+/// 바탕이 곧 띠 색이다.
+#[test]
+fn an_amber_tab_label_is_readable_on_the_tab_strip() {
+    let ratio = contrast_ratio(CLAUDE_DONE_AMBER, theme::SURFACE);
+    assert!(ratio >= 4.5, "탭 띠 위에서 안 읽힌다: {ratio:.2}:1");
+    // 이미 뜻이 박힌 색과 겹치면 두 뜻이 한 그림이 된다(theme.rs 가 갈라 둔 이유).
+    assert_ne!(CLAUDE_DONE_AMBER, theme::FOCUS, "'고르는 중'과 '바뀌었다'가 같은 색이다");
+    assert_ne!(CLAUDE_DONE_AMBER, theme::INVERT_BG, "'켜짐'과 '바뀌었다'가 같은 색이다");
+    assert_ne!(CLAUDE_DONE_AMBER, REMOTE_PINK, "'원격'과 '바뀌었다'가 같은 색이다");
+}
+
+// ★ 위 다섯은 **순수 함수**를 직접 부른다(그 함수 문서가 적은 이유 — 종전에는 헤드리스
+// 프레임에 색이 안 남아 그리는 자리에 두면 아무도 못 쟀다). 그 전제는 2026-08-24 에
+// 사라졌다: `Scene::record_text` 가 색을 함께 기록하므로(`PROVENANCE.md` §47) **부르는
+// 줄까지** 잴 수 있다 — 순수 함수만 재면 `render_tabs` 에서 그 함수를 부르는 줄을 지워도
+// 통과한다(루트 CLAUDE.md §표시 기능은 호출부까지 단언 — 이 저장소가 두 번 물린 부류).
+/// ★ **호출부까지 잰다.** 위 넷은 순수 함수를 재므로, `render_tabs` 에서 그 함수를 부르는
+/// 줄을 지워도 통과한다(이 저장소가 「공허 통과」로 두 번 물린 부류 — 루트 CLAUDE.md
+/// §표시 기능은 호출부까지 단언). 그래서 프레임에서 그 색을 실제로 찾는다.
+#[test]
+fn the_frame_really_paints_a_finished_tab_amber() {
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status", "windows": [
+            {"index": 0, "name": "하나", "active": true},
+            {"index": 1, "name": "구현", "claude_done": true},
+        ]
+    }))
+    .unwrap();
+    let painted = painted_colors(vec![layout_one_pane(), status], &[]);
+    let done = painted
+        .iter()
+        .find(|(text, _)| text.contains("구현"))
+        .unwrap_or_else(|| panic!("완료 탭이 프레임에 없다: {painted:?}"));
+    assert_eq!(done.1, CLAUDE_DONE_AMBER, "완료 탭이 호박색이 아니다: {:?}", done);
+    // 조용한 탭은 그대로 기본색이다 — 안 그러면 "전부 호박색"으로도 이 시험이 통과한다.
+    let quiet = painted
+        .iter()
+        .find(|(text, _)| text.contains("하나"))
+        .expect("조용한 탭이 없다");
+    assert_eq!(quiet.1, palette::FG, "조용한 탭까지 물들였다");
+}
+
+/// 같은 이유의 호출부 오라클 — 모드 표식 칩의 **바탕색**이 정본의 호박색인가(pytmux-380).
+#[test]
+fn the_command_mode_chip_is_painted_in_the_canon_accent() {
+    let fills = painted_fills(vec![layout_one_pane()], &[(Key::Escape, Mods::NONE)]);
+    assert!(
+        fills.iter().any(|(c, _, _)| *c == CLAUDE_DONE_AMBER),
+        "esc 모드 칩이 정본 색으로 안 칠해졌다: {fills:?}"
+    );
+    // 대조군: 평소 모드에는 그 색이 없어야 한다(있으면 위 단언이 공허하다).
+    let quiet = painted_fills(vec![layout_one_pane()], &[]);
+    assert!(
+        !quiet.iter().any(|(c, _, _)| *c == CLAUDE_DONE_AMBER),
+        "모드가 아닌데 그 색이 이미 있다 — 위 단언이 공허해진다"
+    );
+}
+
+// ── 검색이 «다 못 봤다» 를 말한다 (pytmux-404) ────────────────────────────────────
+
+#[test]
+fn a_host_that_answered_but_held_some_back_still_says_so() {
+    // ⛔ 종전에는 `state != "ok"` 인 상류만 훑어서, **답했는데 일부를 못 실은** 경우가
+    //    통째로 사라졌다. 그건 문구가 아니라 판정이다 — 「없다」와 「안 봤다」를 가른다.
+    let sr: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "search_results", "query": "x", "items": [],
+        "hosts": [
+            {"host": "boxA", "state": "ok", "n": 3, "hidden": 2},
+            {"host": "boxB", "state": "ok", "n": 1, "dropped": 7},
+            {"host": "boxC", "state": "ok", "n": 5},
+        ]
+    }))
+    .unwrap();
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(sr))).unwrap();
+    view.pump_headless();
+    let notes = view.state.search_results().expect("회신이 안 담겼다").notes();
+    assert!(notes.contains("boxA"), "숨긴 탭을 안 적었다: {notes}");
+    assert!(notes.contains("2"), "숨긴 수를 안 적었다: {notes}");
+    assert!(notes.contains("boxB"), "못 실은 것을 안 적었다: {notes}");
+    assert!(notes.contains('7'), "못 실은 수를 안 적었다: {notes}");
+    // ⛔ 대조군: 전수로 답한 곳은 «빠진 곳» 에 들지 않는다(그러면 경고가 잡음이 된다).
+    assert!(!notes.contains("boxC"), "멀쩡한 상류를 빠진 곳으로 적었다: {notes}");
+}
+
+// ── 스펙의 막대 (pytmux-371 ③) ────────────────────────────────────────────────────
+
+fn machines_spec() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-machines", "kind": "table",
+        "title": "토큰 사용량 · 머신별", "hint": "↑↓ 이동 · Esc 닫기",
+        "rows": [
+            {"key": "이 머신", "label": "이 머신", "cols": ["1,200"], "bar": 1000},
+            {"key": "91ddca94", "label": "91ddca94", "cols": ["300"], "bar": 250},
+        ],
+        "text": "", "note": "", "selected": 0
+    }))
+    .unwrap()
+}
+
+/// 정본 토큰 팝업의 **글자 키**를 실은 스펙(pytmux-371 · 서버 `screenspec._hub_keys`).
+///
+/// 가르는 것: `keys` 에 탭으로 가는 글자 다섯이 있다. 정본이 «소비만 하고 무동작»으로
+/// 둔 글자들(`h`·`d`·`w`·`m`·`r`)은 **여기 안 싣는다** — 이 클라는 표에 없는 글자에
+/// 이미 아무 일도 안 하므로(`a_letter_the_spec_does_not_declare_is_ignored_not_a_close`),
+/// 실으면 아무 일도 안 하는 왕복만 서버에 한 번 더 가게 된다.
+fn machines_spec_with_letter_keys() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-machines", "kind": "table",
+        "title": "토큰 사용량 · 머신별",
+        "hint": "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "rows": [
+            {"key": "이 머신", "label": "이 머신", "cols": ["1,200"], "bar": 1000},
+            {"key": "goto:limits", "label": "한도(/usage) 보기 →", "cols": []},
+        ],
+        "text": "", "note": "", "selected": 0,
+        "keys": {"p": "goto:sessions", "l": "goto:limits", "o": "goto:period",
+                 "s": "goto:settings", "u": "refresh-usage"}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_letter_key_on_a_token_panel_sends_the_action_the_canonical_popup_would() {
+    // ⛔ **여기가 «있다» 와 «같게 군다» 가 갈리는 자리다**(루트 CLAUDE.md ★★). 잇는 줄은
+    //    이미 있었지만, 정본을 손에 익힌 사람은 줄을 고르지 않고 `l` 을 친다
+    //    (`plugins/claude-code/screens.py::TokenLogScreen.on_key`).
+    //
+    // 재는 것은 **나가는 것**이다 — 그리는 것이 아니라. 스펙이 키를 실어도 그 키가
+    // 액션이 안 되면 판만 예쁘고 아무 일도 안 난다(부정 단언만 있는 오라클이 놓치는 것).
+    let sent = sent_after(
+        vec![layout_one_pane(), machines_spec_with_letter_keys()],
+        &[(Key::Char('l'), Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let action = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_action")
+        .unwrap_or_else(|| panic!("`l` 이 액션이 안 됐다: {frames:?}"));
+    assert_eq!(action["id"], "claude-token-machines");
+    assert_eq!(action["do"], "goto:limits", "`l` 이 한도 판으로 안 간다: {action:?}");
+}
+
+/// 한도 판 — 줄 하나가 **리셋 시각**(`until`)을 싣는다(pytmux-371 ④).
+fn limits_spec_with_deadline(until: i64) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-usage-panel", "kind": "table",
+        "title": "Claude 사용 한도 (/usage)", "hint": "↑↓ 스크롤 · Esc 닫기",
+        "rows": [
+            {"key": "세션", "label": "세션", "cols": ["42% 사용"], "bar": 420,
+             "until": until},
+            {"key": "acct", "label": "계정 me@example.com", "cols": []}
+        ],
+        "text": "", "note": "", "selected": 0, "keys": {}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn the_limit_panel_counts_down_to_the_reset_the_server_named() {
+    // 정본 `[한도]` 탭은 다음 리셋까지를 **큰 글자 카운트다운**으로 센다. 서버가 그 글자를
+    // 지어 보내면 초마다 프레임이 와야 하므로(판 하나 때문에 초당 전 세션 재그리기),
+    // 서버는 **언제인지**만 싣고 남은 시간은 이쪽이 굴린다.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let painted = painted_after(
+        vec![layout_one_pane(), limits_spec_with_deadline(now + 3661)],
+        &[],
+    );
+    assert!(
+        painted.iter().any(|t| t.starts_with("1:0")),
+        "리셋까지 남은 시간이 안 그려진다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_reset_that_already_passed_is_not_drawn_as_zero() {
+    // ⛔ 대조군이자 규율: `0:00:00` 이 굳어 있으면 그것이 **「지금 리셋된다」**로 읽힌다.
+    //    실제 뜻은 「실측이 낡았다」이고, 그 사실은 판의 신선도 줄이 따로 말한다.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let painted = painted_after(
+        vec![layout_one_pane(), limits_spec_with_deadline(now - 60)],
+        &[],
+    );
+    assert!(
+        !painted.iter().any(|t| t.contains("0:00:00")),
+        "지난 시각을 0 으로 그린다: {painted:?}"
+    );
+    // 시각이 아예 없는 줄도 같다(대조군 둘째).
+    let painted = painted_after(vec![layout_one_pane(), limits_spec_with_deadline(0)], &[]);
+    assert!(
+        !painted.iter().any(|t| t.contains(":00:")),
+        "시각이 없는데 카운트다운을 그린다: {painted:?}"
+    );
+}
+
+#[test]
+fn the_clock_only_repaints_for_a_countdown_that_is_actually_on_screen() {
+    // `true` 를 돌려주면 화면 **전체**를 다시 그린다 — 카운트다운이 없는 평상시에도 초당
+    // 한 번 전 세션을 다시 그리면 그 비용을 아무도 안 낸다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    assert!(!view.tick_clock(), "판이 안 떴는데 초마다 다시 그린다");
+}
+
+#[test]
+fn a_row_with_a_ratio_is_drawn_as_a_bar_not_as_block_glyphs() {
+    // 정본은 같은 뜻을 `█` 글자로 그린다(격자라 그 길뿐이다). GUI 는 면으로 그린다 —
+    // 사용자 지시(«인터페이스는 gui 기반»)이고, 서버는 **비율만** 싣는다.
+    let fills = painted_fills(vec![layout_one_pane(), machines_spec()], &[]);
+    let bars = fills
+        .iter()
+        .filter(|(c, _, _)| *c == theme::INVERT_BG)
+        .count();
+    assert!(bars >= 2, "막대가 줄마다 안 그려졌다(면 {}): {fills:?}", bars);
+    // 그리고 글자로는 `█` 를 쓰지 않는다 — 그것을 쓰면 정본 그림을 흉내내는 것이다.
+    let painted = painted_after(vec![layout_one_pane(), machines_spec()], &[]);
+    assert!(
+        !painted.iter().any(|t| t.contains('█')),
+        "막대를 글자로 그렸다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_row_without_a_ratio_gets_no_bar() {
+    // ⛔ 대조군. 막대가 늘 그려지면 위 시험은 아무 일도 안 해도 통과한다 — 그리고 종전
+    //    화면(mdir·ncd 등)에 없던 막대가 생기는 것은 회귀다.
+    let plain: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "x", "kind": "table", "title": "t", "hint": "h",
+        "rows": [{"key": "a", "label": "a", "cols": ["1"]}], "text": "", "note": "",
+        "selected": 0
+    }))
+    .unwrap();
+    let fills = painted_fills(vec![layout_one_pane(), plain], &[]);
+    assert!(
+        !fills.iter().any(|(c, _, _)| *c == theme::INVERT_BG),
+        "비율이 없는 줄에 막대를 그렸다: {fills:?}"
+    );
+}
+
+// ── 빈 목록도 말을 한다 (pytmux-405) ──────────────────────────────────────────────
+//
+// 정본은 목록이 비면 그 사실을 적는다(`(버퍼 없음)`·`(검색 결과 없음)`·`(지나간 알림 없음)`).
+// 아무 말도 없는 빈 상자는 사용자에게 **「고장」과 구별되지 않는다.**
+//
+// ⛔ 문구를 정본에서 옮기는 것이 목적이 아니다(문구는 GUI 것으로 짓는다) — 재는 것은
+//    **「빈 판이 침묵하지 않는다」** 하나다. 그래서 판마다 문구를 박지 않고 전수로 훑는다.
+
+#[test]
+fn no_panel_stays_silent_when_it_has_nothing_to_show() {
+    // 재료를 하나도 안 준 상태로 판을 전부 열어 본다. 머리줄·꼬리줄은 늘 있으므로
+    // 그 둘을 빼고 **본문에 글자가 있나**를 본다.
+    let mut silent: Vec<String> = Vec::new();
+    for screen in base::screens::Screen::all().iter().copied() {
+        // 목록형이 아닌 판(읽는 판·입력 판)은 대상이 아니다 — 비어 있을 수가 없다.
+        if !base::screens::Screens::is_list(screen) && screen != base::screens::Screen::Notices {
+            continue;
+        }
+        let (mut view, tx, _sent) = harness();
+        tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+        view.pump_headless();
+        view.screens.open(screen);
+        let Some(panel) = view.render_screen_panel(screen).debug_text_content() else {
+            silent.push(format!("{screen:?}(글자 0)"));
+            continue;
+        };
+        let title = screen.title();
+        let hint = screen.hint();
+        let body: Vec<&str> = panel
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && *l != title && *l != hint && !hint.contains(*l))
+            .collect();
+        if body.is_empty() {
+            silent.push(format!("{screen:?}"));
+        }
+    }
+    assert!(
+        silent.is_empty(),
+        "재료가 없을 때 **아무 말도 안 하는** 판이 있다 — 빈 상자는 고장과 구별되지 않는다:
+  {}",
+        silent.join("
+  ")
+    );
+}
+
+// ── 레터박스 (pytmux-381) ─────────────────────────────────────────────────────────
+
+#[test]
+fn a_window_bigger_than_the_shared_grid_gets_a_matte_band() {
+    // 제보의 그림 — 두 클라가 같은 탭을 볼 때 GUI 오른쪽·아래에 창 바탕이 드러났다.
+    // 정본은 그 자리를 무광으로 칠한다(`clientio.py::_composite` 의 matte 띠).
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    // 공유 격자는 80x4(`layout_one_pane`)인데 내 창은 그보다 크다고 알린다.
+    view.size.update(100, 10);
+    let canvas = view.composite_for_paint().expect("캔버스가 없다");
+    let matte = view.letterbox(&canvas).expect("레터박스가 안 섰다");
+    assert_eq!((matte.live_cols, matte.live_rows), (80, 4), "라이브 경계가 격자와 다르다");
+    assert_eq!((matte.cols, matte.rows), (100, 10), "띠가 내 창을 안 덮는다");
+    assert_eq!(matte.color, theme::MATTE);
+}
+
+#[test]
+fn the_usual_single_client_gets_no_band() {
+    // ⛔ 대조군. 단일 클라(정상 경로)에서 발동하면 평소 그림이 바뀐다 — 정본도 그때는
+    //    두 값이 같아 안 칠한다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.size.update(80, 4);
+    let canvas = view.composite_for_paint().expect("캔버스가 없다");
+    assert!(view.letterbox(&canvas).is_none(), "격자와 같은 크기인데 띠를 세웠다");
+    // 더 작은 창(공유 격자가 나보다 크다)에서도 안 칠한다 — 그때는 잘리는 쪽이다.
+    view.size.update(40, 2);
+    assert!(view.letterbox(&canvas).is_none(), "내가 더 작은데 띠를 세웠다");
+}
+
+// ── 고정(핀) 구역 (pytmux-62) ─────────────────────────────────────────────────────
+
+fn tabs_with_a_pinned_one() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({"t": "status", "windows": [
+        {"index": 0, "name": "고정", "pinned": true},
+        {"index": 1, "name": "하나", "active": true},
+        {"index": 2, "name": "둘"},
+    ]}))
+    .unwrap()
+}
+
+#[test]
+fn pinned_tabs_gather_behind_a_separator() {
+    // 제보(2026-08-24): 정본은 고정 탭을 뒤 구역으로 모으는데 GUI 는 제자리에 두어
+    // 「핀이 반영되지 않는다」로 보였다. `*` 글리프는 오고 있었다 — 없던 것은 **자리**다.
+    let painted = painted_after(vec![layout_one_pane(), tabs_with_a_pinned_one()], &[]);
+    let at = |needle: &str| {
+        painted
+            .iter()
+            .position(|t| t.contains(needle))
+            .unwrap_or_else(|| panic!("프레임에 {needle:?} 가 없다: {painted:?}"))
+    };
+    assert!(at("하나") < at("‖"), "비고정 탭이 구분자 뒤로 갔다: {painted:?}");
+    assert!(at("둘") < at("‖"), "비고정 탭이 구분자 뒤로 갔다: {painted:?}");
+    assert!(at("‖") < at("고정"), "고정 탭이 구분자 앞에 남았다: {painted:?}");
+    // `+` 는 정본 차례대로 **고정 구역 앞**이다.
+    assert!(at("+") < at("‖"), "새 탭 단추가 고정 구역 뒤로 갔다: {painted:?}");
+}
+
+#[test]
+fn without_a_pinned_tab_there_is_no_separator() {
+    // 대조군 — 구분자가 늘 있으면 위 시험은 아무 일도 안 해도 통과한다.
+    let painted = painted_after(three_tabs(), &[]);
+    assert!(
+        !painted.iter().any(|t| t.contains('‖')),
+        "고정 탭이 없는데 구분자를 그렸다: {painted:?}"
+    );
+    // 그리고 `+` 는 그때도 그려진다(정본 탭바도 늘 달고 있다).
+    assert!(painted.iter().any(|t| t.contains('+')), "새 탭 단추가 사라졌다: {painted:?}");
+}
+
+// ── esc 모드 표식 (pytmux-380) ────────────────────────────────────────────────────
+
+#[test]
+fn the_command_mode_badge_says_what_it_can_do() {
+    // `[esc]` 네 글자는 "무언가 모드에 들어와 있다"까지만 말한다. 정본은 같은 자리에서
+    // 나가는 길·쓰는 길을 광고한다.
+    let badge = InputMode::Command.badge().expect("표식이 없다");
+    assert!(badge.contains('←') && badge.contains(':'), "할 일을 안 적었다: {badge}");
+    assert_ne!(badge, "[esc]");
+}
+
+#[test]
+fn the_command_mode_badge_is_translated() {
+    // 종전 `[esc]` 는 기호라 카탈로그에 줄이 없었고 en 로케일에서도 그대로 나왔다.
+    let badge = InputMode::Command.badge().unwrap();
+    let en = base::i18n::with_locale("en", || base::i18n::t(badge));
+    assert_ne!(en, badge, "en 카탈로그에 줄이 없다");
+    assert!(en.contains("cmd"), "정본 en 문구와 다르다: {en}");
 }
 
 // ── 판이 서는 자리 — 정본 앵커(`Screen::anchor`)를 뷰가 실제로 따르나 ────────────
@@ -4586,6 +5536,96 @@ fn esc_from_the_detail_goes_back_to_the_list_without_asking_the_server() {
     assert!(
         painted_contains(&painted, "68995  플러그인 호환 P2"),
         "Esc 뒤 목록으로 안 돌아왔다: {painted:?}"
+    );
+}
+
+/// 끊김 사유를 받아 적는 로거 — 아래 한 시험만 쓴다(pytmux-390).
+///
+/// `log` 의 전역 로거는 **프로세스에 하나뿐**이라 걸기는 한 번뿐이다. 그래서 받아 적기만
+/// 하고 판정은 시험이 한다 — 다른 시험이 뱉은 줄이 섞여도 사유 글로 골라내면 된다.
+static ENDED_RECORDS: std::sync::Mutex<Vec<(log::Level, String)>> =
+    std::sync::Mutex::new(Vec::new());
+
+struct CaptureLog;
+
+impl log::Log for CaptureLog {
+    fn enabled(&self, _meta: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, record: &log::Record) {
+        if let Ok(mut out) = ENDED_RECORDS.lock() {
+            out.push((record.level(), record.args().to_string()));
+        }
+    }
+    fn flush(&self) {}
+}
+
+#[test]
+fn the_reason_a_link_ended_reaches_the_log_not_just_the_screen() {
+    // ⛔ 이 자가 없으면 리팩터가 `log::error!` 를 지우거나 `debug!` 로 내려도 **아무 시험이
+    //    안 운다**(pytmux-390). 그러면 증상은 오류가 아니라 **침묵으로 되돌아가는 것**이라,
+    //    다음 사람은 「로그가 없네」를 「안 끊겼네」로 읽는다 — 이 저장소가 pytmux-171 에서
+    //    한 번 치른 값이다(제보자는 `--frame-dump` 그림에서 눈으로 보고서야 알았다).
+    //
+    // 재는 것 셋: ⑴ 레코드가 났나 ⑵ 수준이 `Error` 인가(기본 로그 수준에서도 보여야
+    // 한다) ⑶ **사유 문자열이 실렸나**(사유 없는 "끊겼다"는 진단이 아니다).
+    static CAPTURE: CaptureLog = CaptureLog;
+    log::set_logger(&CAPTURE)
+        .expect("전역 로거를 못 걸었다 — 이 자는 «못 쟀다»이지 통과가 아니다");
+    log::set_max_level(log::LevelFilter::Trace);
+
+    let (mut view, tx, _sent) = harness();
+    // 실제로 났던 사유 그대로(pytmux-171 의 길이 프레임 오독).
+    let reason = "Frame too large: 1684217948 bytes (limit 67108864)";
+    tx.send(LinkEvent::Ended(reason.into())).unwrap();
+    view.pump_headless();
+
+    let records = ENDED_RECORDS.lock().unwrap().clone();
+    let hit = records
+        .iter()
+        .find(|(_, msg)| msg.contains("1684217948"))
+        .unwrap_or_else(|| {
+            panic!("끊김 사유가 로그에 안 남았다 — 화면 밖에는 자취가 없다: {records:?}")
+        });
+    assert_eq!(
+        hit.0,
+        log::Level::Error,
+        "끊김이 기본 로그 수준 아래로 내려갔다 — `RUST_LOG` 를 미리 켠 사람만 본다: {hit:?}"
+    );
+}
+
+#[test]
+fn the_text_panel_stops_scrolling_at_the_end_instead_of_running_away() {
+    // 제보(pytmux-184 ⑵ · 스크린샷 3장): `/usage` 팝업에서 아래 방향키를 계속 누르면
+    // 내용이 사라지고 빈 칸만 남았다. 그리는 쪽이 `min(max_scroll)` 을 매기면서
+    // **판이 비는 것**은 멎었지만, core 의 `scroll` 은 그대로 자란다 — 그러면 끝에서
+    // 더 누른 만큼 `↑` 가 헛돈다(그림은 그대로인데 키가 안 먹는 것으로 보인다).
+    //
+    // ⛔ 재는 것은 「끝에서 ↑ 한 번이 곧바로 한 줄을 되돌리나」다. 값을 안 보고 **그림**을
+    //    보는 이유: 자르는 자리가 어디든(뷰든 core 든) 사용자가 겪는 것은 이 한 가지다.
+    let body: String = (1..=40).map(|n| format!("L{n:02}
+")).collect();
+    let long: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-usage-view", "kind": "text",
+        "title": "Claude usage limit (/usage)", "hint": "(↑↓ 스크롤 · Esc 닫기)",
+        "text": body, "note": "", "keys": {}
+    }))
+    .unwrap();
+    // 끝을 한참 넘겨 내려간다(PgDn 한 번이 10줄 · 판 예산은 그보다 작다).
+    let deep: Vec<(Key, Mods)> = std::iter::repeat_n((Key::PageDown, Mods::NONE), 10).collect();
+    let mut deep_then_up = deep.clone();
+    deep_then_up.push((Key::Up, Mods::NONE));
+
+    let at_end = painted_after(vec![layout_one_pane(), long.clone()], &deep);
+    let after_up = painted_after(vec![layout_one_pane(), long], &deep_then_up);
+
+    assert!(
+        at_end.iter().any(|t| t.contains("L40")),
+        "끝까지 내려갔는데 마지막 줄이 안 보인다 — 판이 비었거나 상한이 틀렸다: {at_end:?}"
+    );
+    assert_ne!(
+        at_end, after_up,
+        "끝에서 `↑` 가 헛돌았다 — 넘긴 만큼 눌러야 움직인다(pytmux-184 ⑵)"
     );
 }
 
@@ -6336,18 +7376,28 @@ fn the_status_tabs_are_real_tabs_not_boxed_text() {
 }
 
 #[test]
-fn switching_status_tabs_does_not_carry_the_old_scroll() {
-    // 탭마다 줄 수가 다르다 — 스크롤 자리를 물려받으면 짧은 탭이 **빈 화면**으로 뜬다.
+fn switching_status_tabs_does_not_carry_the_old_cursor() {
+    // 탭마다 줄 수가 다르다 — 커서 자리를 물려받으면 짧은 탭에서 **없는 줄**을 가리킨다.
+    //
+    // ⚠ 종전에는 이 판의 `↑↓` 가 글 굴리기라 `scroll` 을 쟀다. 이제는 **항목 커서**다
+    //   (pytmux-373 ⑶ · 정본 `ListView` 와 같다) — 굴리기는 그 커서의 부수 효과이고,
+    //   탭을 바꿀 때 되돌려야 하는 것도 그 커서다.
     let (mut view, tx, _sent) = harness();
-    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(layout_tall_pane()))).unwrap();
     view.pump_headless();
-    view.screens.open_info_tabs();
-    for _ in 0..5 {
-        view.handle_key(Key::Down, Mods::NONE);   // 판 안 스크롤(키 경로 그대로)
+    view.apply_action_for_test(base::Action::ShowInfoTabs);
+    let opened = view.screens.info_row();
+    for _ in 0..3 {
+        view.handle_key(Key::Down, Mods::NONE);
     }
-    assert_ne!(view.screens.scroll(), 0, "전제 실패 — 스크롤이 안 내려갔다");
-    view.screens.panel_click(base::PanelTarget::InfoTab(1));
+    assert_ne!(view.screens.info_row(), opened, "전제 실패 — 커서가 안 내려갔다");
+    view.panel_click(base::PanelTarget::InfoTab(1));
     assert_eq!(view.screens.scroll(), 0, "다른 탭의 스크롤 자리를 물려받았다");
+    assert_eq!(
+        view.screens.info_row(),
+        0,
+        "다른 탭의 커서 자리를 물려받았다 — 그 탭에 동작 줄이 없으면 첫 줄이라야 한다"
+    );
 }
 
 #[test]
@@ -6366,11 +7416,274 @@ fn the_status_lines_are_pinned_to_the_cell_grid() {
     assert_eq!(boxed, vec!["┤", "▁", "▂", "█"], "못박을 조각을 못 골랐다: {segs:?}");
 }
 
+// ── Status 판의 «정돈» · pytmux-373 ⑵⑶⑷ ──────────────────────────────────────
+//
+// 제보의 표가 다섯 줄로 갈랐다: 닫기 없음 · 동작 막대 없음 · `[c]`/`[o]` 가 고를 수 없음 ·
+// 꼬리줄이 `↑↓ 스크롤` 이라고 말함 · 아래가 통째로 빔. 아래는 그 다섯을 각각 잰다.
+
+/// REC 플러그인이 도는 상태(= status 에 `capture` 칸이 온다). 그때만 REC 탭과
+/// `[c]`/`[o]` 동작이 선다(정본 delete-to-disable 동형).
+fn rec_running() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "status", "windows": [],
+        "capture": true, "capture_path": "/tmp/rec/pane1.log", "capture_size": 2048
+    }))
+    .unwrap()
+}
+
+/// Status 판을 REC 탭으로 펴 놓은 뷰와, 그 뷰가 **서버로 보낸 것**.
+fn view_with_status_panel() -> (SessionView, Sent) {
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_tall_pane(), rec_running()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.apply_action_for_test(base::Action::ShowInfoTabs);
+    view.pump_headless();
+    (view, sent)
+}
+
+/// Status 판이 담은 글을 **줄 단위**로. 자리를 재려면 줄이 필요하다(어느 줄에 있나).
+fn status_panel_lines(view: &SessionView) -> Vec<String> {
+    view.render_screen_panel(base::screens::Screen::InfoTabs)
+        .debug_text_content()
+        .expect("Status 판에 글자가 없다")
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn the_status_panel_has_a_close_button_and_a_close_bar() {
+    // ⑷ 오른쪽 위 `[x]` 와 ⑵ 바닥 「닫기」 막대 — 정본 `#itclose`·`#itclosebtn`.
+    //    둘 다 **없었다**: 마우스로 닫는 길이 하나도 없었고, 아래는 통째로 비어 있었다.
+    //
+    // ☠ **판 전체에서 글자를 찾으면 안 된다** — 꼬리줄이 이미
+    //    `(←→ 탭·닫기[x] · …)` 라 `"[x]"` 도 `"닫기"` 도 **거기서** 걸린다. 실제로
+    //    처음에 그렇게 적었더니 `[x]` 를 통째로 지운 변이가 초록으로 통과했다.
+    //    그래서 재는 것은 **자리**다: `[x]` 는 탭줄 오른쪽 끝, 「닫기」는 제 줄 하나.
+    let (view, _sent) = view_with_status_panel();
+    let lines = status_panel_lines(&view);
+    let tabbar = lines
+        .iter()
+        .find(|l| l.contains("출력 캡처(REC)"))
+        .unwrap_or_else(|| panic!("탭줄을 못 찾았다:\n{}", lines.join("\n")));
+    assert!(
+        tabbar.contains("[x]"),
+        "오른쪽 위 닫기가 탭줄에 없다: {tabbar:?}"
+    );
+    assert!(
+        tabbar.trim_end().ends_with("[x]"),
+        "닫기가 오른쪽 **끝**이 아니다(정본 `#itgap` 이 미는 자리다): {tabbar:?}"
+    );
+    let close_bar = lines.iter().position(|l| l.trim() == "닫기");
+    let bar = close_bar.unwrap_or_else(|| panic!("바닥 닫기 막대가 없다:\n{}", lines.join("\n")));
+    // 막대는 **본문 아래**다(정본은 목록 다음 줄에 둔다) — 위로 올라가면 목록을 자른다.
+    let last_body = lines
+        .iter()
+        .rposition(|l| l.trim() == "" || l.contains("탭 매핑"))
+        .expect("본문이 없다");
+    assert!(bar > last_body, "닫기 막대가 본문 위에 있다: {bar} <= {last_body}");
+}
+
+#[test]
+fn the_close_button_actually_closes_by_key_and_by_click() {
+    // ⛔ 그려지기만 하고 안 눌리면 그것은 **또 다른 거짓말**이다(pytmux-9 ⑶ 이 같은
+    //    자리에서 배운 것). 키 동선(`←` 로 `[x]` → `Enter`)과 클릭 둘 다 잰다.
+    let (mut view, sent) = view_with_status_panel();
+    view.handle_key(Key::Left, Mods::NONE);       // 첫 탭에서 왼쪽 = `[x]`
+    assert!(view.screens.info_close_focused(), "←→ 로 `[x]` 에 못 간다");
+    view.handle_key(Key::Enter, Mods::NONE);
+    assert_eq!(view.screens.top(), None, "`[x]` 에서 Enter 를 눌렀는데 안 닫혔다");
+    // 클릭도 **같은 표적**을 지난다(클릭에만 있는 지름길을 안 만든다).
+    let (mut view, sent) = view_with_status_panel();
+    view.panel_click(base::PanelTarget::InfoClose);
+    assert_eq!(view.screens.top(), None, "닫기를 눌렀는데 안 닫혔다");
+}
+
+#[test]
+fn the_rec_actions_are_rows_you_can_pick_not_a_dim_line() {
+    // ⑶ 정본에서 `[c]`/`[o]` 는 **고를 수 있는 항목**(`▸ …`)이고, 우리 쪽은 `proto` 가
+    //    얹어 준 흐린 글자 한 줄이었다 — 키를 직접 치는 수밖에 없었다.
+    let (mut view, sent) = view_with_status_panel();
+    let panel = view
+        .render_screen_panel(base::screens::Screen::InfoTabs)
+        .debug_text_content()
+        .expect("Status 판에 글자가 없다");
+    assert!(panel.contains("▸ [c] 캡처 켜기/끄기"), "동작이 항목으로 안 섰다:\n{panel}");
+    assert!(panel.contains("▸ [o] 기록 폴더 열기"), "동작이 항목으로 안 섰다:\n{panel}");
+    // ⛔ 그리고 그 둘이 **줄로도 남아 있으면** 같은 말이 두 번 뜬다(`proto` 가 얹던 줄).
+    assert!(
+        !panel.contains("[c] 캡처 켜기/끄기 · [o] 기록 폴더 열기"),
+        "옛 안내 줄이 아직 남아 있다 — 같은 말이 두 번 뜬다:\n{panel}"
+    );
+    // 커서는 **첫 내용 줄**에서 시작한다(정본 `lv.index = len(acts)`) — 판을 열자마자
+    // 동작 단추가 골라져 있으면 `Enter` 한 번이 캡처를 토글한다.
+    assert_eq!(view.screens.info_row(), 2, "커서가 동작 단추 위에서 시작한다");
+    // ↑ 두 번이면 첫 동작 줄, 거기서 Enter 면 **캡처 토글이 나가고 판은 그대로**다.
+    view.handle_key(Key::Up, Mods::NONE);
+    view.handle_key(Key::Up, Mods::NONE);
+    assert_eq!(view.screens.info_row(), 0);
+    view.handle_key(Key::Enter, Mods::NONE);
+    assert_eq!(
+        view.screens.top(),
+        Some(base::screens::Screen::InfoTabs),
+        "동작을 골랐는데 판이 닫혔다 — 결과를 볼 곳이 없다"
+    );
+    view.pump_headless();   // 큐를 실제로 흘린다 — 안 흘리면 아래 단언이 공허하다
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter()
+            .any(|o| matches!(o, Outgoing::Command(Command::SetCapture))),
+        "동작 줄에서 Enter 를 눌렀는데 캡처 토글이 안 나갔다: {out:?}"
+    );
+}
+
+#[test]
+fn picking_a_plain_line_closes_the_status_panel() {
+    // 정본과 같은 손 — 동작이 아닌 줄에서 `Enter` 는 닫기다(`InfoScreen` 계열의 가벼운 닫힘).
+    let (mut view, sent) = view_with_status_panel();
+    view.handle_key(Key::Down, Mods::NONE);   // 내용 줄
+    view.handle_key(Key::Enter, Mods::NONE);
+    assert_eq!(view.screens.top(), None, "내용 줄에서 Enter 가 안 닫는다");
+}
+
+#[test]
+fn the_hint_line_says_items_because_that_is_what_up_down_does_now() {
+    // ⑵ 의 넷째 줄 — 꼬리줄이 `↑↓ 스크롤` 이라 적혀 있었고 그것이 **정본과 갈린 자리**였다.
+    //    문구만 고치면 그건 또 다른 거짓말이라, 문구와 **동작을 같이** 잰다.
+    let hint = base::screens::Screen::InfoTabs.hint();
+    assert!(hint.contains("↑↓ 항목"), "꼬리줄이 아직 굴리기라고 말한다: {hint}");
+    assert!(hint.contains("닫기[x]"), "꼬리줄이 `[x]` 동선을 안 말한다: {hint}");
+    let (mut view, sent) = view_with_status_panel();
+    let before = view.screens.info_row();
+    view.handle_key(Key::Down, Mods::NONE);
+    assert_eq!(view.screens.info_row(), before + 1, "↑↓ 가 항목을 안 옮긴다");
+    assert_eq!(view.screens.scroll(), 0, "굴리기가 커서와 따로 논다");
+}
+
+// ── Status 판의 **높이**는 탭을 바꿔도 안 변한다 · pytmux-373 ⑴ ───────────────
+//
+// ☠ **종전 오라클은 줄 수만 쟀다**(`panel_budget_for_test`·`pad_rows_count_for_test`).
+//    이 결함은 **줄 수가 맞는데 픽셀이 안 맞는** 부류라 그 둘로는 전건 통과했다 — 루트
+//    `CLAUDE.md` 의 *"값을 만드는 헬퍼만 테스트하면 그 값을 붙이는 호출을 지워도 통과한다"*
+//    가 정확히 이 자리다. 그래서 여기서는 **판이 실제로 칠한 면**을 잰다.
+//
+// ⚠ 시험 폰트는 글자 폭이 0이라 가로는 못 잰다 — 세로는 살아 있다(§`painted_boxes` 머리말).
+//    이 판이 재는 것도 세로 하나다.
+
+/// 캔버스가 **판 예산을 뜻있게 만들 만큼** 큰 배치. `layout_one_pane`(4행)으로는
+/// 예산이 최소값(5)까지 접혀 탭마다 그리는 줄 수가 똑같아지고, 그러면 아래 단언이
+/// 아무것도 안 잰다.
+fn layout_tall_pane() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 40, "active": 1,
+        "panes": [{"id": 1, "x": 0, "y": 0, "w": 80, "h": 40, "title": "sh", "active": true}]
+    }))
+    .unwrap()
+}
+
+/// 정보 팝업을 `tab` 탭으로 펴 놓고 한 프레임 그려 **판 배경면의 높이**를 준다.
+///
+/// 판 배경은 `theme::ELEV` 한 색이고 그 색을 쓰는 자리는 판 하나뿐이다 — 그래서 색으로
+/// 좁혀도 남의 면을 안 센다(다른 색이었다면 `fills_covering` 처럼 자리로 좁혀야 한다).
+fn info_tabs_panel_height(tab: usize) -> f32 {
+    painted_scene_setup(
+        // REC 플러그인까지 켠다 — 그래야 **동작 줄이 있는 탭과 없는 탭**을 함께 잰다
+        // (pytmux-373 ⑶ 이 그 줄들을 더했다 · 그것도 판 높이를 타면 안 된다).
+        vec![layout_tall_pane(), rec_running()],
+        &[],
+        move |view| {
+            view.apply_action_for_test(base::Action::ShowInfoTabs);
+            view.panel_click(base::PanelTarget::InfoTab(tab));
+        },
+        |scene| {
+            let mut hits: Vec<f32> = scene
+                .layers()
+                .flat_map(|layer| layer.rects.iter())
+                .filter_map(|r| match r.background {
+                    warpui::elements::Fill::Solid(c) if c == theme::ELEV => {
+                        Some(r.bounds.lower_left().y() - r.bounds.origin().y())
+                    }
+                    _ => None,
+                })
+                .collect();
+            hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            // 없으면 **공허 통과**다 — 아무 면도 못 찾았는데 "높이가 같다"고 말하게 된다.
+            hits.pop().expect("판 배경(ELEV)이 한 조각도 안 칠해졌다 — 오라클이 죽었다")
+        },
+    )
+}
+
+#[test]
+fn the_status_panel_is_the_same_height_whatever_the_tab() {
+    // 제보(pytmux-373 · 첨부 3장): 같은 창·같은 판인데 **탭마다 위·아래 모서리가 움직인다**.
+    // 정본(`InfoTabsScreen`)은 짧은 탭을 빈 줄로 채워 한 픽셀도 안 움직인다.
+    let mut state = proto::SessionState::new();
+    state.apply(rec_running());
+    let tabs = proto::info::tabs(&state, "/tmp/test.sock", 0.0);
+    // 전제 둘 — 깨지면 아래 단언이 공허하다.
+    assert!(tabs.len() >= 2, "탭이 하나뿐이면 잴 것이 없다");
+    let counts: Vec<usize> = tabs.iter().map(|(_, lines)| lines.len()).collect();
+    assert!(
+        counts.iter().any(|n| *n != counts[0]),
+        "탭마다 줄 수가 같다 — 이 오라클은 줄 수가 달라야 뜻이 있다: {counts:?}"
+    );
+    let heights: Vec<f32> = (0..tabs.len()).map(info_tabs_panel_height).collect();
+    assert!(heights[0] > 0., "판 높이가 0이다 — 판이 안 떴다: {heights:?}");
+    for (i, h) in heights.iter().enumerate() {
+        assert!(
+            (h - heights[0]).abs() < 0.5,
+            "탭 {i}({}) 에서 판 높이가 {h} 다 — 첫 탭은 {}. 줄 수는 예산으로 같으니 \
+             갈린 것은 **한 줄의 픽셀**이다(채움 줄만 판의 줄 상자를 쓰고 내용 줄은 안 썼다).\n\
+             탭별 줄 수: {counts:?} · 탭별 높이: {heights:?}",
+            tabs[i].0,
+            heights[0]
+        );
+    }
+}
+
 // ── 입력기 배지는 **글자를 받는 곳**에 붙는다 · pytmux-14 ─────────────────────
 //
 // 캔버스 쪽 배지(활성 패널 커서 줄)는 서버 플러그인이 그린다. 판이 열리면 커서는 판 안
 // 입력줄로 가고 캔버스 배지는 판 **뒤**에 깔린다 — 제보가 본 그림이 그것이다.
 // 여기서는 그림 대신 **판이 담은 글자**를 묻는다(`debug_text_content` — `test-util`).
+
+/// 한/영 배지의 **알약 바탕색** — 정본이 정한 의미 이름을 이 클라 표에서 푼 값이다.
+fn ime_track(label: &str) -> ColorU {
+    let name = if label == "한" { "success" } else { "primary" };
+    match proto::session::theme::resolve(name) {
+        proto::session::theme::Resolution::Color(c) => to_gui_color(&c),
+        other => panic!("의미 색 이름을 못 풀었다: {other:?}"),
+    }
+}
+
+/// 한 프레임을 그려 **배지 알약의 면**을 센다(pytmux-392).
+///
+/// # 왜 글자가 아니라 면인가
+///
+/// 이 배지는 이제 글자가 아니다 — `[한]`·`[EN]` 네 글자를 그리던 자리에 알약과 손잡이를
+/// 그린다(사용자 요청 2026-08-24: *"텍스트로 표시하지 말고 그래픽 요소로"*). 그래서
+/// 「배지가 있나」를 묻는 오라클도 글자에서 **면**으로 옮긴다 — 안 옮기면 그림이 멀쩡한데
+/// 시험이 울고, 그 시험을 지우면 배선이 빠진 것을 아무도 안 잰다.
+fn ime_pills(label: &'static str, setup: impl FnOnce(&mut SessionView) + 'static) -> usize {
+    let track = ime_track(label);
+    painted_scene_setup(
+        vec![layout_one_pane()],
+        &[],
+        move |v| {
+            v.report_ime(Some(label));
+            setup(v);
+        },
+        move |scene| {
+            scene
+                .layers()
+                .flat_map(|l| l.rects.iter())
+                .filter(|r| matches!(r.background, warpui::elements::Fill::Solid(c) if c == track))
+                .count()
+        },
+    )
+}
 
 /// 배지 상태를 세운 뷰. `report_ime` 를 쓰는 이유는 그것이 OS 를 안 묻는 쪽이라서다
 /// (`tick_ime` 은 창 밖 입력기에 물어 테스트가 값을 정할 수 없다).
@@ -6384,71 +7697,51 @@ fn view_with_ime(label: Option<&'static str>) -> SessionView {
 
 #[test]
 fn the_ime_badge_rides_the_palette_input_line() {
-    let mut view = view_with_ime(Some("한"));
-    view.screens.open(base::screens::Screen::Commands);
-    let panel = view
-        .render_screen_panel(base::screens::Screen::Commands)
-        .debug_text_content()
-        .expect("팔레트 판에 글자가 하나도 없다");
-    // 입력줄과 **같은 줄**이라야 한다 — 판 어딘가가 아니라 치는 자리 옆이다.
-    let line = panel
-        .lines()
-        .find(|l| l.contains('>'))
-        .unwrap_or_else(|| panic!("입력줄을 못 찾았다:\n{panel}"));
-    assert!(
-        line.contains("[한]"),
-        "입력기 배지가 팔레트 입력줄에 없다 — 사람은 지금 무엇이 찍힐지 모른 채 친다.\n입력줄: {line:?}"
-    );
+    // 판이 열려 있으면 배지 **알약**이 프레임에 있어야 한다(치는 자리 옆이다).
+    //
+    // ⚠ 종전에는 판이 담은 **글자**에서 `[한]` 을 찾았다. 배지가 그림이 된 뒤
+    //   (pytmux-392) 그 오라클은 그림이 멀쩡해도 운다 — 재는 것을 면으로 옮긴다.
+    let pills = ime_pills("한", |v| v.screens.open(base::screens::Screen::Commands));
+    assert!(pills >= 1, "입력기 배지가 팔레트 판에 없다 — 사람은 지금 무엇이 찍힐지 모른 채 친다");
 }
 
 #[test]
 fn the_ime_badge_rides_the_prompt_input_line() {
     // 제보의 그림(인자를 묻는 작은 판)이 이 판이다.
-    let mut view = view_with_ime(Some("EN"));
-    view.screens
-        .ask(base::Prompt::RenameTab, "");
-    let panel = view
-        .render_screen_panel(base::screens::Screen::Prompt)
-        .debug_text_content()
-        .expect("물음 판에 글자가 하나도 없다");
-    let line = panel
-        .lines()
-        .find(|l| l.contains('>'))
-        .unwrap_or_else(|| panic!("입력줄을 못 찾았다:\n{panel}"));
-    assert!(line.contains("[EN]"), "입력기 배지가 물음 판 입력줄에 없다:\n{line:?}");
+    let pills = ime_pills("EN", |v| v.screens.ask(base::Prompt::RenameTab, ""));
+    assert!(pills >= 1, "입력기 배지가 물음 판에 없다");
 }
 
 #[test]
 fn in_the_composer_the_badge_rides_the_cursor_row_only() {
     // 작성창은 여러 줄이라 "입력줄"이 곧 **커서 줄**이다 — 캔버스 규칙과 같은 자리다.
-    let mut view = view_with_ime(Some("한"));
-    view.screens.open_compose("첫줄\n둘째줄");
-    let panel = view
-        .render_screen_panel(base::screens::Screen::Compose)
-        .debug_text_content()
-        .expect("작성창에 글자가 하나도 없다");
-    let marked: Vec<&str> = panel.lines().filter(|l| l.contains("[한]")).collect();
-    assert_eq!(
-        marked.len(),
-        1,
-        "배지가 커서 줄에만 있어야 한다 — 줄마다 붙으면 글을 읽을 수 없다:\n{panel}"
-    );
+    // 알약이 **딱 하나**여야 한다: 줄마다 붙으면 글을 읽을 수 없다.
+    let pills = ime_pills("한", |v| v.screens.open_compose("첫줄
+둘째줄"));
+    assert_eq!(pills, 1, "배지가 커서 줄에만 있어야 한다");
 }
 
 #[test]
 fn without_an_ime_state_no_badge_is_drawn() {
-    // 비 Windows·질의 실패는 `None` 이다. 그때 `[  ]` 같은 빈 배지를 그리면 자리만
-    // 차지하고 아무 말도 안 한다(정본도 안 올라오면 안 그린다).
-    let mut view = view_with_ime(None);
-    view.screens.open(base::screens::Screen::Commands);
-    let panel = view
-        .render_screen_panel(base::screens::Screen::Commands)
-        .debug_text_content()
-        .unwrap_or_default();
-    assert!(
-        !panel.contains("[한]") && !panel.contains("[EN]"),
-        "상태를 모르는데 배지를 그렸다:\n{panel}"
+    // 비 Windows·질의 실패는 `None` 이다. 그때 빈 배지를 그리면 자리만 차지하고 아무
+    // 말도 안 한다(정본도 안 올라오면 안 그린다).
+    let track = ime_track("한");
+    let fills = painted_scene_setup(
+        vec![layout_one_pane()],
+        &[],
+        |v| {
+            v.report_ime(None);
+            v.screens.open(base::screens::Screen::Commands);
+        },
+        move |scene| {
+            scene
+                .layers()
+                .flat_map(|l| l.rects.iter())
+                .filter(|r| matches!(r.background, warpui::elements::Fill::Solid(c) if c == track))
+                .count()
+        },
     );
+    assert_eq!(fills, 0, "상태를 모르는데 배지를 그렸다");
 }
 
 #[test]
@@ -6470,17 +7763,31 @@ fn no_screen_shows_an_input_line_without_the_badge() {
         let Some(panel) = view.render_screen_panel(screen).debug_text_content() else {
             continue;
         };
-        for line in panel.lines() {
-            let t = line.trim_end();
-            if t.starts_with('>') && t.ends_with('_') && !line.contains("[한]") {
-                naked.push(format!("{screen:?}: {line:?}"));
+        let has_input = panel.lines().any(|l| {
+            let t = l.trim_end();
+            t.starts_with('>') && t.ends_with('_')
+        });
+        if !has_input {
+            continue;
+        }
+        // 배지는 이제 그림이라 판의 글자에서는 안 보인다 — 프레임의 면으로 잰다.
+        let pills = ime_pills("한", move |v| match screen {
+            base::screens::Screen::Compose => v.screens.open_compose(""),
+            base::screens::Screen::Prompt | base::screens::Screen::Confirm => {
+                v.screens.ask(base::Prompt::RenameTab, "")
             }
+            other => v.screens.open(other),
+        });
+        if pills == 0 {
+            naked.push(format!("{screen:?}"));
         }
     }
     assert!(
         naked.is_empty(),
-        "글자를 받는 줄인데 입력기 배지가 없다 — `input_line` 을 거칠 것:\n  {}",
-        naked.join("\n  ")
+        "글자를 받는 줄인데 입력기 배지가 없다 — `input_line` 을 거칠 것:
+  {}",
+        naked.join("
+  ")
     );
 }
 
@@ -6733,6 +8040,69 @@ fn the_hint_sits_on_the_border_column_not_inside_the_pane() {
     let [bx, _, bw, _] = pane.boxrect.expect("테두리 상자");
     assert_eq!(hint.x, bx + bw - 1, "테두리 오른쪽 열이 아니다");
     assert!(hint.x >= pane.x + pane.w, "내용 칸을 먹었다");
+}
+
+// ── 설정 판의 목록 이동과 오른쪽 막대(pytmux-374) ─────────────────────────────
+
+fn settings_view() -> SessionView {
+    let (link, _tx, _sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    view.pump_headless();
+    view.screens.open(Screen::Settings);
+    view
+}
+
+/// `End` 는 **마지막 줄**에 선다 — core 가 두고 간 상한을 뷰가 접는 그 자리를 잰다.
+///
+/// core 쪽 오라클(`screens_tests`)은 「상한을 두고 간다」까지밖에 못 잰다. 줄 수를 아는
+/// 것은 여기라, **접는 자가 실제로 불리는지**는 이 자리에서만 보인다.
+#[test]
+fn end_lands_on_the_last_settings_row() {
+    let mut view = settings_view();
+    let last = view.screens.plugins().settings_len() - 1;
+    view.handle_key(Key::End, Mods::NONE);
+    assert_eq!(view.screens.top(), Some(Screen::Settings), "End 가 판을 닫았다");
+    assert_eq!(view.screens.selected(), last, "End 가 끝으로 안 갔다");
+    // 끝에서 한 번 더 눌러도 넘어가지 않는다 — 넘기면 그만큼 `↑` 가 헛돈다.
+    view.handle_key(Key::PageDown, Mods::NONE);
+    assert_eq!(view.screens.selected(), last);
+    view.handle_key(Key::Up, Mods::NONE);
+    assert_eq!(view.screens.selected(), last - 1, "끝에서 ↑ 한 번이 안 먹었다");
+}
+
+/// ⑴ 오른쪽 막대는 **넘칠 때만** 서고, 커서를 따라 트랙을 걷는다.
+#[test]
+fn the_settings_bar_walks_the_track() {
+    let mut view = settings_view();
+    let (start, len) = view.settings_scroll_for_test().expect("설정은 판보다 길다");
+    assert!(start.abs() < 1e-9, "맨 위인데 썸이 위가 아니다: {start}");
+    assert!(len > 0.0 && len < 1.0, "썸이 트랙을 다 먹었다: {len}");
+
+    view.handle_key(Key::End, Mods::NONE);
+    let (start, len) = view.settings_scroll_for_test().expect("막대가 사라졌다");
+    assert!((start + len - 1.0).abs() < 1e-9, "끝인데 썸이 바닥이 아니다: {start} {len}");
+}
+
+/// 그릴 것이 없으면 안 그린다 — 판이 목록보다 길면 늘 꽉 찬 막대가 붙는다.
+#[test]
+fn a_tall_enough_panel_gets_no_settings_bar() {
+    let view = settings_view();
+    let total = view.screens.plugins().settings_len();
+    assert_eq!(base::scrollbar::list_fraction(total, total, 0), None);
+    // 지금 판(예산 = 캔버스 없이 12줄에서 나온 값)은 그보다 훨씬 짧다.
+    assert!(view.panel_budget_for_test() < total, "이 시험이 재는 상황이 아니다");
+}
+
+/// ⑵ 제 것 아닌 키가 판을 안 닫는다 — **키 경로 전체**(뷰 배선 포함)에서 잰다.
+#[test]
+fn a_stray_key_leaves_the_settings_panel_open() {
+    let mut view = settings_view();
+    for key in [Key::Function(5), Key::Insert] {
+        view.handle_key(key, Mods::NONE);
+        assert_eq!(view.screens.top(), Some(Screen::Settings), "{key:?} 가 판을 닫았다");
+    }
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.screens.top(), None, "Esc 가 안 닫았다");
 }
 
 // ── 경로 존의 기준은 **그 패널**이다(§10-21ⓧ2 / pytmux-24) ────────────────────
@@ -7730,8 +9100,13 @@ fn the_canvas_takes_the_leftover_and_the_status_bar_stays_on_the_floor() {
     .unwrap();
     let boxes = painted_boxes(vec![layout_one_pane(), screen], &[]);
     let canvas = painted_y(&boxes, "HELLO-ORACLE").expect("캔버스가 안 그려졌다");
-    // 배지 줄(`⇕`)이 상태줄이다 — 머신 이름·시각과 달리 어디서 돌려도 같다.
-    let status = painted_y(&boxes, "\u{21d5}").expect("상태줄이 안 그려졌다");
+    // 상태줄은 **날짜 run** 이 짚는다 — 머신 이름·시각과 달리 모양이 고정이다
+    // (`looks_like_a_date` 문서).
+    let status = boxes
+        .iter()
+        .find(|(t, _)| looks_like_a_date(t))
+        .map(|(_, y)| *y)
+        .expect("상태줄이 안 그려졌다");
     // 창은 이 하네스에서 600 높이다(`painted_scene_setup`).
     assert!(
         status > canvas + 300.,
@@ -7986,4 +9361,117 @@ fn a_panel_cell_without_an_extra_column_is_just_the_name() {
     let cell = SessionView::panel_cell("..", "", 8);
     assert_eq!(proto::footer::width(&cell), 8, "{cell:?}");
     assert!(cell.starts_with(".."), "{cell:?}");
+}
+
+
+/// 판 바닥 안내줄은 **잘리는 대신 접힌다**(pytmux-371 ⓐ).
+///
+/// # 무엇이 있었나 (실측 2026-08-30 · 1280x800 · 배율 1.5)
+///
+/// 판 폭은 화면이 정하고(`panel_width` = 760px · pytmux-158) 안쪽은 730px 다. 안내줄은
+/// 그 안에 그려지고, 넘친 부분은 `Clipped` 가 **말없이 잘라 냈다**:
+///
+/// | 화면 | 꼬리줄 | |
+/// | --- | --- | --- |
+/// | Period | `… · o machine · s scenari` | 잘림 — `u /usage` 가 사라졌다 |
+/// | Warn | `… · o machine · s scena` | 잘림 |
+/// | Machine · Session · Limit | `… · s scenario · u /usage` | 우연히 들어맞음 |
+///
+/// ⛔ 미관이 아니다. pytmux-185 계약에서 **꼬리줄이 광고하는 조작이 그 화면의 최소
+/// 요건**이고 pytmux-371 은 요건표를 바로 그 줄로 적었다 — 광고가 안 보이면 요건이
+/// 사라진다.
+///
+/// # 왜 `PANEL_COLS` 로는 안 잡혔나
+///
+/// 줄을 줄이는 자(`footer::elide`)는 `PANEL_COLS = 110` 칸을 쓰는데, 730px 에 실제로
+/// 들어가는 것은 **약 100칸**이다(11px 글자의 전진폭 실측 ≈ 7.3px). 그래서 103칸짜리
+/// 안내줄은 「자를 필요 없다」로 통과한 뒤 픽셀에서 잘렸다 — 칸 예산과 픽셀 예산이
+/// 서로 다른 값을 믿고 있었다.
+///
+/// # 이 시험이 무는 것
+///
+/// 고침은 **그 줄만** `soft_wrap` 을 켠 것이다(`Text::new_inline` 은 거짓,
+/// [`Text::new`] 는 참이 기본). 접힘 여부는 렌더 결과라 단위 시험이 픽셀로 못 재므로,
+/// 여기서는 **그 호출이 살아 있는지**를 문다 — 「호출 제거」 뮤테이션이 이 저장소에서
+/// 두 번 공허 통과를 만든 자리다(CLAUDE.md §표시 기능은 호출부까지 단언).
+#[test]
+fn the_panel_hint_wraps_instead_of_being_clipped() {
+    let src = SESSION_VIEW_SRC;
+    assert!(
+        src.contains("fn hint_text("),
+        "안내줄 전용 헬퍼가 사라졌다 — 접힘이 어디서 오는지 말하는 자리가 없다"
+    );
+    assert!(
+        src.contains("Some(h) => self.hint_text(h, self.font, 11., palette::DIM),"),
+        "플러그인 판의 안내줄이 다시 안 접히는 글자로 돌아갔다(pytmux-371 ⓐ 재발)"
+    );
+    assert!(
+        src.contains("None => self.hint_text(hint, self.ui_font, 11., palette::DIM),"),
+        "정적 화면의 안내줄이 다시 안 접히는 글자로 돌아갔다"
+    );
+    // ⛔ 대조군 — **나머지 줄은 접히면 안 된다.** 판 안의 표·막대는 칸 격자에 기대고
+    //    있어서, 거기까지 접히면 한 줄이 두 줄이 되어 「예산 = 줄 수」가 깨진다
+    //    (pytmux-369·373 이 픽셀로 값을 치른 자리다).
+    assert!(
+        src.contains("Text::new_inline(s.into(), self.font, self.scaled(size))"),
+        "본문 글자가 접히는 쪽으로 바뀌었다 — 판의 줄 수 셈이 깨진다"
+    );
+}
+
+
+/// 글꼴 설정은 **지금 창**에 먹는다(pytmux-408 ④).
+///
+/// # 왜 소스로 묻나
+///
+/// 다시 까는 일에는 `ViewContext` 가 필요해 헤드리스 하네스가 그 경로를 못 탄다(이 뷰의
+/// 시험이 `with_fonts` 로 창 없이 서는 이유와 같은 벽이다). 그래서 **결정**이 아니라
+/// **배선**을 문다 — 「호출 제거」가 이 저장소에서 두 번 공허 통과를 만든 자리다
+/// (CLAUDE.md §표시 기능은 호출부까지 단언).
+///
+/// 값이 바뀌는 자리는 셋이고(설정 화면의 대답 · `:set` · `source-file`) 전부 `ctx` 가
+/// 없다. 그 셋에 각자 글꼴 등록을 넣으면 하나만 빠져도 **어떤 길로 바꿨느냐에 따라 먹기도
+/// 안 먹기도** 하므로, 화해는 `pump` 한 곳이다. 이 시험이 그 한 곳을 지킨다.
+#[test]
+fn changing_the_font_setting_takes_effect_without_a_restart() {
+    let src = SESSION_VIEW_SRC;
+    assert!(
+        src.contains("fn reconcile_font("),
+        "글꼴 화해 자리가 사라졌다 — 설정을 바꿔도 다음 기동에나 먹는다"
+    );
+    assert!(
+        src.contains("let font_changed = self.reconcile_font(ctx);"),
+        "`pump` 가 글꼴을 더는 안 맞춘다(pytmux-408 ④ 재발) — 함수만 남고 호출이 죽었다"
+    );
+    // 다시 깔았으면 **다시 그려야** 한다. 안 그러면 다음 입력이 올 때까지 옛 글꼴이다.
+    assert!(
+        src.contains("let dirty = dirty || font_changed;"),
+        "글꼴을 바꾸고 다시 안 그린다 — 다음 입력 전까지 옛 글자가 남는다"
+    );
+    // 셀 크기는 글꼴을 탄다 — 자리표를 안 버리면 마우스 좌표가 옛 격자로 풀린다.
+    assert!(
+        src.contains("self.cell_px.set(None);"),
+        "글꼴을 바꾸고 셀 자리표를 안 버렸다 — 클릭이 엉뚱한 칸으로 간다"
+    );
+}
+
+/// 고른 글꼴이 **첫 프레임부터** 먹는다(pytmux-408 ①).
+///
+/// `with_fonts` 가 설정을 읽는 자리는 글꼴을 까는 자리보다 **뒤**라, 그 차례를 안 고치면
+/// `font-family` 는 「적었는데 다음 기동에나 먹는」 값이 된다. `new` 가 설정을 먼저 읽어
+/// 그 이름으로 깔고, 깐 이름을 `font_want` 에 적어 위 화해가 헛돌지 않게 한다.
+#[test]
+fn the_font_setting_is_honoured_on_the_very_first_frame() {
+    let src = SESSION_VIEW_SRC;
+    assert!(
+        src.contains("let want = base::Config::load().font_family;"),
+        "첫 프레임 전에 설정을 안 읽는다 — 고른 글꼴이 한 박자 늦게 먹는다"
+    );
+    assert!(
+        src.contains("mono_font::install_preferred(cache, &want)"),
+        "`new` 가 고른 글꼴을 안 넘긴다 — 후보 목록만 본다"
+    );
+    assert!(
+        src.contains("view.font_want = want;"),
+        "깐 이름을 안 적었다 — 화해가 매 프레임 다시 깔거나 영영 안 깐다"
+    );
 }

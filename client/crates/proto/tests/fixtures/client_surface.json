@@ -404,7 +404,6 @@
     "strip-box-drawing": "config",
     "synchronize-panes": "server",
     "tab-bar": "config",
-    "touch-scroll": "config",
     "vt-parser": "server",
     "win-mouse-motion": "server",
     "window-size": "server"
@@ -432,8 +431,7 @@
     "status-left",
     "status-position",
     "status-right",
-    "tab-bar",
-    "touch-scroll"
+    "tab-bar"
   ],
   "screens": [
     "ChooseBufferScreen",

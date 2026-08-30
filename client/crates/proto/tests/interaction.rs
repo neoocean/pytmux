@@ -231,9 +231,14 @@ static CONTRACTS: &[Contract] = &[
     ),
     c(
         Screen::Plugins,
-        Closes,
-        Unmeasured,
-        "플러그인 켜고끄기. `Enter` 가 안 닫는 것은 정본과 같다 — 나머지 키는 안 쟀다",
+        Stays,
+        Same("clientscreens.py PluginManagerScreen.on_key 직접 대조 — `escape`·`space`·\
+         `backspace`·**찍히는 글자 하나**만 `event.stop()` 하고 그 밖은 흘려보낸다\
+         (이 축이 재는 F5 는 `event.character` 가 없어 그 «그 밖»이다). \
+         `press_settings` 의 `_ => close_top()` 을 삼키기로 고쳤다(pytmux-374 ⑵)"),
+        "플러그인 켜고끄기. `Enter` 가 안 닫는 것도, **제 것 아닌 키를 무시하는 것도** \
+         이제 정본과 같다 — 종전엔 아무 키나 닫았다. ⚠ 정본의 **글자 치기 = 이름 \
+         필터**(`#plgsearch`)는 아직 없다 — 그 둘은 이 축(닫기 여부) 밖의 기능 공백이다",
     ),
     c(
         Screen::PluginView,
@@ -263,8 +268,15 @@ static CONTRACTS: &[Contract] = &[
         Screen::InfoTabs,
         Closes,
         Unmeasured,
-        "탭 있는 읽기 판. ←→ 가 탭이고 ↑↓ 가 스크롤인 것까지는 정본 `InfoTabsScreen` 과 \
-         맞췄고, 나머지 키는 안 쟀다. ⛔ **usage limit 팝업(pytmux-184)은 이 판이 아니다** — \
+        "탭 있는 읽기 판 + 고를 수 있는 동작 줄. ←→ 는 **탭과 닫기 `[x]` 를 한 바퀴** 돌고 \
+         (정본 `_sel` 의 `% (n+1)`) ↑↓ 는 **항목 커서**이며 `Enter` 는 동작 줄이면 그것을 \
+         돌리고(판 유지) 아니면 닫는다 — 셋 다 정본 `InfoTabsScreen.on_key` 를 열어 맞췄다 \
+         (pytmux-373 ⑵⑶⑷). 종전에는 ↑↓ 가 글 굴리기였고 `[x]` 가 아예 없었다. \
+         `Home`·`End`·`space` 도 정본과 같은 팔에 뒀다. \
+         ⚠ **한 칸 남았다 — `PageUp`/`PageDown` 의 «몇 줄»은 안 쟀다**: 정본은 5줄이고 \
+         우리는 판 공통 상수 `PAGE`(10)다. 그 상수를 이 판만 다르게 하는 것이 옳은지가 \
+         아직 판단이 안 서서 안 건드렸다. \
+         ⛔ **usage limit 팝업(pytmux-184)은 이 판이 아니다** — \
          GUI 에서 그것은 `PluginView` 의 글 판이다(그 줄을 볼 것)",
     ),
     c(
@@ -275,9 +287,16 @@ static CONTRACTS: &[Contract] = &[
     ),
     c(
         Screen::Settings,
-        Closes,
-        Unmeasured,
-        "설정. `Enter` 가 안 닫는 것은 정본과 같다 — 나머지 키는 안 쟀다. \
+        Stays,
+        Same("clientscreens.py SettingsScreen.on_key 직접 대조 — `escape`·`enter`·\
+         `left`/`right`·`tab`/`shift+tab` **넷만** `event.stop()` 하고 그 밖의 키는 \
+         `ListView` 로 흘러가 판을 안 닫는다. `press_settings` 를 그 규약으로 고쳤다\
+         (pytmux-374 ⑵). ⚠ **한 칸 갈린다** — 정본에서 `Home`·`End`·`PageUp`·`PageDown` \
+         은 `ScrollableContainer` 기본 바인딩이라 **글만 굴리고 커서는 제자리**인데, \
+         우리 판에는 커서와 따로 사는 스크롤이 없어 커서를 옮긴다(그 사유는 \
+         `press_settings` 머리말)"),
+        "설정. **제 것 아닌 키가 판을 안 닫고**(고쳐졌다 — pytmux-273 이 `press_list` 에 \
+         한 것과 같은 처방) `Home`·`End`·`PageUp`·`PageDown` 이 목록을 옮긴다. \
          네이티브 위젯으로 다시 그리는 일은 pytmux-182 다(그것은 이 축이 아니라 그림 축)",
     ),
     c(
@@ -303,12 +322,24 @@ static CONTRACTS: &[Contract] = &[
         Same("clientconn.py open_autoresume_info 직접 대조 — 정본은 범용 InfoScreen 을 hide_key=a 로 띄운다. 곧 `a` 는 뒤집고 닫고, 그 밖의 키는 InfoScreen 규약대로 닫힌다(_NAV_KEYS 넷 + Home/End 만 스크롤). 우리도 같은 갈래다"),
         "자동 재개 설명 + 켜고 끄기(pytmux-183). 좌하단 `[자동재개]` 표식을 눌러 연다 — `a` 가 뒤집고 닫는 것까지 정본과 같다",
     ),
+    c(
+        Screen::Cursor,
+        Stays,
+        Allowed(Ground::NativeOnly),
+        "커서 판(pytmux-375) — 모양·두께·색·깜빡임·주기 다섯과 견본 한 칸. 정본에 짝이 \
+         없다: 저쪽 커서는 **호스트 단말의 하드웨어 커서**라 그 값을 가질 자리가 아예 \
+         없다(pytmux-161 이 설정 넷에 대해 적은 것과 같은 근거). 그래서 대조할 `on_key` \
+         가 없고, 이 판이 **새로 만들어진** 것인 만큼 계약은 처음부터 지켜서 짓는다 — \
+         손을 설정 판과 같은 `press_settings` 에 태워 **제 것 아닌 키가 판을 안 닫게** \
+         했다(pytmux-374 ⑵·273 이 걸린 그 함정). 갈리는 것은 `Tab` 하나뿐이다(이 판에는 \
+         분류가 없어 삼킨다)",
+    ),
 ];
 
 /// 지금 점수. **양방향 래칫**이다 — 늘어도 줄어도 여기를 고쳐야 한다(`parity.rs` 규칙 2).
 ///
 /// `(같다, 허용된 갈림, 결함, 못 쟀다)`.
-static SCORE: (usize, usize, usize, usize) = (12, 2, 1, 10);
+static SCORE: (usize, usize, usize, usize) = (14, 3, 1, 8);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4).
 ///
@@ -317,7 +348,7 @@ static SCORE: (usize, usize, usize, usize) = (12, 2, 1, 10);
 /// 그러면 pytmux-185 가 막으려던 바로 그 재생산이 표 안에서 일어난다.
 ///
 /// 줄일 때는 이 수도 함께 내린다(그래야 "언제 무엇을 쟀나"가 이력에 남는다).
-const UNMEASURED_CEILING: usize = 10;
+const UNMEASURED_CEILING: usize = 8;
 
 /// 재는 데 쓰는 **제 것 아닌 키**. F5 를 고른 이유는 어느 판도 F 키를 자기 것이라고
 /// 적지 않았기 때문이다(스펙이 F 키를 쓰는 플러그인 판은 뷰가 먼저 가로챈다 — 이 축은
@@ -371,7 +402,10 @@ fn opened(screen: Screen) -> Screens {
         | Screen::Hooks
         | Screen::Settings
         | Screen::Summary
-        | Screen::SearchResults => screens.open(screen),
+        | Screen::SearchResults
+        // 커서 판은 `open()` 한 줄이면 선다 — 줄 다섯이 정적이고(설정 표에서 온다)
+        // 견본은 그림이라 core 가 들 상태가 없다(pytmux-375).
+        | Screen::Cursor => screens.open(screen),
     }
     assert_eq!(
         screens.top(),

@@ -14,7 +14,7 @@ from rich.style import Style
 from rich.terminal_theme import DEFAULT_TERMINAL_THEME, TerminalTheme
 
 from . import i18n, proc
-from .cellwidth import char_cells
+from .cellwidth import char_advance, char_cells
 
 def _shell_argv(cmd: str) -> list:
     """run-shell/if-shell/display-popup 의 셸 명령 argv. OS 별 셸로 분기.
@@ -213,6 +213,8 @@ def unwrap_copy_text(text: str, width: int, first_col: int = 0) -> str:
 # lru 메모이즈(C1 PERFORMANCE_REVIEW 2026-06-07: 합성 셀 루프·TabBar·상태줄에서 문자
 # 1개당 호출, ASCII 절대다수라 적중률≈100%)를 그대로 유지한다.
 _char_cells = char_cells
+# 칸을 **나눌 때** 쓰는 자(폭 0 글자는 0). 같은 이유로 여기 별칭을 둔다.
+_char_advance = char_advance
 
 
 # 이모지(컬러 픽토그래프) 코드포인트 대략 범위. 팝업이 떠 본문을 어둡게 칠할 때,
@@ -1106,7 +1108,7 @@ COMMANDS = [
 # COMPLETIONS 에 "set <name>" 으로 병합한다(사용자 요청 2026-06-25).
 _SET_OPTION_NAMES = (
     "prefix", "mouse", "mouse-drag-copy", "mouse-drag-threshold",
-    "copy-unwrap", "touch-scroll", "mouse-debug", "alt-scroll",
+    "copy-unwrap", "mouse-debug", "alt-scroll",
     "ambiguous-width",
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
@@ -1123,7 +1125,6 @@ SET_OPTION_CHOICES = {
     "mouse-drag-copy": ("on", "off"),
     "mouse-drag-threshold": ("1", "2", "3", "5", "8"),
     "copy-unwrap": ("on", "off"),
-    "touch-scroll": ("on", "off"),
     "mouse-debug": ("on", "off"),
     "mode-keys": ("vi", "emacs"),
     "tab-bar": ("always", "auto"),
@@ -1242,8 +1243,6 @@ SETTINGS = [
      "backend": "config"},
     {"key": "copy-unwrap", "cat": "입력", "type": "bool",
      "cmd": "set copy-unwrap", "backend": "config"},
-    {"key": "touch-scroll", "cat": "입력", "type": "bool",
-     "cmd": "set touch-scroll", "backend": "config"},
     {"key": "mode-keys", "cat": "입력", "type": "enum",
      "choices": ["vi", "emacs"], "cmd": "set mode-keys", "backend": "config"},
     {"key": "alt-scroll", "cat": "입력", "type": "bool",

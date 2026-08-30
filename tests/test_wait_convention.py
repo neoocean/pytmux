@@ -38,7 +38,10 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
 
 # 총계 래칫(2026-07-25 기준 실측). **늘리지 말고 줄여라** — 이주 CL 이 여기를 함께 낮춘다.
 # 2026-07-30c 이주 6차(260→249): test_client 의 화면·자식 마운트 대기 11건.
-TOTALS = {"pause": 249, "sleep": 85, "silent_skip": 17}
+# 2026-08-24: sleep 85→84. 코드를 지운 것이 아니라 **세는 법을 고쳤다** — 산문에 백틱으로
+# 인용된 `await asyncio.sleep(0)` 두 줄이 부채로 잡혀 있었다(`_code` 문서). 래칫은 실측을
+# 따라 같은 CL 에서 내린다(안 내리면 다음 사람이 그만큼 다시 늘릴 수 있다).
+TOTALS = {"pause": 249, "sleep": 84, "silent_skip": 17}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
@@ -96,11 +99,40 @@ CEILINGS = {
 }
 
 
+# 산문에 인용된 코드를 세지 않으려고 지우는 것들 — 백틱 안(`await asyncio.sleep(0)`)과
+# 줄 주석(`# … pilot.pause(1) …`).
+_QUOTED = re.compile(r"`[^`]*`")
+_COMMENT = re.compile(r"#.*$")
+
+
+def _code(line):
+    """그 줄에서 **코드만** 남긴다(백틱 인용·줄 주석 제거).
+
+    # 왜 필요한가 (2026-08-24)
+
+    이 게이트는 **자기 소스**를 세지 않으려고 `_SELF` 를 제외해 뒀다(위 `_scan` 문서 —
+    정규식 리터럴이 스스로 매칭됐다). 같은 함정이 **다른 파일의 산문**에도 있다: 이
+    저장소의 문서는 코드를 백틱으로 인용하는데(`` `await asyncio.sleep(0)` ``), 그것이
+    «고정 대기» 로 세어졌다. 실측으로 `test_search_all` 의 docstring 한 줄이 그렇게
+    부채로 잡혀 **모듈 상한과 총계를 동시에 넘겼다** — 코드는 한 줄도 안 늘었는데 게이트가
+    붉었고, 그 붉은 줄은 다음 사람에게 「원래 그런 것」으로 읽힌다.
+
+    ⛔ 삼중 인용 문자열 전체를 파싱하지는 않는다 — 그것까지 하려면 이 파일이 파서가 된다.
+    이 저장소의 산문은 코드를 **거의 항상 백틱으로** 인용하므로 그 둘로 충분하다(안 잡히는
+    잔여는 상한 표가 흡수한다).
+    """
+    return _COMMENT.sub("", _QUOTED.sub("", line))
+
+
 def _count(path):
     """(고정 pause, 고정 sleep, 조용한 플랫폼 return)."""
     lines = open(path, encoding="utf-8").read().splitlines()
-    p = sum(len(_PAUSE.findall(ln)) for ln in lines)
-    s = sum(len(_SLEEP.findall(ln)) for ln in lines)
+    # ⚠ **고정 대기만** 코드로 걸러 센다. 조용한 return 판정에는 원문을 쓴다 — 주석을
+    #   지우면 `return  # 사유` 가 «맨 return» 이 되어 없던 부채가 생긴다(실측: 이 한
+    #   줄을 안 갈라 놓았을 때 모듈 일곱이 한꺼번에 상한을 넘었다).
+    code = [_code(ln) for ln in lines]
+    p = sum(len(_PAUSE.findall(ln)) for ln in code)
+    s = sum(len(_SLEEP.findall(ln)) for ln in code)
     sil = sum(1 for i, ln in enumerate(lines)
               if _PLAT.match(ln) and i + 1 < len(lines)
               and lines[i + 1].strip() == "return")

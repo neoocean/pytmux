@@ -19,6 +19,9 @@ pub static EN: &[(&str, &str)] = &[
     ("서버", "Server"),
     ("시계", "Clock"),
     ("달력", "Calendar"),
+    // ── keys.rs — InputMode::badge ──
+    // 정본 `i18n.py` 의 `ui.cmd_mode_badge` 와 같은 짝이다(꼬리 공백만 다르다).
+    ("CMD(←↑↓→ 이동, : 명령)", "CMD(←↑↓→ move, : cmd)"),
     // ── keymap.rs — Action::label ──
     // 글자 배율 셋(§10-21ⓐ) — 액션 이름 둘 + 되돌리기.
     ("글자 크게", "Larger text"),
@@ -76,6 +79,8 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("(a 켜고 끄기 · Esc 닫기)", "(a toggles · Esc closes)"),
     ("자동재개 설명", "Autoresume info"),
+    // 커서 판(pytmux-375) — 판 제목이자 `Action::ShowCursor` 의 라벨이다(같은 낱말).
+    ("커서", "Cursor"),
     ("키 도움말", "Key help"),
     ("탭 스위처", "Tab switcher"),
     ("트리(개요)", "Tree (overview)"),
@@ -278,9 +283,14 @@ pub static EN: &[(&str, &str)] = &[
     ("setting\u{0004}흐리게 세기", "Dim strength"),
     // GUI 만의 줄(§10-21ⓐ) — 정본에 짝이 없어 이름도 번역도 우리가 짓는다.
     ("setting\u{0004}글자 크기 배율", "Text size"),
+    // 같은 부류(pytmux-408) — 정본의 글꼴은 호스트 단말의 것이라 저쪽에 짝이 없다.
+    ("setting\u{0004}고정폭 글꼴", "Monospace font"),
     // 커서 넷도 GUI 만의 줄이다(`pytmux/pytmux-161`) — 정본의 커서는 호스트 단말의 것이라
     // 저쪽에 짝이 없다.
     ("setting\u{0004}커서 모양", "Cursor shape"),
+    // 두께(`pytmux/pytmux-375` ⓑ) — 제보의 낱말은 「높이」였지만 `bar` 에서는 그것이
+    // 가로 폭이라, 넷을 한 낱말로 옳게 덮는 것은 「두께」뿐이다(`Config` 머리말).
+    ("setting\u{0004}커서 두께(px)", "Cursor thickness (px)"),
     ("setting\u{0004}커서 색", "Cursor color"),
     ("setting\u{0004}커서 깜빡임", "Cursor blink"),
     ("setting\u{0004}커서 깜빡임 주기(ms)", "Cursor blink interval (ms)"),
@@ -380,6 +390,11 @@ pub static EN: &[(&str, &str)] = &[
         "(↑↓ 고르기 · ←→ 값 · Tab 카테고리 · Enter 바꾸기 · Esc 닫기)",
         "(↑↓ choose · ←→ value · Tab category · Enter change · Esc close)",
     ),
+    // 커서 판(pytmux-375) — 같은 손인데 **분류가 없어** `Tab` 칸만 뺐다.
+    (
+        "(↑↓ 고르기 · ←→ 값 · Enter 바꾸기 · Esc 닫기)",
+        "(↑↓ choose · ←→ value · Enter change · Esc close)",
+    ),
     (
         "(↑↓ 고르기 · Enter/Space 켜고끄기 · Esc 닫기)",
         "(↑↓ choose · Enter/Space toggle · Esc close)",
@@ -399,7 +414,7 @@ pub static EN: &[(&str, &str)] = &[
         "(Enter 전송 · Shift+Enter 줄바꿈 · Esc 메뉴 · Shift+방향키/Ctrl+A 선택)",
         "(Enter send · Shift+Enter newline · Esc menu · Shift+arrows/Ctrl+A select)",
     ),
-    ("(←→ 탭 · ↑↓ 스크롤 · Esc 닫기)", "(←→ tabs · ↑↓ scroll · Esc close)"),
+    ("(←→ 탭·닫기[x] · ↑↓ 항목 · Enter/Esc 닫기)", "(←→ tabs·close[x] · ↑↓ items · Enter/Esc close)"),
     // ── screens.rs — 작성창 const 셋(소비는 뷰 쪽 `t(...)`) ──
     (
         "ESC 메뉴 — : 명령 · Esc 취소 · 그 외 키 편집 복귀",
@@ -441,6 +456,10 @@ pub static EN: &[(&str, &str)] = &[
     (
         "커서 색 (예: blue · brightblack · #ff8800 · 비우면 테마):",
         "Cursor color (e.g. blue · brightblack · #ff8800 · empty for theme):",
+    ),
+    (
+        "고정폭 글꼴 (예: Cascadia Mono · Consolas · 비우면 자동):",
+        "Monospace font (e.g. Cascadia Mono · Consolas · empty for auto):",
     ),
     ("설정 (예: mouse off · prefix C-a):", "Set option (e.g. mouse off · prefix C-a):"),
     (
@@ -512,6 +531,9 @@ pub static EN: &[(&str, &str)] = &[
     ("달력 오버레이 토글(현재 패널 이번 달)", "Toggle calendar overlay (this month on current pane)"),
     ("시계 모드 토글(현재 패널 큰 시계)", "Toggle clock mode (big clock on current pane)"),
     ("(테마)", "(theme)"),
+    // ⛔ 「(테마)」와 **다른 낱말**이다(pytmux-408) — 색의 빈 값은 «테마가 정한다»이고
+    //    글꼴의 빈 값은 «이 상자에 있는 것에서 고른다»다.
+    ("(자동)", "(auto)"),
     ("bind 줄이 아니다", "not a bind line"),
     // ── options.rs — 인자 폼 라벨(소비는 `row_text`) ──
     ("토글", "Toggle"),

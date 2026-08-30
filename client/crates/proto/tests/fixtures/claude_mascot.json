@@ -1,0 +1,13 @@
+{
+  "_comment": "Claude Code CLI 시작 화면 마스코트의 **실측** 캡처(pytmux-177). ⛔ 생성기(gen_*.py)가 없다 — 도는 claude 를 pty 로 몰아야 나오는 값이라 픽스처 게이트가 다시 뽑지 못한다. 다시 뜨는 법은 tests/mascot_conformance.rs 머리말에 있다.",
+  "captured_at": "2026-08-24",
+  "claude_version": "2.1.241",
+  "platform": "darwin 24.6.0 arm64",
+  "rows": [
+    " ▐▛███▛█",
+    "▝▜██████▀",
+    "  ▝▝ ▝▝"
+  ],
+  "codepoints": ["U+2580", "U+2588", "U+2590", "U+259B", "U+259C", "U+259D"],
+  "quadrants": ["U+259B", "U+259C", "U+259D"]
+}

@@ -52,6 +52,51 @@ def bar(value: int, vmax: int, cells: int) -> str:
     return "█" * full + (_BAR_BLOCKS[rem] if rem and full < cells else "")
 
 
+def usage_values(usage, age_sec=None):
+    """`/usage` 한도 dict → **값**(그림이 아니라 자료).
+
+    돌려주는 것: `{"rows": [{"label","pct","reset"}], "account": str|None, "ago": str|None}`
+    데이터가 없으면 `None`.
+
+    # 왜 값 추출기가 따로 필요한가 (pytmux-371 ④)
+
+    [`usage_bar_lines`] 는 같은 값을 **글자 막대**(`█`·`░`)로 그린다 — 격자 위에 사는
+    정본에는 그것이 옳다. 그런데 그 줄을 그대로 GUI 에 실어 보내면 GUI 는 «텍스트 기반
+    인터페이스»를 그리게 되고, 그건 사용자 지시(*"인터페이스는 gui 기반을 따라야 한다"*)와
+    어긋난다. 그래서 **버킷 표·순서·라벨은 여기 한 벌**로 두고, 글자로 그릴지 면으로 그릴지는
+    소비자가 정한다.
+
+    ⛔ 여기에 UI 를 들이지 않는다(이 모듈 머리말) — 퍼센트와 문구까지고, 칸 수·픽셀은 없다.
+    """
+    if not isinstance(usage, dict):
+        return None
+    rows = []
+    for key, label_key in _BUCKETS:
+        d = usage.get(key)
+        if isinstance(d, dict) and d.get("pct") is not None:
+            reset = d.get("reset")
+            rows.append({
+                "label": i18n.t(label_key),
+                "pct": int(d["pct"]),
+                # 타임존 괄호는 자리 절약 위해 생략한다(글자 판과 같은 규칙).
+                "reset": (reset.split(" (")[0].strip() if reset else ""),
+            })
+    if not rows:
+        return None
+    acct = None
+    if "account" in usage:
+        acct = usage.get("account_full") or usage.get("account")
+        acct = (i18n.t("usage.account", acct=acct) if acct
+                else i18n.t("usage.account_unknown"))
+    ago = None
+    if isinstance(age_sec, (int, float)) and age_sec >= 120:
+        m = int(age_sec // 60)
+        span = (i18n.t("usage.ago_hm", h=m // 60, m=m % 60) if m >= 60
+                else i18n.t("usage.ago_m", m=m))
+        ago = i18n.t("usage.measured_ago", ago=span)
+    return {"rows": rows, "account": acct, "ago": ago}
+
+
 def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
                     track_char=" ", row_gap=False):
     """Claude `/usage` 한도 dict(session·week_all·week_sonnet)를 보기 좋은 표시
@@ -82,11 +127,12 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
     # 달라(예: 'Week Sonnet' 11셀 vs 'Week all' 8셀) 막대 시작 열이 행마다 어긋나던
     # 것을, 가장 긴 라벨 + 1칸으로 모두 패딩해 **모든 막대의 왼쪽 시작을 같은 열**에
     # 맞춘다(요청 2026-06-18 — 종전 고정 10셀은 11셀 라벨에서 막대가 한 칸 밀렸다).
-    entries = []
-    for key, label_key in _BUCKETS:
-        d = usage.get(key)
-        if isinstance(d, dict) and d.get("pct") is not None:
-            entries.append((i18n.t(label_key), d))
+    # ★ 값은 [`usage_values`] 한 벌에서 온다(pytmux-371 ④) — 버킷 순서·라벨·리셋 다듬기를
+    #   여기서 또 적으면 글자 판과 면 판이 **다른 값**을 보이는 날이 온다.
+    vals = usage_values(usage, age_sec=age_sec)
+    if vals is None:
+        return None
+    entries = [(r["label"], r) for r in vals["rows"]]
     label_w = max((sum(char_cells(c) for c in nm) for nm, _ in entries),
                   default=0)
     rows = []
@@ -96,10 +142,10 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
         # 가장 긴 라벨 + 1칸 → 모든 라벨이 같은 폭(막대 시작 열 통일), 최소 1칸 간격.
         label = name + " " * max(1, label_w + 1 - sum(char_cells(c) for c in name))
         reset = d.get("reset")
-        # 타임존 괄호는 자리 절약 위해 생략.
+        # 타임존 괄호 생략은 `usage_values` 가 이미 했다(값 한 벌).
         # 새로고침 화살표와 날짜/시각 사이 한 칸(가독성 — 붙으면 첫 글자가 화살표에
         # 겹쳐 안 보인다, 제보 2026-07-18). 종료 요약(_usage_exit_lines)과 동형.
-        reset_txt = ("↻ " + reset.split(" (")[0].strip()) if reset else ""
+        reset_txt = ("↻ " + reset) if reset else ""
         if right_align:
             # 막대를 트랙 폭으로 채워(공백) 리셋 시작 열을 행마다 맞추고, % 숫자는
             # 줄 오른쪽 끝(width)에 우측정렬한다 — 막대/리셋과 % 사이를 공백으로 채움.
@@ -130,17 +176,9 @@ def usage_bar_lines(usage, width=80, age_sec=None, right_align=False,
         rows.append(line)
     # 그림자 /usage 세션의 계정(일치 확인용). 키가 있을 때만 — 폰 앱과 다른 계정이면
     # 한도가 실제로 달라지므로 눈으로 대조하라고 표시한다. 신호 못 잡으면 '미확인'.
-    if rows and "account" in usage:
-        # 전체 이메일(account_full, 프로브가 라이브로 실어 보냄)을 우선 표시하고, 없으면
-        # 별칭(account, DB 영속·재시작 직후 폴백)으로. 사용자 본인 화면이라 줄이지 않고
-        # 전체를 보인다(요청·footer claude_account_full 과 동일 방침).
-        acct = usage.get("account_full") or usage.get("account")
-        rows.append(i18n.t("usage.account", acct=acct) if acct
-                    else i18n.t("usage.account_unknown"))
-    # S6 T3: 실측 신선도 — 2분 미만이면 표기 생략(잡음), 그 이상은 분/시간 단위.
-    if rows and isinstance(age_sec, (int, float)) and age_sec >= 120:
-        m = int(age_sec // 60)
-        ago = (i18n.t("usage.ago_hm", h=m // 60, m=m % 60) if m >= 60
-               else i18n.t("usage.ago_m", m=m))
-        rows.append(i18n.t("usage.measured_ago", ago=ago))
+    # 계정·신선도 줄도 **값에서** 온다(같은 이유 — 두 곳에서 짓지 않는다).
+    if rows and vals["account"]:
+        rows.append(vals["account"])
+    if rows and vals["ago"]:
+        rows.append(vals["ago"])
     return rows or None

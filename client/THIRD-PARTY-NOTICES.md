@@ -37,7 +37,7 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | 항목 | 수 |
 |---|---:|
 | 서드파티 크레이트 | 449 |
-| 라이선스 전문(중복 제거) | 211 |
+| 라이선스 전문(중복 제거) | 210 |
 | 이진에 박힌 서드파티 자산 | 1 |
 | 전문을 안 싣는 크레이트 | 28 |
 
@@ -96,7 +96,7 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 
 | 자산 | 라이선스 | 왜 이진에 있나 | 전문 |
 |---|---|---|---|
-| Roboto (Regular) | `OFL-1.1` | 이미지 캐시의 SVG 렌더가 쓰는 기본 산세리프 — `warpui_core/src/image_cache.rs` | [L211](#l211) |
+| Roboto (Regular) | `OFL-1.1` | 이미지 캐시의 SVG 렌더가 쓰는 기본 산세리프 — `warpui_core/src/image_cache.rs` | [L210](#l210) |
 
 ## 2. 서드파티 크레이트 (449)
 
@@ -159,165 +159,165 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `color_quant` | 1.1.0 | `crates.io` | `MIT` | `MIT` | [L036](#l036) |
 | `concurrent-queue` | 2.5.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) |
 | `convert_case` | 0.4.0 | `crates.io` | `MIT` | `MIT` | — (배포에 전문을 안 실었다) |
-| `core-foundation` | 0.10.1 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L037](#l037) |
-| `core-foundation-sys` | 0.8.7 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L037](#l037) |
+| `core-foundation` | 0.10.1 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L035](#l035) |
+| `core-foundation-sys` | 0.8.7 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L035](#l035) |
 | `core-graphics` | 0.24.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L034](#l034) [L035](#l035) |
-| `core-graphics` | 0.25.0 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L034](#l034) [L037](#l037) |
+| `core-graphics` | 0.25.0 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L034](#l034) [L035](#l035) |
 | `core-graphics-types` | 0.2.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L035](#l035) |
-| `core-graphics-types` | 0.2.0 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L037](#l037) |
-| `core-text` | 21.1.0 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L034](#l034) [L037](#l037) |
+| `core-graphics-types` | 0.2.0 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L035](#l035) |
+| `core-text` | 21.1.0 | `https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1` | `MIT OR Apache-2.0` | `MIT` | [L034](#l034) [L035](#l035) |
 | `core_maths` | 0.1.0 | `crates.io` | `MIT` | `MIT` | — (배포에 전문을 안 실었다) |
-| `cosmic-text` | 0.12.0 | `https://github.com/warpdotdev/cosmic-text.git?rev=15198beba692162201c0ea8b15222cf5643ea068#15198beb` | `MIT OR Apache-2.0` | `MIT` | [L038](#l038) |
-| `crc32fast` | 1.5.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L039](#l039) |
-| `crossbeam-channel` | 0.5.8 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L040](#l040) [L041](#l041) |
-| `crossbeam-deque` | 0.8.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L040](#l040) |
-| `crossbeam-epoch` | 0.9.15 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L040](#l040) |
-| `crossbeam-utils` | 0.8.21 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L040](#l040) |
-| `cstr` | 0.2.11 | `crates.io` | `MIT` | `MIT` | [L042](#l042) |
+| `cosmic-text` | 0.12.0 | `https://github.com/warpdotdev/cosmic-text.git?rev=15198beba692162201c0ea8b15222cf5643ea068#15198beb` | `MIT OR Apache-2.0` | `MIT` | [L037](#l037) |
+| `crc32fast` | 1.5.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L038](#l038) |
+| `crossbeam-channel` | 0.5.8 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L039](#l039) [L040](#l040) |
+| `crossbeam-deque` | 0.8.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L039](#l039) |
+| `crossbeam-epoch` | 0.9.15 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L039](#l039) |
+| `crossbeam-utils` | 0.8.21 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L039](#l039) |
+| `cstr` | 0.2.11 | `crates.io` | `MIT` | `MIT` | [L041](#l041) |
 | `ctrlc` | 3.4.7 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L003](#l003) |
-| `cursor-icon` | 1.1.0 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L043](#l043) |
-| `dashmap` | 6.1.0 | `crates.io` | `MIT` | `MIT` | [L044](#l044) |
-| `data-url` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L045](#l045) |
-| `derivative` | 2.2.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L046](#l046) |
-| `derive_more` | 0.99.17 | `crates.io` | `MIT` | `MIT` | [L047](#l047) |
-| `dirs` | 6.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L048](#l048) |
-| `dirs-next` | 2.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L048](#l048) |
-| `dirs-sys` | 0.5.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L048](#l048) |
-| `dirs-sys-next` | 0.1.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L048](#l048) |
+| `cursor-icon` | 1.1.0 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L042](#l042) |
+| `dashmap` | 6.1.0 | `crates.io` | `MIT` | `MIT` | [L043](#l043) |
+| `data-url` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L044](#l044) |
+| `derivative` | 2.2.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L045](#l045) |
+| `derive_more` | 0.99.17 | `crates.io` | `MIT` | `MIT` | [L046](#l046) |
+| `dirs` | 6.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L047](#l047) |
+| `dirs-next` | 2.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L047](#l047) |
+| `dirs-sys` | 0.5.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L047](#l047) |
+| `dirs-sys-next` | 0.1.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L047](#l047) |
 | `dispatch` | 0.2.0 | `crates.io` | `MIT` | `MIT` | — (배포에 전문을 안 실었다) |
 | `dispatch2` | 0.3.0 | `crates.io` | `Zlib OR Apache-2.0 OR MIT` | `MIT` | — (배포에 전문을 안 실었다) |
 | `displaydoc` | 0.2.5 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
-| `dlib` | 0.5.2 | `crates.io` | `MIT` | `MIT` | [L049](#l049) |
-| `document-features` | 0.2.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L050](#l050) |
-| `downcast-rs` | 1.2.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L051](#l051) |
-| `dpi` | 0.1.1 | `https://github.com/warpdotdev/winit.git?rev=a4e0ecb5f9626ccac9445a73dc28354b52423abc#a4e0ecb5` | `Apache-2.0` | `Apache-2.0` | [L052](#l052) |
+| `dlib` | 0.5.2 | `crates.io` | `MIT` | `MIT` | [L048](#l048) |
+| `document-features` | 0.2.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L049](#l049) |
+| `downcast-rs` | 1.2.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L050](#l050) |
+| `dpi` | 0.1.1 | `https://github.com/warpdotdev/winit.git?rev=a4e0ecb5f9626ccac9445a73dc28354b52423abc#a4e0ecb5` | `Apache-2.0` | `Apache-2.0` | [L051](#l051) |
 | `dwrote` | 0.11.5 | `https://github.com/warpdotdev/dwrote-rs?rev=a71ce6c0136f7d0954a9a8b181b5b2d8ace5eb9c#a71ce6c0` | `MPL-2.0` | `MPL-2.0` | — (배포에 전문을 안 실었다) |
-| `either` | 1.9.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L053](#l053) |
+| `either` | 1.9.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L052](#l052) |
 | `endi` | 1.1.0 | `crates.io` | `MIT` | `MIT` | [L003](#l003) |
 | `enum-iterator` | 1.4.1 | `crates.io` | `0BSD` | `0BSD` | — (배포에 전문을 안 실었다) |
 | `enum-iterator-derive` | 1.2.1 | `crates.io` | `0BSD` | `0BSD` | — (배포에 전문을 안 실었다) |
-| `enumflags2` | 0.7.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L054](#l054) |
-| `enumflags2_derive` | 0.7.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L055](#l055) |
-| `env_logger` | 0.10.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L056](#l056) |
-| `equivalent` | 1.0.1 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L057](#l057) |
-| `errno` | 0.3.10 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L058](#l058) |
-| `error-code` | 3.3.2 | `crates.io` | `BSL-1.0` | `BSL-1.0` | [L059](#l059) |
+| `enumflags2` | 0.7.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L053](#l053) |
+| `enumflags2_derive` | 0.7.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L054](#l054) |
+| `env_logger` | 0.10.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L055](#l055) |
+| `equivalent` | 1.0.1 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L056](#l056) |
+| `errno` | 0.3.10 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L057](#l057) |
+| `error-code` | 3.3.2 | `crates.io` | `BSL-1.0` | `BSL-1.0` | [L058](#l058) |
 | `event-listener` | 5.4.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) |
 | `event-listener-strategy` | 0.5.2 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) |
 | `fastrand` | 1.9.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) |
 | `fastrand` | 2.3.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) |
-| `fdeflate` | 0.3.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L060](#l060) |
+| `fdeflate` | 0.3.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L059](#l059) |
 | `find-msvc-tools` | 0.1.9 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L027](#l027) |
-| `fixedbitset` | 0.5.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L061](#l061) |
-| `flate2` | 1.1.9 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L062](#l062) |
-| `float-cmp` | 0.9.0 | `crates.io` | `MIT` | `MIT` | [L063](#l063) |
-| `float-ord` | 0.3.2 | `crates.io` | `MIT / Apache-2.0` | `MIT` | [L064](#l064) |
-| `fnv` | 1.0.7 | `crates.io` | `Apache-2.0 / MIT` | `MIT` | [L065](#l065) |
-| `foldhash` | 0.1.5 | `crates.io` | `Zlib` | `Zlib` | [L066](#l066) |
-| `foldhash` | 0.2.0 | `crates.io` | `Zlib` | `Zlib` | [L066](#l066) |
+| `fixedbitset` | 0.5.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L060](#l060) |
+| `flate2` | 1.1.9 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L061](#l061) |
+| `float-cmp` | 0.9.0 | `crates.io` | `MIT` | `MIT` | [L062](#l062) |
+| `float-ord` | 0.3.2 | `crates.io` | `MIT / Apache-2.0` | `MIT` | [L063](#l063) |
+| `fnv` | 1.0.7 | `crates.io` | `Apache-2.0 / MIT` | `MIT` | [L064](#l064) |
+| `foldhash` | 0.1.5 | `crates.io` | `Zlib` | `Zlib` | [L065](#l065) |
+| `foldhash` | 0.2.0 | `crates.io` | `Zlib` | `Zlib` | [L065](#l065) |
 | `font-kit` | 0.12.0 | `https://github.com/warpdotdev/font-kit?rev=a04b225ecb639bb850f21d05212cfdc7465000f3#a04b225e` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
-| `font-types` | 0.7.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L067](#l067) |
-| `fontconfig` | 0.8.0 | `crates.io` | `MIT` | `MIT` | [L068](#l068) |
-| `fontconfig-parser` | 0.5.3 | `crates.io` | `MIT` | `MIT` | [L069](#l069) |
-| `fontdb` | 0.23.0 | `crates.io` | `MIT` | `MIT` | [L070](#l070) |
-| `foreign-types` | 0.5.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L071](#l071) |
-| `foreign-types-macros` | 0.2.3 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L071](#l071) |
-| `foreign-types-shared` | 0.3.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L071](#l071) |
-| `form_urlencoded` | 1.2.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L072](#l072) |
+| `font-types` | 0.7.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L066](#l066) |
+| `fontconfig` | 0.8.0 | `crates.io` | `MIT` | `MIT` | [L067](#l067) |
+| `fontconfig-parser` | 0.5.3 | `crates.io` | `MIT` | `MIT` | [L068](#l068) |
+| `fontdb` | 0.23.0 | `crates.io` | `MIT` | `MIT` | [L069](#l069) |
+| `foreign-types` | 0.5.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L070](#l070) |
+| `foreign-types-macros` | 0.2.3 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L070](#l070) |
+| `foreign-types-shared` | 0.3.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L070](#l070) |
+| `form_urlencoded` | 1.2.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L071](#l071) |
 | `freetype` | 0.7.2 | `crates.io` | `Apache-2.0 / MIT` | `MIT` | [L034](#l034) [L035](#l035) |
-| `freetype-sys` | 0.20.1 | `crates.io` | `MIT` | `MIT` | [L073](#l073) |
-| `futures` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
-| `futures-channel` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
-| `futures-core` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
-| `futures-executor` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
-| `futures-io` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
+| `freetype-sys` | 0.20.1 | `crates.io` | `MIT` | `MIT` | [L072](#l072) |
+| `futures` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
+| `futures-channel` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
+| `futures-core` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
+| `futures-executor` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
+| `futures-io` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
 | `futures-lite` | 1.13.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) [L014](#l014) |
 | `futures-lite` | 2.6.1 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) [L014](#l014) |
-| `futures-macro` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
-| `futures-sink` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
-| `futures-task` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
-| `futures-util` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L074](#l074) |
-| `gethostname` | 1.1.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | [L075](#l075) |
-| `getrandom` | 0.2.16 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L076](#l076) |
-| `getrandom` | 0.3.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L077](#l077) |
-| `gif` | 0.14.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L078](#l078) |
+| `futures-macro` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
+| `futures-sink` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
+| `futures-task` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
+| `futures-util` | 0.3.31 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L073](#l073) |
+| `gethostname` | 1.1.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | [L074](#l074) |
+| `getrandom` | 0.2.16 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L075](#l075) |
+| `getrandom` | 0.3.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L076](#l076) |
+| `gif` | 0.14.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L077](#l077) |
 | `gl_generator` | 0.14.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | — (배포에 전문을 안 실었다) |
 | `glob` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L020](#l020) |
-| `global-hotkey` | 0.7.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L079](#l079) [L080](#l080) |
+| `global-hotkey` | 0.7.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L078](#l078) [L079](#l079) |
 | `glow` | 0.17.0 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L003](#l003) |
-| `glutin_wgl_sys` | 0.6.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | [L081](#l081) |
-| `gpu-allocator` | 0.28.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L082](#l082) |
-| `half` | 2.6.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L083](#l083) |
-| `hash32` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L084](#l084) |
-| `hashbrown` | 0.14.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L085](#l085) |
-| `hashbrown` | 0.15.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L085](#l085) |
-| `hashbrown` | 0.16.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L085](#l085) |
-| `hashbrown` | 0.17.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L085](#l085) |
-| `heapless` | 0.8.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L086](#l086) |
-| `heck` | 0.5.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L087](#l087) |
-| `hex` | 0.4.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L088](#l088) |
+| `glutin_wgl_sys` | 0.6.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | [L080](#l080) |
+| `gpu-allocator` | 0.28.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L081](#l081) |
+| `half` | 2.6.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L082](#l082) |
+| `hash32` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L083](#l083) |
+| `hashbrown` | 0.14.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L084](#l084) |
+| `hashbrown` | 0.15.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L084](#l084) |
+| `hashbrown` | 0.16.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L084](#l084) |
+| `hashbrown` | 0.17.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L084](#l084) |
+| `heapless` | 0.8.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L085](#l085) |
+| `heck` | 0.5.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L086](#l086) |
+| `hex` | 0.4.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L087](#l087) |
 | `home` | 0.5.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
-| `humantime` | 2.1.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L089](#l089) |
-| `iana-time-zone` | 0.1.64 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L090](#l090) |
-| `icu_collections` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_locid` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_locid_transform` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_locid_transform_data` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_normalizer` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_normalizer_data` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_properties` | 1.5.1 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_properties_data` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_provider` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `icu_provider_macros` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `idna` | 1.0.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L045](#l045) |
-| `idna_adapter` | 1.2.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L092](#l092) |
-| `image` | 0.25.9 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L060](#l060) |
-| `image-webp` | 0.2.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L060](#l060) |
-| `imagesize` | 0.14.0 | `crates.io` | `MIT` | `MIT` | [L093](#l093) |
-| `indexmap` | 2.12.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L094](#l094) |
-| `infer` | 0.19.0 | `crates.io` | `MIT` | `MIT` | [L095](#l095) |
-| `instant` | 0.1.12 | `crates.io` | `BSD-3-Clause` | `BSD-3-Clause` | [L096](#l096) |
-| `is-docker` | 0.2.0 | `crates.io` | `MIT` | `MIT` | [L097](#l097) |
-| `is-terminal` | 0.4.17 | `crates.io` | `MIT` | `MIT` | [L003](#l003) [L098](#l098) |
-| `is-wsl` | 0.4.0 | `crates.io` | `MIT` | `MIT` | [L097](#l097) |
-| `itertools` | 0.11.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L053](#l053) |
-| `itertools` | 0.13.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L053](#l053) |
-| `itertools` | 0.14.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L053](#l053) |
+| `humantime` | 2.1.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L088](#l088) |
+| `iana-time-zone` | 0.1.64 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L089](#l089) |
+| `icu_collections` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_locid` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_locid_transform` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_locid_transform_data` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_normalizer` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_normalizer_data` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_properties` | 1.5.1 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_properties_data` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_provider` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `icu_provider_macros` | 1.5.0 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `idna` | 1.0.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L044](#l044) |
+| `idna_adapter` | 1.2.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L091](#l091) |
+| `image` | 0.25.9 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L059](#l059) |
+| `image-webp` | 0.2.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L059](#l059) |
+| `imagesize` | 0.14.0 | `crates.io` | `MIT` | `MIT` | [L092](#l092) |
+| `indexmap` | 2.12.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L093](#l093) |
+| `infer` | 0.19.0 | `crates.io` | `MIT` | `MIT` | [L094](#l094) |
+| `instant` | 0.1.12 | `crates.io` | `BSD-3-Clause` | `BSD-3-Clause` | [L095](#l095) |
+| `is-docker` | 0.2.0 | `crates.io` | `MIT` | `MIT` | [L096](#l096) |
+| `is-terminal` | 0.4.17 | `crates.io` | `MIT` | `MIT` | [L003](#l003) [L097](#l097) |
+| `is-wsl` | 0.4.0 | `crates.io` | `MIT` | `MIT` | [L096](#l096) |
+| `itertools` | 0.11.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L052](#l052) |
+| `itertools` | 0.13.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L052](#l052) |
+| `itertools` | 0.14.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L052](#l052) |
 | `itoa` | 1.0.18 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
 | `jobserver` | 0.1.32 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L027](#l027) |
-| `keyboard-types` | 0.7.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L099](#l099) |
+| `keyboard-types` | 0.7.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L098](#l098) |
 | `khronos-egl` | 6.0.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L003](#l003) |
 | `khronos_api` | 3.1.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | — (배포에 전문을 안 실었다) |
-| `kurbo` | 0.13.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L100](#l100) |
-| `lazy_static` | 1.5.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L101](#l101) |
-| `libc` | 0.2.186 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L102](#l102) |
-| `libloading` | 0.8.9 | `crates.io` | `ISC` | `ISC` | [L103](#l103) |
-| `libm` | 0.2.15 | `crates.io` | `MIT` | `MIT` | [L104](#l104) |
-| `linux-raw-sys` | 0.11.0 | `crates.io` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `MIT` | [L105](#l105) [L003](#l003) |
-| `linux-raw-sys` | 0.4.15 | `crates.io` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `MIT` | [L105](#l105) [L003](#l003) |
-| `litemap` | 0.7.4 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `litrs` | 1.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L106](#l106) |
-| `lock_api` | 0.4.14 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L107](#l107) |
+| `kurbo` | 0.13.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L099](#l099) |
+| `lazy_static` | 1.5.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L100](#l100) |
+| `libc` | 0.2.186 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L101](#l101) |
+| `libloading` | 0.8.9 | `crates.io` | `ISC` | `ISC` | [L102](#l102) |
+| `libm` | 0.2.15 | `crates.io` | `MIT` | `MIT` | [L103](#l103) |
+| `linux-raw-sys` | 0.11.0 | `crates.io` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `MIT` | [L104](#l104) [L003](#l003) |
+| `linux-raw-sys` | 0.4.15 | `crates.io` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `MIT` | [L104](#l104) [L003](#l003) |
+| `litemap` | 0.7.4 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `litrs` | 1.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L105](#l105) |
+| `lock_api` | 0.4.14 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L106](#l106) |
 | `log` | 0.4.29 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L020](#l020) |
 | `malloc_buf` | 0.0.6 | `crates.io` | `MIT` | `MIT` | — (배포에 전문을 안 실었다) |
 | `memchr` | 2.7.6 | `crates.io` | `Unlicense OR MIT` | `MIT` | [L005](#l005) [L006](#l006) |
-| `memmap2` | 0.9.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L108](#l108) |
-| `memoffset` | 0.9.0 | `crates.io` | `MIT` | `MIT` | [L109](#l109) |
-| `minimal-lexical` | 0.2.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L003](#l003) [L110](#l110) |
-| `miniz_oxide` | 0.8.8 | `crates.io` | `MIT OR Zlib OR Apache-2.0` | `MIT` | [L111](#l111) [L112](#l112) |
-| `moxcms` | 0.7.11 | `crates.io` | `BSD-3-Clause OR Apache-2.0` | `BSD-3-Clause` | [L113](#l113) |
-| `naga` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L114](#l114) |
-| `naga-types` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L114](#l114) |
-| `native-dialog` | 0.7.0 | `crates.io` | `MIT` | `MIT` | [L115](#l115) |
-| `nix` | 0.26.4 | `crates.io` | `MIT` | `MIT` | [L116](#l116) |
-| `nix` | 0.30.1 | `crates.io` | `MIT` | `MIT` | [L116](#l116) |
-| `nom` | 7.1.3 | `crates.io` | `MIT` | `MIT` | [L117](#l117) |
-| `nom` | 8.0.0 | `crates.io` | `MIT` | `MIT` | [L117](#l117) |
-| `notify-rust` | 4.11.7 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L118](#l118) |
+| `memmap2` | 0.9.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L107](#l107) |
+| `memoffset` | 0.9.0 | `crates.io` | `MIT` | `MIT` | [L108](#l108) |
+| `minimal-lexical` | 0.2.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L003](#l003) [L109](#l109) |
+| `miniz_oxide` | 0.8.8 | `crates.io` | `MIT OR Zlib OR Apache-2.0` | `MIT` | [L110](#l110) [L111](#l111) |
+| `moxcms` | 0.7.11 | `crates.io` | `BSD-3-Clause OR Apache-2.0` | `BSD-3-Clause` | [L112](#l112) |
+| `naga` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L113](#l113) |
+| `naga-types` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L113](#l113) |
+| `native-dialog` | 0.7.0 | `crates.io` | `MIT` | `MIT` | [L114](#l114) |
+| `nix` | 0.26.4 | `crates.io` | `MIT` | `MIT` | [L115](#l115) |
+| `nix` | 0.30.1 | `crates.io` | `MIT` | `MIT` | [L115](#l115) |
+| `nom` | 7.1.3 | `crates.io` | `MIT` | `MIT` | [L116](#l116) |
+| `nom` | 8.0.0 | `crates.io` | `MIT` | `MIT` | [L116](#l116) |
+| `notify-rust` | 4.11.7 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L117](#l117) |
 | `num-derive` | 0.4.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L020](#l020) |
 | `num-traits` | 0.2.19 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L020](#l020) |
-| `num_cpus` | 1.16.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L119](#l119) |
-| `objc` | 0.2.7 | `https://github.com/warpdotdev/rust-objc.git?rev=5b656827fa9f863ef0eb22e444a3fedac009e78a#5b656827` | `MIT` | `MIT` | [L120](#l120) |
+| `num_cpus` | 1.16.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L118](#l118) |
+| `objc` | 0.2.7 | `https://github.com/warpdotdev/rust-objc.git?rev=5b656827fa9f863ef0eb22e444a3fedac009e78a#5b656827` | `MIT` | `MIT` | [L119](#l119) |
 | `objc2` | 0.6.3 | `crates.io` | `MIT` | `MIT` | — (배포에 전문을 안 실었다) |
 | `objc2-app-kit` | 0.3.2 | `crates.io` | `Zlib OR Apache-2.0 OR MIT` | `MIT` | — (배포에 전문을 안 실었다) |
 | `objc2-av-foundation` | 0.3.2 | `crates.io` | `Zlib OR Apache-2.0 OR MIT` | `MIT` | — (배포에 전문을 안 실었다) |
@@ -327,49 +327,49 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `objc2-metal` | 0.3.2 | `crates.io` | `Zlib OR Apache-2.0 OR MIT` | `MIT` | — (배포에 전문을 안 실었다) |
 | `objc2-quartz-core` | 0.3.2 | `crates.io` | `Zlib OR Apache-2.0 OR MIT` | `MIT` | — (배포에 전문을 안 실었다) |
 | `once_cell` | 1.21.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
-| `open` | 5.3.3 | `crates.io` | `MIT` | `MIT` | [L121](#l121) |
-| `option-ext` | 0.2.0 | `crates.io` | `MPL-2.0` | `MPL-2.0` | [L122](#l122) |
-| `ordered-float` | 3.9.2 | `crates.io` | `MIT` | `MIT` | [L123](#l123) |
-| `ordered-float` | 5.3.0 | `crates.io` | `MIT` | `MIT` | [L123](#l123) |
+| `open` | 5.3.3 | `crates.io` | `MIT` | `MIT` | [L120](#l120) |
+| `option-ext` | 0.2.0 | `crates.io` | `MPL-2.0` | `MPL-2.0` | [L121](#l121) |
+| `ordered-float` | 3.9.2 | `crates.io` | `MIT` | `MIT` | [L122](#l122) |
+| `ordered-float` | 5.3.0 | `crates.io` | `MIT` | `MIT` | [L122](#l122) |
 | `ordered-stream` | 0.2.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
-| `os_pipe` | 1.2.3 | `crates.io` | `MIT` | `MIT` | [L124](#l124) |
+| `os_pipe` | 1.2.3 | `crates.io` | `MIT` | `MIT` | [L123](#l123) |
 | `owned_ttf_parser` | 0.25.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | [L001](#l001) |
-| `parking` | 2.2.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) [L125](#l125) |
-| `parking_lot` | 0.12.5 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L107](#l107) |
-| `parking_lot_core` | 0.9.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L107](#l107) |
+| `parking` | 2.2.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) [L124](#l124) |
+| `parking_lot` | 0.12.5 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L106](#l106) |
+| `parking_lot_core` | 0.9.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L106](#l106) |
 | `pathdiff` | 0.2.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L003](#l003) |
 | `pathfinder_color` | 0.5.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | — (배포에 전문을 안 실었다) |
 | `pathfinder_geometry` | 0.5.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | — (배포에 전문을 안 실었다) |
-| `pathfinder_simd` | 0.5.4 | `https://github.com/warpdotdev/pathfinder.git?rev=34128a129ca6aee168fbc5060a4f21b4f7e486a9#34128a12` | `MIT OR Apache-2.0` | `MIT` | [L101](#l101) |
-| `percent-encoding` | 2.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L045](#l045) |
-| `petgraph` | 0.8.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L053](#l053) |
-| `pico-args` | 0.5.0 | `crates.io` | `MIT` | `MIT` | [L126](#l126) |
+| `pathfinder_simd` | 0.5.4 | `https://github.com/warpdotdev/pathfinder.git?rev=34128a129ca6aee168fbc5060a4f21b4f7e486a9#34128a12` | `MIT OR Apache-2.0` | `MIT` | [L100](#l100) |
+| `percent-encoding` | 2.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L044](#l044) |
+| `petgraph` | 0.8.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L052](#l052) |
+| `pico-args` | 0.5.0 | `crates.io` | `MIT` | `MIT` | [L125](#l125) |
 | `pin-project-lite` | 0.2.16 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) |
-| `pin-utils` | 0.1.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L127](#l127) |
+| `pin-utils` | 0.1.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L126](#l126) |
 | `piper` | 0.2.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
 | `pkg-config` | 0.3.32 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L027](#l027) |
-| `png` | 0.18.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L128](#l128) |
+| `png` | 0.18.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L127](#l127) |
 | `polling` | 3.11.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) |
-| `ppv-lite86` | 0.2.17 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L129](#l129) |
-| `presser` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L130](#l130) |
+| `ppv-lite86` | 0.2.17 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L128](#l128) |
+| `presser` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L129](#l129) |
 | `prettyplease` | 0.2.37 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
 | `proc-macro-crate` | 3.3.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
 | `proc-macro2` | 1.0.106 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
-| `profiling` | 1.0.11 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L131](#l131) |
-| `pxfm` | 0.1.28 | `crates.io` | `BSD-3-Clause OR Apache-2.0` | `BSD-3-Clause` | [L113](#l113) |
-| `quick-error` | 2.0.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L132](#l132) |
-| `quick-xml` | 0.37.4 | `crates.io` | `MIT` | `MIT` | [L133](#l133) |
+| `profiling` | 1.0.11 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L130](#l130) |
+| `pxfm` | 0.1.28 | `crates.io` | `BSD-3-Clause OR Apache-2.0` | `BSD-3-Clause` | [L112](#l112) |
+| `quick-error` | 2.0.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L131](#l131) |
+| `quick-xml` | 0.37.4 | `crates.io` | `MIT` | `MIT` | [L132](#l132) |
 | `quote` | 1.0.45 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
-| `rand` | 0.8.6 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L134](#l134) [L135](#l135) |
-| `rand_chacha` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L134](#l134) [L135](#l135) |
-| `rand_core` | 0.6.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L134](#l134) [L135](#l135) |
-| `range-alloc` | 0.1.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L136](#l136) |
-| `rangemap` | 1.4.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L137](#l137) |
-| `raw-window-handle` | 0.5.2 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L138](#l138) |
-| `raw-window-handle` | 0.6.2 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L138](#l138) |
-| `rayon` | 1.10.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L101](#l101) |
-| `rayon-core` | 1.12.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L101](#l101) |
-| `read-fonts` | 0.22.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L037](#l037) |
+| `rand` | 0.8.6 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L133](#l133) [L134](#l134) |
+| `rand_chacha` | 0.3.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L133](#l133) [L134](#l134) |
+| `rand_core` | 0.6.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L133](#l133) [L134](#l134) |
+| `range-alloc` | 0.1.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L135](#l135) |
+| `rangemap` | 1.4.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L136](#l136) |
+| `raw-window-handle` | 0.5.2 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L137](#l137) |
+| `raw-window-handle` | 0.6.2 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L137](#l137) |
+| `rayon` | 1.10.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L100](#l100) |
+| `rayon-core` | 1.12.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L100](#l100) |
+| `read-fonts` | 0.22.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L138](#l138) |
 | `regex` | 1.11.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L020](#l020) |
 | `regex-automata` | 0.4.9 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L020](#l020) |
 | `regex-syntax` | 0.8.5 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L020](#l020) |
@@ -381,7 +381,7 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `rstar` | 0.12.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | — (배포에 전문을 안 실었다) |
 | `rustc-hash` | 1.1.0 | `crates.io` | `Apache-2.0/MIT` | `MIT` | [L003](#l003) |
 | `rustc-hash` | 2.1.1 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L003](#l003) |
-| `rustc_version` | 0.4.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L107](#l107) |
+| `rustc_version` | 0.4.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L106](#l106) |
 | `rustix` | 0.38.44 | `crates.io` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `MIT` | [L143](#l143) [L003](#l003) |
 | `rustix` | 1.1.2 | `crates.io` | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | `MIT` | [L143](#l143) [L003](#l003) |
 | `rustversion` | 1.0.14 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L003](#l003) |
@@ -400,10 +400,10 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `shlex` | 1.3.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L148](#l148) |
 | `signal-hook-registry` | 1.4.1 | `crates.io` | `Apache-2.0/MIT` | `MIT` | [L149](#l149) |
 | `simd-adler32` | 0.3.7 | `crates.io` | `MIT` | `MIT` | [L150](#l150) |
-| `similar` | 2.7.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | [L075](#l075) |
+| `similar` | 2.7.0 | `crates.io` | `Apache-2.0` | `Apache-2.0` | [L074](#l074) |
 | `simplecss` | 0.2.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L151](#l151) |
 | `siphasher` | 1.0.1 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L152](#l152) |
-| `skrifa` | 0.22.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L067](#l067) |
+| `skrifa` | 0.22.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L066](#l066) |
 | `slab` | 0.4.9 | `crates.io` | `MIT` | `MIT` | [L153](#l153) |
 | `slotmap` | 1.0.6 | `crates.io` | `Zlib` | `Zlib` | [L154](#l154) |
 | `smallvec` | 1.15.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L155](#l155) |
@@ -434,31 +434,31 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `tiny-skia` | 0.12.0 | `crates.io` | `BSD-3-Clause` | `BSD-3-Clause` | [L168](#l168) |
 | `tiny-skia-path` | 0.11.4 | `crates.io` | `BSD-3-Clause` | `BSD-3-Clause` | [L168](#l168) |
 | `tiny-skia-path` | 0.12.0 | `crates.io` | `BSD-3-Clause` | `BSD-3-Clause` | [L168](#l168) |
-| `tinystr` | 0.7.6 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
+| `tinystr` | 0.7.6 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
 | `tinyvec` | 1.6.0 | `crates.io` | `Zlib OR Apache-2.0 OR MIT` | `MIT` | [L169](#l169) |
 | `tinyvec_macros` | 0.1.1 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L170](#l170) |
 | `titlecase` | 1.1.0 | `crates.io` | `MIT` | `MIT` | [L171](#l171) |
 | `tokio` | 1.50.0 | `crates.io` | `MIT` | `MIT` | [L172](#l172) |
-| `toml_datetime` | 0.6.11 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L056](#l056) |
-| `toml_edit` | 0.22.27 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L056](#l056) |
+| `toml_datetime` | 0.6.11 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L055](#l055) |
+| `toml_edit` | 0.22.27 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L055](#l055) |
 | `tracing` | 0.1.44 | `crates.io` | `MIT` | `MIT` | [L173](#l173) |
 | `tracing-attributes` | 0.1.31 | `crates.io` | `MIT` | `MIT` | [L173](#l173) |
 | `tracing-core` | 0.1.36 | `crates.io` | `MIT` | `MIT` | [L173](#l173) |
 | `trait-set` | 0.3.0 | `crates.io` | `MIT` | `MIT` | [L174](#l174) |
 | `tree_magic_mini` | 3.2.2 | `crates.io` | `MIT` | `MIT` | [L175](#l175) |
 | `ttf-parser` | 0.25.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L160](#l160) |
-| `unicode-bidi` | 0.3.15 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L176](#l176) [L087](#l087) |
-| `unicode-bidi-mirroring` | 0.4.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L070](#l070) |
-| `unicode-ccc` | 0.4.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L070](#l070) |
+| `unicode-bidi` | 0.3.15 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L176](#l176) [L086](#l086) |
+| `unicode-bidi-mirroring` | 0.4.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L069](#l069) |
+| `unicode-ccc` | 0.4.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L069](#l069) |
 | `unicode-ident` | 1.0.12 | `crates.io` | `(MIT OR Apache-2.0) AND Unicode-DFS-2016` | `MIT AND Unicode-DFS-2016` | [L003](#l003) [L177](#l177) |
 | `unicode-linebreak` | 0.1.5 | `crates.io` | `Apache-2.0` | `Apache-2.0` | [L033](#l033) |
-| `unicode-properties` | 0.1.3 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L178](#l178) [L087](#l087) |
+| `unicode-properties` | 0.1.3 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L178](#l178) [L086](#l086) |
 | `unicode-script` | 0.5.5 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L179](#l179) |
-| `unicode-segmentation` | 1.11.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L178](#l178) [L087](#l087) |
+| `unicode-segmentation` | 1.11.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L178](#l178) [L086](#l086) |
 | `unicode-vo` | 0.1.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L151](#l151) |
-| `unicode-width` | 0.1.14 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L178](#l178) [L087](#l087) |
-| `unicode-width` | 0.2.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L178](#l178) [L087](#l087) |
-| `url` | 2.5.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L045](#l045) |
+| `unicode-width` | 0.1.14 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L178](#l178) [L086](#l086) |
+| `unicode-width` | 0.2.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L178](#l178) [L086](#l086) |
+| `url` | 2.5.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L044](#l044) |
 | `urlencoding` | 2.1.3 | `crates.io` | `MIT` | `MIT` | [L180](#l180) |
 | `usvg` | 0.47.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L140](#l140) |
 | `utf16_iter` | 1.0.5 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L181](#l181) [L182](#l182) |
@@ -472,7 +472,7 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `walkdir` | 2.4.0 | `crates.io` | `Unlicense/MIT` | `MIT` | [L005](#l005) [L006](#l006) |
 | `wayland-backend` | 0.3.11 | `crates.io` | `MIT` | `MIT` | [L189](#l189) |
 | `wayland-client` | 0.31.11 | `crates.io` | `MIT` | `MIT` | [L189](#l189) |
-| `wayland-csd-frame` | 0.3.0 | `crates.io` | `MIT` | `MIT` | [L043](#l043) |
+| `wayland-csd-frame` | 0.3.0 | `crates.io` | `MIT` | `MIT` | [L042](#l042) |
 | `wayland-cursor` | 0.31.8 | `crates.io` | `MIT` | `MIT` | [L189](#l189) |
 | `wayland-protocols` | 0.32.9 | `crates.io` | `MIT` | `MIT` | [L189](#l189) |
 | `wayland-protocols-plasma` | 0.3.9 | `crates.io` | `MIT` | `MIT` | [L189](#l189) |
@@ -481,12 +481,12 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `wayland-sys` | 0.31.7 | `crates.io` | `MIT` | `MIT` | [L189](#l189) |
 | `weezl` | 0.1.12 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L190](#l190) |
 | `wfd` | 0.1.8 | `crates.io` | `MIT` | `MIT` | [L191](#l191) |
-| `wgpu` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L114](#l114) |
-| `wgpu-core` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L114](#l114) |
-| `wgpu-core-deps-windows-linux-android` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L114](#l114) |
-| `wgpu-hal` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L114](#l114) |
-| `wgpu-naga-bridge` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L114](#l114) |
-| `wgpu-types` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L114](#l114) |
+| `wgpu` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L113](#l113) |
+| `wgpu-core` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L113](#l113) |
+| `wgpu-core-deps-windows-linux-android` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L113](#l113) |
+| `wgpu-hal` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L113](#l113) |
+| `wgpu-naga-bridge` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L113](#l113) |
+| `wgpu-types` | 30.0.0 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L113](#l113) |
 | `which` | 4.4.2 | `crates.io` | `MIT` | `MIT` | [L192](#l192) |
 | `winapi` | 0.3.9 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L193](#l193) |
 | `winapi-util` | 0.1.11 | `crates.io` | `Unlicense OR MIT` | `MIT` | [L005](#l005) [L145](#l145) |
@@ -516,43 +516,43 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `windows-threading` | 0.2.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L194](#l194) |
 | `windows-version` | 0.1.7 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L194](#l194) |
 | `windows_x86_64_msvc` | 0.52.6 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L194](#l194) |
-| `winit` | 0.30.13 | `https://github.com/warpdotdev/winit.git?rev=a4e0ecb5f9626ccac9445a73dc28354b52423abc#a4e0ecb5` | `Apache-2.0` | `Apache-2.0` | [L195](#l195) |
-| `winnow` | 0.7.12 | `crates.io` | `MIT` | `MIT` | [L196](#l196) |
-| `winreg` | 0.55.0 | `crates.io` | `MIT` | `MIT` | [L197](#l197) |
-| `wio` | 0.2.2 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L198](#l198) |
-| `wl-clipboard-rs` | 0.9.3 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L199](#l199) |
-| `write16` | 1.0.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L200](#l200) [L182](#l182) |
-| `writeable` | 0.5.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
+| `winit` | 0.30.13 | `https://github.com/warpdotdev/winit.git?rev=a4e0ecb5f9626ccac9445a73dc28354b52423abc#a4e0ecb5` | `Apache-2.0` | `Apache-2.0` | [L051](#l051) |
+| `winnow` | 0.7.12 | `crates.io` | `MIT` | `MIT` | [L195](#l195) |
+| `winreg` | 0.55.0 | `crates.io` | `MIT` | `MIT` | [L196](#l196) |
+| `wio` | 0.2.2 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L197](#l197) |
+| `wl-clipboard-rs` | 0.9.3 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L198](#l198) |
+| `write16` | 1.0.0 | `crates.io` | `Apache-2.0 OR MIT` | `MIT` | [L199](#l199) [L182](#l182) |
+| `writeable` | 0.5.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
 | `x11-dl` | 2.21.0 | `crates.io` | `MIT` | `MIT` | [L003](#l003) |
-| `x11rb` | 0.13.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L201](#l201) |
-| `x11rb-protocol` | 0.13.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L201](#l201) |
-| `xcursor` | 0.3.4 | `crates.io` | `MIT` | `MIT` | [L202](#l202) |
-| `xkbcommon-dl` | 0.4.2 | `crates.io` | `MIT` | `MIT` | [L203](#l203) |
-| `xkeysym` | 0.2.1 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L204](#l204) |
-| `xml-rs` | 0.8.19 | `crates.io` | `MIT` | `MIT` | [L205](#l205) |
+| `x11rb` | 0.13.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L200](#l200) |
+| `x11rb-protocol` | 0.13.2 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L200](#l200) |
+| `xcursor` | 0.3.4 | `crates.io` | `MIT` | `MIT` | [L201](#l201) |
+| `xkbcommon-dl` | 0.4.2 | `crates.io` | `MIT` | `MIT` | [L202](#l202) |
+| `xkeysym` | 0.2.1 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L203](#l203) |
+| `xml-rs` | 0.8.19 | `crates.io` | `MIT` | `MIT` | [L204](#l204) |
 | `xmlparser` | 0.13.6 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L151](#l151) |
-| `xmlwriter` | 0.1.0 | `crates.io` | `MIT` | `MIT` | [L206](#l206) |
-| `yazi` | 0.1.6 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L207](#l207) |
-| `yeslogic-fontconfig-sys` | 5.0.0 | `crates.io` | `MIT` | `MIT` | [L068](#l068) |
-| `yoke` | 0.7.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `yoke-derive` | 0.7.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `zbus` | 5.9.0 | `crates.io` | `MIT` | `MIT` | [L208](#l208) |
-| `zbus_macros` | 5.9.0 | `crates.io` | `MIT` | `MIT` | [L208](#l208) |
-| `zbus_names` | 4.2.0 | `crates.io` | `MIT` | `MIT` | [L208](#l208) |
+| `xmlwriter` | 0.1.0 | `crates.io` | `MIT` | `MIT` | [L205](#l205) |
+| `yazi` | 0.1.6 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L206](#l206) |
+| `yeslogic-fontconfig-sys` | 5.0.0 | `crates.io` | `MIT` | `MIT` | [L067](#l067) |
+| `yoke` | 0.7.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `yoke-derive` | 0.7.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `zbus` | 5.9.0 | `crates.io` | `MIT` | `MIT` | [L207](#l207) |
+| `zbus_macros` | 5.9.0 | `crates.io` | `MIT` | `MIT` | [L207](#l207) |
+| `zbus_names` | 4.2.0 | `crates.io` | `MIT` | `MIT` | [L207](#l207) |
 | `zeno` | 0.2.3 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L161](#l161) |
-| `zerocopy` | 0.7.32 | `crates.io` | `BSD-2-Clause OR Apache-2.0 OR MIT` | `MIT` | [L209](#l209) |
-| `zerofrom` | 0.1.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `zerofrom-derive` | 0.1.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `zerovec` | 0.10.4 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
-| `zerovec-derive` | 0.10.3 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L091](#l091) |
+| `zerocopy` | 0.7.32 | `crates.io` | `BSD-2-Clause OR Apache-2.0 OR MIT` | `MIT` | [L208](#l208) |
+| `zerofrom` | 0.1.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `zerofrom-derive` | 0.1.5 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `zerovec` | 0.10.4 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
+| `zerovec-derive` | 0.10.3 | `crates.io` | `Unicode-3.0` | `Unicode-3.0` | [L090](#l090) |
 | `zmij` | 1.0.21 | `crates.io` | `MIT` | `MIT` | [L003](#l003) |
-| `zune-core` | 0.5.1 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L210](#l210) |
-| `zune-jpeg` | 0.5.12 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L210](#l210) |
-| `zvariant` | 5.6.0 | `crates.io` | `MIT` | `MIT` | [L208](#l208) |
-| `zvariant_derive` | 5.6.0 | `crates.io` | `MIT` | `MIT` | [L208](#l208) |
+| `zune-core` | 0.5.1 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L209](#l209) |
+| `zune-jpeg` | 0.5.12 | `crates.io` | `MIT OR Apache-2.0 OR Zlib` | `MIT` | [L209](#l209) |
+| `zvariant` | 5.6.0 | `crates.io` | `MIT` | `MIT` | [L207](#l207) |
+| `zvariant_derive` | 5.6.0 | `crates.io` | `MIT` | `MIT` | [L207](#l207) |
 | `zvariant_utils` | 3.2.0 | `crates.io` | `MIT` | `MIT` | [L003](#l003) |
 
-## 3. 라이선스 전문 (211)
+## 3. 라이선스 전문 (210)
 
 ### L001
 
@@ -2294,7 +2294,7 @@ copied, modified, or distributed except according to those terms.
 
 *파일*: LICENSE-MIT
 
-*적용*: `cocoa v0.26.0`, `cocoa-foundation v0.2.1`, `core-graphics v0.24.0`, `core-graphics-types v0.2.0`, `freetype v0.7.2`
+*적용*: `cocoa v0.26.0`, `cocoa-foundation v0.2.1`, `core-foundation v0.10.1 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `core-foundation-sys v0.8.7 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `core-graphics v0.24.0`, `core-graphics v0.25.0 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `core-graphics-types v0.2.0`, `core-graphics-types v0.2.0 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `core-text v21.1.0 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `freetype v0.7.2`
 
 ````text
 Copyright (c) 2012-2013 Mozilla Foundation
@@ -2358,16 +2358,6 @@ SOFTWARE.
 
 *파일*: LICENSE-MIT
 
-*적용*: `core-foundation v0.10.1 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `core-foundation-sys v0.8.7 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `core-graphics v0.25.0 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `core-graphics-types v0.2.0 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `core-text v21.1.0 (https://github.com/servo/core-foundation-rs?rev=6f844cf1a1a18e25b70fcdf1bcdc458555bd2eff#6f844cf1)`, `read-fonts v0.22.7`
-
-````text
-../LICENSE-MIT
-````
-
-### L038
-
-*파일*: LICENSE-MIT
-
 *적용*: `cosmic-text v0.12.0 (https://github.com/warpdotdev/cosmic-text.git?rev=15198beba692162201c0ea8b15222cf5643ea068#15198beb)`
 
 ````text
@@ -2394,7 +2384,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L039
+### L038
 
 *파일*: LICENSE-MIT
 
@@ -2424,7 +2414,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L040
+### L039
 
 *파일*: LICENSE-MIT
 
@@ -2460,7 +2450,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L041
+### L040
 
 *파일*: LICENSE-THIRD-PARTY
 
@@ -3062,7 +3052,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ````
 
-### L042
+### L041
 
 *파일*: LICENSE
 
@@ -3096,7 +3086,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L043
+### L042
 
 *파일*: LICENSE · LICENSE-MIT
 
@@ -3124,7 +3114,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L044
+### L043
 
 *파일*: LICENSE
 
@@ -3154,7 +3144,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L045
+### L044
 
 *파일*: LICENSE-MIT
 
@@ -3188,7 +3178,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L046
+### L045
 
 *파일*: LICENSE-MIT
 
@@ -3216,7 +3206,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L047
+### L046
 
 *파일*: LICENSE
 
@@ -3246,7 +3236,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L048
+### L047
 
 *파일*: LICENSE-MIT
 
@@ -3274,7 +3264,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L049
+### L048
 
 *파일*: LICENSE.txt
 
@@ -3302,7 +3292,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L050
+### L049
 
 *파일*: LICENSE-MIT
 
@@ -3330,7 +3320,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L051
+### L050
 
 *파일*: LICENSE-MIT
 
@@ -3364,17 +3354,217 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L052
+### L051
 
 *파일*: LICENSE
 
-*적용*: `dpi v0.1.1 (https://github.com/warpdotdev/winit.git?rev=a4e0ecb5f9626ccac9445a73dc28354b52423abc#a4e0ecb5)`
+*적용*: `dpi v0.1.1 (https://github.com/warpdotdev/winit.git?rev=a4e0ecb5f9626ccac9445a73dc28354b52423abc#a4e0ecb5)`, `winit v0.30.13 (https://github.com/warpdotdev/winit.git?rev=a4e0ecb5f9626ccac9445a73dc28354b52423abc#a4e0ecb5)`
 
 ````text
-../LICENSE
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "{}"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright {yyyy} {name of copyright owner}
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
 ````
 
-### L053
+### L052
 
 *파일*: LICENSE-MIT
 
@@ -3408,7 +3598,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L054
+### L053
 
 *파일*: LICENSE-MIT
 
@@ -3442,7 +3632,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L055
+### L054
 
 *파일*: LICENSE-MIT
 
@@ -3476,7 +3666,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L056
+### L055
 
 *파일*: LICENSE-MIT
 
@@ -3504,7 +3694,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L057
+### L056
 
 *파일*: LICENSE-MIT
 
@@ -3538,7 +3728,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L058
+### L057
 
 *파일*: LICENSE-MIT
 
@@ -3572,7 +3762,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L059
+### L058
 
 *파일*: LICENSE
 
@@ -3604,7 +3794,7 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L060
+### L059
 
 *파일*: LICENSE-MIT
 
@@ -3638,7 +3828,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L061
+### L060
 
 *파일*: LICENSE-MIT
 
@@ -3672,7 +3862,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L062
+### L061
 
 *파일*: LICENSE-MIT
 
@@ -3706,7 +3896,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L063
+### L062
 
 *파일*: LICENSE
 
@@ -3734,7 +3924,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 ````
 
-### L064
+### L063
 
 *파일*: LICENSE-MIT
 
@@ -3762,7 +3952,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L065
+### L064
 
 *파일*: LICENSE-MIT
 
@@ -3796,7 +3986,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L066
+### L065
 
 *파일*: LICENSE
 
@@ -3824,7 +4014,7 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ````
 
-### L067
+### L066
 
 *파일*: LICENSE-MIT
 
@@ -3858,7 +4048,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L068
+### L067
 
 *파일*: LICENSE
 
@@ -3891,7 +4081,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L069
+### L068
 
 *파일*: LICENSE
 
@@ -3921,7 +4111,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L070
+### L069
 
 *파일*: LICENSE · LICENSE-MIT
 
@@ -3951,7 +4141,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L071
+### L070
 
 *파일*: LICENSE-MIT
 
@@ -3979,7 +4169,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L072
+### L071
 
 *파일*: LICENSE-MIT
 
@@ -4013,7 +4203,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L073
+### L072
 
 *파일*: LICENSE
 
@@ -4043,7 +4233,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L074
+### L073
 
 *파일*: LICENSE-MIT
 
@@ -4078,7 +4268,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L075
+### L074
 
 *파일*: LICENSE
 
@@ -4288,7 +4478,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ````
 
-### L076
+### L075
 
 *파일*: LICENSE-MIT
 
@@ -4323,7 +4513,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L077
+### L076
 
 *파일*: LICENSE-MIT
 
@@ -4358,7 +4548,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L078
+### L077
 
 *파일*: LICENSE-MIT
 
@@ -4388,7 +4578,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L079
+### L078
 
 *파일*: LICENSE-MIT
 
@@ -4418,7 +4608,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L080
+### L079
 
 *파일*: LICENSE.spdx
 
@@ -4446,7 +4636,7 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/global-hotkey.git
 Creator: Person: Daniel Thompson-Yvetot
 ````
 
-### L081
+### L080
 
 *파일*: LICENSE
 
@@ -4656,7 +4846,7 @@ Apache License
    limitations under the License.
 ````
 
-### L082
+### L081
 
 *파일*: LICENSE-MIT
 
@@ -4672,7 +4862,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ````
 
-### L083
+### L082
 
 *파일*: LICENSE-MIT
 
@@ -4700,7 +4890,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L084
+### L083
 
 *파일*: LICENSE-MIT
 
@@ -4734,7 +4924,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L085
+### L084
 
 *파일*: LICENSE-MIT
 
@@ -4768,7 +4958,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L086
+### L085
 
 *파일*: LICENSE-MIT
 
@@ -4802,7 +4992,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L087
+### L086
 
 *파일*: LICENSE-MIT
 
@@ -4836,7 +5026,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L088
+### L087
 
 *파일*: LICENSE-MIT
 
@@ -4865,7 +5055,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L089
+### L088
 
 *파일*: LICENSE-MIT
 
@@ -4900,7 +5090,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L090
+### L089
 
 *파일*: LICENSE-MIT
 
@@ -4934,7 +5124,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L091
+### L090
 
 *파일*: LICENSE
 
@@ -4989,7 +5179,7 @@ Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
 ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
 ````
 
-### L092
+### L091
 
 *파일*: LICENSE-MIT
 
@@ -5023,7 +5213,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L093
+### L092
 
 *파일*: LICENSE
 
@@ -5053,7 +5243,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L094
+### L093
 
 *파일*: LICENSE-MIT
 
@@ -5087,7 +5277,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L095
+### L094
 
 *파일*: LICENSE
 
@@ -5117,7 +5307,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L096
+### L095
 
 *파일*: LICENSE
 
@@ -5153,7 +5343,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ````
 
-### L097
+### L096
 
 *파일*: LICENSE
 
@@ -5183,7 +5373,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L098
+### L097
 
 *파일*: LICENSE-MIT-atty
 
@@ -5215,7 +5405,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ````
 
-### L099
+### L098
 
 *파일*: LICENSE-MIT
 
@@ -5243,7 +5433,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L100
+### L099
 
 *파일*: LICENSE-MIT
 
@@ -5277,7 +5467,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L101
+### L100
 
 *파일*: LICENSE-MIT
 
@@ -5311,7 +5501,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L102
+### L101
 
 *파일*: LICENSE-MIT
 
@@ -5345,7 +5535,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L103
+### L102
 
 *파일*: LICENSE
 
@@ -5366,7 +5556,7 @@ NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE US
 THIS SOFTWARE.
 ````
 
-### L104
+### L103
 
 *파일*: LICENSE.txt
 
@@ -5633,7 +5823,7 @@ have been licensed under extremely permissive terms.
 Copyright notices are retained in src/* files where relevant.
 ````
 
-### L105
+### L104
 
 *파일*: COPYRIGHT
 
@@ -5671,7 +5861,7 @@ is licensed under:
 at your option.
 ````
 
-### L106
+### L105
 
 *파일*: LICENSE-MIT
 
@@ -5705,7 +5895,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L107
+### L106
 
 *파일*: LICENSE-MIT
 
@@ -5739,7 +5929,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L108
+### L107
 
 *파일*: LICENSE-MIT
 
@@ -5774,7 +5964,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L109
+### L108
 
 *파일*: LICENSE
 
@@ -5802,7 +5992,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L110
+### L109
 
 *파일*: LICENSE.md
 
@@ -5848,7 +6038,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ````
 
-### L111
+### L110
 
 *파일*: LICENSE
 
@@ -5882,7 +6072,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L112
+### L111
 
 *파일*: LICENSE-MIT.md
 
@@ -5915,7 +6105,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L113
+### L112
 
 *파일*: LICENSE.md
 
@@ -5950,7 +6140,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ````
 
-### L114
+### L113
 
 *파일*: LICENSE.MIT
 
@@ -5980,7 +6170,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L115
+### L114
 
 *파일*: LICENSE
 
@@ -6010,7 +6200,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L116
+### L115
 
 *파일*: LICENSE
 
@@ -6040,7 +6230,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L117
+### L116
 
 *파일*: LICENSE
 
@@ -6069,7 +6259,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ````
 
-### L118
+### L117
 
 *파일*: LICENSE-MIT
 
@@ -6099,7 +6289,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L119
+### L118
 
 *파일*: LICENSE-MIT
 
@@ -6127,7 +6317,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L120
+### L119
 
 *파일*: LICENSE.txt
 
@@ -6157,7 +6347,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L121
+### L120
 
 *파일*: LICENSE.md
 
@@ -6191,7 +6381,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ````
 
-### L122
+### L121
 
 *파일*: LICENSE.txt
 
@@ -6573,7 +6763,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   defined by the Mozilla Public License, v. 2.0.
 ````
 
-### L123
+### L122
 
 *파일*: LICENSE-MIT
 
@@ -6607,7 +6797,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L124
+### L123
 
 *파일*: LICENSE
 
@@ -6635,7 +6825,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L125
+### L124
 
 *파일*: LICENSE-THIRD-PARTY
 
@@ -6653,7 +6843,7 @@ option. All files in the project carrying such notice may not be
 copied, modified, or distributed except according to those terms.
 ````
 
-### L126
+### L125
 
 *파일*: LICENSE
 
@@ -6681,7 +6871,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L127
+### L126
 
 *파일*: LICENSE-MIT
 
@@ -6715,7 +6905,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L128
+### L127
 
 *파일*: LICENSE-MIT
 
@@ -6749,7 +6939,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L129
+### L128
 
 *파일*: LICENSE-MIT
 
@@ -6783,7 +6973,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L130
+### L129
 
 *파일*: LICENSE-MIT
 
@@ -6817,7 +7007,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L131
+### L130
 
 *파일*: LICENSE-MIT
 
@@ -6847,7 +7037,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L132
+### L131
 
 *파일*: LICENSE-MIT
 
@@ -6875,7 +7065,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L133
+### L132
 
 *파일*: LICENSE-MIT.md
 
@@ -6907,7 +7097,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L134
+### L133
 
 *파일*: COPYRIGHT
 
@@ -6928,7 +7118,7 @@ The Rand project includes code from the Rust project
 published under these same licenses.
 ````
 
-### L135
+### L134
 
 *파일*: LICENSE-MIT
 
@@ -6963,7 +7153,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L136
+### L135
 
 *파일*: LICENSE.MIT
 
@@ -6993,7 +7183,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L137
+### L136
 
 *파일*: LICENSE-MIT
 
@@ -7009,7 +7199,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ````
 
-### L138
+### L137
 
 *파일*: LICENSE-MIT.md
 
@@ -7037,6 +7227,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+````
+
+### L138
+
+*파일*: LICENSE-MIT
+
+*적용*: `read-fonts v0.22.7`
+
+````text
+⚠ 상류가 이 자리에 심링크(`../LICENSE-MIT`)를 배포했는데 그 대상이 크레이트
+  배포물 밖이라 **전문을 여기 싣지 못했다**(실측: read-fonts 0.22.7).
+
+  전문은 상류 저장소의 같은 경로에 있다. ⛔ 표준 문안으로 대신하지 않는다 —
+  MIT 는 저작권 줄이 본문의 일부라, 지어 붙이면 저작권자를 발명하는 것이 된다.
 ````
 
 ### L139
@@ -8766,216 +8970,6 @@ SOFTWARE.
 
 ### L195
 
-*파일*: LICENSE
-
-*적용*: `winit v0.30.13 (https://github.com/warpdotdev/winit.git?rev=a4e0ecb5f9626ccac9445a73dc28354b52423abc#a4e0ecb5)`
-
-````text
-Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
-
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-
-   1. Definitions.
-
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
-
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
-
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
-
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
-
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
-
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
-
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
-
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
-
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
-
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
-
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
-
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
-
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
-
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
-
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
-
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
-
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
-
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
-
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
-
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
-
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
-
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
-
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may choose to offer,
-      and charge a fee for, acceptance of support, warranty, indemnity,
-      or other liability obligations and/or rights consistent with this
-      License. However, in accepting such obligations, You may act only
-      on Your own behalf and on Your sole responsibility, not on behalf
-      of any other Contributor, and only if You agree to indemnify,
-      defend, and hold each Contributor harmless for any liability
-      incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability.
-
-   END OF TERMS AND CONDITIONS
-
-   APPENDIX: How to apply the Apache License to your work.
-
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "{}"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
-
-   Copyright {yyyy} {name of copyright owner}
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-````
-
-### L196
-
 *파일*: LICENSE-MIT
 
 *적용*: `winnow v0.7.12`
@@ -9001,7 +8995,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ````
 
-### L197
+### L196
 
 *파일*: LICENSE
 
@@ -9029,7 +9023,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L198
+### L197
 
 *파일*: LICENSE-MIT
 
@@ -9057,7 +9051,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L199
+### L198
 
 *파일*: LICENSE-MIT
 
@@ -9091,7 +9085,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L200
+### L199
 
 *파일*: COPYRIGHT
 
@@ -9120,7 +9114,7 @@ Test code is dedicated to the Public Domain when so designated (see
 the individual files for PD/CC0-dedicated sections).
 ````
 
-### L201
+### L200
 
 *파일*: LICENSE-MIT
 
@@ -9154,7 +9148,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L202
+### L201
 
 *파일*: LICENSE
 
@@ -9184,7 +9178,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L203
+### L202
 
 *파일*: LICENSE
 
@@ -9214,7 +9208,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L204
+### L203
 
 *파일*: LICENSE-MIT
 
@@ -9242,7 +9236,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L205
+### L204
 
 *파일*: LICENSE
 
@@ -9272,7 +9266,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L206
+### L205
 
 *파일*: LICENSE
 
@@ -9302,7 +9296,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L207
+### L206
 
 *파일*: LICENSE-MIT
 
@@ -9330,7 +9324,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### L208
+### L207
 
 *파일*: LICENSE
 
@@ -9364,7 +9358,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L209
+### L208
 
 *파일*: LICENSE-MIT
 
@@ -9398,7 +9392,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### L210
+### L209
 
 *파일*: LICENSE-MIT
 
@@ -9428,7 +9422,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### L211
+### L210
 
 *파일*: LICENSE.txt
 

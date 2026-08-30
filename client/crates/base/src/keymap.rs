@@ -339,16 +339,6 @@ pub enum Action {
     /// **고를 블록이 있어야** 이 모드가 뜻을 갖기 때문이다
     /// ([`ModeState::enter_block`](crate::keys::ModeState::enter_block)).
     SelectBlocks,
-    /// 스크롤 모드를 **뒤집는다** — 들어가 있으면 라이브로 돌아온다.
-    ///
-    /// [`EnterScroll`](Self::EnterScroll) 과 갈라 두는 이유: 이 액션의 주인은 상태줄의
-    /// `⇕` 배지다(터치 스크롤바 — 설정 `touch-scroll`). 배지는 **누를 때마다 뒤집혀야**
-    /// 한다. 휠이 안 오는 단말에서는 그 배지가 스크롤백에 드나드는 유일한 길이라,
-    /// 들어가기만 하고 못 나오면 반쪽이다(정본 `touch_badge_action` 도 토글이다).
-    ///
-    /// 나올 때는 **라이브 맨 아래로** 되돌린다(정본과 같다) — 훑던 자리에 남겨 두면
-    /// 라이브 모드인데 화면은 과거인 상태가 되고, 그건 "멈춘 것처럼" 보인다.
-    ToggleScroll,
     /// 활성 Claude 패널에서 **이전/다음에 입력한 프롬프트** 자리로 뛴다
     /// (`esc Ctrl+↑`/`Ctrl+↓` — 파이썬 `e_jump`). `up` 이면 과거 방향이다.
     ///
@@ -403,6 +393,16 @@ pub enum Action {
     /// 뒤집고**(키·팔레트의 손) 이쪽은 **판을 세운다**(좌하단 표식을 눌렀을 때의 손).
     /// 정본이 그 둘을 따로 두는 이유는 `Screen::Autoresume` 문서에 있다.
     ShowAutoresume,
+    /// **커서 판**을 연다(`cursor` · GUI 전용 · pytmux-375).
+    ///
+    /// 모양·두께·색·깜빡임·주기 다섯이 이미 설정 화면에 있는데도 입구를 따로 두는
+    /// 이유는 [`Screen::Cursor`](crate::screens::Screen::Cursor) 가 적는다 — 요약하면
+    /// **바꾸면서 결과를 못 보던** 자리를 판 안의 견본으로 푼다.
+    ///
+    /// ⛔ 키를 안 준다. 이 판은 자주 여는 자리가 아니라(커서를 하루에 몇 번 바꾸겠나)
+    /// 기본 키 표에 자리를 하나 먹으면 그만큼 정본과 멀어진다 — 입구는 팔레트 하나다
+    /// (`font-scale-*` 이 키를 갖는 것과 갈리는 지점이고, 그쪽은 키가 **주** 입구다).
+    ShowCursor,
     /// UI 언어를 이 로케일로 바꾼다(`lang ko|en` — 파이썬 `cmd_lang`).
     ///
     /// **클라 안에서 끝난다** — 로케일은 per-user 라 서버에 보낼 것이 없다(파이썬도
@@ -559,7 +559,6 @@ impl Action {
             Action::ToggleExpand => "접기/펴기",
             Action::ToggleClaudeDetail => "플랜/거부",
             Action::EnterScroll => "스크롤",
-            Action::ToggleScroll => "스크롤 모드 토글",
             Action::SearchScrollback => "스크롤백 검색",
             Action::SearchAll => "모든 탭·패널 검색",
             Action::SearchAgain { down: false } => "검색 반복 ↑",
@@ -570,6 +569,7 @@ impl Action {
             Action::ShowInfoTabs => "상태 (서버·세션)",
             Action::ToggleAutoresume => "자동재개",
             Action::ShowAutoresume => "자동재개 설명",
+            Action::ShowCursor => "커서",
             Action::TogglePromptClear => "프롬프트 클리어",
             Action::SetLang(_) => "언어",
             Action::Reconnect => "재접속",
@@ -1324,6 +1324,11 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("notice-history", "설정/기타", Action::ShowNotices),
     // GUI 만의 판(§10-21ⓓ) — 화면에서 뺀 요약 구역의 새 입구다.
     pe("summary", "설정/기타", Action::ShowSummary),
+    // ★ GUI 만의 판(pytmux-375). 정본의 커서는 **호스트 단말의 하드웨어 커서**라
+    //   저쪽에 이 이름이 있을 수 없다(`SETTINGS_OURS` 가 같은 근거를 설정 다섯에
+    //   대해 적는다). 키를 안 주므로 **팔레트가 유일한 입구**다 — 그 사정은
+    //   `Action::ShowCursor` 가 쥔다.
+    pe("cursor", "설정/기타", Action::ShowCursor),
     // GUI 만의 모드(pytmux-18). 키(`esc b`)가 주 입구이고 팔레트는 그 키를 모르는
     // 사람의 입구다 — 요약 판(위)이 목록을 **보여 주는** 자리라면 이쪽은 캔버스 위에서
     // 그 블록을 **집는** 자리다.
@@ -1702,7 +1707,6 @@ fn variant_index(action: Action) -> usize {
         Action::ToggleExpand => 4,
         Action::ToggleClaudeDetail => 5,
         Action::EnterScroll => 6,
-        Action::ToggleScroll => 104,
         Action::Quit => 7,
         Action::SplitLeftRight => 8,
         Action::SplitTopBottom => 9,
@@ -1803,6 +1807,11 @@ fn variant_index(action: Action) -> usize {
         Action::ShowInfoTabs => 96,
         Action::ToggleAutoresume => 97,
         Action::ShowAutoresume => 117,
+        // ⚠ 104 는 종전 `ToggleScroll` 의 자리다(pytmux-377 로 그 액션을 걷었다).
+        // 이 수는 **오라클 비트맵의 자리**일 뿐이라 뜻이 없다 — 다만 0..ACTION_COUNT 가
+        // 빈틈없이 차야 `all_actions()` 의 전수 검사가 성립하므로, 구멍을 남기는 대신
+        // 맨 끝 것을 그리로 옮기고 [`ACTION_COUNT`] 를 하나 줄였다.
+        Action::ShowCursor => 104,
         Action::Reconnect => 98,
         Action::RestartAll => 99,
         Action::SetLang(_) => 100,
@@ -1832,7 +1841,6 @@ pub fn all_actions() -> Vec<Action> {
         Action::ToggleExpand,
         Action::ToggleClaudeDetail,
         Action::EnterScroll,
-        Action::ToggleScroll,
         Action::Quit,
         Action::SplitLeftRight,
         Action::SplitTopBottom,
@@ -1933,6 +1941,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::ShowInfoTabs,
         Action::ToggleAutoresume,
         Action::ShowAutoresume,
+        Action::ShowCursor,
         Action::Reconnect,
         Action::ToggleFullscreen,
         Action::RestartAll,
@@ -2015,17 +2024,6 @@ mod tests {
                     crate::keys::KeyOutcome::Action(made) if same(made)
                 )
             };
-            // 터치 스크롤 토글의 입구는 표도 팔레트도 아닌 **상태줄 `⇕` 배지**다
-            // (휠이 안 오는 단말에서 스크롤백에 드나드는 유일한 길 — 키가 있는 사람은
-            // `esc [` 를 쓴다). 넘기기만 하면 검사 밖으로 새므로 그 입구를 직접 본다.
-            if same(Action::ToggleScroll) {
-                assert_eq!(
-                    crate::chrome::Badge::TouchScroll.action(),
-                    Action::ToggleScroll,
-                    "`⇕` 배지가 이 액션을 만드는 유일한 입구인데 그 길이 끊겼다"
-                );
-                continue;
-            }
             if same(Action::SearchScrollback) {
                 assert!(scroll_hits('/'), "스크롤 모드 `/` 가 검색 물음을 안 연다");
                 assert!(

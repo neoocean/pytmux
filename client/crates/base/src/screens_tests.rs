@@ -812,19 +812,20 @@ fn settings_moves_and_reports_the_row() {
     );
 }
 
+/// 설정 판을 닫는 키는 **`Esc` 하나**다.
+///
+/// ⚠ 종전에 이 오라클은 `q` 도 닫는 것을 «계약»으로 적고 있었다 — 그것이 정본 규약이
+/// 아니라는 것을 pytmux-374 가 `SettingsScreen.on_key` 를 열어 확인했다(멈추는 키는
+/// `escape`·`enter`·`←→`·`tab`/`shift+tab` 넷뿐이고, 그 밖은 흘러가 판을 안 닫는다).
+/// 그래서 이 시험은 **뒤집혔다** — 「안 닫는다」 쪽은 위
+/// `a_stray_key_does_not_close_the_settings_panel` 이 잰다.
 #[test]
-fn settings_closes_on_anything_else() {
+fn only_escape_closes_the_settings_panel() {
     // Tab 은 여기 없다 — **카테고리 이동**이 됐다(아래 오라클).
-    for key in [Key::Escape, Key::Char('q')] {
-        let mut screens = Screens::new();
-        screens.open(Screen::Settings);
-        assert_eq!(
-            screens.press(key, Mods::NONE),
-            Some(ScreenKey::Closed),
-            "{key:?} 가 화면을 안 닫았다"
-        );
-        assert_eq!(screens.top(), None);
-    }
+    let mut screens = Screens::new();
+    screens.open(Screen::Settings);
+    assert_eq!(screens.press(Key::Escape, Mods::NONE), Some(ScreenKey::Closed));
+    assert_eq!(screens.top(), None);
 }
 
 /// `Tab` 이 **다음 카테고리의 첫 줄**로 뛰나(파이썬 설정 화면의 Tab 동선).
@@ -864,6 +865,77 @@ fn tab_from_the_middle_of_a_category_still_jumps_to_the_next_one() {
 
     screens.press(Key::Tab, Mods::NONE);
     assert_eq!(screens.selected(), settings_cat_first(SETTINGS_CATS[1]).unwrap());
+}
+
+/// ⑵ **제 것 아닌 키가 설정 판을 안 닫는다**(pytmux-374 · 정본 `SettingsScreen.on_key`).
+///
+/// pytmux-273 이 `press_list` 에서 쓸고 간 부류인데, 설정·플러그인은 그 **위에서**
+/// 갈라져 나와 `_ => close_top()` 이 남아 있었다. 여기서 재는 것은 그 한 팔이다.
+#[test]
+fn a_stray_key_does_not_close_the_settings_panel() {
+    for screen in [Screen::Settings, Screen::Plugins] {
+        for key in [Key::Function(5), Key::Char('z'), Key::Insert, Key::Delete] {
+            let mut screens = Screens::new();
+            screens.open(screen);
+            assert_eq!(
+                screens.press(key, Mods::NONE),
+                Some(ScreenKey::Consumed),
+                "{screen:?} 에서 {key:?} 가 삼켜지지 않았다"
+            );
+            assert_eq!(screens.top(), Some(screen), "{screen:?} 를 {key:?} 가 닫았다");
+        }
+        // ⛔ `Esc` 는 여전히 닫는다 — 「안 닫는다」를 「못 닫는다」로 만들면 갇힌다.
+        let mut screens = Screens::new();
+        screens.open(screen);
+        assert_eq!(screens.press(Key::Escape, Mods::NONE), Some(ScreenKey::Closed));
+        assert_eq!(screens.top(), None, "{screen:?} 에서 Esc 가 안 닫았다");
+    }
+}
+
+/// ⑶ `Home`·`End`·`PageUp`·`PageDown` 이 **살아 있다**(pytmux-374).
+///
+/// 양성 오라클이다 — 「안 닫힌다」만 재면 넷을 그냥 삼켜 버려도 통과하고, 제보가 신고한
+/// 상태(`PageUp`/`PageDown` 이 안 먹는다)가 그대로 남는다. 그래서 **어디로 갔는지**를 잰다.
+#[test]
+fn page_keys_move_the_settings_cursor() {
+    let mut screens = Screens::new();
+    screens.open(Screen::Settings);
+    assert_eq!(screens.selected(), 0);
+
+    assert_eq!(screens.press(Key::PageDown, Mods::NONE), Some(ScreenKey::Consumed));
+    let after = screens.selected();
+    assert!(after > 0, "PageDown 이 아무 데도 안 갔다");
+    assert!(after > 1, "PageDown 이 한 줄만 갔다 — 그건 ↓ 다");
+    assert_eq!(screens.top(), Some(Screen::Settings), "PageDown 이 판을 닫았다");
+
+    assert_eq!(screens.press(Key::PageUp, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 0, "PageUp 이 제자리로 안 돌아왔다");
+
+    // `Home` 은 맨 위. 아무 데서나 눌러도 0 이다.
+    screens.press(Key::PageDown, Mods::NONE);
+    assert_eq!(screens.press(Key::Home, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 0);
+
+    // `End` 는 **뷰가 자른다**(줄 수를 아는 것은 그리는 쪽) — core 는 상한을 두고 간다.
+    assert_eq!(screens.press(Key::End, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.top(), Some(Screen::Settings), "End 가 판을 닫았다");
+    screens.clamp_selection(crate::config::SETTINGS.len());
+    assert_eq!(screens.selected(), crate::config::SETTINGS.len() - 1, "End 가 끝으로 안 갔다");
+}
+
+/// `End` 뒤에 `↓`·`PageDown` 을 더 눌러도 **넘치지 않는다**(뷰가 자르기 전에도).
+///
+/// core 가 `usize::MAX` 를 두고 가는 규약이라, 그 위에서 `+= 1` 을 하면 디버그 빌드가
+/// 그 자리에서 죽는다. 자르는 것은 뷰의 일이고 **안 죽는 것은 여기 일**이다.
+#[test]
+fn the_settings_cursor_does_not_overflow_past_the_end() {
+    let mut screens = Screens::new();
+    screens.open(Screen::Settings);
+    screens.press(Key::End, Mods::NONE);
+    screens.press(Key::Down, Mods::NONE);
+    screens.press(Key::PageDown, Mods::NONE);
+    assert_eq!(screens.selected(), usize::MAX);
+    assert_eq!(screens.top(), Some(Screen::Settings));
 }
 
 #[test]
@@ -924,46 +996,128 @@ fn escaping_the_merge_picker_merges_nothing() {
 
 // ── 정보 팝업(패리티 `InfoTabsScreen`) ────────────────────────────────────────
 
+/// 뷰가 프레임마다 하는 **자리 맞추기**를 그대로 흉내낸다(GUI `settle_info_tabs`).
+///
+/// ⛔ 이걸 안 부르고 `press` 만 하면 아무것도 안 움직인다 — 한 바퀴가 몇 칸인지도, 줄이
+/// 몇인지도 core 는 모르기 때문이다(그 규약이 이 판의 요점이라 테스트도 같은 길을 간다).
+fn settle(screens: &mut Screens, tabs: usize, actions: usize, rows: usize) {
+    screens.wrap_info_focus(tabs);
+    screens.place_info_cursor(actions, rows);
+}
+
+
 #[test]
 fn the_info_tabs_screen_moves_tabs_with_left_right_not_up_down() {
     // 다른 읽는 화면과 갈리는 유일한 점이다. ↑↓ 가 탭을 옮기면 긴 탭을 훑을 방법이 없다.
     let mut screens = Screens::new();
     screens.open_info_tabs();
+    settle(&mut screens, 3, 0, 9);
     assert_eq!(screens.info_tab(), 0);
     screens.press(Key::Right, Mods::NONE);
-    screens.wrap_info_tab(3);
+    settle(&mut screens, 3, 0, 9);
     assert_eq!(screens.info_tab(), 1);
     screens.press(Key::Down, Mods::NONE);
-    screens.wrap_info_tab(3);
+    settle(&mut screens, 3, 0, 9);
     assert_eq!(screens.info_tab(), 1, "↑↓ 가 탭을 옮겼다");
-    assert_eq!(screens.scroll(), 1, "↑↓ 가 스크롤을 안 옮겼다");
+    // ★ ↑↓ 는 이제 **항목 커서**다(pytmux-373 ⑶ · 정본 `ListView` 와 같다).
+    assert_eq!(screens.info_row(), 1, "↑↓ 가 항목 커서를 안 옮겼다");
 }
 
 #[test]
-fn changing_tab_resets_the_scroll() {
+fn changing_tab_resets_the_scroll_and_the_cursor() {
     // 긴 탭을 훑다 옆으로 가면 짧은 그 탭이 **빈 화면**으로 보인다(스크롤이 내용보다
-    // 아래에 있다).
+    // 아래에 있다) — 커서도 없는 줄을 가리킨다.
     let mut screens = Screens::new();
     screens.open_info_tabs();
+    settle(&mut screens, 3, 0, 9);
     for _ in 0..5 {
         screens.press(Key::Down, Mods::NONE);
+        settle(&mut screens, 3, 0, 9);
     }
-    assert_eq!(screens.scroll(), 5);
+    assert_eq!(screens.info_row(), 5);
     screens.press(Key::Right, Mods::NONE);
+    screens.wrap_info_focus(3);
     assert_eq!(screens.scroll(), 0, "탭을 바꿨는데 스크롤이 남았다");
+    // 새 탭의 커서는 **첫 내용 줄**이다(정본 `lv.index = len(acts)`).
+    screens.place_info_cursor(2, 9);
+    assert_eq!(screens.info_row(), 2, "탭을 바꿨는데 옛 커서가 남았다");
 }
 
 #[test]
-fn the_tabs_wrap_in_both_directions() {
-    // 한쪽만 돌면 사용자는 어느 화살표가 살아 있는지 매번 시험해야 한다.
+fn the_left_right_focus_wraps_through_the_close_button() {
+    // pytmux-373 ⑷ — 정본 `_sel` 은 `0..N-1 = 탭 · N = [x]` 한 바퀴다. 닫기가 그
+    // 순환에 없으면 **마우스 없이는 못 누른다**(pytmux-185 의 「포커스 이동」).
     let mut screens = Screens::new();
     screens.open_info_tabs();
+    settle(&mut screens, 3, 0, 9);
+    // 0 에서 왼쪽 → 닫기 `[x]`
     screens.press(Key::Left, Mods::NONE);
-    screens.wrap_info_tab(3);
-    assert_eq!(screens.info_tab(), 2, "왼쪽으로 안 돌았다");
+    settle(&mut screens, 3, 0, 9);
+    assert!(screens.info_close_focused(), "왼쪽으로 갔는데 [x] 에 안 왔다");
+    assert_eq!(screens.info_tab(), 0, "[x] 에 왔는데 내용 탭까지 바뀌었다");
+    // 닫기에서 왼쪽 → 마지막 탭
+    screens.press(Key::Left, Mods::NONE);
+    settle(&mut screens, 3, 0, 9);
+    assert!(!screens.info_close_focused());
+    assert_eq!(screens.info_tab(), 2, "[x] 에서 왼쪽이 마지막 탭이 아니다");
+    // 마지막 탭에서 오른쪽 → 닫기, 거기서 오른쪽 → 첫 탭
     screens.press(Key::Right, Mods::NONE);
-    screens.wrap_info_tab(3);
-    assert_eq!(screens.info_tab(), 0, "오른쪽으로 안 돌았다");
+    settle(&mut screens, 3, 0, 9);
+    assert!(screens.info_close_focused(), "오른쪽 끝에서 [x] 에 안 왔다");
+    screens.press(Key::Right, Mods::NONE);
+    settle(&mut screens, 3, 0, 9);
+    assert!(!screens.info_close_focused());
+    assert_eq!(screens.info_tab(), 0, "[x] 에서 오른쪽이 첫 탭이 아니다");
+}
+
+#[test]
+fn enter_on_the_close_button_closes_but_enter_on_a_row_asks_the_view() {
+    // pytmux-373 ⑵⑶ — `[x]` 면 닫고, 아니면 **뷰가 판정한다**(동작 줄이면 돌리고 판은
+    // 그대로). ⛔ core 가 여기서 닫아 버리면 동작 단추를 눌러도 판이 사라져 결과를 볼
+    // 곳이 없다 — 정본은 `_run_action` 뒤에 `_render_tab` 을 다시 그린다.
+    let mut screens = Screens::new();
+    screens.open_info_tabs();
+    settle(&mut screens, 3, 0, 9);
+    assert_eq!(
+        screens.press(Key::Enter, Mods::NONE),
+        Some(ScreenKey::Applied(0)),
+        "`Enter` 가 뷰에게 안 넘어왔다"
+    );
+    assert!(screens.is_open(), "동작 줄일 수도 있는데 core 가 닫았다");
+    screens.press(Key::Left, Mods::NONE);
+    settle(&mut screens, 3, 0, 9);
+    assert!(screens.info_close_focused());
+    assert_eq!(screens.press(Key::Enter, Mods::NONE), Some(ScreenKey::Closed));
+    assert!(!screens.is_open(), "[x] 에서 `Enter` 를 눌렀는데 안 닫혔다");
+}
+
+#[test]
+fn the_info_cursor_is_placed_on_the_first_content_line_when_it_opens() {
+    // 정본 `lv.index = len(acts)` — **정보가 먼저 보이게** 커서를 동작 단추 아래에 놓는다.
+    // 단추 위에 놓으면 판을 열자마자 파괴적일 수도 있는 줄이 골라져 있다.
+    let mut screens = Screens::new();
+    screens.open_info_tabs();
+    screens.place_info_cursor(2, 8);
+    assert_eq!(screens.info_row(), 2, "커서가 동작 단추 위에 놓였다");
+    // 두 번째부터는 **안 옮긴다**(사람이 옮긴 자리를 프레임마다 되돌리면 못 움직인다).
+    screens.press(Key::Down, Mods::NONE);
+    screens.place_info_cursor(2, 8);
+    assert_eq!(screens.info_row(), 3);
+    screens.place_info_cursor(2, 8);
+    assert_eq!(screens.info_row(), 3, "프레임마다 커서를 되돌린다");
+    // 줄 밖으로는 못 나간다 — 없는 줄에 `Enter` 를 치면 뷰가 빈 곳을 실행한다.
+    for _ in 0..20 {
+        screens.press(Key::Down, Mods::NONE);
+    }
+    screens.place_info_cursor(2, 8);
+    assert_eq!(screens.info_row(), 7, "커서가 목록 밖으로 나갔다");
+    // `Home`·`End` 도 커서다(정본 `InfoScreen` 계열과 같다 — pytmux-273 ①).
+    screens.press(Key::Home, Mods::NONE);
+    screens.place_info_cursor(2, 8);
+    assert_eq!(screens.info_row(), 0);
+    screens.press(Key::End, Mods::NONE);
+    screens.place_info_cursor(2, 8);
+    assert_eq!(screens.info_row(), 7);
 }
 
 #[test]

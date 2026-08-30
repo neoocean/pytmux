@@ -60,15 +60,6 @@ pub enum Badge {
     Clock,
     /// 달력 오버레이 토글.
     Calendar,
-    /// 터치 스크롤 `⇕` — 누르면 스크롤 모드에 드나든다(설정 `touch-scroll`).
-    ///
-    /// # 왜 배지인가
-    ///
-    /// **휠을 안 넘겨 주는 단말**(iPhone Blink 등)에서는 스와이프가 단말 자기 스크롤백
-    /// 으로 소비돼 앱에 안 온다. 그런 사람에게 스크롤백에 닿는 입력은 **탭뿐**이라,
-    /// 스크롤 모드로 들어가는 자리가 화면에 보여야 한다(정본도 같은 이유로 상태줄에
-    /// 늘 띄운다). 필요 없으면 `set touch-scroll off`.
-    TouchScroll,
 }
 
 impl Badge {
@@ -79,8 +70,6 @@ impl Badge {
             Badge::Host => "서버",
             Badge::Clock => "시계",
             Badge::Calendar => "달력",
-            // 글리프 그대로다 — 번역할 낱말이 아니고, 좁은 상태줄에서 한 칸이 값이다.
-            Badge::TouchScroll => "⇕",
         })
     }
 
@@ -94,7 +83,6 @@ impl Badge {
             Badge::Host => Action::ShowInfoTabs,
             Badge::Clock => Action::ToggleClock,
             Badge::Calendar => Action::ToggleCalendar,
-            Badge::TouchScroll => Action::ToggleScroll,
         }
     }
 }

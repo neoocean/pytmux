@@ -58,9 +58,15 @@ async def test_new_window_runs_a_command_and_leaves_a_shell():
         text = pane_text(pane)
         assert "nosuchcommand-pytmux137" in text, text
         # 셸이 남아 그 줄을 붙들고 있다 — 명령이 죽어도 패널은 살고 **입력을 받는다**.
-        # 친 글자와 결과를 가르려고 따옴표를 끼워 넣는다(에코에는 `ali""ve137` 이,
-        # 결과에는 `alive137` 이 뜬다).
-        pane.pty.write(b'echo ali""ve137\n')
+        # 친 글자와 결과를 가르려고 **셸이 삼키는 글자**를 끼워 넣는다(에코에는 그 글자가
+        # 보이고 결과에는 `alive137` 만 뜬다).
+        # ⛔ 그 글자는 셸마다 다르다: POSIX 는 따옴표, cmd.exe 는 캐럿(`^`)이다.
+        #   `echo ali""ve137` 을 cmd.exe 에 주면 따옴표를 **그대로 찍어** `alive137` 이
+        #   영영 안 나온다 — 즉 종전 프로브는 POSIX 모양이었고, Windows 에서는 앞단의
+        #   따옴표 결함(`_shell_argv_env` 주석)에 가려 그 사실이 안 보였다.
+        from pytmuxlib import pty_backend as _pb
+        probe = b"echo ali^ve137\r\n" if _pb.IS_WINDOWS else b'echo ali""ve137\n'
+        pane.pty.write(probe)
         await wait_for(lambda: "alive137" in pane_text(pane))
         assert "alive137" in pane_text(pane), pane_text(pane)
         assert len(sess.tabs) == before + 1, "명령이 끝나며 탭이 사라졌다"
@@ -124,8 +130,11 @@ async def test_new_window_wire_carries_the_command():
 async def test_cmd_then_shell_branches_per_os():
     """명령 뒤에 셸을 남기는 한 줄의 OS 분기(pytmux-137).
 
-    POSIX 는 `<명령>; exec <셸>`, Windows(cmd.exe `/c`)는 `<명령> & "<셸>"`.
-    `_shell_argv_env` 와 **같은 전제**라 여기서만 갈리면 안 된다."""
+    POSIX 는 `<명령>; exec <셸>`. **Windows 는 문자열을 안 만든다** — `cmd.exe /k
+    <명령>` 으로 셸을 남긴다(`_shell_argv_env(keep_shell=True)`). 종전의 한 줄
+    `<명령> & "<셸>"` 은 `list2cmdline` 이 안쪽 따옴표를 백슬래시로 이스케이프해
+    **cmd.exe 가 못 읽었다** — 실측 2026-08-25: 탭이 열리자마자
+    `is not recognized as an internal or external command` 를 찍고 셸이 안 남았다."""
     from unittest import mock
 
     from pytmuxlib import pty_backend
@@ -143,8 +152,21 @@ async def test_cmd_then_shell_branches_per_os():
                 mock.patch.dict("os.environ",
                                 {"COMSPEC": r"C:\Windows\System32\cmd.exe"},
                                 clear=True):
-            assert srv._cmd_then_shell("claude") == \
-                r'claude & "C:\Windows\System32\cmd.exe"'
+            # 문자열을 안 만든다 — 셸은 플래그(`/k`)가 남긴다.
+            assert srv._cmd_then_shell("claude") == "claude"
+            argv, _env = srv._shell_argv_env("claude", keep_shell=True)
+            assert argv == [r"C:\Windows\System32\cmd.exe", "/k", "claude"], argv
+            # 팝업(명령이 끝나면 닫혀야 한다)은 그대로 `/c` 다.
+            argv, _env = srv._shell_argv_env("claude")
+            assert argv == [r"C:\Windows\System32\cmd.exe", "/c", "claude"], argv
+        # ⛔ 셸 경로에 공백이 있어도 인자가 하나라 따옴표가 아예 안 생긴다 —
+        #    이어붙이던 시절 이 경우가 두 번째 함정이었다.
+        with mock.patch.object(pty_backend, "IS_WINDOWS", True), \
+                mock.patch.dict("os.environ",
+                                {"COMSPEC": r"C:\Program Files\sh\cmd.exe"},
+                                clear=True):
+            argv, _env = srv._shell_argv_env("claude", keep_shell=True)
+            assert argv == [r"C:\Program Files\sh\cmd.exe", "/k", "claude"], argv
     finally:
         await teardown(srv, task, sock)
 
@@ -1140,6 +1162,12 @@ async def test_auto_token_on_exit_windows_places_block_above_prompt():
     try:
         sess = srv.ensure_default_session(80, 24)
         p = sess.active_window.active_pane
+        # ⛔ 이 패널에는 **진짜 셸**이 붙어 있다. 아래는 심어 두고 `await` 로 정착을
+        #    기다리는 모양이라, 그 틈에 셸이 화면에 쓰면 심은 것이 지워진다 — Windows 의
+        #    `cmd.exe` 는 배너를 찍고 ConPTY 가 화면을 정리하므로 이 상자에서는 블록이
+        #    통째로 사라져 **늘 빨갰다**(pytmux-397 · 증상과 처방은 pytmux-384 가
+        #    `harness.hush_pane` 머리말에 적어 뒀다). 심기 **전에** 입을 막는다.
+        harness.hush_pane(p)
         srv._usage = {"session": {"pct": 69, "reset": "10:10pm"},
                       "week_all": {"pct": 61, "reset": "Jun 20 at 9am"}}
         p.feed(b"\r\n" * 10 + b"D:\\>")      # 프롬프트를 화면 중간으로 내림

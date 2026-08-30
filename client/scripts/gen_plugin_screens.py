@@ -139,6 +139,23 @@ def collect(pytmux_root: pathlib.Path) -> dict:
     unresolved: list[str] = []
 
     def note(kind: str, where: str) -> None:
+        """이 모양을 내는 자리를 적는다. ⛔ **`where` 는 파일까지다 — 줄 번호를 담지 않는다.**
+
+        판정 축은 `kinds` 와 `unresolved` 둘뿐이다(픽스처를 읽는
+        `crates/proto/tests/plugin_screen_conformance.rs` 가 그 둘만 역직렬화한다).
+        `sites` 는 *"어느 파일이 이 모양을 내나"* 를 사람에게 알려 주는 참고인데,
+        여기에 줄 번호를 담았더니 **플러그인 파일을 한 줄만 고쳐도** 픽스처가 낡아
+        게이트 둘(`check_fixtures` · `test_surface_ledger`)이 울었다 — 화면 모양의
+        집합은 하나도 안 바뀐 채로다(pytmux-394 · 실측 2026-08-24).
+
+        그 상시 적색이 가르치는 것은 「이 게이트는 원래 붉다」이고, 그러면 **진짜
+        갈림(새 화면 모양)이 왔을 때 아무도 안 본다.** 그래서 참고를 판정에서 뺐다.
+        줄 번호가 필요하면 그 파일에서 `grep -n '"t": "plugin_screen"'` 로 그때 찾는다
+        — 픽스처에 굳혀 두는 것보다 싸고, 언제나 지금 값이다.
+
+        ⚠ `unresolved` 는 줄 번호를 **그대로** 든다. 그것은 참고가 아니라 *"여기를
+        못 풀었다"* 는 진단이고, 비어 있는 것이 정상이라(적합성 테스트가 단언한다)
+        무관한 편집으로 흔들리지 않는다."""
         kinds.add(kind)
         sites.setdefault(kind, []).append(where)
 
@@ -156,7 +173,7 @@ def collect(pytmux_root: pathlib.Path) -> dict:
                 continue
             lit = _literal(kv)
             if lit is not None:
-                note(lit, where)
+                note(lit, rel)          # 자리는 파일까지만 — `note` 머리말 참조
                 continue
             fn = owner.get(node)
             if isinstance(kv, ast.Name) and fn is not None:
@@ -191,7 +208,7 @@ def collect(pytmux_root: pathlib.Path) -> dict:
                 found = True
                 lit = _literal(arg)
                 if lit is not None:
-                    note(lit, f"{rel}:{node.lineno}")
+                    note(lit, rel)      # 자리는 파일까지만 — `note` 머리말 참조
                 else:
                     unresolved.append(
                         f"{rel}:{node.lineno} — {factory}() 의 kind 가 글자가 아니다"

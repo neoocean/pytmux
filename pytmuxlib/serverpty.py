@@ -62,7 +62,7 @@ BURST_RUN = 3        # 연속 누적이 이 횟수 이상이면 버스트로 판
 class ServerPtyMixin:
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None,
-                    cmd: str | None = None):
+                    cmd: str | None = None, keep_shell: bool = False):
         """셸을 PTY 백엔드(pty_backend)에 띄우고 PtyProcess 핸들을 반환.
 
         OS 별 PTY/프로세스 분기는 전부 pty_backend 가 담당한다(Unix=pty.fork,
@@ -73,10 +73,10 @@ class ServerPtyMixin:
         """
         cols = max(MIN_W, cols)
         rows = max(MIN_H, rows)
-        argv, env = self._shell_argv_env(cmd)
+        argv, env = self._shell_argv_env(cmd, keep_shell=keep_shell)
         return pty_backend.spawn(argv, cols=cols, rows=rows, cwd=cwd, env=env)
 
-    def _shell_argv_env(self, cmd: str | None = None):
+    def _shell_argv_env(self, cmd: str | None = None, keep_shell: bool = False):
         """셸 실행 argv + 환경을 만든다(인프로세스 spawn 과 host 모드 spawn 공용).
 
         cmd 가 주어지면 인터랙티브 셸 대신 `셸 -c <cmd>`(display-popup 라이브 PTY).
@@ -85,7 +85,18 @@ class ServerPtyMixin:
         env = self._panel_env()
         if pty_backend.IS_WINDOWS:
             shell = env.get("PYTMUX_SHELL") or env.get("COMSPEC") or "cmd.exe"
-            argv = [shell, "/c", cmd] if cmd else [shell]
+            # ★ `keep_shell` 은 **플래그로** 낸다(`/k`), 문자열 이어붙이기가 아니다.
+            #   종전에는 `_cmd_then_shell` 이 `<명령> & "<셸>"` 한 줄을 만들어 `/c` 에
+            #   실었는데, 그 인자가 CreateProcess 로 가며 `subprocess.list2cmdline` 을
+            #   지나면 안쪽 따옴표가 `\"` 로 이스케이프된다 — 그건 C 런타임 규약이라
+            #   **cmd.exe 는 못 읽는다**. 실측(2026-08-25)으로 탭이 열리자마자
+            #   `'"C:\WINDOWS\system32\cmd.exe"' is not recognized` 를 찍고 셸이 안
+            #   남았다(= `esc c` 로 연 Claude Code 탭이 Windows 에서 즉시 죽는다.
+            #   test_server.test_new_window_runs_a_command_and_leaves_a_shell 가 그 자리).
+            #   `/k` 는 「명령을 돌리고 그 셸에 머문다」라 pytmux-137 의 요구와 정확히
+            #   같고, 셸 경로에 공백이 있어도 인자가 하나라 따옴표가 아예 안 생긴다.
+            flag = "/k" if keep_shell else "/c"
+            argv = [shell, flag, cmd] if cmd else [shell]
         else:
             shell = env.get("SHELL", "/bin/sh")
             argv = [shell, "-c", cmd] if cmd else [shell]
@@ -100,14 +111,15 @@ class ServerPtyMixin:
         사라져 사용자에게는 "키가 안 먹었다"로 보인다. 남는 셸이 그 줄을 화면에
         붙들어 두고, 그대로 평소의 셸 탭이 된다(= 새 탭을 연 것과 같은 자리).
 
-        ⚠ Windows 는 `cmd.exe /c` 를 전제한 `&` 연결이다(`_shell_argv_env` 와 같은
-        전제). `PYTMUX_SHELL` 을 PowerShell 로 두면 그 전제가 이미 `/c` 에서
-        깨져 있다 — 이 함수가 새로 만드는 제약이 아니다.
+        ⚠ **여기는 POSIX 만 다룬다.** Windows 는 문자열을 안 만들고 `cmd.exe /k` 로
+        간다(`_shell_argv_env(keep_shell=True)`) — 종전의 `<명령> & "<셸>"` 한 줄은
+        `list2cmdline` 이 안쪽 따옴표를 `\"` 로 바꿔 cmd.exe 가 못 읽었다(그 자리의
+        실측은 `_shell_argv_env` 주석). 그래서 Windows 에서는 이 함수를 **부르지
+        않는다**; 실수로 불리면 명령을 그대로 돌려주어 최소한 명령은 돈다.
         """
         env = self._panel_env()
         if pty_backend.IS_WINDOWS:
-            shell = env.get("PYTMUX_SHELL") or env.get("COMSPEC") or "cmd.exe"
-            return f'{cmd} & "{shell}"'
+            return cmd
         shell = env.get("SHELL", "/bin/sh")
         return f"{cmd}; exec {shlex.quote(shell)}"
 
@@ -117,12 +129,13 @@ class ServerPtyMixin:
         self._pane_seq += 1
         return self._pane_seq
 
-    def _spawn_pane_host(self, cols: int, rows: int, cwd, cmd) -> Pane:
+    def _spawn_pane_host(self, cols: int, rows: int, cwd, cmd,
+                         keep_shell: bool = False) -> Pane:
         """host 모드: 셸을 host 프로세스에 띄우고 _RemotePtyProcess 로 감싼 Pane 반환.
         패널은 host_pane_id 로 식별한다(child_pid/master_fd 는 -1). 출력 누락이 없도록
         reader 등록(start_reader)을 host spawn **이전**에 한다."""
         cols, rows = max(MIN_W, cols), max(MIN_H, rows)
-        argv, env = self._shell_argv_env(cmd)
+        argv, env = self._shell_argv_env(cmd, keep_shell=keep_shell)
         pane_id = self._next_pane_id()
         proc = self._pty_host.make_pane(pane_id, cols, rows)
         pane = Pane(-1, -1, cols, rows,
@@ -200,10 +213,10 @@ class ServerPtyMixin:
             lambda p=pane: self._pane_eof(p))
 
     def spawn_pane(self, cols: int, rows: int, cwd: str | None = None,
-                   cmd: str | None = None) -> Pane:
+                   cmd: str | None = None, keep_shell: bool = False) -> Pane:
         if self._pty_host is not None:        # host 모드(옵션 C, Windows 세션유지)
-            return self._spawn_pane_host(cols, rows, cwd, cmd)
-        proc = self._fork_shell(cols, rows, cwd, cmd)
+            return self._spawn_pane_host(cols, rows, cwd, cmd, keep_shell)
+        proc = self._fork_shell(cols, rows, cwd, cmd, keep_shell)
         fd = proc.fileno() if hasattr(proc, "fileno") else -1
         pane = Pane(proc.pid, fd, max(MIN_W, cols), max(MIN_H, rows),
                     vt_parser=getattr(self, "vt_parser", "native"))

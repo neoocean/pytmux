@@ -450,6 +450,13 @@ pub trait Window: 'static + WindowContext + std::any::Any {
     /// Whether the window has the native OS window frame (title bar and buttons).
     fn uses_native_window_decorations(&self) -> bool;
     fn set_titlebar_height(&self, height: f64);
+    /// The draggable band height the window is **currently** using.
+    ///
+    /// ⛔ 되읽을 길이 없으면 부르는 쪽은 「한 번 말했으니 창이 안 잊는다」를 **가정해야**
+    /// 하고(그래서 값이 바뀔 때만 말한다), 창이 그 값을 잊는 경로가 하나라도 있으면
+    /// 그 뒤로 **영영 다시 안 말한다** — 증상은 「머리줄을 끌어도 창이 안 움직인다」다
+    /// (pytmux/pytmux-365 후보 ①). 가정을 없애려면 물어볼 수 있어야 한다.
+    fn titlebar_height(&self) -> f64;
 
     /// Whether any hardware supports window transparency
     fn supports_transparency(&self) -> bool;

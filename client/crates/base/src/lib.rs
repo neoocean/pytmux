@@ -28,6 +28,7 @@ pub mod config;
 pub mod editor;
 pub mod hooks;
 pub mod i18n;
+pub mod ime_badge;
 pub mod keymap;
 pub mod options;
 pub mod plugins;

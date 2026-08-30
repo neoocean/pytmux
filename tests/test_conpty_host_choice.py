@@ -171,6 +171,45 @@ async def test_the_harness_uses_the_three_way_verdict_not_a_bare_count():
         "[5] 가 안 감싸져 있다 — 여기서 죽으면 회차가 판정 불능이 된다")
 
 
+async def test_the_harness_only_calls_methods_the_owned_backend_actually_has():
+    """☠ 하네스가 `pty` 에 부르는 이름이 **그 객체에 실제로 있나.**
+
+    ⛔ 이것이 없어서 `[5]` 는 **배선된 날부터 한 번도 안 돌았다.** 실측
+    (2026-08-23 · GHA 32637285906·32640590840 의 여섯 장 전부):
+
+        [5] 리페인트 재방출(pytmux-208): 못 쟀다
+            — AttributeError("'_OwnedConPty' object has no attribute 'resize'")
+
+    `_OwnedConPty` 에 있는 것은 `set_winsize(rows, cols)` 이고 `resize` 는 없다.
+    ☠ **그 자리의 오라클이 전부 「소스에 이 낱말이 있나」였다** — 그래서 있지도 않은
+    메서드를 부르는 줄이 열셋 전부 초록을 지나갔다. 낱말이 아니라 **객체**에 묻는다.
+
+    ⚠ 이 시험은 Windows 가 필요 없다 — `pty_backend` 는 어디서나 import 되고
+    (클래스 «정의»는 플랫폼과 무관하다) 우리가 묻는 것은 이름의 존재뿐이다.
+    ⛔ 인자 순서는 여기서 못 잰다(그 값은 Windows 실기가 진다) — 그래서 `set_winsize`
+    의 서명이 `(rows, cols)` 라는 사실만 못박아, 다음 사람이 `resize(cols, rows)` 를
+    그대로 옮겨 적으면 **여기서** 걸리게 한다."""
+    from pytmuxlib import pty_backend
+
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, "scripts", "validate_conpty.py"),
+               encoding="utf-8").read()
+    # 주석·독스트링은 빼고 «부르는 줄»만 본다 — 위 시험이 값을 치르고 배운 그 규율이다.
+    called = {m.group(1) for m in re.finditer(r"^\s*pty\.([A-Za-z_]\w*)\(", src, re.M)}
+    assert called, "하네스가 pty 에 아무것도 안 부른다 — 자리가 바뀌었다"
+    missing = sorted(n for n in called if not hasattr(pty_backend._OwnedConPty, n))
+    assert not missing, (
+        "하네스가 _OwnedConPty 에 없는 메서드를 부른다: %s — 그 스텝은 AttributeError 로 "
+        "삼켜져 «못 쟀다» 로만 나온다(있는 것: set_winsize/write/close/…)" % missing)
+
+    # ★ 뒤집힌 인자 순서가 이 결함의 나머지 반쪽이다 — 서명을 못박아 둔다.
+    import inspect
+    params = list(inspect.signature(pty_backend._OwnedConPty.set_winsize).parameters)
+    assert params == ["self", "rows", "cols"], (
+        "set_winsize 의 인자 순서가 바뀌었다: %s — 하네스 [5] 의 호출을 함께 고쳐라"
+        % params)
+
+
 # ── 이 실험을 «실제로 재는 자리» 가 살아 있나 (pytmux/pytmux-208) ────────────────
 # 위 시험들은 「기본이 무엇인가」를 못박는다. 그런데 이 뒤집기는 **실험**이라 기본을
 # 못박는 것만으로는 반쪽이다 — 답을 내는 것은 Windows 에서 도는 계측(`.github/workflows/

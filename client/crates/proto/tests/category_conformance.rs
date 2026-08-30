@@ -108,6 +108,11 @@ fn surface(fx: &Fixture) -> base::PluginSurface {
 /// 여기 없으면 테스트가 운다. `command_conformance.rs` 의 `full` 예외 목록과 같은 규칙으로
 /// **정확·정렬**이라야 한다.
 static PALETTE_OURS: &[(&str, &str)] = &[
+    // ★ **GUI 만의 판**(`pytmux/pytmux-375`) — 커서 다섯을 한 자리에 모으고 견본을
+    //   함께 그린다. 정본의 커서는 **호스트 단말의 하드웨어 커서**라 저쪽에 이 판도
+    //   이 이름도 있을 수 없다(아래 `SETTINGS_OURS` 의 커서 줄과 같은 근거).
+    //   ⛔ 키를 안 준다 — 팔레트가 유일한 입구다(`Action::ShowCursor`).
+    ("cursor", "설정/기타"),
     // 정본 `SETTINGS` 에는 있고 `COMMANDS` 에는 없다(저쪽 입구는 설정 화면뿐).
     ("display-panes", "패널"),
     // ★ **GUI 만의 것**(§10-21ⓐ) — 정본의 글자 크기는 호스트 단말이 정하므로 저쪽에
@@ -234,6 +239,10 @@ fn palette_tabs_follow_the_canon_order() {
 /// 보여야 한다 — 전자는 그냥 우리가 아직 안 단 줄이고, 그건 예외가 아니라 할 일이다.
 static SETTINGS_OURS: &[(&str, &str)] = &[
     (
+        "font-family",
+        "정본의 고정폭 글꼴도 호스트 단말이 정한다 — 우리만 캔버스를 직접 그린다(pytmux-408)",
+    ),
+    (
         "font-scale",
         "정본의 글자 크기는 호스트 단말이 정한다 — 저쪽에 짝이 있을 수 없다(§10-21ⓐ)",
     ),
@@ -258,6 +267,12 @@ static SETTINGS_OURS: &[(&str, &str)] = &[
     (
         "cursor-blink-interval",
         "같은 이유 — 깜빡임 주기는 호스트 단말의 설정이다",
+    ),
+    // 다섯째(`pytmux/pytmux-375`) — 같은 이유의 연장이다. 정본은 커서를 **스스로 안
+    // 그리므로** 선의 굵기를 정할 자리도 없다(우리는 캔버스에 직접 사각형을 얹는다).
+    (
+        "cursor-thickness",
+        "같은 이유 — 정본은 커서를 스스로 안 그려서 선 굵기를 정할 자리가 없다",
     ),
 ];
 

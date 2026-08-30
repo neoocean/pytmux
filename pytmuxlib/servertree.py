@@ -258,8 +258,14 @@ class ServerTreeMixin:
         rows = c.rows if c else 24
         cwd = self._resolve_start_cwd(sess, path)
         cmd = (cmd or "").strip() or None
-        root = self.spawn_pane(cols, rows, cwd=cwd,
-                               cmd=self._cmd_then_shell(cmd) if cmd else None)
+        # ⚠ Windows 는 셸을 **플래그로** 남긴다(`cmd.exe /k`) — 문자열을 이어붙이면
+        #   따옴표가 cmd.exe 를 못 지난다(`_shell_argv_env` 주석의 실측).
+        from pytmuxlib import pty_backend as _pb
+        if cmd and _pb.IS_WINDOWS:
+            root = self.spawn_pane(cols, rows, cwd=cwd, cmd=cmd, keep_shell=True)
+        else:
+            root = self.spawn_pane(cols, rows, cwd=cwd,
+                                   cmd=self._cmd_then_shell(cmd) if cmd else None)
         # 새 탭은 비고정 구역의 끝(첫 고정 탭 앞)에 삽입한다 — 고정 구역을 침범하지
         # 않게(항목7). 고정 탭이 없으면 종전대로 맨 뒤(= append 와 동일).
         prev_active = sess.active_tab

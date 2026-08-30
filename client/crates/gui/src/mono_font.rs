@@ -21,7 +21,13 @@
 /// 보던 글자 모양과 최대한 같아야 한다.
 ///
 /// - `Menlo` — macOS 기본 고정폭.
-/// - `Consolas` — Windows 기본 고정폭(Vista 이후 항상 있다).
+/// - `Cascadia Mono` · `Cascadia Code` — **Windows Terminal 의 기본 글꼴**(2019~).
+///   `Consolas` 보다 앞이다(pytmux-408): 이 목록의 규칙은 「그 OS 에서 터미널이 기본으로
+///   쓰는 것이 앞」인데, Windows 의 그 자리는 2019년 이후 Consolas 가 아니다. 실측
+///   (2026-08-26)으로 이 상자의 Windows Terminal 은 `fontFace` 를 안 적어 기본값
+///   `Cascadia Mono` 로 돌고, 그래서 정본(TUI)과 GUI 의 글자 모양이 갈렸다.
+///   ⚠ 취향이 아니라 **머리말의 규칙을 값에 반영하는 것**이다.
+/// - `Consolas` — Windows 에 늘 있는 것(Vista 이후). Cascadia 가 없는 상자의 보루.
 /// - `DejaVu Sans Mono` · `Liberation Mono` — 리눅스 배포판 대부분.
 /// - `Courier New` — 마지막 보루. 보기 좋진 않지만 거의 모든 곳에 있다.
 ///
@@ -29,6 +35,8 @@
 /// 아니다. macOS 에 Consolas 를 깐 사람도 있고, 그 경우에도 Menlo 가 먼저 잡히면 된다.
 pub const CANDIDATES: &[&str] = &[
     "Menlo",
+    "Cascadia Mono",
+    "Cascadia Code",
     "Consolas",
     "DejaVu Sans Mono",
     "Liberation Mono",
@@ -97,6 +105,30 @@ pub fn pick<T, E>(
     ))
 }
 
+/// 사용자가 고른 이름을 **먼저** 물어보고, 없으면 후보로 떨어진다(pytmux-408).
+///
+/// 돌려주는 셋째 값은 **못 쓴 이름**이다(`Some(이름)` = 「적었는데 그 글꼴이 없다」).
+/// ⛔ 그것을 `None` 으로 뭉개지 않는 이유: 「적었는데 아무 일도 안 일어난다」가 이 부류에서
+/// 제일 나쁜 결과다 — 사용자는 자기가 틀렸는지 앱이 무시했는지 못 가린다. 부르는 쪽이
+/// 그 이름으로 한 마디 한다.
+///
+/// 빈 값(자동)은 **못 쓴 것이 아니다** — 그때는 `None` 이다.
+pub fn pick_preferred<T, E>(
+    preferred: &str,
+    candidates: &[&'static str],
+    mut load: impl FnMut(&str) -> Result<T, E>,
+) -> Result<(String, T, Option<String>), String> {
+    let want = preferred.trim();
+    if !want.is_empty() {
+        if let Ok(font) = load(want) {
+            return Ok((want.to_owned(), font, None));
+        }
+    }
+    let (name, font) = pick(candidates, &mut load)?;
+    let missed = (!want.is_empty()).then(|| want.to_owned());
+    Ok((name.to_owned(), font, missed))
+}
+
 /// 후보를 **전부** 물어 실제로 들어간 것의 이름을 돌려준다.
 ///
 /// [`pick`] 과 반대로 첫 성공에서 멈추지 않는다 — 폴백은 "하나 고르는" 것이 아니라 DB 에
@@ -128,11 +160,25 @@ pub fn load_fallbacks<T, E>(
 /// 고정폭을 하나도 못 찾으면 패닉한다 — 글자를 한 자도 못 그리므로 계속할 뜻이 없다.
 /// 보조 글꼴이 하나도 없는 것은 패닉이 **아니다**(화면은 뜨고, 한글만 두부가 된다).
 pub fn install(cache: &mut warpui::fonts::Cache) -> warpui::fonts::FamilyId {
-    let (name, family) = match pick(CANDIDATES, |n| cache.load_system_font(n)) {
-        Ok(picked) => picked,
-        // "글꼴을 못 찾았다"만 남기면 사용자는 무엇을 깔아야 하는지 모른다.
-        Err(tried) => panic!("{tried}"),
-    };
+    install_preferred(cache, "").0
+}
+
+/// [`install`] 과 같되 **사용자가 고른 이름**을 먼저 본다(설정 `font-family`).
+///
+/// 둘째 값은 「적었는데 그 글꼴이 없더라」는 이름이다 — 부르는 쪽이 화면에 한 마디 한다.
+pub fn install_preferred(
+    cache: &mut warpui::fonts::Cache,
+    preferred: &str,
+) -> (warpui::fonts::FamilyId, Option<String>) {
+    let (name, family, missed) =
+        match pick_preferred(preferred, CANDIDATES, |n| cache.load_system_font(n)) {
+            Ok(picked) => picked,
+            // "글꼴을 못 찾았다"만 남기면 사용자는 무엇을 깔아야 하는지 모른다.
+            Err(tried) => panic!("{tried}"),
+        };
+    if let Some(ref want) = missed {
+        log::warn!("설정한 고정폭 글꼴 `{want}` 이 이 상자에 없다 — `{name}` 으로 떨어졌다");
+    }
     log::info!("고정폭 글꼴: {name}");
 
     let loaded = load_fallbacks(FALLBACK_CANDIDATES, |n| cache.load_system_font(n));
@@ -145,7 +191,7 @@ pub fn install(cache: &mut warpui::fonts::Cache) -> warpui::fonts::FamilyId {
     } else {
         log::info!("보조 글꼴: {}", loaded.join(", "));
     }
-    family
+    (family, missed)
 }
 
 #[cfg(test)]
@@ -200,7 +246,10 @@ mod tests {
             if n == "DejaVu Sans Mono" { Ok(()) } else { Err(()) }
         });
         assert!(picked.is_ok());
-        assert_eq!(asked, vec!["Menlo", "Consolas", "DejaVu Sans Mono"]);
+        assert_eq!(
+            asked,
+            vec!["Menlo", "Cascadia Mono", "Cascadia Code", "Consolas", "DejaVu Sans Mono"]
+        );
     }
 
     #[test]
@@ -263,6 +312,55 @@ mod tests {
         let before = seen.len();
         seen.dedup();
         assert_eq!(before, seen.len(), "보조 글꼴 후보에 중복이 있다");
+    }
+
+    #[test]
+    fn the_windows_terminal_default_comes_before_the_old_one() {
+        // pytmux-408 ② — 이 목록의 규칙은 머리말이 스스로 적어 둔 「그 OS 에서 터미널이
+        // 기본으로 쓰는 것이 앞」이다. Windows 의 그 자리는 2019년 이후 Cascadia 이고,
+        // 목록이 그 규칙보다 낡아 있었다(언제나 Consolas 로 떨어졌다).
+        let at = |n: &str| CANDIDATES.iter().position(|c| *c == n);
+        let cascadia = at("Cascadia Mono").expect("Windows Terminal 기본이 빠졌다");
+        let consolas = at("Consolas").expect("Windows 보루가 빠졌다");
+        assert!(
+            cascadia < consolas,
+            "Cascadia 가 Consolas 보다 뒤다 — 그러면 Windows 에서 영영 Consolas 다"
+        );
+    }
+
+    #[test]
+    fn the_font_the_user_picked_wins_over_the_candidates() {
+        // pytmux-408 ① — 고른 이름이 있으면 그것부터. 후보는 «아무것도 안 골랐을 때»의 표다.
+        let (name, _, missed) =
+            pick_preferred("Sarasa Mono K", CANDIDATES, |n| {
+                if n == "Sarasa Mono K" { Ok(()) } else { Err::<(), ()>(()) }
+            })
+            .unwrap();
+        assert_eq!(name, "Sarasa Mono K");
+        assert!(missed.is_none(), "쓴 글꼴을 못 썼다고 말했다");
+    }
+
+    #[test]
+    fn a_font_the_user_picked_but_does_not_exist_is_said_out_loud() {
+        // ⛔ pytmux-408 ③ — 「적었는데 아무 일도 안 일어난다」가 이 부류에서 제일 나쁘다.
+        //    떨어지는 것은 맞지만, **무엇이 없었는지**를 부르는 쪽이 말할 수 있어야 한다.
+        let (name, _, missed) = pick_preferred("NoSuchFont ZZ", CANDIDATES, |n| {
+            if n == "Consolas" { Ok(()) } else { Err::<(), ()>(()) }
+        })
+        .unwrap();
+        assert_eq!(name, "Consolas", "후보로 안 떨어졌다");
+        assert_eq!(missed.as_deref(), Some("NoSuchFont ZZ"), "못 쓴 이름을 삼켰다");
+    }
+
+    #[test]
+    fn picking_nothing_is_not_a_miss() {
+        // 대조군 — 빈 값은 «자동»이지 «못 썼다»가 아니다. 여기를 안 가르면 아무것도 안
+        // 고른 사람에게 매 기동 경고가 뜬다.
+        let (_, _, missed) = pick_preferred("   ", CANDIDATES, |n| {
+            if n == "Menlo" { Ok(()) } else { Err::<(), ()>(()) }
+        })
+        .unwrap();
+        assert!(missed.is_none(), "안 고른 것을 «못 썼다»로 읽었다");
     }
 
     #[test]

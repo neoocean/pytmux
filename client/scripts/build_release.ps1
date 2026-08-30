@@ -37,7 +37,41 @@ $bin = Join-Path $client "target\release\pytmux-gui.exe"
 if (-not (Test-Path $bin)) { Write-Error "build_release: $bin 이 안 나왔다" }
 
 # 굽자마자 미러 문턱과 **같은 자**로 잰다.
-$py = if ($env:PYTHON) { $env:PYTHON } else { "python" }
+#
+# ⛔ **"있나" 가 아니라 "도나" 로 고른다**(pytmux-383) — `python` 이 깔려 있지 않은
+# 상자에서 그 이름은 Store 앱 실행 별칭이고, 그것은 스크립트를 안 돌린다. 별칭이
+# 조용히 rc 0 으로 끝나는 판에서는 아래 둘이 **아무것도 안 재고** 통과해, 서드파티
+# 고지를 안 재고 이진이 `build\` 로 들어간다.
+# ★ 그리고 이것이 `build_release.sh` 와 **같은 차례**를 본다 — 종전에는 이쪽 기본값이
+# `python`, 저쪽이 `python3` 이라 같은 일을 하는 두 짝이 서로 다른 자를 집었다.
+# (정본 규칙은 `scripts\pick_python.sh` 다. PowerShell 은 sh 를 source 할 수 없어
+#  모양만 옮겨 적는다 — 그 파일 머리말이 왜 그렇게 고르는지를 쥔다.)
+function Get-Python3 {
+    # ⚠ 이 파일은 `$ErrorActionPreference = "Stop"` 아래 돈다 — 그대로 두면 **후보가
+    #   죽는 것 자체가** 스크립트를 끝낸다(별칭은 rc 49 로 죽고 stderr 도 쓴다. 게다가
+    #   Windows PowerShell 5.1 은 네이티브 명령의 `2>` 를 그 설정에서 종료 오류로 만든다).
+    #   고르는 동안만 되돌린다 — 여기서 후보가 죽는 것은 «답»이지 «사고»가 아니다.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        foreach ($cand in @($env:PYTMUX_PYTHON, $env:PYTHON, "python3", "python", "py")) {
+            if (-not $cand) { continue }
+            if (-not (Get-Command $cand -ErrorAction SilentlyContinue)) { continue }
+            $major = $null
+            try { $major = & $cand -c "import sys; print(sys.version_info[0])" 2>$null }
+            catch { continue }
+            if ($LASTEXITCODE -eq 0 -and "$major".Trim() -eq "3") { return $cand }
+        }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    return $null
+}
+
+$py = Get-Python3
+if (-not $py) {
+    Write-Error "build_release: 쓸 만한 파이썬 3 을 못 찾았다 — 경로 유출·서드파티 고지를 못 쟀다. PYTHON=<경로> 로 지정할 것."
+}
 & $py (Join-Path $repo "scripts\check_mirror.py") --scan $bin
 if ($LASTEXITCODE -ne 0) {
     Write-Error "build_release: 갓 구운 이진에 이 상자의 경로가 남았다 — build\ 에 넣지 않는다. remap 이 안 먹었다(CARGO_HOME 확인)."

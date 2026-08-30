@@ -310,11 +310,6 @@ static SETTINGS: &[Item] = &[
     i("strip-box-drawing", Done, "설정 화면"),
     i("synchronize-panes", Done, "설정 화면 · 팔레트"),
     i("tab-bar", Done, "설정 화면 - auto 면 탭 하나일 때 감춘다"),
-    i(
-        "touch-scroll",
-        Done,
-        "설정 화면 · 상태줄 `⇕` 배지(누르면 스크롤 모드 토글) · 스크롤 모드에서 활성 패널 우측 한 열에 스크롤바 + 탭(▲▼=반 화면 · 트랙=점프). 산수는 정본 픽스처로 고정(scrollbar_conformance)",
-    ),
     i("vt-parser", Done, "설정 화면 → 다음 값 · 팔레트"),
     i("win-mouse-motion", Done, "설정 화면 · 팔레트"),
     i("window-size", Done, "설정 화면 → 다음 값 · 팔레트"),
@@ -411,7 +406,7 @@ static SCORE: &[(&str, usize, usize)] = &[
     ("commands", 88, 0),
     ("prefix_keys", 32, 0),
     ("esc_keys", 19, 0),
-    ("settings", 38, 0),
+    ("settings", 37, 0),
     ("screens", 18, 0),
 ];
 

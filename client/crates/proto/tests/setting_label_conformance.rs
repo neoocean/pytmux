@@ -71,6 +71,8 @@ fn plugin_setting_keys() -> Vec<String> {
 /// 으로 자리만 옮긴다) 모양·색·깜빡임을 저쪽이 가질 수가 없다(`pytmux/pytmux-161`).
 const NO_CANON_LABEL: &[&str] = &[
     "ambiguous-width",
+    // 고정폭 글꼴도 같은 부류다(pytmux-408) — 정본은 호스트 단말의 글꼴로 그린다.
+    "font-family",
     "font-scale",
     "win-mouse-motion",
     "window-size",
@@ -78,6 +80,7 @@ const NO_CANON_LABEL: &[&str] = &[
     "cursor-color",
     "cursor-blink",
     "cursor-blink-interval",
+    "cursor-thickness",
 ];
 
 #[test]

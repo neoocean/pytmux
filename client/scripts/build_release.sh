@@ -26,6 +26,10 @@ cd "$(dirname "$0")/.."          # client/
 CLIENT="$(pwd)"
 REPO="$(cd .. && pwd)"
 
+# 파이썬을 «어떻게 고르나» 는 저장소에 한 자리다(`scripts/pick_python.sh` 머리말 ·
+# pytmux-383). 굽는 자리라 조용한 실패가 특히 나쁘다 — 고지를 안 재고 이진이 나간다.
+. "$REPO/scripts/pick_python.sh"
+
 if ! command -v cargo >/dev/null 2>&1; then
     echo "build_release: cargo 를 찾을 수 없다 (PATH 에 ~/.cargo/bin 이 있는지 확인)" >&2
     exit 2
@@ -82,7 +86,14 @@ BIN="target/release/pytmux-gui"
 
 # 굽자마자 **같은 자**로 잰다 — 미러 문턱(`scripts/check_mirror.py` ⑤)이 쓰는 규칙
 # 그대로다. 자가 한 벌이라 여기서 통과한 것이 저기서 떨어지는 일이 없다.
-PY="${PYTHON:-python3}"
+# ⛔ **"있나" 가 아니라 "도나" 로 고른다**(pytmux-383) — `command -v` 는 Windows Store
+# 별칭을 못 가르고, 그 별칭이 rc 0 으로 끝나는 판에서는 아래 둘이 **아무것도 안 재고**
+# 통과한다. 여기서 못 고르면 굽지 않는다.
+PY=$(pick_python) || {
+    echo "build_release: 쓸 만한 파이썬 3 을 못 찾았다 — 경로 유출·서드파티 고지를 못 쟀다" >&2
+    echo "  → 못 쟀으면 통과가 아니다. PYTHON=<경로> 로 지정할 것" >&2
+    exit 2
+}
 if ! "$PY" "$REPO/scripts/check_mirror.py" --scan "$CLIENT/$BIN"; then
     echo "build_release: 갓 구운 이진에 이 상자의 경로가 남았다 — build/ 에 넣지 않는다." >&2
     echo "  remap 이 안 먹었다는 뜻이다(cargo 홈이 다른 데 있나? CARGO_HOME 확인)." >&2

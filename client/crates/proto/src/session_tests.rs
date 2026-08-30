@@ -349,6 +349,47 @@ fn plugin_cell_runs_are_painted_where_the_server_said() {
 }
 
 #[test]
+fn a_zero_width_char_does_not_take_a_cell_of_its_own() {
+    // 제보(pytmux-389 · 맥 `--frame-dump` 실측 2026-08-24): 변이 선택자(U+FE0F)가 든
+    // 줄만 **한 칸씩 오른쪽으로 밀렸다**.
+    //
+    //   |A|   ← `|` 가 3번째 칸 (옳다)
+    //   |⚠ |  ← `|` 가 4번째 칸 (밀렸다)
+    //
+    // 뿌리는 「칸을 나눌 때 폭을 묻는다」였다 — 변이 선택자·ZWJ·결합 표시는 **앞 글자에
+    // 얹히는** 것이라 아무도 밀지 않는데, `char_cells` 는 계약상 폭 0 도 1 로 준다
+    // (파이썬 `cellwidth.char_cells` 와 글자 하나까지 같아야 하는 계약이다).
+    //
+    // ⛔ 재는 것은 대조군과 **같은 자리**다: 선택자가 없는 줄과 있는 줄에서 닫는 `|` 가
+    //    같은 칸에 서는가. 값 하나를 못박으면 다음 사람이 값만 고치고 지나간다.
+    let mut state = SessionState::new();
+    state.apply(layout_msg(&[(1, 6)]));
+    state.apply(screen_msg(1, "hi"));
+    let marked = format!("|{}{}|", '\u{26a0}', '\u{fe0f}');
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [],
+        "runs": [
+            {"x": 0, "y": 0, "text": "|A|", "style": {}, "theme": {}},
+            {"x": 0, "y": 1, "text": marked, "style": {}, "theme": {}}
+        ]
+    }))
+    .unwrap();
+    assert!(state.apply(cells), "화면이 바뀌었는데 안 바뀌었다고 했다");
+    let canvas = state.composite().unwrap();
+    let closing = |y: usize| canvas.row_text(y).chars().position(|c| c == '|' ).map(|first| {
+        first + 1 + canvas.row_text(y).chars().skip(first + 1).position(|c| c == '|').unwrap_or(0)
+    });
+    assert_eq!(
+        closing(0),
+        closing(1),
+        "폭 0 글자가 칸을 먹어 그 줄이 밀렸다 — 대조군 {:?} vs {:?}",
+        canvas.row_text(0),
+        canvas.row_text(1)
+    );
+    assert!(closing(0).is_some(), "대조군에 닫는 `|` 가 없다 — 오라클이 공허하다");
+}
+
+#[test]
 fn the_semantic_colour_is_resolved_by_us_not_the_server() {
     // 색의 권위는 **이 클라의 테마**다(설계 §10 위험표). 서버는 이름만 싣는다 —
     // 달력의 '오늘'처럼 **배경**에 강조색을 까는 자리도 있어서 전경만으로는 못 나른다.
@@ -912,6 +953,10 @@ fn a_rows_columns_are_read_in_our_own_locale_but_its_name_is_not() {
         depth: 0,
         expand: String::new(),
         i18n: Default::default(),
+        // 막대 없는 줄 — 종전 화면은 전부 이쪽이다(pytmux-371 ③).
+        bar: None,
+        // 시각도 없다 — 카운트다운은 한도 판만 싣는다(pytmux-371 ④).
+        until: 0,
     };
     // 그리는 자리가 부르는 것과 **같은 함수**로 잰다 — `label` 을 직접 읽으면 뷰가
     // 그 자리에서 무엇을 하는지는 안 재는 오라클이 된다.

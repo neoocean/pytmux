@@ -1734,7 +1734,7 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         Action::ToggleClaudeDetail => None,
         // 스크롤 모드 전이는 **뷰의 모드 상태**다(서버는 모드를 모른다). 나갈 때 라이브
         // 맨 아래로 되돌리는 `scroll` 프레임은 뷰가 따로 보낸다.
-        Action::EnterScroll | Action::ToggleScroll => None,
+        Action::EnterScroll => None,
         // 프롬프트 점프는 **서버가 계산한다**(claude-code 플러그인 `claude_jump_prompt`
         // 가 스크롤백의 턴 경계를 찾는다) — 클라는 스크롤백을 안 갖고 있어 셀 수 없다.
         // 방향의 철자는 서버 어휘이므로 여기서 옮긴다.
@@ -1854,6 +1854,9 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         Action::FontScale { .. } | Action::FontScaleReset => None,
         // 요약 판은 **클라 안의 것**이다 — 재료(블록·Claude 항목)를 이미 들고 있다.
         Action::ShowSummary => None,
+        // 커서 판도 같다(pytmux-375) — 다섯 값의 주인은 **설정 파일**이고 그 파일은
+        // 클라가 읽고 쓴다. 서버는 커서를 그리지도 않는다(자리만 프레임으로 준다).
+        Action::ShowCursor => None,
         // 블록 고르기도 같다 — 모드 전이라 서버에 보낼 것이 없다(복사할 때에야
         // `CopyRange` 가 나간다. 그 명령은 마우스 드래그 복사와 **같은 하나**다).
         Action::SelectBlocks => None,

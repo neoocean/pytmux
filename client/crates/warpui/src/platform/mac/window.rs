@@ -489,6 +489,12 @@ pub struct WindowState {
     synthetic_drag_counter: Cell<usize>,
     executor: Rc<executor::Foreground>,
     ime_active: Cell<bool>,
+    /// 창에 마지막으로 말한 **끌 수 있는 띠** 높이.
+    ///
+    /// AppKit 쪽으로는 넘기기만 하고 되물을 길이 없어(`set_titlebar_height` 는 ObjC
+    /// 헬퍼다) 이쪽에 함께 둔다 — 부르는 쪽이 「창은 한 번 말하면 안 잊는다」를
+    /// **가정하지 않게** 하려면 물어볼 수 있어야 한다(pytmux/pytmux-365 후보 ①).
+    titlebar_height: Cell<f64>,
     pub(super) capture_callback: RefCell<Option<FrameCaptureCallback>>,
 }
 
@@ -619,6 +625,8 @@ impl Window {
                 synthetic_drag_counter: Cell::new(0),
                 executor,
                 ime_active: Cell::new(false),
+                // 아직 아무도 안 말했다 — 뷰가 첫 프레임에 말한다.
+                titlebar_height: Cell::new(0.),
                 capture_callback: RefCell::new(None),
             });
 
@@ -1028,6 +1036,10 @@ impl platform::Window for Window {
     fn set_titlebar_height(&self, height: f64) {
         self.0.set_titlebar_height(height);
     }
+
+    fn titlebar_height(&self) -> f64 {
+        self.0.titlebar_height()
+    }
 }
 
 impl platform::WindowContext for Window {
@@ -1160,10 +1172,15 @@ impl WindowState {
     }
 
     fn set_titlebar_height(&self, height: f64) {
+        self.titlebar_height.set(height);
         // SAFETY: `set_titlebar_height` reads the window for the duration of the call.
         unsafe {
             set_titlebar_height(self.window(), height);
         }
+    }
+
+    fn titlebar_height(&self) -> f64 {
+        self.titlebar_height.get()
     }
 }
 

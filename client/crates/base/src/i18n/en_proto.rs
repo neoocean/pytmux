@@ -24,7 +24,8 @@ pub static EN: &[(&str, &str)] = &[
     ("파일: {path}", "File: {path}"),
     ("크기: {bytes} bytes ({kib} KiB)", "Size: {bytes} bytes ({kib} KiB)"),
     ("탭 매핑: {path}", "Tab mapping: {path}"),
-    ("[c] 캡처 켜기/끄기 · [o] 기록 폴더 열기", "[c] toggle capture · [o] open folder"),
+    ("[c] 캡처 켜기/끄기", "[c] toggle capture"),
+    ("[o] 기록 폴더 열기", "[o] open folder"),
     ("RTT: {rtt} ms (임계 {thr} ms)", "RTT: {rtt} ms (threshold {thr} ms)"),
     ("RTT 그래프 (최근 60분):", "RTT graph (last 60 min):"),
     ("-60분", "-60m"),
@@ -265,4 +266,6 @@ pub static EN: &[(&str, &str)] = &[
     ("패널 {n}개는 {per}건까지만 실었다", "{n} pane(s) capped at {per}"),
     ("원격 {ok}/{total}곳", "remote {ok}/{total}"),
     ("빠진 곳 — {names}", "missing — {names}"),
+    ("숨긴 탭 {n}건", "{n} hidden tab(s)"),
+    ("상한에 걸려 {n}건 못 실었다", "{n} dropped at the cap"),
 ];

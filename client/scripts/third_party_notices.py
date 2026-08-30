@@ -372,8 +372,57 @@ def choose(expr):
 
 # ── 라이선스 전문 ────────────────────────────────────────────────────────────
 
-def text_of(path):
-    """파일 하나를 **줄끝을 편** 글로. 못 읽으면 `None`."""
+#: **안 풀린 심링크**의 몸통 — 대상 경로 한 줄. 경로 글자만 들고 공백이 없다.
+#: ⛔ 이 자만으로는 안 가른다(`_link_target` 참조) — 진짜 한 줄짜리 고지를 오독한다.
+_LINK_BODY = re.compile(r"^[A-Za-z0-9._-]+(?:[/\\][A-Za-z0-9._-]+)*$")
+
+#: 대상이 없는 심링크 자리에 싣는 글. ⛔ **전문을 지어내지 않는다** — MIT·BSD 는 저작권
+#: 줄이 본문의 일부라, 표준 문안을 붙이면 우리가 저작권자를 발명하게 된다. ⛔ 껍데기를
+#: 전문인 척 싣지도 않는다(그것이 pytmux-416 의 원래 증상이다). 무슨 일이 있었는지 적는다.
+_BROKEN_LINK = (
+    "\u26a0 상류가 이 자리에 심링크(`{target}`)를 배포했는데 그 대상이 크레이트\n"
+    "  배포물 밖이라 **전문을 여기 싣지 못했다**(실측: read-fonts 0.22.7).\n"
+    "\n"
+    "  전문은 상류 저장소의 같은 경로에 있다. \u26d4 표준 문안으로 대신하지 않는다 —\n"
+    "  MIT 는 저작권 줄이 본문의 일부라, 지어 붙이면 저작권자를 발명하는 것이 된다."
+)
+
+
+def _link_target(path, body):
+    """`body` 가 **안 풀린 심링크**의 대상 경로면 그 절대경로, 아니면 `None`.
+
+    Windows 에서 심링크 권한이 없으면(`WinError 1314`) git 은 심링크를 **대상 경로 한 줄이
+    든 보통 파일**로 푼다(pytmux-416 ⑴). 그대로 실으면 「MIT 전문」 자리에 일곱 글자가
+    앉고, 그러면 **법적 고지가 고지를 안 한다.** 게다가 POSIX 에서 구우면 전문이 들어가
+    상자마다 다른 파일이 구워진다 — 그것이 재발 엔진이다.
+
+    ⛔ **「공백이 없다」만으로 가르면 진짜 한 줄짜리 고지를 오독한다.** 셋을 다 만족해야
+       심링크로 본다: ⓐ 한 줄이다 ⓑ 경로 글자만 들었다 ⓒ **마지막 조각이 라이선스 파일
+       이름**이다(`LICENSE_NAME` — 이 파일이 이미 쓰는 자다).
+    """
+    if not body or "\n" in body:
+        return None
+    cand = body.strip()
+    if not _LINK_BODY.match(cand):
+        return None
+    if not LICENSE_NAME.match(os.path.basename(cand.replace("\\", "/"))):
+        return None
+    target = os.path.normpath(os.path.join(os.path.dirname(path), cand))
+    if os.path.isfile(target):
+        return target                      # 대상이 실제로 있다 — 링크가 맞다
+    # ⛔ 대상이 없을 때는 **경로 구분자**까지 봐야 한다. 안 그러면 한 줄짜리 진짜 고지
+    #    (`Unlicense` · `MIT` — `LICENSE_NAME` 에 걸린다)가 «깨진 링크»로 읽혀 사라진다.
+    #    실측: 이 대조군이 없던 판이 `Unlicense` 를 통째로 잃었다.
+    return target if ("/" in cand or "\\" in cand) else None
+
+
+def text_of(path, _depth=0):
+    """파일 하나를 **줄끝을 편** 글로. 못 읽으면 `None`.
+
+    안 풀린 심링크는 **따라간다**(`_link_target`) — 그래야 POSIX 와 Windows 가 같은 파일을
+    굽는다. 대상이 없으면 `_BROKEN_LINK` 를 싣는다(지어내지도, 껍데기를 싣지도 않는다).
+    `_depth` 는 링크가 링크를 가리킬 때의 상한이다(고리에서 안 돈다).
+    """
     try:
         with open(path, "rb") as fh:
             raw = fh.read()
@@ -383,8 +432,15 @@ def text_of(path):
         body = raw.decode("utf-8")
     except UnicodeDecodeError:
         body = raw.decode("latin-1")
-    body = body.replace("\r\n", "\n").replace("\r", "\n")
-    return body.strip("\n")
+    body = body.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+
+    target = _link_target(path, body) if _depth < 3 else None
+    if target is not None:
+        followed = text_of(target, _depth + 1)
+        if followed:
+            return followed
+        return _BROKEN_LINK.format(target=body.strip())
+    return body
 
 
 def license_files(pkg_dir, walk_up=0):

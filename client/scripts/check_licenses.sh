@@ -26,6 +26,10 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+# 파이썬을 «어떻게 고르나» 는 저장소에 한 자리다(`scripts/pick_python.sh` 머리말 ·
+# pytmux-383). 여기서 각자 적으면 셋이 갈리고, 갈리는 날 조용한 쪽이 믿긴다.
+. "$(cd .. && pwd)/scripts/pick_python.sh"
+
 # warpui/warpui_core = warp 에서 가져온 MIT 크레이트.
 # 나머지 여섯은 AGPL 원본을 대체한 자체 구현(PROVENANCE.md §2).
 # base·proto·gui·tui·claude·clip = 우리가 새로 쓴 클라이언트 코드
@@ -118,12 +122,15 @@ fi
 # 판정을 파이썬에 두는 이유: 라이선스 식(`(MIT OR Apache-2.0) AND Unicode-DFS-2016`)을
 # 평가하고 크레이트 449개의 전문을 모아 비교하는 일이라 sh 로 적으면 그 자체가 결함
 # 원천이 된다. `build_release.sh` 가 `check_mirror.py` 를 부르는 것과 같은 자리다.
-PY="${PYTHON:-python3}"
-if ! command -v "$PY" >/dev/null 2>&1; then
-    echo "check_licenses: $PY 를 찾을 수 없다 — 외부 의존·배포 고지를 못 쟀다" >&2
+#
+# ⛔ **"있나" 가 아니라 "도나" 로 고른다**(pytmux-383). 종전에는 `PYTHON:-python3` 을
+# `command -v` 하나로 재서, Windows Store 별칭(`…\WindowsApps\python3`)이 그 관문을
+# **통과**했다 — 위의 *"못 쟀으면 통과가 아니다"* 가 그 자리에서 무력화됐다.
+PY=$(pick_python) || {
+    echo "check_licenses: 쓸 만한 파이썬 3 을 못 찾았다 — 외부 의존·배포 고지를 못 쟀다" >&2
     echo "  → 못 쟀으면 통과가 아니다. PYTHON=<경로> 로 지정할 것" >&2
     exit 2
-fi
+}
 "$PY" scripts/third_party_notices.py --check || rc=$?
 
 exit "$rc"

@@ -42,6 +42,12 @@ pub struct IntegrationTestDelegate {
 
 pub struct Window {
     callbacks: WindowCallbacks,
+    /// 창이 지금 쓰는 **끌 수 있는 띠** 높이.
+    ///
+    /// ⛔ 종전에는 `set_titlebar_height` 를 통째로 버렸다(`{}`). 그러면 「뷰가 창에게
+    /// 그 값을 제대로 말하나」를 **아무도 못 잰다** — 그 자리가 pytmux/pytmux-365 의
+    /// 후보 ①이다. 인형이 값을 기억해야 시험이 그것을 물어볼 수 있다.
+    titlebar_height: std::cell::Cell<f64>,
 }
 
 impl AppDelegate {
@@ -81,7 +87,11 @@ impl platform::WindowManager for WindowManager {
         callbacks: WindowCallbacks,
     ) -> Result<()> {
         self.windows
-            .insert(window_id, Rc::new(Window { callbacks }));
+            .insert(window_id, Rc::new(Window {
+                callbacks,
+                // 실제 창의 기본값과 같다 — 뷰가 아직 말하기 전의 상태를 흉내낸다.
+                titlebar_height: std::cell::Cell::new(0.),
+            }));
         Ok(())
     }
 
@@ -423,7 +433,13 @@ impl platform::Window for Window {
         platform::FullscreenState::Normal
     }
 
-    fn set_titlebar_height(&self, _height: f64) {}
+    fn set_titlebar_height(&self, height: f64) {
+        self.titlebar_height.set(height);
+    }
+
+    fn titlebar_height(&self) -> f64 {
+        self.titlebar_height.get()
+    }
 
     fn as_ctx(&self) -> &dyn platform::WindowContext {
         self
@@ -663,3 +679,4 @@ impl platform::TextLayoutSystem for FontDB {
         crate::text_layout::TextFrame::empty(line_style.font_size, line_style.line_height_ratio)
     }
 }
+

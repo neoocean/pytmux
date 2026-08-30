@@ -108,6 +108,13 @@ pub struct Glyph {
 pub struct PaintedText {
     pub text: String,
     pub bounds: RectF,
+    /// The colour the glyphs were painted in.
+    ///
+    /// Headless colour oracles need this: several pytmux surfaces say something
+    /// *with colour alone* (a finished tab, a mode badge, a dimmed hint), and a
+    /// text-only record cannot tell "painted, but in the wrong colour" from
+    /// "painted correctly". Rasterization never reads it.
+    pub color: ColorU,
 }
 
 #[derive(Clone, Default)]
@@ -673,13 +680,14 @@ impl Scene {
     /// without the font — so [`Scene::painted_texts`] (the headless drawing
     /// oracle) needs the elements that paint text to also record what they
     /// painted. Rasterization never reads these records.
-    pub fn record_text(&mut self, text: &str, bounds: RectF) {
+    pub fn record_text(&mut self, text: &str, bounds: RectF, color: ColorU) {
         if text.is_empty() {
             return;
         }
         self.active_layer().texts.push(PaintedText {
             text: text.to_owned(),
             bounds,
+            color,
         });
     }
 

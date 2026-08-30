@@ -112,21 +112,6 @@ impl Notice {
     }
 }
 
-/// 터치 스크롤바가 차지한 자리 — 그리는 쪽과 누르는 쪽이 **같은 값**을 본다.
-///
-/// 활성 패널 오른쪽 끝 **한 열**이다(`x` 는 그 열, `y..y+h` 가 그 세로 범위).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TouchScrollZone {
-    /// 이 바가 조종하는 패널.
-    pub pane: i64,
-    /// 바가 그려지는 열.
-    pub x: usize,
-    /// 바의 첫 행.
-    pub y: usize,
-    /// 바의 높이(= 패널 높이).
-    pub h: usize,
-}
-
 /// 서버가 광고하는 플러그인 하나(패리티 G7).
 ///
 /// # 왜 서버가 알려 줘야 하나
@@ -668,6 +653,21 @@ pub struct PluginRow {
     /// 섞여 `label` 이 더는 자료가 아니게 되고, 타이핑 찾기·복사가 그 공백을 물고 간다.
     #[serde(default)]
     pub depth: u16,
+    /// 이 줄이 가리키는 **시각**(epoch 초). `0` 이면 없다.
+    ///
+    /// # 왜 글자가 아니라 시각인가 (pytmux-371 ④)
+    ///
+    /// 정본 토큰 팝업의 `[한도]` 탭은 다음 리셋까지를 **큰 글자 카운트다운**으로 센다.
+    /// 그 글자를 서버가 지어 보내면 **초마다 프레임이 와야** 하고, 그건 판 하나 때문에
+    /// 초당 한 번씩 전 세션을 다시 그리는 값이다(같은 이유로 시계도 그렇게 안 한다).
+    ///
+    /// 그래서 서버는 **언제인지**만 싣고 남은 시간은 클라가 **제 타이머로** 굴린다.
+    /// 자료를 싣고 그림은 클라가 정한다는 이 스펙의 규율 그대로다.
+    ///
+    /// ⚠ **초 단위 정수**다. 부동소수로 두면 이 구조체가 `Eq` 를 잃고(그 유도가 스펙
+    /// 비교 전반에 쓰인다) 카운트다운에는 소수점 아래가 아무 뜻도 없다.
+    #[serde(default)]
+    pub until: i64,
     /// 펼침 상태 — `open`(펼침) · `shut`(접힘) · `""`(펼 것이 없다).
     ///
     /// 세 갈래인 이유: 접힘과 **잎**은 다르다. 둘을 하나로 묶으면 빈 디렉터리에도
@@ -688,9 +688,50 @@ pub struct PluginRow {
     /// 종전 그대로 손대지 않는다.
     #[serde(default)]
     pub i18n: I18nMap,
+    /// 이 줄의 **비율**(천분율 0~1000) — 있으면 뷰가 막대로 그린다(pytmux-371 ③).
+    ///
+    /// # 왜 칸 수나 `█` 가 아니라 비율인가
+    ///
+    /// 정본은 격자라 막대를 **글자로** 그린다(`█` 를 칸 수만큼). 서버가 그 글자를 실으면
+    /// 그 순간 **서버가 UI 를 알게 되고**(설계 §10 위험표), 격자가 없는 GUI 는 그 글자를
+    /// 다시 해석해야 한다 — 사용자 지시(*"인터페이스는 gui 기반"*)와도 어긋난다. 비율은
+    /// 자료이고, 그것을 몇 픽셀로 그릴지는 뷰가 안다.
+    ///
+    /// # 왜 `f32` 가 아니라 정수 천분율인가
+    ///
+    /// 이 구조체는 `Eq` 다 — 프레임이 **바뀌었나**를 값 비교로 판정하는 자리들이 그것을
+    /// 쓴다(`cells != self.plugin_cells` 류). 부동소수를 넣으면 그 파생을 잃고, 잃으면
+    /// «같은 화면인데 매 프레임 다시 그린다»가 조용히 생긴다. 천분율이면 표현이 정확하고
+    /// 막대 한 줄에 그보다 고운 눈금은 뜻이 없다(120px 막대에서 1‰ = 0.12px).
+    ///
+    /// 없으면(`None`) 막대가 없는 줄이다 — 종전 화면은 전부 그렇다.
+    #[serde(default)]
+    pub bar: Option<u16>,
 }
 
 impl PluginRow {
+    /// `until` 까지 남은 시간을 `H:MM:SS` 로. 시각이 없거나 이미 지났으면 `None`.
+    ///
+    /// # 왜 여기서 짓나
+    ///
+    /// 서식이 뷰마다 다르면 같은 판이 클라마다 다른 글자를 보인다. 자리(픽셀·글꼴)는
+    /// 뷰가 정하고 **글자는 여기 한 벌**이라는, 이 파일의 다른 `say_*` 와 같은 경계다.
+    ///
+    /// 지난 시각을 `None` 으로 돌려주는 것이 중요하다 — `0:00:00` 이 굳어 있으면 그것이
+    /// 「지금 리셋된다」로 읽히고, 실은 **실측이 낡았다**는 뜻이다(그 사실은 판의
+    /// 신선도 줄이 따로 말한다).
+    pub fn countdown(&self, now: i64) -> Option<String> {
+        if self.until <= 0 {
+            return None;
+        }
+        let left = self.until - now;
+        if left <= 0 {
+            return None;
+        }
+        let secs = left as u64;
+        Some(format!("{}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60))
+    }
+
     /// 줄의 글 — **말이면** 이 클라의 로케일로, 자료면 그대로.
     pub fn say_label(&self) -> String {
         match self.i18n.get("label") {
@@ -1071,6 +1112,16 @@ pub struct SearchHost {
     pub state: String,
     #[serde(default)]
     pub n: u32,
+    /// 이 상류에서 **숨긴 탭**에 맞은 수(pytmux-404).
+    ///
+    /// remote-detach 로 단일 탭만 보고 있는 자리는 탭바에 없어 목록에 실을 수 없다 — 그러니
+    /// 「없다」가 아니라 **「못 실었다」**다. 그 둘을 구별하지 못하면 사용자는 검색이 전수였다고
+    /// 믿는다(이 저장소가 못박은 규율: *"조용한 누락은 상습 결함"*).
+    #[serde(default)]
+    pub hidden: u32,
+    /// 전체 상한이 먼저 차서 **못 실은** 수. 위와 같은 이유로 센다.
+    #[serde(default)]
+    pub dropped: u32,
 }
 
 /// `search_all` 전체 회신(pytmux-27). 상한·누락 상류는 **본문에** 적는다(테두리
@@ -1144,19 +1195,41 @@ impl SearchResults {
             "원격 {ok}/{total}곳",
             &[("ok", &ok.to_string()), ("total", &self.hosts.len().to_string())],
         );
+        // ★ **답한 곳도 일부를 못 실을 수 있다**(pytmux-404). 종전에는 `state != "ok"` 만
+        //   훑어서 「숨긴 탭 N건」·「상한에 걸려 N건 못 실었다」가 통째로 사라졌다 — 그건
+        //   문구가 아니라 **판정**이다: 「없다」와 「안 봤다」를 가르는 정보이고, 그걸 안 적으면
+        //   사용자는 검색이 전수였다고 믿는다. 정본은 사유를 한 곳에 모아 적는다
+        //   (`SearchResultsScreen.hosts_text` — 한 상류에 사유가 둘 이상일 수 있다).
         let miss: Vec<String> = self
             .hosts
             .iter()
-            .filter(|h| h.state != "ok")
-            .map(|h| {
-                let why = match h.state.as_str() {
-                    "timeout" => "무응답",
-                    "down" => "끊김",
-                    "skipped" => "건너뜀",
-                    "hops" => "홉 상한",
-                    other => other,
-                };
-                format!("{}({})", h.host, why)
+            .filter_map(|h| {
+                let mut why: Vec<String> = Vec::new();
+                if h.state != "ok" {
+                    why.push(
+                        match h.state.as_str() {
+                            "timeout" => "무응답",
+                            "down" => "끊김",
+                            "skipped" => "건너뜀",
+                            "hops" => "홉 상한",
+                            other => other,
+                        }
+                        .to_owned(),
+                    );
+                }
+                if h.hidden > 0 {
+                    why.push(base::i18n::tf(
+                        "숨긴 탭 {n}건",
+                        &[("n", &h.hidden.to_string())],
+                    ));
+                }
+                if h.dropped > 0 {
+                    why.push(base::i18n::tf(
+                        "상한에 걸려 {n}건 못 실었다",
+                        &[("n", &h.dropped.to_string())],
+                    ));
+                }
+                (!why.is_empty()).then(|| format!("{}({})", h.host, why.join(", ")))
             })
             .collect();
         if !miss.is_empty() {
@@ -1270,14 +1343,6 @@ pub struct SessionState {
     ///
     /// **다음 키 하나로 사라진다**(파이썬도 모드라 그렇다) — 그 판정은 뷰가 한다.
     pane_numbers: bool,
-    /// 터치 스크롤바를 쓰나(설정 `touch-scroll`, 기본 켬 — 뷰가 넣는다).
-    touch_scroll: bool,
-    /// 지금 스크롤 모드인가(뷰의 `InputMode` 를 옮겨 받는다).
-    ///
-    /// proto 가 모드를 갖는 것이 아니라 **그 사실을 안다**: 스크롤바는 스크롤 모드에서만
-    /// 그려야 하고(라이브 화면의 마지막 열을 덮으므로), 그리는 자리는 두 뷰가 공유하는
-    /// [`composite`](Self::composite) 다.
-    scroll_mode: bool,
     /// 상태줄에 걸리는 세션 전역 표식들(패리티 G6). 서버가 `status` 에 매번 실어 준다 —
     /// 종전에는 **탭 목록만 꺼내 쓰고 나머지를 버리고 있었다**.
     flags: StatusFlags,
@@ -1291,11 +1356,9 @@ pub struct SessionState {
 }
 
 impl SessionState {
-    /// 새 상태. **`touch_scroll` 만 `true` 로 시작한다** — 설정 기본이 켬이고
-    /// (`base::Config::default`), 뷰가 설정을 읽기 전 한 프레임이라도 꺼져 보이면
-    /// `⇕` 배지가 깜빡인다. 나머지는 `Default` 그대로다(모르는 것은 끈다).
+    /// 새 상태 — 전부 `Default` 그대로다(모르는 것은 끈다).
     pub fn new() -> Self {
-        Self { touch_scroll: true, ..Self::default() }
+        Self::default()
     }
 
     /// 메시지 하나를 반영한다. **화면이 달라졌으면** `true`.
@@ -1671,72 +1734,6 @@ impl SessionState {
     /// 비활성 패널 딤을 켜고 끈다(설정에서 읽은 값을 뷰가 넣는다).
     pub fn set_inactive_dim(&mut self, on: bool, ratio: f32) {
         self.inactive_dim = on.then_some(ratio.clamp(0.0, 0.8));
-    }
-
-    /// 터치 스크롤바를 쓰나(설정 `touch-scroll`). 뷰가 설정에서 읽어 넣는다.
-    pub fn set_touch_scroll(&mut self, on: bool) {
-        self.touch_scroll = on;
-    }
-
-    pub fn touch_scroll(&self) -> bool {
-        self.touch_scroll
-    }
-
-    /// 지금 스크롤 모드인가를 알려 준다(뷰가 모드를 바꿀 때마다 넣는다).
-    pub fn set_scroll_mode(&mut self, on: bool) {
-        self.scroll_mode = on;
-    }
-
-    /// 터치 스크롤바가 차지한 자리 — **없으면 그리지도 안 눌리지도 않는다**.
-    ///
-    /// 조건은 정본(`clientio._composite`)과 같다:
-    /// - 스크롤 모드일 것(라이브 화면의 마지막 열을 덮으므로 평소에는 안 그린다)
-    /// - 설정 `touch-scroll` 이 켜져 있을 것
-    /// - **팝업이 안 떠 있을 것** — 팝업은 스크롤바를 덮어 그린다. 존만 남기면
-    ///   사용자가 보는 것(팝업)과 탭이 하는 일(뒤 패널 스크롤)이 어긋난다
-    /// - 활성 패널이 2칸 이상 넓고, 바를 그릴 만큼(3행) 높을 것
-    ///
-    /// 그리는 쪽과 누르는 쪽이 **같은 함수**를 봐야 좌표가 안 어긋난다 — 정본은 그리기
-    /// 부수효과로 존을 남기는데, 우리는 순수 함수로 두고 양쪽이 부른다.
-    pub fn touch_scroll_zone(&self) -> Option<TouchScrollZone> {
-        if !self.scroll_mode || !self.touch_scroll {
-            return None;
-        }
-        let layout = self.layout.as_ref()?;
-        if layout.popup.is_some() {
-            return None;
-        }
-        let pane = layout.panes.iter().find(|p| p.id == layout.active)?;
-        if pane.w < 2 || (pane.h as usize) < base::scrollbar::MIN_H {
-            return None;
-        }
-        Some(TouchScrollZone {
-            pane: pane.id,
-            x: (pane.x + pane.w - 1) as usize,
-            y: pane.y as usize,
-            h: pane.h as usize,
-        })
-    }
-
-    /// 스크롤바 안 **상대 행** `iy` 를 눌렀을 때 보낼 프레임. 누를 것이 없으면 `None`.
-    ///
-    /// `▲`/`▼` 는 반 화면(PgUp/PgDn 과 같은 양), 트랙은 그 자리로 점프한다. 점프는 절대
-    /// 위치가 아니라 **지금과의 차**를 보낸다 — 그래서 `scr` 을 안 주는 구서버에서도
-    /// 프로토콜 추가 없이 동작한다.
-    pub fn touch_scroll_tap(&self, iy: usize) -> Option<crate::command::Scroll> {
-        let zone = self.touch_scroll_zone()?;
-        let scroll = |delta: i32| {
-            (delta != 0).then(|| crate::command::Scroll::by(delta).for_pane(Some(zone.pane)))
-        };
-        match base::scrollbar::hit(zone.h, iy)? {
-            base::scrollbar::Hit::Up => scroll(base::scrollbar::half_page(zone.h)),
-            base::scrollbar::Hit::Down => scroll(-base::scrollbar::half_page(zone.h)),
-            base::scrollbar::Hit::Jump(frac) => scroll(base::scrollbar::jump_delta(
-                self.pane_top(zone.pane).unwrap_or(0),
-                self.pane_scroll(zone.pane).unwrap_or(0),
-                frac,
-            )),
-        }
     }
 
     /// 패널 번호를 띄우거나 지운다(`prefix q`). 켜졌으면 `true`.
@@ -2126,17 +2123,11 @@ impl SessionState {
         // ⚠ `status_right` 에서 그 토큰들을 지운 사람에게는 **마우스 입구가 사라진다**.
         // 키·팔레트는 남는다(`prefix t` · `clock-mode` · `calendar-mode` · `status`) —
         // 정본도 상태줄 형식을 비우면 그 버튼들이 같이 사라지므로 결이 같다.
-        // 터치 스크롤 `⇕` 는 **설정이 켜져 있을 때만**이다(정본과 같다 — 저쪽은
-        // `touch_scroll and mouse_enabled`). 마우스를 끈 판에서는 누를 수가 없으므로
-        // 자리만 차지한다.
-        if self.touch_scroll {
-            out.push(Badge::TouchScroll);
-        }
         // ★ **알림이 마지막이다**(pytmux-367). 이 목록의 차례는 크롬 포커스(`e_down`)가
         //   도는 차례이고, 그것은 **눈에 보이는 왼→오** 여야 한다. 알림 배지는 정본과
-        //   같이 **우측 무리의 머리**(host·시각·날짜 앞)에 그려지므로, 왼쪽 무리인
-        //   `⇕` 뒤에 온다. 종전에는 이 줄이 맨 앞이었고 그래서 GUI 는 알림을 왼쪽
-        //   무리에 그렸다 — 제보가 지목한 그 갈림이다.
+        //   같이 **우측 무리의 머리**(host·시각·날짜 앞)에 그려지므로 마지막이다.
+        //   종전에는 이 줄이 맨 앞이었고 그래서 GUI 는 알림을 왼쪽 무리에 그렸다 —
+        //   제보가 지목한 그 갈림이다.
         //
         // ⚠ 자리를 옮기는 것은 뷰지만 **차례를 정하는 것은 여기**다: 뷰가 그리는 무리와
         //   포커스가 도는 차례가 갈리면 탭 순서가 화면과 어긋난다.
@@ -2528,24 +2519,6 @@ impl SessionState {
         // 주석은 "정본과 같은 자리"라고 적고 있었지만 커서가 첫 줄일 때만 같았다.
         // 이제 그림은 플러그인이 `plugin_cells` 로 준다(우리는 한/영이라는 **사실**만
         // `client_fact` 로 올린다). 셀 런은 위 plugin_cells 경로가 얹는다.
-        // 터치 스크롤바는 **입력기 배지 뒤**다(정본과 같은 순서). 둘이 같은 자리(활성
-        // 패널 우측 끝)를 쓰는데, 가려도 되는 것은 배지 쪽이다 — 스크롤바에는 **클릭존이
-        // 붙어 있어서**, 보이는 것과 탭이 하는 일이 어긋나면 안 된다.
-        if let Some(zone) = self.touch_scroll_zone() {
-            let bar = base::scrollbar::chars(
-                zone.h,
-                self.pane_top(zone.pane).unwrap_or(0),
-                self.pane_scroll(zone.pane).unwrap_or(0),
-            );
-            let style = crate::style::CellStyle {
-                fg: Some(crate::style::Color::Named(crate::style::NamedColor::BrightBlue)),
-                bold: true,
-                ..Default::default()
-            };
-            for (i, ch) in bar.into_iter().enumerate() {
-                canvas.put(zone.x, zone.y + i, ch, style.clone());
-            }
-        }
         // ★ 플러그인 셀 기여(설계 Tier B · P3) — **테두리를 그린 뒤** 덮는다(먼저
         //   그리면 프레임이 글자 위에 얹힌다). 시계가 이 길로 온다: 우리는 어느 폰트를
         //   고르고 어디에 중앙 정렬하는지 **모른다**. 그건 플러그인 한 벌의 일이고
@@ -2589,6 +2562,20 @@ impl SessionState {
                 // 재료가 안 오면 `say()` 가 서버 글 그대로 돌려준다.
                 let text = run.say();
                 for ch in text.chars() {
+                    // ★ **폭 0 글자는 칸을 안 먹는다**(pytmux-389). 변이 선택자
+                    //   (`U+FE0E`·`U+FE0F`)·ZWJ·결합 표시는 앞 글자에 얹히는 것이라
+                    //   자기 칸이 없다 — 한 칸을 주면 그 글자가 든 **줄 전체가 한 칸씩
+                    //   오른쪽으로 밀리고**(실측: `|⚠ |` 의 `|` 가 4번째 칸), 게다가
+                    //   `put` 이 다음 칸을 그 선택자로 덮어써 뒤 글자가 사라진다.
+                    //
+                    //   ⚠ **여기서 버린다**(칸이 없으니 놓을 자리도 없다). 그 대가로
+                    //   `⚠`+`U+FE0F` 는 셰이퍼에 홀로 들어가 **흑백**으로 그려진다 —
+                    //   색까지 살리려면 `Cell` 이 글자 하나가 아니라 **문자소 군집**을
+                    //   들어야 하고, 그것은 canvas·render·마우스 산수를 함께 옮기는
+                    //   별건이다(pytmux-389 의 «색이 아닌» 나머지 절반).
+                    if crate::compose::char_advance(ch) == 0 {
+                        continue;
+                    }
                     canvas.put(x, run.y as usize, ch, style.clone());
                     x += crate::compose::display_width(&ch.to_string()).max(1);
                 }

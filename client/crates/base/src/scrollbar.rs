@@ -1,20 +1,20 @@
-//! 터치 스크롤바 — **휠을 안 넘겨 주는 단말**에서 스크롤백에 닿는 유일한 길.
+//! **표시용** 스크롤바의 산수 — 지금 보는 자리가 전체 중 어디인가(pytmux-25 · §10-21ⓨ2).
 //!
-//! # 왜 있나
+//! # 무엇을 재나
 //!
-//! 정본이 이 경로를 만든 이유(진단 2026-07-31, iPhone Blink → ssh → MSYS)를 그대로
-//! 옮긴다: 그런 단말에서는 **클릭은 SGR 로 정상 도달하는데 휠은 0건**이다 — 두 손가락
-//! 스와이프를 단말이 자기 스크롤백 UI 로 소비해 버려, 앱이 휠을 받을 방법이 원천적으로
-//! 없다. 그래서 **도달하는 유일한 입력인 탭**으로 스크롤백을 조작한다: 스크롤 모드에서
-//! 활성 패널 오른쪽 끝 한 열에 스크롤바를 그리고, `▲`/`▼` 탭 = 반 화면 위/아래,
-//! 트랙 탭 = 그 자리로 점프.
+//! 트랙을 1.0 으로 봤을 때의 **(썸 시작, 썸 길이)** 뿐이다. 픽셀도 글자도 여기서 안
+//! 정한다 — 캔버스 패널은 테두리 선 위에 얹고([`overlay_fraction`]) 목록 판은 판
+//! 오른쪽에 얹는데([`list_fraction`]), 그 자리는 뷰의 것이고 **산수는 하나**여야 한다.
 //!
-//! # 왜 순수 함수인가
+//! # ⛔ 종전에 여기 있던 «조작용» 스크롤바는 걷었다 (pytmux-377)
 //!
-//! 셀 격자도 소켓도 안 건드린다 — 그래서 정본에서 뽑은 값과 **한 자리씩** 대조할 수 있다
-//! (`tests/scrollbar_conformance.rs` · 픽스처 `scripts/gen_scrollbar_fixture.py`).
-//! 반올림이 세 군데(썸 길이·썸 위치·점프 델타)라 눈으로 옮기면 한 칸씩 어긋난 바가
-//! 나오고, 그건 두 화면을 나란히 놓아야만 보인다.
+//! `▲`/`▼`/트랙을 탭으로 눌러 스크롤하던 열(설정 `touch-scroll` · 상태줄 `⇕` 배지)이
+//! 여기 함께 있었다. **휠을 안 넘겨 주는 단말**을 위해 만든 것이었는데 *"실제로는 잘
+//! 동작하지 않는다"* 는 사용자 판단으로 두 클라에서 같이 지웠다(2026-08-23).
+//! ⛔ **그때 이 파일을 통째로 지우면 안 됐다** — 아래 것은 **다른 물건**이다:
+//! 저것은 칸을 먹고 탭을 받았고, 이것은 칸을 안 먹고 아무것도 안 받는다. 그 갈림을
+//! 이 파일의 옛 주석이 미리 적어 뒀고(*"둘을 한 자리로 합치면 touch-scroll 을 끈
+//! 사람에게 표시까지 사라진다"*), 이번 삭제가 정확히 그 경고가 겨눈 상황이었다.
 //!
 //! # 좌표계
 //!
@@ -22,117 +22,14 @@
 //! `scroll`(라이브에서 위로 올라간 행수). 위로 더 갈 수 있는 최대치는 `top + scroll`,
 //! 전체 행수는 `top + h + scroll`.
 
-/// 위 화살표.
-pub const UP: char = '▲';
-/// 아래 화살표.
-pub const DOWN: char = '▼';
-/// 트랙(썸이 없는 자리).
-pub const TRACK: char = '│';
-/// 썸(지금 보고 있는 구간).
-pub const THUMB: char = '█';
-/// `▲` + 트랙 한 칸 + `▼` 미만이면 그리지 않는다.
+/// 막대를 그릴 최소 높이 — 그 아래로는 한 칸짜리 막대라 자리만 차지한다.
 pub const MIN_H: usize = 3;
-
-/// 스크롤바 한 열의 글자들(길이 `h`). 높이가 [`MIN_H`] 미만이면 빈 벡터(미표시).
-///
-/// 썸 길이 = 트랙 × (보이는 `h` / 전체), 위치는 아래에서부터 `scroll` 비율이다.
-pub fn chars(h: usize, top: usize, scroll: usize) -> Vec<char> {
-    if h < MIN_H {
-        return Vec::new();
-    }
-    let n = h - 2; // 화살표 두 칸을 뺀 트랙 길이
-    let max_scroll = top + scroll;
-    let total = max_scroll + h;
-    let thumb = if total > 0 {
-        (round_half_away(n as f64 * h as f64 / total as f64)).clamp(1, n as i64) as usize
-    } else {
-        n
-    };
-    // frac: 0.0 = 맨 위(스크롤 최대) … 1.0 = 맨 아래(라이브). 스크롤백이 없으면 썸이
-    // 트랙 전체라 위치는 뜻이 없다(0 으로 고정).
-    let frac = if max_scroll == 0 {
-        0.0
-    } else {
-        1.0 - scroll as f64 / max_scroll as f64
-    };
-    let start = round_half_away((n - thumb) as f64 * frac).clamp(0, (n - thumb) as i64) as usize;
-    let mut out = Vec::with_capacity(h);
-    out.push(UP);
-    for i in 0..n {
-        out.push(if i >= start && i < start + thumb { THUMB } else { TRACK });
-    }
-    out.push(DOWN);
-    out
-}
-
-/// 스크롤바 안에서 누른 자리가 무엇인가.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Hit {
-    /// `▲` — 반 화면 위로.
-    Up,
-    /// `▼` — 반 화면 아래로.
-    Down,
-    /// 트랙 — 그 자리로 점프(`0.0` = 맨 위 … `1.0` = 맨 아래).
-    Jump(f64),
-}
-
-/// 스크롤바 안 **상대 행** `iy` → 조작. 범위 밖이거나 미표시면 `None`.
-pub fn hit(h: usize, iy: usize) -> Option<Hit> {
-    if h < MIN_H || iy >= h {
-        return None;
-    }
-    if iy == 0 {
-        return Some(Hit::Up);
-    }
-    if iy == h - 1 {
-        return Some(Hit::Down);
-    }
-    let n = h - 2;
-    Some(Hit::Jump(if n > 1 { (iy - 1) as f64 / (n - 1) as f64 } else { 0.0 }))
-}
-
-/// 트랙 탭이 요구하는 스크롤 델타(+위 / -아래) — `scroll` 프레임에 그대로 넣는다.
-///
-/// 절대 위치 명령을 새로 만들지 않고 **지금 위치와의 차**로 옮긴다. 그래서 `scr` 을 안
-/// 보내는 구서버(→ `scroll = 0`)에서도 프로토콜 추가 없이 동작한다(정확도만 떨어진다).
-pub fn jump_delta(top: usize, scroll: usize, frac: f64) -> i32 {
-    let max_scroll = (top + scroll) as f64;
-    (round_half_away((1.0 - frac) * max_scroll) - scroll as i64) as i32
-}
-
-/// `▲`/`▼` 한 번이 옮기는 양 — 반 화면(PgUp/PgDn 과 같다). 최소 1.
-pub fn half_page(h: usize) -> i32 {
-    (h / 2).max(1) as i32
-}
-
-/// 파이썬 `round()` 는 **짝수로 반올림**(banker's)이지만 정본이 넣는 값에서 `.5` 가
-/// 나오는 경우가 실제로 있다(트랙 길이가 짝수이고 비율이 정확히 절반일 때) — 거기서
-/// 갈리면 썸이 한 칸 어긋난다. 그래서 반올림 규칙을 **픽스처로 확인**하고 맞춘다.
-///
-/// 확인 결과 정본과 어긋나는 경우가 나오면 이 함수를 바꾼다(테스트가 먼저 운다).
-fn round_half_away(v: f64) -> i64 {
-    // Rust 의 `f64::round` 는 half-away-from-zero, 파이썬은 half-to-even 이다.
-    // 픽스처 대조가 이 선택을 검증한다 — 여기서 갈리면 `scrollbar_conformance` 가 운다.
-    let floor = v.floor();
-    let diff = v - floor;
-    if (diff - 0.5).abs() < f64::EPSILON {
-        // 정확히 .5 — 파이썬과 같이 **짝수 쪽**으로.
-        let f = floor as i64;
-        if f % 2 == 0 { f } else { f + 1 }
-    } else {
-        v.round() as i64
-    }
-}
 
 /// **표시용** 스크롤바 — 지금 보는 자리가 전체 중 어디인가(§10-21ⓨ2).
 ///
-/// # 위 [`chars`] 와 무엇이 다른가 (섞으면 안 된다)
+/// # 칸을 안 먹는다
 ///
-/// 저것은 **조작**이다 — 휠을 못 받는 단말을 위해 활성 패널 오른쪽 끝 **한 열을 먹고**
-/// 탭을 받는다(설정 `touch-scroll` 과 한 벌). 제보가 말하는 것은 **표시**이고, 자리도
-/// 칸이 아니라 **외곽선 위**다. 둘을 한 자리로 합치면 touch-scroll 을 끈 사람에게 표시까지
-/// 사라진다.
-///
+/// 제보(pytmux-25)가 말한 것은 **표시**이고, 자리도 칸이 아니라 **외곽선 위**다.
 /// GUI 는 테두리를 실제 선으로 그리므로(N8) 칸을 안 먹고 선 위에 얹을 수 있다 —
 /// 캔버스 격자를 안 건드리니 서버에 보고하는 행·열도 안 바뀐다.
 ///
@@ -155,10 +52,29 @@ pub fn overlay_fraction(h: usize, top: usize, scroll: usize) -> Option<(f64, f64
     let total = max_scroll + h;
     // 썸 길이 = 보이는 만큼의 비율. 너무 짧으면 안 보이므로 하한을 둔다.
     let len = (h as f64 / total as f64).clamp(MIN_THUMB, 1.0);
-    // 0.0 = 맨 위(스크롤 최대) … 1.0 = 맨 아래(라이브). `chars` 와 같은 셈이다.
+    // 0.0 = 맨 위(스크롤 최대) … 1.0 = 맨 아래(라이브).
     let frac = 1.0 - scroll as f64 / max_scroll as f64;
     let start = (1.0 - len) * frac;
     Some((start.clamp(0.0, 1.0 - len), len))
+}
+
+/// **목록 판**의 표시용 막대 — 보이는 줄 `visible` / 전체 `total` / 창의 첫 줄 `first`.
+///
+/// # 왜 [`overlay_fraction`] 을 다시 안 적나
+///
+/// 두 자리는 좌표계만 다르고 산수는 하나다. 캔버스 쪽은 「위로 얼마나 올라갔나」
+/// (`top`·`scroll`)로 말하고 목록은 「창의 첫 줄이 몇 번째인가」(`first`)로 말한다 —
+/// 옮겨 담는 규칙이 아래 세 줄이고, 그것만 여기 두면 반올림·하한(`MIN_THUMB`)·
+/// 「그릴 것이 없다」 판정이 저쪽과 **영영 같다**. 한 벌 더 적으면 갈리는 날 조용하다.
+///
+/// 「위로 갈 수 있는 최대치」가 곧 안 보이는 줄 수(`total - visible`)이고, 그중 이미
+/// 내려온 만큼이 `first` 이므로 남은 것(= `scroll`)은 `hidden - first` 다.
+///
+/// 다 보이면(`total <= visible`) `None` — 늘 꽉 찬 막대는 아무 말도 안 한다.
+pub fn list_fraction(visible: usize, total: usize, first: usize) -> Option<(f64, f64)> {
+    let hidden = total.checked_sub(visible)?;
+    let first = first.min(hidden);
+    overlay_fraction(visible, first, hidden - first)
 }
 
 /// 표시용 썸의 **최소 길이**(트랙 대비). 스크롤백이 아주 길면 비율이 0 에 수렴해
@@ -169,26 +85,6 @@ pub const MIN_THUMB: f64 = 0.06;
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_short_pane_gets_no_bar() {
-        assert!(chars(2, 0, 0).is_empty(), "높이 2 는 미표시다");
-        assert_eq!(chars(3, 0, 0).len(), 3);
-        assert_eq!(hit(2, 0), None);
-    }
-
-    #[test]
-    fn the_thumb_fills_the_track_without_scrollback() {
-        let bar: String = chars(5, 0, 0).into_iter().collect();
-        assert_eq!(bar, "▲███▼", "스크롤백이 없으면 썸이 트랙 전체다");
-    }
-
-    #[test]
-    fn the_arrows_move_half_a_page() {
-        assert_eq!(half_page(10), 5);
-        assert_eq!(half_page(1), 1, "0 이 되면 탭이 아무 일도 안 한다");
-    }
-
-    /// 점프는 **차이**로 옮긴다 — 맨 위를 누르면 지금 스크롤만큼 더 올라간다.
     // ── 표시용 막대(§10-21ⓨ2) ────────────────────────────────────────────────
 
     #[test]
@@ -225,10 +121,31 @@ mod tests {
         }
     }
 
+    // ── 목록 판의 막대(pytmux-374 ⑴) ────────────────────────────────────────
+
     #[test]
-    fn a_jump_is_a_difference_not_a_position() {
-        assert_eq!(jump_delta(100, 0, 0.0), 100, "맨 위로 = 100줄 위로");
-        assert_eq!(jump_delta(100, 0, 1.0), 0, "이미 맨 아래면 움직일 것이 없다");
-        assert_eq!(jump_delta(50, 50, 1.0), -50, "맨 아래로 = 올라간 만큼 내려온다");
+    fn a_list_that_fits_gets_no_bar() {
+        // 다 보이면 그릴 것이 없다 — 「스크롤할 수 있다」는 거짓말을 안 한다.
+        assert_eq!(list_fraction(40, 34, 0), None);
+        assert_eq!(list_fraction(34, 34, 0), None);
+    }
+
+    #[test]
+    fn the_list_thumb_walks_from_top_to_bottom() {
+        // 첫 줄이 0 이면 맨 위, 끝까지 내려가면 맨 아래다(캔버스 쪽과 같은 규약).
+        let (start, len) = list_fraction(6, 34, 0).expect("막대");
+        assert!(start.abs() < 1e-9, "맨 위가 아니다: {start}");
+        let (start, _) = list_fraction(6, 34, 28).expect("막대");
+        assert!((start + len - 1.0).abs() < 1e-9, "끝인데 바닥이 아니다: {start} {len}");
+        // 창의 첫 줄이 안 보이는 줄 수를 넘겨도 바닥에서 멈춘다(뷰가 넘겨 줄 수 있다).
+        assert_eq!(list_fraction(6, 34, 999), list_fraction(6, 34, 28));
+    }
+
+    #[test]
+    fn the_list_thumb_never_runs_past_the_track() {
+        for first in 0..=28 {
+            let (start, len) = list_fraction(6, 34, first).expect("막대");
+            assert!(start >= 0.0 && start + len <= 1.0 + 1e-9, "{first}: {start}+{len}");
+        }
     }
 }

@@ -249,7 +249,7 @@ impl Element for ShimmeringTextElement {
             ctx.scene,
         );
         // Record the source string for the headless drawing oracle (Scene::record_text).
-        ctx.scene.record_text(&self.text, bounds);
+        ctx.scene.record_text(&self.text, bounds, self.base_color);
     }
 
     fn size(&self) -> Option<Vector2F> {

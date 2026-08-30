@@ -36,7 +36,8 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     REMOTE_PINK, REMOTE_PINK_DIM,
     _BOX_BITS, _BOX_REV, _JAMO, _KEY_DIAG,
     _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE,
-    _char_cells, _client_relaunch_ok, _darken_style, _dim_inactive_style,
+    _char_advance, _char_cells, _client_relaunch_ok, _darken_style,
+    _dim_inactive_style,
     _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
     _signed_int, _with_reverse,
     has_hangul, hangul_to_qwerty,
@@ -391,7 +392,7 @@ class _InputMixin:
             self.exit(message="detached")
         elif k == "left_square_bracket" or ch == "[":
             self.mode = "scroll"
-            self.status.refresh()   # ⇕ 배지가 곧 모드 표시(touch-scroll) — 즉시 반영
+            self.status.refresh()   # 모드가 바뀌었으니 상태줄을 즉시 다시 그린다
         elif k == "right_square_bracket" or ch == "]":
             self.send_cmd("paste_buffer", index=0)
         elif k == "equals_sign" or ch == "=":
@@ -804,7 +805,7 @@ class _InputMixin:
         elif k in ("q", "escape", "enter"):
             self.send_scroll(aid, bottom=True)
             self.mode = "normal"
-            self.status.refresh()   # ⇕ 배지 강조 해제(모드 표시 동기화)
+            self.status.refresh()   # 모드가 바뀌었으니 상태줄을 다시 그린다
 
 
 class _RenderMixin:
@@ -897,7 +898,30 @@ class _RenderMixin:
                     for chh in text:
                         if cx - p["x"] >= p["w"]:
                             break
-                        wch = _char_cells(chh)
+                        # ★ **폭 0 글자는 칸을 안 먹는다**(pytmux-389). 변이 선택자
+                        #   (U+FE0E·U+FE0F)·ZWJ·결합 표시는 앞 글자에 얹히는 것이라
+                        #   자기 칸이 없다 — 한 칸을 주면 그 글자가 든 **줄 전체가 한
+                        #   칸씩 오른쪽으로 밀린다**(러스트 클라에서 프레임으로 실측:
+                        #   `|⚠ |` 의 닫는 `|` 가 4번째 칸).
+                        #
+                        #   ★ **이제 앞 칸에 얹는다**(pytmux-407 — 389 의 나머지 절반).
+                        #   종전에는 버렸고, 그 대가로 `⚠`+U+FE0F 가 셰이퍼에 홀로 가
+                        #   **흑백**으로 그려졌다. 얹으면 셀의 글이 두 글자가 되는데,
+                        #   그것을 받는 폭 함수는 `cellwidth.cluster_cells` 로 옮겼다
+                        #   (`char_cells` 는 러스트와 값이 같아야 하는 계약이라 못 건드린다).
+                        #   ⛔ 얹을 앞 칸이 없으면(줄 첫 글자) 버린다 — 놓을 자리가 없다.
+                        wch = _char_advance(chh)
+                        if wch == 0:
+                            at = cx - 1
+                            if at >= 0 and 0 <= gy < H:
+                                # 넓은 글자의 **본체**에 얹는다(연속 칸이 아니라) —
+                                # 연속 칸에 얹으면 렌더가 그 칸을 건너뛰어 사라진다.
+                                if cells[gy][at][0] == "" and at > 0:
+                                    at -= 1
+                                if 0 <= at < W:
+                                    prev_ch, prev_st = cells[gy][at]
+                                    cells[gy][at] = (prev_ch + chh, prev_st)
+                            continue
                         # §2.10: 비활성(딤) 패널의 **컬러 이모지**는 터미널이 셀
                         # 전경색을 무시하고 자체 색 글리프로 그려 안 어두워진다 →
                         # dim 패널에 한해 **폭 보존 중간점(·)**으로 치환해 함께 어둡게
@@ -1094,40 +1118,6 @@ class _RenderMixin:
         # Claude Code 콘텐츠-레이어 장식(footer 클릭존 스캔)·플러그인 오버레이는
         # client_render 훅이 그린다(없으면 no-op — delete-to-disable).
         self.plugins.client_render(self, cells, W, H)
-        # 터치 스크롤바(touch-scroll, 기본 on): 스크롤 모드에서 활성 패널 오른쪽 끝
-        # 한 열에 세로 스크롤바를 그리고 클릭존을 남긴다. **휠을 앱에 안 넘기는
-        # 터미널**(iPhone Blink 등 — 스와이프를 자기 스크롤백으로 소비, 진단
-        # 2026-07-31)에서 도달하는 유일한 입력이 탭이라 만든 경로다. 콘텐츠 마지막
-        # 열을 덮으므로 **스크롤 모드에서만** 그린다(라이브 화면은 불변).
-        # **플러그인 렌더 뒤**에 그린다 — IME 배지가 같은 자리(활성 패널 우측 끝)를
-        # 쓰는데, 클릭존이 있는 쪽(스크롤바)이 가려지면 탭 좌표와 보이는 것이 어긋난다.
-        # 반대로 패널 전체를 덮는 오버레이(시계/달력)·탭닫기 [x] 는 뒤에 그려 이긴다.
-        # 라이브 PTY 팝업(display-popup)이 떠 있으면 **그리지도 존을 남기지도 않는다**
-        # — 팝업은 아래(⑥)에서 그려 스크롤바를 덮는데, 클릭존만 남으면 사용자가 보는
-        # 것(팝업)과 탭이 하는 일(뒤 패널 스크롤)이 어긋난다.
-        self._touch_scroll_zone = None
-        if (self.mode == "scroll" and self.touch_scroll and self.mouse_enabled
-                and not self.layout.get("popup")):
-            ap = next((p for p in self.layout.get("panes", [])
-                       if p["id"] == active), None)
-            # 패널을 통째로 덮는 오버레이(시계·달력)도 팝업과 **같은 이유**로 막는다:
-            # 아래 `client_overlay` 가 그 위에 그려 스크롤바를 가리므로, 존만 남으면
-            # 사용자가 보는 것(오버레이)과 탭이 하는 일(뒤 패널 스크롤)이 어긋난다.
-            # 오버레이는 코어가 아니라 **플러그인이 아는 사실**이라 훅으로 묻는다
-            # (검수 2026-07-31 §5 가 "조회 API 가 없다"로 유보한 자리 — API 를 냈다).
-            if ap and self.plugins.client_overlay_covers(self, ap["id"]):
-                ap = None
-            if ap and ap["w"] >= 2:
-                bar = clientrender.scrollbar_chars(
-                    ap["h"], self.pane_top.get(ap["id"], 0),
-                    self.pane_scroll.get(ap["id"], 0))
-                if bar:
-                    bx = ap["x"] + ap["w"] - 1
-                    st = Style(color=theme_color(self, "primary"), bold=True)
-                    for i, chb in enumerate(bar):
-                        clientrender.put_cell(cells, bx, ap["y"] + i, chb,
-                                              st, W, H)
-                    self._touch_scroll_zone = (ap["id"], bx, ap["y"], ap["h"])
         # 현재 탭 닫기 [x]: 활성 패널 상단 테두리 행 우측(2026-06-13 한 칸 위로)
         self._draw_tab_close(cells, W, H)
         # 패널 오버레이(시계/달력 등, 패널 전체 덮기·뒤 화면 dim) — clock·calendar
@@ -1286,7 +1276,18 @@ class _RenderMixin:
                         for chh in text:
                             if gx - pcx >= pcw:
                                 break
-                            wch = _char_cells(chh)
+                            # 폭 0 은 칸을 안 먹고 **앞 칸의 글자에 얹힌다**
+                            # (pytmux-407 · 위 본문 루프와 같은 규칙 — 까닭도 거기 있다).
+                            wch = _char_advance(chh)
+                            if wch == 0:
+                                at = gx - 1
+                                if at >= 0 and 0 <= gy < H:
+                                    if cells[gy][at][0] == "" and at > 0:
+                                        at -= 1
+                                    if 0 <= at < W:
+                                        prev_ch, prev_st = cells[gy][at]
+                                        cells[gy][at] = (prev_ch + chh, prev_st)
+                                continue
                             if 0 <= gx < W:
                                 cells[gy][gx] = (chh, s)
                             if wch == 2 and 0 <= gx + 1 < W and \
