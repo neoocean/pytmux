@@ -207,6 +207,71 @@ async def test_the_c_key_types_a_cd_too():
         assert target in typed and typed.endswith("\r"), typed
 
 
+async def test_a_swallowed_send_says_why_instead_of_going_quiet():
+    """★ 못 넣었으면 **말한다**(pytmux-417 ③ⓐ).
+
+    가드 셋(패널 없음 · pty 없음 · `OSError`)은 전부 조용해서, 걸리면 사용자에게는
+    「Enter 를 눌렀는데 아무 일도 안 남」으로 보인다 — [[pytmux-173]] 이 남긴 것과 **글자
+    그대로 같은 그림**인데 트레이스백조차 없어 로그에도 단서가 없다. 실제로 제보
+    (2026-08-30)를 받고도 세 갈래 중 어느 것인지 소스만으로 못 갈랐다.
+    ⛔ **터지면 안 된다** — 여기서 예외를 올리면 판까지 안 닫힌다(173 이 겪은 자리).
+    """
+    class _Server:
+        def __init__(self):
+            self.logged = []
+
+        def _log_error(self, where, detail=""):
+            self.logged.append((where, detail))
+
+    class _Boom:
+        def write(self, _data):
+            raise OSError("EIO")
+
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        target = os.path.join(td, "a")
+
+        for label, pane, hint in (
+                ("pty 가 없다", _pane_without_pty(), "pty"),
+                ("write 가 거절한다", _pane_with(_Boom()), "EIO"),
+        ):
+            server = _Server()
+            resp = PLUGIN.plugin_screen(
+                server, _Sess(pane),
+                {"id": "ncd", "do": "into", "row": 0, "input": target, "state": {}},
+            )
+            assert resp["t"] == "plugin_screen_close", f"{label}: 판이 안 닫혔다 — {resp}"
+            assert server.logged, f"{label}: 조용히 삼켰다 — 로그가 비었다"
+            where, detail = server.logged[-1]
+            assert where == "ncd_send_to_pane", (label, where)
+            assert hint in detail, f"{label}: 이유를 안 적었다 — {detail!r}"
+            assert target in detail, f"{label}: 넣으려던 글자를 안 적었다 — {detail!r}"
+
+    # ⚠ **성공한 회차는 조용해야 한다** — 안 그러면 이 로그가 곧 잡음이 되고,
+    #    잡음이 된 로그는 다음 사람이 안 읽는다(위양성 쪽도 함께 잰다).
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        server = _Server()
+        PLUGIN.plugin_screen(
+            server, _Sess(_Pane()),
+            {"id": "ncd", "do": "into", "row": 0,
+             "input": os.path.join(td, "a"), "state": {}},
+        )
+        assert not server.logged, f"멀쩡히 넣고도 로그를 남겼다: {server.logged}"
+
+
+def _pane_without_pty():
+    p = _Pane()
+    p.pty = None
+    return p
+
+
+def _pane_with(pty):
+    p = _Pane()
+    p.pty = pty
+    return p
+
+
 async def test_an_into_survives_a_pane_without_a_pty():
     """`pane.pty` 는 `None` 일 수 있다(`model.py` 의 `self.pty = None` · `reinit` 직후).
     거기서 터지면 `plugin_screen_close` 가 안 나가서 **화면이 안 닫힌다** — 오타 때와

@@ -278,14 +278,35 @@ class _NcdPlugin:
         ⛔ **가짜를 `pane` 에 달아 재지 마라** — 그것이 이 결함을 살려 둔 길이다
         (`tests/test_ncd_tree.py` §`_Pane` · 전수 오라클은
         `tests/test_pane_write_typo.py`).
+
+        ★ **못 넣었으면 «말한다»**(pytmux-417 ③ⓐ). 가드 셋(패널 없음 · pty 없음 ·
+        `OSError`)은 전부 조용해서, 걸리면 사용자에게는 **「Enter 를 눌렀는데 아무 일도
+        안 남」**으로 보인다 — pytmux-173 이 남긴 것과 **글자 그대로 같은 그림**인데
+        이번엔 트레이스백조차 없어 로그에도 단서가 없다. 그래서 제보(2026-08-30
+        「경로에서 엔터를 눌러도 프롬프트에 cd 가 안 생긴다」)를 받고도 세 갈래 중
+        어느 것인지 **소스만으로는 못 갈랐다**.
+        ⛔ 고치는 것이 아니라 **세고 적는다** — 여기서 예외를 올리면 `plugin_screen`
+        이 죽어 판까지 안 닫힌다(173 이 겪은 그 자리다).
         """
         win = sess.active_window if sess else None
         pane = win.active_pane if win else None
+        why = ""
         try:
-            if pane is not None and pane.pty is not None:
+            if pane is None:
+                why = "활성 패널이 없다"
+            elif pane.pty is None:
+                why = "패널에 pty 가 없다(reinit 직후이거나 죽은 패널)"
+            else:
                 pane.pty.write(text.encode("utf-8", "replace"))
-        except OSError:
-            pass
+        except OSError as e:
+            why = f"pty.write 가 거절했다: {e!r}"
+        if why:
+            log = getattr(server, "_log_error", None)
+            if log:
+                # 예외 없는 진단 로그다 — 스위트의 error.log 만능가드는 트레이스백만
+                # 세므로 이 줄은 초록을 안 깬다(루트 CLAUDE.md §서버 예외 만능가드).
+                log("ncd_send_to_pane", f"{why} · 넣으려던 글자: {text!r}")
+        return not why
 
     # ---- 트리(pytmux-11 B) --------------------------------------------------
     #
