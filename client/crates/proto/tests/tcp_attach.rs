@@ -20,8 +20,16 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("pytmux-tcp-test-{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        // ⛔ **고정 경로를 쓰지 않는다**(pytmux-424) — 같은 기계에서 `cargo test` 가
+        //    둘 돌면 뒤엣것의 `remove_dir_all` 이 앞엣것의 트리를 **런 도중에** 지우고,
+        //    그 증상은 엉뚱한 자리의 패닉이라 「부하 플레이크」로 읽힌다.
+        let dir = std::env::temp_dir().join(format!(
+            "pytmux-tcp-test-{name}-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         Self(dir)
     }

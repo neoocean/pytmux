@@ -25,6 +25,22 @@ fn windows_rules() -> Rules {
     }
 }
 
+/// 런마다 **제 몫의** 디렉터리(pytmux-424).
+///
+/// ⛔ 종전에는 이름이 `pytmux-endpoint-test` 로 고정이라 **같은 포트파일 한 장**을 두
+/// 런이 나눠 썼다 — 한쪽이 `remove_file` 로 지운 찰나에 다른 쪽이 `looks_live()` 를
+/// 물으면 「포트파일이 없으면 서버가 없다」가 거짓으로 뒤집힌다. 혼자 돌리면 안 나므로
+/// 「부하 플레이크」로 읽히는 부류다.
+fn scratch(name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "pytmux-{name}-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
 #[test]
 fn unix_prefers_xdg_and_falls_back_to_tmp() {
     let rules = Rules {
@@ -121,7 +137,7 @@ fn windows_pytmux_home_also_goes_under_state() {
 fn a_live_looking_endpoint_is_decided_by_a_file_not_by_connecting() {
     // Windows 루프백에서 죽은 포트로 connect 하면 즉시 거절이 아니라 타임아웃까지
     // 매달린다(방화벽이 SYN 을 조용히 버린다) — 그래서 파일로 판정한다.
-    let dir = std::env::temp_dir().join("pytmux-endpoint-test");
+    let dir = scratch("endpoint-test");
     let _ = std::fs::create_dir_all(&dir);
     let portfile = dir.join("default.port");
     let _ = std::fs::remove_file(&portfile);
@@ -152,7 +168,7 @@ fn an_explicit_port_needs_no_portfile() {
 
 #[test]
 fn junk_in_the_portfile_is_not_a_port() {
-    let dir = std::env::temp_dir().join("pytmux-endpoint-junk");
+    let dir = scratch("endpoint-junk");
     let _ = std::fs::create_dir_all(&dir);
     let portfile = dir.join("default.port");
     std::fs::write(&portfile, "서버가 죽으며 남긴 쓰레기").unwrap();

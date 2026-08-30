@@ -9,11 +9,49 @@ use std::path::PathBuf;
 use claude::discover::Watcher;
 use claude::{ItemKind, ToolState, encode_project_dir};
 
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("pytmux-claude-test-{name}"));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+/// 런마다 **제 몫의** 디렉터리. 블록을 벗어나면 자기가 만든 것만 지운다.
+///
+/// ⛔ **고정 경로를 쓰지 않는다**(pytmux-424). 종전에는 이름이
+/// `pytmux-claude-test-{name}` 로 고정이고 만들기 전에 `remove_dir_all` 을 쳤다 —
+/// 같은 기계에서 `cargo test` 가 둘 돌면 뒤엣것이 앞엣것의 트리를 **런 도중에**
+/// 지운다. 그때 터지는 자리는 지운 자리가 아니라 엉뚱한 인덱스라(실측 2026-08-30:
+/// `watcher.items()[1]` 패닉 둘) 혼자 돌리면 10/10 통과이고, 그래서 「부하
+/// 플레이크」로 읽힌다. pid 가 프로세스를 가르고 일련번호가 한 프로세스 안의
+/// 시험들을 가른다.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "pytmux-claude-test-{name}-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+    fn path(&self) -> PathBuf {
+        self.0.clone()
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = PathBuf;
+    fn deref(&self) -> &PathBuf {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn scratch(name: &str) -> Scratch {
+    Scratch::new(name)
 }
 
 fn write(path: &PathBuf, lines: &[&str]) {
@@ -32,7 +70,7 @@ fn finds_the_transcript_for_a_working_directory() {
     fs::create_dir_all(&dir).unwrap();
     write(&dir.join("session.jsonl"), &[PROMPT]);
 
-    let mut watcher = Watcher::new(Some(root));
+    let mut watcher = Watcher::new(Some(root.path()));
     assert!(watcher.set_cwd(cwd));
     assert!(watcher.refresh(), "첫 읽기는 변화다");
     assert_eq!(watcher.items().len(), 1);
@@ -42,7 +80,8 @@ fn finds_the_transcript_for_a_working_directory() {
 #[test]
 fn an_unknown_directory_is_simply_empty() {
     // Claude 를 안 쓰는 패널에서는 아무 일도 일어나지 않아야 한다.
-    let mut watcher = Watcher::new(Some(scratch("unknown")));
+    let root = scratch("unknown");
+    let mut watcher = Watcher::new(Some(root.path()));
     watcher.set_cwd("/nowhere");
     assert!(!watcher.refresh());
     assert!(watcher.items().is_empty());
@@ -57,7 +96,7 @@ fn unchanged_file_is_not_reparsed() {
     fs::create_dir_all(&dir).unwrap();
     write(&dir.join("s.jsonl"), &[PROMPT]);
 
-    let mut watcher = Watcher::new(Some(root));
+    let mut watcher = Watcher::new(Some(root.path()));
     watcher.set_cwd(cwd);
     assert!(watcher.refresh());
     assert!(
@@ -75,7 +114,7 @@ fn appended_lines_show_up_and_resolve_the_running_tool() {
     let file = dir.join("s.jsonl");
     write(&file, &[PROMPT, TOOL]);
 
-    let mut watcher = Watcher::new(Some(root));
+    let mut watcher = Watcher::new(Some(root.path()));
     watcher.set_cwd(cwd);
     watcher.refresh();
     assert_eq!(watcher.items()[1].state(), Some(ToolState::Running));
@@ -94,7 +133,7 @@ fn a_newer_session_file_takes_over() {
     fs::create_dir_all(&dir).unwrap();
     write(&dir.join("old.jsonl"), &[PROMPT]);
 
-    let mut watcher = Watcher::new(Some(root.clone()));
+    let mut watcher = Watcher::new(Some(root.path()));
     watcher.set_cwd(cwd);
     watcher.refresh();
     assert!(watcher.path().unwrap().ends_with("old.jsonl"));
@@ -149,7 +188,7 @@ fn appending_one_line_does_not_reread_the_whole_file() {
     let size = fs::metadata(&file).unwrap().len();
     assert!(size > 900_000, "표본이 충분히 커야 차이가 보인다: {size}");
 
-    let mut watcher = Watcher::new(Some(root));
+    let mut watcher = Watcher::new(Some(root.path()));
     watcher.set_cwd(cwd);
     assert!(watcher.refresh());
     let after_first = watcher.bytes_read();
@@ -180,7 +219,7 @@ fn a_half_written_last_line_is_not_lost() {
     let file = dir.join("s.jsonl");
 
     fs::write(&file, format!("{PROMPT}\n{}", &TOOL[..30])).unwrap();
-    let mut watcher = Watcher::new(Some(root));
+    let mut watcher = Watcher::new(Some(root.path()));
     watcher.set_cwd(cwd);
     watcher.refresh();
     assert_eq!(watcher.items().len(), 1, "반쪽 줄은 아직 항목이 아니다");
@@ -202,7 +241,7 @@ fn a_rewritten_tail_forces_a_full_reread() {
     let file = dir.join("s.jsonl");
     write(&file, &[PROMPT, TOOL]);
 
-    let mut watcher = Watcher::new(Some(root));
+    let mut watcher = Watcher::new(Some(root.path()));
     watcher.set_cwd(cwd);
     watcher.refresh();
     assert_eq!(watcher.items()[1].title, "ls");

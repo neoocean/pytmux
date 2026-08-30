@@ -2188,7 +2188,11 @@ fn harness() -> (SessionView, std::sync::mpsc::Sender<LinkEvent>, Sent) {
     // ★ 설정 쓰기를 **사물함으로 돌린다**(맨 처음 한 번만 먹는다). 액션 축 오라클이
     //   액션 전수를 먹이는데 그중 몇은 설정 파일을 고친다 — 안 돌리면 `cargo test` 가
     //   돌린 사람의 진짜 config 를 고친다(글자 배율은 다음 기동에 눈에 보인다).
-    base::config::redirect_writes(std::env::temp_dir().join("pytmux-gui-test-config"));
+    // ⛔ **이 자리도 런마다 제 몫이어야 한다**(pytmux-424) — 이름이 고정이면 같은
+    //    기계에서 도는 두 `cargo test` 가 **같은 설정 파일 한 장**에 함께 쓴다.
+    base::config::redirect_writes(
+        std::env::temp_dir().join(format!("pytmux-gui-test-config-{}", std::process::id())),
+    );
     let (link, tx, sent) = ServerLink::detached("/tmp/test.sock");
     // 글꼴은 값 하나다 — 그리지 않는 테스트에서는 어느 id 든 상관없다.
     (
