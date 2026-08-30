@@ -523,7 +523,7 @@ class ServerPersistMixin:
         if relaunch_clients:
             note["relaunch"] = True
         for c in list(self.clients):
-            asyncio.create_task(self._send_to(c, dict(note)))
+            self._spawn(self._send_to(c, dict(note)), "persist_notice")
         # 비-PTY fd(캡처 파일 등) 정리 — 새 이미지가 다시 연다. master fd 는 보존.
         self.plugins.server_shutdown(self)   # REC 캡처 파일 닫기 등(plugins/rec)
         argv = proc.server_argv(self.sock_path) + ["--resume",
@@ -556,7 +556,7 @@ class ServerPersistMixin:
         if relaunch_clients:
             note["relaunch"] = True
         for c in list(self.clients):
-            asyncio.create_task(self._send_to(c, dict(note)))
+            self._spawn(self._send_to(c, dict(note)), "persist_notice")
         argv = proc.server_argv(self.sock_path) + ["--resume",
                                                    self.resume_state_path]
         proc.spawn_detached(argv)
@@ -580,7 +580,7 @@ class ServerPersistMixin:
                     pass
         if self._pty_host is not None:
             # 연결만 닫는다(close_pane 아님!) — 패널은 host 가 계속 소유한다.
-            asyncio.create_task(self._pty_host.close())
+            self._spawn(self._pty_host.close(), "ptyhost_close")
         self._unlink_sock_if_mine()
         if self.loop:
             self.loop.stop()

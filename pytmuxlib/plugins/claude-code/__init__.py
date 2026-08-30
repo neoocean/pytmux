@@ -1246,9 +1246,10 @@ class _ClaudeCodePlugin:
         if action == "token_sync":
             # 키 생성·네트워크가 섞여 있어 **여기서 기다리지 않는다** — 태스크로 띄우고
             # 결과만 notice 로 돌려준다(블로킹-온-루프 금지, 이 프로젝트 재발 항목).
-            asyncio.create_task(
+            server._spawn(
                 _token_sync_cmd(server, client, str(msg.get("sub") or "status"),
-                                str(msg.get("arg") or "")))
+                                str(msg.get("arg") or "")),
+                "token_sync")
             return "handled"
         if action == "set_autoresume":
             server.set_autoresume(sess, value=msg.get("value"),
@@ -1279,7 +1280,7 @@ class _ClaudeCodePlugin:
                                         repeat=msg.get("repeat"))
             return "broadcast"
         if action == "refresh_usage":                 # M19 그림자 /usage 질의
-            asyncio.create_task(server.refresh_usage())
+            server._spawn(server.refresh_usage(), "refresh_usage")
             return "send_full"
         if action == "set_token_debug":               # §10-D 토큰 회계 진단 로그 토글
             server.set_token_debug(msg.get("value"))

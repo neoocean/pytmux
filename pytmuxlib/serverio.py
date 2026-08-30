@@ -66,6 +66,43 @@ def _scr_field(scroll):
 
 
 class ServerIOMixin:
+    #: 돌고 있는 «떼어 놓은» 태스크들. ⛔ **이 집합이 있어야 하는 이유**(pytmux-410):
+    #: `asyncio.create_task(...)` 의 반환값을 아무도 안 들면 이벤트 루프는 그 태스크를
+    #: **약한 참조로만** 붙든다 — 파이썬 문서가 명시하는 함정이고, 실제로 GC 가
+    #: **실행 도중에** 태스크를 거둬 간다. 증상은 「가끔 한 클라만 브로드캐스트를 못
+    #: 받는다」이고, 부하가 높을수록(=GC 가 자주 돌수록) 자주 난다. QA 가 그것을
+    #: 2026-08-26 에 한 번 잡았고(클라 3 중 1), 한가한 상자에서는 15/15 로 안 났다.
+    #: 클래스 자리에 둔 것은 Server 가 여러 믹스인의 합성이라 `__init__` 이 한 곳이
+    #: 아니어서다 — 인스턴스마다 따로 두려고 `_spawn` 이 처음 쓸 때 만든다.
+    _bg_tasks = None
+
+    def _spawn(self, coro, where: str):
+        """코루틴을 떼어 놓고 돌린다 — **참조를 붙들고**, 터지면 로그를 남긴다.
+
+        ⛔ 서버 코드에서 `asyncio.create_task(...)` 를 그냥 쓰지 않는다. 이유 둘:
+        ⑴ 참조가 없으면 GC 가 실행 중인 태스크를 거둬 갈 수 있다(위 `_bg_tasks`).
+        ⑵ 예외가 「Task exception was never retrieved」로 사라진다 — 데몬은 stderr 가
+           /dev/null 이라 그 줄조차 안 보인다. 여기서 `_log_error` 로 받아 적는다.
+        `tests/test_detached_tasks.py` 가 AST 로 이 규율을 지킨다.
+        """
+        if self._bg_tasks is None:
+            self._bg_tasks = set()
+        task = asyncio.ensure_future(coro)
+        self._bg_tasks.add(task)
+
+        def _done(t, where=where):
+            self._bg_tasks.discard(t)
+            if t.cancelled():
+                return
+            if t.exception() is not None:
+                try:
+                    raise t.exception()
+                except Exception:
+                    self._log_error(f"spawn({where})")
+
+        task.add_done_callback(_done)
+        return task
+
     @staticmethod
     def _content_rect(rect, bordered, border_status):
         """패널 박스 rect(x,y,w,h) → (cx,cy,cw,ch, box, titled). 테두리/상태줄을
@@ -732,7 +769,7 @@ class ServerIOMixin:
         """구조 변경 후 해당 세션의 모든 클라이언트에 전체 상태를 다시 보낸다."""
         for c in self.clients:
             if c.session is sess:
-                asyncio.create_task(self._send_full(c))
+                self._spawn(self._send_full(c), "broadcast_session")
         # 활성 패널·탭이 바뀌었을 수 있다 = 포커스의 주인이 바뀌었다(pytmux-421).
         # 여기 한 자리에 두는 이유: 활성 패널을 옮기는 길이 여럿(키·마우스·명령·
         # 패널 종료)인데 **전부 이 함수로 모인다**. 자리마다 부르면 한 곳이 빠지고,
@@ -741,7 +778,7 @@ class ServerIOMixin:
 
     def _notify_no_sessions(self):
         for c in self.clients:
-            asyncio.create_task(self._send_to(c, {"t": "bye"}))
+            self._spawn(self._send_to(c, {"t": "bye"}), "notify_no_sessions")
         self.running = False
         if self.loop:
             self.loop.call_later(0.2, self.shutdown)
@@ -1972,7 +2009,7 @@ class ServerIOMixin:
             # 에서 동기로 부르면 `p4 changes` 왕복(~수백 ms)이 클라 접속 임계경로에
             # 올라 콜드 기동이 느려졌다(server.__init__ 주석 참조). executor 로 돌려
             # 이벤트 루프를 막지 않고, 끝나면 self._code_version 을 갱신한다.
-            asyncio.create_task(self._capture_version())
+            self._spawn(self._capture_version(), "capture_version")
             async with server:
                 try:
                     await server.serve_forever()

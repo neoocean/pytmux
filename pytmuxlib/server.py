@@ -666,7 +666,7 @@ class Server(*_SERVER_BASES):
             r = self.plugins.server_control(self, sess, c, args)
             return r if r is not None else f"unknown: {c}"
         for cl in list(self.clients):
-            asyncio.create_task(self._send_full(cl))
+            self._spawn(self._send_full(cl), "control_broadcast")
         return "ok"
 
     @staticmethod

@@ -324,6 +324,7 @@
     "pytmuxlib/serverio.py:_scr_field",
     "pytmuxlib/serverio.py:_screen_frame",
     "pytmuxlib/serverio.py:_send_full",
+    "pytmuxlib/serverio.py:_spawn",
     "pytmuxlib/serverio.py:_status_msg",
     "pytmuxlib/serverio.py:_switcher_panes",
     "pytmuxlib/serverio.py:_usage_loop",
