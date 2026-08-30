@@ -1900,13 +1900,40 @@ impl Screens {
                 self.close_top();
                 ScreenKey::Chosen(picked)
             }
+            // 항해 키 넷 — 정본에 있는 것을 여기도 준다(pytmux-417 ①). 정본 ncd 는
+            // `home`/`end`/`pageup`/`pagedown` 을 다 받고 힌트에도 적어 둔다
+            // (`plugins/ncd/screen.py`). 종전에 이 넷은 아래 `_` 로 떨어져 **삼켜졌고**,
+            // 그래서 증상이 「닫힌다」가 아니라 「아무 일도 안 난다」였다.
+            // ⚠ 이것은 ncd 만의 일이 아니다 — `press_list` 를 지나는 **모든 목록형
+            //   플러그인 판**이 같이 안 먹고 있었다. 한 함수라 한 번에 낫는다.
+            // ★ pytmux-273 이 「모르는 키가 판을 닫는다」를 없앴고(닫힘→삼킴),
+            //   pytmux-374 가 설정 판에 이 넷의 **뜻**을 넣었다. 목록형은 첫 절반만
+            //   받고 둘째 절반을 못 받은 자리였다.
+            Key::Home => {
+                self.selected = 0;
+                ScreenKey::Consumed
+            }
+            Key::End => {
+                // 끝이 몇 번째인지는 **뷰가 안다** — 여기서 `usize::MAX` 를 두면 그리는
+                // 쪽이 목록 길이로 자른다(`press_settings`·`press_info_tabs` 와 같은 규약).
+                self.selected = usize::MAX;
+                ScreenKey::Consumed
+            }
+            Key::PageUp => {
+                self.selected = self.selected.saturating_sub(PAGE);
+                ScreenKey::Consumed
+            }
+            Key::PageDown => {
+                self.selected = self.selected.saturating_add(PAGE);
+                ScreenKey::Consumed
+            }
             Key::Escape => {
                 self.close_top();
                 ScreenKey::Closed
             }
             // 목록형 화면은 정본 `InfoScreen` 계열이 아니다(pytmux-181·273) — 관계없는
-            // 키(문자 키·좌우·PageUp/Down 등)를 눌렀다고 조용히 닫히면 사용자가 의도치
-            // 않게 화면을 잃는다. 정의된 키가 아니면 **삼킨다**.
+            // 키(문자 키·좌우 등)를 눌렀다고 조용히 닫히면 사용자가 의도치 않게 화면을
+            // 잃는다. 정의된 키가 아니면 **삼킨다**.
             _ => ScreenKey::Consumed,
         }
     }

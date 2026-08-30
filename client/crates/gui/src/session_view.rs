@@ -6140,6 +6140,12 @@ impl SessionView {
         let Some(act) = spec.enter_action().map(str::to_owned) else {
             return;                     // 이 화면은 Enter 에 뜻이 없다
         };
+        // ⛔ **여기서 자른다.** `End` 는 커서를 `usize::MAX` 로 두고 «자르는 것은 그리는
+        // 쪽»이 규약이다(`press_list`·`press_settings`) — 그 규약대로면 이 자리도
+        // 자르는 쪽이다. 안 자르면 `End` 다음 `Enter` 가 **줄 없는 번호**와 `input:
+        // None` 을 실어 보내고, 서버는 그것을 조용히 무시한다(화면에는 아무 일도 안
+        // 난 것으로 보인다 · pytmux-417 ①의 곁가지).
+        let row = row.min(spec.rows.len().saturating_sub(1));
         let id = spec.id.clone();
         let input = spec.rows.get(row).map(|r| r.key.clone());
         self.pending.push(Outgoing::Command(Command::PluginAction { id, act, row, input }));

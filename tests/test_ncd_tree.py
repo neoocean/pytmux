@@ -403,6 +403,49 @@ async def test_windows_can_move_to_another_drive():
         assert d["expand"] == "open", _labels(spec)
         work = next(r for r in spec["rows"] if r["key"] == "D:\\work")
         assert work["depth"] == d["depth"] + 1, _labels(spec)
+        # ★ **커서도 단언한다**(pytmux-417 ②). 종전엔 줄만 봐서, 편 뒤 커서가 `cwd` 로
+        #   튀어도 초록이었다 — 그리고 클라는 새 스펙의 `selected` 를 그대로 적용하므로
+        #   (「커서의 주인은 스펙」) 사용자에겐 **「D: 트리가 안 열린다」**로 보인다.
+        assert spec["rows"][spec["selected"]]["key"] == "D:\\", (
+            "편 줄에 커서가 안 남았다: "
+            + spec["rows"][spec["selected"]]["key"] + " · " + _labels(spec))
+
+
+async def test_collapsing_keeps_the_cursor_where_you_pressed_it():
+    """접기도 같은 규약이다 — `←→` 를 번갈아 눌러도 자리가 안 흔들려야 한다."""
+    with _windows():
+        mine = {"path": "C:\\Users\\me", "cwd": "C:\\Users\\me"}
+        PLUGIN._open_tree(mine)
+        PLUGIN._expand(mine, "D:\\")
+        spec = PLUGIN._collapse(mine, "D:\\")
+        assert next(r for r in spec["rows"] if r["key"] == "D:\\")["expand"] == "shut"
+        assert spec["rows"][spec["selected"]]["key"] == "D:\\", (
+            "접은 줄에 커서가 안 남았다: "
+            + spec["rows"][spec["selected"]]["key"] + " · " + _labels(spec))
+
+
+async def test_collapsing_a_shut_row_climbs_to_the_parent():
+    """이미 접힌 줄에서 `←` 는 **부모로 올라간다**(정본 `←` 의 두 번째 뜻).
+    커서 규약을 고치면서 이 뜻이 깨지지 않았는지 함께 잰다."""
+    with _windows():
+        mine = {"path": "C:\\Users\\me", "cwd": "C:\\Users\\me"}
+        PLUGIN._open_tree(mine)
+        # `C:\\Windows` 는 이미 접혀 있는 줄(자식이 없다) — 거기서 `←` 는 부모로 간다.
+        spec = PLUGIN._collapse(mine, "C:\\Windows")
+        assert spec["rows"][spec["selected"]]["key"] == "C:\\", _labels(spec)
+
+
+async def test_the_hint_says_what_the_keys_actually_do():
+    """힌트가 동작과 어긋나면 **화면이 스스로 틀린 기대를 만든다**(pytmux-417).
+
+    종전 힌트는 「Enter 들어가기」였는데 실제 `Enter` 는 정본과 같이 **그 자리로 cd** 다.
+    그리고 항해 키 넷은 정본 힌트에 적혀 있고 이제 GUI 에서도 먹는다."""
+    from pytmuxlib import i18n
+    hint = i18n.t("ncd.hint")
+    assert "Enter cd" in hint, hint
+    assert "들어가기" not in hint, hint
+    for k in ("Home/End", "PgUp/PgDn", "펼치기", "접기"):
+        assert k in hint, (k, hint)
 
 
 async def test_windows_drive_row_uses_the_canonical_spelling():

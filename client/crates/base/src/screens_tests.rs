@@ -1499,3 +1499,60 @@ fn a_panel_that_never_got_its_geometry_still_behaves_like_a_list() {
     assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::Consumed));
     assert_eq!(screens.top(), Some(Screen::PluginView));
 }
+
+/// ncd 같은 **단일 열 목록 판**에서도 항해 키 넷이 산다(pytmux-417 ①).
+///
+/// 종전에 `press_list` 가 아는 키는 넷뿐이었고(`↑↓`·`Tab`·`Enter`·`Esc`) 나머지는 전부
+/// `_ => Consumed` 로 **삼켜졌다**. 그래서 증상이 「판이 닫힌다」가 아니라 **「아무 일도
+/// 안 난다」**였다 — pytmux-273 이 첫 절반(닫힘→삼킴)을, pytmux-374 가 설정 판에 둘째
+/// 절반(뜻)을 줬는데 목록형은 둘째를 못 받은 자리다.
+///
+/// ⚠ **ncd 만의 일이 아니다** — `press_list` 를 지나는 모든 목록형 플러그인 판이 같이
+/// 안 먹고 있었다. 그래서 이 시험은 `plugin_grid` 를 **단일 열**로 두고 잰다(다열 판은
+/// 위쪽 갈래가 `PgUp/PgDn` 을 먼저 가로채므로 그 팔은 이 결함과 무관하다).
+#[test]
+fn navigation_keys_move_the_cursor_in_a_single_column_list() {
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    screens.set_plugin_grid(0, 1); // ncd 와 같은 단일 열(뷰의 `panel_grid()` 가 주는 값)
+    screens.select_row(7);
+
+    assert_eq!(screens.press(Key::Home, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 0, "Home 이 첫 줄로 안 갔다");
+
+    assert_eq!(screens.press(Key::End, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(
+        screens.selected(),
+        usize::MAX,
+        "End 는 **뷰가 자르는** 상한값이어야 한다(목록 길이를 아는 것은 스펙을 든 뷰다)"
+    );
+
+    screens.select_row(30);
+    assert_eq!(screens.press(Key::PageUp, Mods::NONE), Some(ScreenKey::Consumed));
+    let after_up = screens.selected();
+    assert!(after_up < 30, "PageUp 이 위로 안 갔다: {after_up}");
+    assert_eq!(screens.press(Key::PageDown, Mods::NONE), Some(ScreenKey::Consumed));
+    assert!(
+        screens.selected() > after_up,
+        "PageDown 이 아래로 안 갔다: {} → {}",
+        after_up,
+        screens.selected()
+    );
+}
+
+/// 그리고 그 넷이 **판을 안 닫는다** — 「먹게 했다」가 「닫게 했다」가 되면 더 나쁘다.
+#[test]
+fn navigation_keys_do_not_close_a_list_panel() {
+    for key in [Key::Home, Key::End, Key::PageUp, Key::PageDown] {
+        let mut screens = Screens::new();
+        screens.open_plugin_view(true);
+        screens.set_plugin_grid(0, 1);
+        assert_eq!(screens.press(key, Mods::NONE), Some(ScreenKey::Consumed));
+        assert_eq!(screens.top(), Some(Screen::PluginView), "{key:?} 가 판을 닫았다");
+    }
+    // ⛔ `Esc` 는 여전히 닫는다 — 「안 닫는다」를 「못 닫는다」로 만들면 갇힌다.
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    assert_eq!(screens.press(Key::Escape, Mods::NONE), Some(ScreenKey::Closed));
+    assert_eq!(screens.top(), None);
+}

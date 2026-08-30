@@ -9475,3 +9475,51 @@ fn the_font_setting_is_honoured_on_the_very_first_frame() {
         "깐 이름을 안 적었다 — 화해가 매 프레임 다시 깔거나 영영 안 깐다"
     );
 }
+
+/// `End` 다음 `Enter` 가 **마지막 줄**을 고른다(pytmux-417 ①의 곁가지).
+///
+/// `End` 는 커서를 `usize::MAX` 로 두고 「자르는 것은 그리는 쪽」이 규약이다
+/// (`press_list`·`press_settings`). 그 규약을 `plugin_view_chosen` 이 안 지키면
+/// `End` 다음 `Enter` 가 **줄 없는 번호**와 `input: None` 을 실어 보내고, 서버는 그것을
+/// 조용히 무시한다 — 화면에는 「아무 일도 안 났다」로 보인다.
+///
+/// ⛔ 이 오라클이 없으면 항해 키를 살린 것이 **새 구멍**을 만든다. 키가 죽어 있던
+///    동안에는 커서가 `usize::MAX` 가 될 길이 없었다.
+#[test]
+fn end_then_enter_picks_the_last_row() {
+    let out = sent_after(
+        vec![layout_one_pane(), plugin_list_screen()],
+        &[(Key::End, Mods::NONE), (Key::Enter, Mods::NONE)],
+    );
+    let picked = out.iter().find_map(|o| match o {
+        Outgoing::Command(Command::PluginAction { row, input, .. }) => {
+            Some((*row, input.clone()))
+        }
+        _ => None,
+    });
+    assert_eq!(
+        picked,
+        Some((1, Some("68997".to_owned()))),
+        "End 뒤 Enter 가 마지막 줄을 안 골랐다: {out:?}"
+    );
+}
+
+/// `Home` 다음 `Enter` 는 첫 줄이다 — 반대쪽도 재야 「End 만 맞춘」 구현이 안 지난다.
+#[test]
+fn home_then_enter_picks_the_first_row() {
+    let out = sent_after(
+        vec![layout_one_pane(), plugin_list_screen()],
+        &[
+            (Key::Down, Mods::NONE),
+            (Key::Home, Mods::NONE),
+            (Key::Enter, Mods::NONE),
+        ],
+    );
+    let picked = out.iter().find_map(|o| match o {
+        Outgoing::Command(Command::PluginAction { row, input, .. }) => {
+            Some((*row, input.clone()))
+        }
+        _ => None,
+    });
+    assert_eq!(picked, Some((0, Some("68995".to_owned()))), "{out:?}");
+}

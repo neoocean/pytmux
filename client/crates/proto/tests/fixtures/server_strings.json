@@ -297,6 +297,7 @@
     "pytmuxlib/plugins/ncd/__init__.py:_open_tree",
     "pytmuxlib/plugins/ncd/__init__.py:_parent",
     "pytmuxlib/plugins/ncd/__init__.py:_rows",
+    "pytmuxlib/plugins/ncd/__init__.py:_select",
     "pytmuxlib/plugins/ncd/__init__.py:_tree_spec",
     "pytmuxlib/plugins/p4-show-submitted-changelists/__init__.py:_changes_spec",
     "pytmuxlib/plugins/p4-show-submitted-changelists/__init__.py:_describe_spec",
