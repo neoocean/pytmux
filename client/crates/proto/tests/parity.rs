@@ -280,6 +280,7 @@ static SETTINGS: &[Item] = &[
     i("language", Done, "설정 화면 「표시」 줄 · Enter 로 ko↔en · 영속은 lang 과 같은 길"),
     i("list-keys", Done, "설정 화면의 링크 - 키 도움말 화면"),
     i("copy-unwrap", Done, "설정 화면 - 복사할 때 앱이 접은 줄바꿈을 되돌린다(`proto::unwrap`)"),
+    i("set-clipboard", Done, "설정 화면 - 패널 앱의 OSC 52 를 OS 클립보드에(pytmux-420 ①)"),
     i("mode-keys", Done, "설정 화면 - vi/emacs 스크롤 키가 갈린다"),
     i("monitor-activity", Done, "설정 화면 · 팔레트"),
     i("monitor-bell", Done, "설정 화면 · 팔레트"),
@@ -406,7 +407,7 @@ static SCORE: &[(&str, usize, usize)] = &[
     ("commands", 88, 0),
     ("prefix_keys", 32, 0),
     ("esc_keys", 19, 0),
-    ("settings", 37, 0),
+    ("settings", 38, 0),
     ("screens", 18, 0),
 ];
 

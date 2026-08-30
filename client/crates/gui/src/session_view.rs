@@ -3636,6 +3636,18 @@ impl SessionView {
                         let was_search_results =
                             matches!(other, ServerMessage::SearchResults(_));
                         let changed = self.state.apply(other);
+                        // 패널 앱이 `OSC 52` 로 넣어 달라 한 글을 **여기서** OS 클립보드에
+                        // 넣는다(pytmux-420 ①). `apply` 안에서 안 하는 이유는 그쪽이 순수한
+                        // 상태 접기라서다 — 시험·재생이 같은 프레임을 여러 번 먹이면 그
+                        // 상자의 클립보드가 조용히 덮인다. 실패해도 조용하다: 앱이 한
+                        // 복사라 사용자에게 띄울 토스트가 아니다(선택할 때마다 뜬다).
+                        if let Some(text) = self.state.take_clipboard() {
+                            // `set set-clipboard off` 면 걷기만 하고 안 쓴다 — 걷는 것은
+                            // 꺼져 있어도 해야 한다(안 걷으면 켠 순간 옛 복사가 튀어나온다).
+                            if self.config.set_clipboard {
+                                let _ = clip::copy(&text);
+                            }
+                        }
                         // ★ 플러그인 표면을 화면 상태에 실어 준다(설계 Tier A · P2).
                         //   키 처리(메뉴 층·설정 분류 이동)와 그리기가 **같은 목록**을
                         //   봐야 한다 — 둘이 갈리면 "고른 줄과 실행된 줄이 다르다"가
@@ -7024,6 +7036,7 @@ impl SessionView {
             claude_command: self.config.claude_command.clone(),
             strip_box_drawing: self.config.strip_box_drawing,
             copy_unwrap: self.config.copy_unwrap,
+            set_clipboard: self.config.set_clipboard,
             alt_scroll: self.config.alt_scroll,
             set_titles: self.config.set_titles,
             set_titles_string: self.config.set_titles_string.clone(),

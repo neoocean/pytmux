@@ -113,6 +113,16 @@ class VTTokenizer:
     # 멀티 MB OSC 의 자원 폭주를 막는 캡(보안 N1/N2).
     _OSC_MAX = 4096
 
+    # OSC 52(클립보드)만의 상한. 본문이 **선택한 글 전체를 base64 로 실어** 오므로
+    # 4096 은 정상 사용을 자른다 — 3KB 쯤 되는 붙여넣기가 조용히 반토막 난다(pytmux-420
+    # ①). 그렇다고 상한을 없애면 N1 이 그대로 돌아오므로, **이 코드에만** 더 큰 캡을
+    # 준다. 128KiB = base64 기준 원문 약 96KB — 사람이 한 번에 고르는 글의 상한을
+    # 넉넉히 덮으면서 멀티 MB 폭주는 여전히 막는다.
+    # ⚠ 잘린 base64 는 **디코드가 실패하는 쓰레기**이지 반쪽 글이 아니다. 그래서 소비부
+    # (`model._on_clipboard`)는 「잘렸으면 안 쓴다」로 군다 — 조용히 틀린 클립보드는
+    # 못 쓰는 것보다 나쁘다.
+    _OSC52_MAX = 128 * 1024
+
     # CSI 파라미터 원시문자열 상한. **N1(OSC)의 살아남은 형제**(보안검수 2026-07-17 F2):
     # `_OSC_MAX` 는 OSC 만 캡했고 `_raw` 엔 상한이 없어, 미종결 `ESC[` + 숫자 스트림이
     # ① `self._raw += ch` 의 O(n²) 재할당으로 CPU 를 태우고(400k자=1.15s, 10MB=수 분)
@@ -152,6 +162,7 @@ class VTTokenizer:
         self._priv = ""         # private/intermediate 마커(? > < = $ 등 첫 글자)
         self._osc = ""          # OSC 본문
         self._osc_esc = False   # OSC 안에서 ESC 를 만나 ST(ESC\) 대기 중
+        self._osc_cut = False   # 이 OSC 본문이 상한에 걸려 잘렸다(52 판정에 쓴다)
         self._str_esc = False   # DCS/SOS/PM/APC 본문에서 ST 대기 중
 
     # ── 공개 API ────────────────────────────────────────────────────────────
@@ -190,6 +201,7 @@ class VTTokenizer:
                     self._enter_csi()
                 elif ch == ctrl.OSC_C1:
                     self.state, self._osc, self._osc_esc = self._OSC, "", False
+                    self._osc_cut = False
                 # NUL/DEL 등 그 외 특수문자는 무시(pyte 와 동일).
                 continue
             if st == self._OSC:
@@ -224,6 +236,7 @@ class VTTokenizer:
             self._enter_csi()
         elif ch == "]":
             self.state, self._osc, self._osc_esc = self._OSC, "", False
+            self._osc_cut = False
         elif ch == "#":
             self.state = self._SHARP
         elif ch == "%":
@@ -250,12 +263,26 @@ class VTTokenizer:
         self.state = self._GROUND
 
     def _osc_append(self, s: str) -> None:
-        # 본문 상한(_OSC_MAX) 초과분은 버린다. 타이틀/아이콘명은 현실적으로 수백 B 라
-        # 캡이 정상 사용을 자르지 않으면서, 악의적 멀티 MB OSC 의 메모리/표시 자원
-        # 폭주(N1 의 누적 비용·N2 의 거대 타이틀)를 막는다.
-        room = self._OSC_MAX - len(self._osc)
+        # 본문 상한 초과분은 버린다. 타이틀/아이콘명은 현실적으로 수백 B 라 캡이 정상
+        # 사용을 자르지 않으면서, 악의적 멀티 MB OSC 의 메모리/표시 자원 폭주(N1 의
+        # 누적 비용·N2 의 거대 타이틀)를 막는다.
+        #
+        # 코드가 52(클립보드)면 캡이 다르다 — 그쪽은 본문이 **글 전체**라 4096 이 정상
+        # 사용을 자른다. 코드는 본문 앞 세 글자로 안다. `self._osc` 가 비어 있고 첫
+        # 조각이 통째로 오는 경우와, 두 조각으로 갈려 오는 경우(`"5"` + `"2;…"`)를 둘 다
+        # 맞추려고 **이어붙인 앞 세 글자**를 본다(≤3자 슬라이스라 비용은 상수다).
+        # ⛔ `(self._osc + s)[:3]` 로 쓰면 **본문 전체를 매 append 마다 복사**한다 —
+        # 128KiB 를 조각으로 받는 동안 O(n²) 가 되어, 이 캡이 막으려던 바로 그 자원
+        # 폭주를 캡 판정이 만든다. 이미 세 글자를 넘겼으면 앞머리는 확정이다.
+        head = self._osc[:3] if len(self._osc) >= 3 else (self._osc + s)[:3]
+        cap = self._OSC52_MAX if head == "52;" else self._OSC_MAX
+        room = cap - len(self._osc)
         if room > 0:
             self._osc += s if len(s) <= room else s[:room]
+            if len(s) > room:
+                self._osc_cut = True
+        elif s:
+            self._osc_cut = True
 
     def _consume_osc(self, text: str, i: int, length: int) -> int:
         """OSC 본문을 종결자(BEL / C1 ST / ESC[\\])까지 한 번에 흡수하고 다음
@@ -318,6 +345,11 @@ class VTTokenizer:
         self.state = self._GROUND
         # 형식: "<code>;<param>". 코드 0/1 = icon name, 0/2 = title(pyte 와 동일).
         code, _, param = body.partition(";")
+        if code == "52" and self._osc_cut:
+            # 잘린 base64 는 **반쪽 글이 아니라 쓰레기**다 — 길이가 우연히 4의 배수면
+            # 디코드까지 성공해 «다른 글»이 클립보드에 앉는다. 조용히 틀린 클립보드는
+            # 못 쓰는 것보다 나쁘므로 여기서 버린다(pytmux-420 ①).
+            return
         if code in ("0", "1"):
             self.screen.set_icon_name(param)
         if code in ("0", "2"):

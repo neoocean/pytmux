@@ -146,6 +146,24 @@ pub enum ServerMessage {
         #[serde(default)]
         cwd: Option<String>,
     },
+    /// 패널 안 앱이 `OSC 52` 로 「이 글을 클립보드에 넣어라」 한 것. 서버는 `caps` 로
+    /// 광고한 클라에게만 보낸다.
+    ///
+    /// `data` 는 **base64 원문 그대로**다 — 서버에는 OS 클립보드가 없으므로 풀지
+    /// 않는다. 푸는 자리는 클라이고, 못 풀면(잘린 base64·비-UTF8) **조용히 버린다**:
+    /// 앱이 보낸 쓰레기로 사용자의 클립보드가 깨지면 안 된다.
+    ///
+    /// ⛔ 읽기 요청(`OSC 52 ... ;?`)은 서버가 이미 걸러 여기 오지 않는다. 답하면
+    /// 패널 안 아무 프로그램이나 사용자의 클립보드를 훔쳐 갈 수 있다.
+    ///
+    /// 왜 있나 = pytmux-420 ①: claude 의 fullscreen 렌더러가 광고하는
+    /// «auto-copy on select» 는 ssh 아래에서 이 길 하나로만 나간다.
+    #[serde(rename = "clipboard")]
+    Clipboard {
+        pane: i64,
+        #[serde(default)]
+        data: String,
+    },
     /// 서버가 연결을 정상 종료한다.
     #[serde(rename = "bye")]
     Bye,
@@ -255,6 +273,7 @@ impl ServerMessage {
             Self::Selection { .. } => "selection",
             Self::Claude { .. } => "claude",
             Self::Cwd { .. } => "cwd",
+            Self::Clipboard { .. } => "clipboard",
             Self::Bye => "bye",
             Self::Error { .. } => "error",
             Self::Notice { .. } => "notice",
@@ -598,7 +617,14 @@ where
 /// 광고하지 않으면 해당 메시지가 아예 오지 않는다 — 기능이 조용히 안 되는 것처럼
 /// 보이므로 기본으로 전부 광고한다. 서버가 모르는 이름은 무시하므로 구버전 서버에
 /// 붙어도 안전하다.
-pub const CAPS: &[&str] = &["blocks", "claude", "cwd", "plugin_surface", "plugin_screen"];
+pub const CAPS: &[&str] = &[
+    "blocks",
+    "claude",
+    "clipboard",
+    "cwd",
+    "plugin_surface",
+    "plugin_screen",
+];
 
 /// 클라 → 서버 첫 프레임.
 #[derive(Debug, Clone, Serialize)]
@@ -705,7 +731,14 @@ mod tests {
         // 안 되고, 증상은 "그 패널엔 아무것도 없다"와 구분되지 않는다.
         assert_eq!(
             json["caps"],
-            serde_json::json!(["blocks", "claude", "cwd", "plugin_surface", "plugin_screen"])
+            serde_json::json!([
+                "blocks",
+                "claude",
+                "clipboard",
+                "cwd",
+                "plugin_surface",
+                "plugin_screen"
+            ])
         );
     }
 

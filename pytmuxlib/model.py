@@ -272,6 +272,12 @@ class Pane:
     #: 안 꽂히면(테스트·클라·플러그인 부재) OSC 훅이 아무 일도 하지 않는다.
     osc_handler = None
 
+    #: OSC 52 로 앱이 «클립보드에 이것을 넣어라» 한 base64 본문. 서버가 다음 flush 에
+    #: 걷어(`take_clipboard`) 광고한 클라에게 넘기고 None 으로 돌린다. 여러 번 와도
+    #: **마지막 것만** 남긴다 — 클립보드는 하나뿐이라 중간 값은 어차피 덮인다.
+    #: ⛔ 코어가 base64 를 풀지 않는다. 푸는 자리는 OS 클립보드를 가진 **클라**다.
+    _clipboard_pending = None
+
     def __init__(self, pid: int, fd: int, cols: int, rows: int,
                  vt_parser: str = "native", screen_impl: str | None = None):
         self.id = pid_counter()
@@ -788,10 +794,39 @@ class Pane:
         관찰자를 **여기서 찾지 않고 꽂아 두는** 이유: 이 경로는 feed 안이라 뜨겁고,
         `plugins.load()` 는 호출마다 디렉토리를 스캔한다. OSC 를 반복 방출하는 프로그램이
         그 스캔을 유발하면 그 자체가 자원 공격이 된다(보안검수 계열 N1/F2 와 같은 부류).
-        서버가 패널을 만들 때 한 번 꽂는다."""
+        서버가 패널을 만들 때 한 번 꽂는다.
+
+        ⛔ **딱 하나 예외가 52(클립보드)다.** 그것은 플러그인 관심사가 아니라 단말이
+        원래 하는 일이고(tmux 의 `set-clipboard`), 플러그인을 지웠다고 복사가 죽으면
+        안 된다. 그래서 코어가 **모아만 두고**(해석·디코드는 안 한다) 훅에도 그대로
+        넘긴다 — 보고 싶은 플러그인은 계속 볼 수 있다."""
+        if code == "52":
+            self._on_clipboard(param)
         handler = self.osc_handler
         if handler is not None:
             handler(self, code, param)
+
+    def _on_clipboard(self, param: str) -> None:
+        """OSC 52 본문(`<selection>;<base64>`)을 다음 flush 를 위해 세워 둔다.
+
+        ⛔ **읽기 요청(`<sel>;?`)에는 답하지 않는다.** 그것은 앱이 「클립보드 내용을
+        돌려달라」는 것인데, 답하면 패널 안의 아무 프로그램이나(`cat` 한 파일 포함)
+        사용자의 클립보드를 훔쳐 갈 수 있다. xterm 의 `allowWindowOps`·tmux 가 기본으로
+        막는 자리와 같다 — 우리도 **쓰기만** 받는다.
+
+        선택 대상(`c`=클립보드 · `p`=primary · 여럿이면 `pc` 처럼 붙어 온다)은 지금
+        구분하지 않는다. 우리가 닿는 것은 OS 클립보드 하나뿐이고, 없는 구분을 있는 척
+        실어 보내면 클라가 그것으로 뭘 해야 하는지 몰라 조용히 버린다."""
+        _sel, _, data = param.partition(";")
+        if not data or data == "?":
+            return
+        self._clipboard_pending = data
+
+    def take_clipboard(self):
+        """세워 둔 OSC 52 본문을 **걷어** 돌려준다(없으면 None). 두 번 부르면 두 번째는
+        None — 같은 복사가 클라 수만큼 반복되지 않게 서버가 한 번만 걷는다."""
+        data, self._clipboard_pending = self._clipboard_pending, None
+        return data
 
     def _on_alt_transition(self, enter: bool) -> None:
         """토크나이저가 ?1049/1047/47 h|l 을 감지했을 때의 alt 라우팅

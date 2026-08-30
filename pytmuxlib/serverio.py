@@ -675,6 +675,34 @@ class ServerIOMixin:
         for c in wanted:
             frames_by_client[c].append(frame)
 
+    def _append_clipboard_frames(self, frames_by_client, clients, pane):
+        """패널 안 앱이 OSC 52 로 넣어 달라 한 글을 **광고한 클라에게만** 넘긴다.
+
+        `_append_cwd_frames` 와 두 가지가 다르다:
+
+        - **패널이 dirty 하지 않아도 부른다.** 복사는 화면을 안 바꿀 수 있다(앱이 선택만
+          바꾸고 다시 그리지 않는 경우). 화면 변경에 묶으면 그 복사가 영영 안 간다.
+        - **마지막 값과 비교하지 않는다.** 같은 글을 두 번 복사하는 것은 정상이고,
+          「같으니 안 보낸다」로 굴면 두 번째 Ctrl-C 가 조용히 안 먹는다. 대신 값을
+          `take_clipboard()` 로 **걷어** 한 번만 나가게 한다.
+
+        ⛔ 원격 보기(`remote_view`) 중인 클라에도 보낸다 — 그 클라가 보고 있는 것은
+        상류 패널이고, 그 패널에서 한 복사가 **자기 기계의** 클립보드에 앉는 것이 맞다.
+        (`cwd` 가 원격 보기를 빼는 이유는 «로컬 경로를 푸는 기준»이라 뜻이 어긋나서다 —
+        클립보드는 그런 뜻 어긋남이 없다.)
+
+        base64 는 **여기서 안 푼다.** 서버는 OS 클립보드가 없고, 푸는 자리는 클라다.
+        """
+        data = pane.take_clipboard()
+        if not data:
+            return
+        wanted = [c for c in clients if "clipboard" in getattr(c, "caps", ())]
+        if not wanted:
+            return              # 걷은 값은 버린다 — 아무도 못 쓰는 것을 쌓아 두지 않는다
+        frame = frame_msg({"t": "clipboard", "pane": pane.id, "data": data})
+        for c in wanted:
+            frames_by_client[c].append(frame)
+
     def _append_claude_frames(self, frames_by_client, clients, pane):
         """Claude 트랜스크립트가 자랐으면 **광고한 클라에게만** 원문 꼬리를 보낸다.
 
@@ -827,6 +855,7 @@ class ServerIOMixin:
                 for p in win.panes():
                     self._append_claude_frames(frames_by_client, clients, p)
                     self._append_cwd_frames(frames_by_client, clients, p)
+                    self._append_clipboard_frames(frames_by_client, clients, p)
                 # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다(동기화 출력
                 # 프레임 도중이면 일반 패널과 동일하게 송신을 미룬다).
                 pu = sess.popup

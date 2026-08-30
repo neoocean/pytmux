@@ -1702,3 +1702,64 @@ fn pane_cwd_is_not_the_active_pane_shortcut() {
         "active_cwd 는 블록에서 오고, 비활성 패널의 cwd 로 대신 답하면 안 된다"
     );
 }
+
+// ---- 패널 앱의 클립보드 쓰기(OSC 52 · pytmux-420 ①) --------------------------
+//
+// claude 의 fullscreen 렌더러가 광고하는 «auto-copy on select» 는 ssh 아래에서 이 길
+// 하나로만 나간다. 서버가 base64 를 안 풀고 넘기므로 **푸는 자리가 여기**다.
+//
+// 되돌리면 실패해야 하는 오라클:
+//   · 안 풀고 base64 를 그대로 내면      → the_text_is_decoded 실패
+//   · 걷어 가지 않으면(프레임마다 재복사) → taking_it_twice_gives_nothing 실패
+//   · 못 푸는 값을 억지로 쓰면            → garbage_never_reaches_the_clipboard 실패
+//   · 화면을 다시 그리게 하면             → a_clipboard_write_is_not_a_repaint 실패
+
+fn clipboard_msg(pane: i64, data: &str) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "clipboard", "pane": pane, "data": data
+    }))
+    .unwrap()
+}
+
+#[test]
+fn the_text_is_decoded() {
+    let mut state = SessionState::new();
+    // "붙일 글" 의 base64. 안 풀면 이 글자열이 그대로 나와 시험이 운다.
+    state.apply(clipboard_msg(1, "67aZ7J28IOq4gA=="));
+    assert_eq!(state.take_clipboard().as_deref(), Some("붙일 글"));
+}
+
+#[test]
+fn taking_it_twice_gives_nothing() {
+    // 뷰는 프레임마다 걷는다 — 안 걷어 가면 한 번 복사한 것이 매 프레임 다시 나간다.
+    let mut state = SessionState::new();
+    state.apply(clipboard_msg(1, "67aZ7J28IOq4gA=="));
+    assert!(state.take_clipboard().is_some());
+    assert_eq!(state.take_clipboard(), None);
+}
+
+#[test]
+fn the_last_write_wins() {
+    let mut state = SessionState::new();
+    state.apply(clipboard_msg(1, "7LKr7Ke4")); // "첫째"
+    state.apply(clipboard_msg(1, "65GY7Ke4")); // "둘째"
+    assert_eq!(state.take_clipboard().as_deref(), Some("둘째"));
+}
+
+#[test]
+fn garbage_never_reaches_the_clipboard() {
+    // 잘린 base64 는 **반쪽 글이 아니라 쓰레기**다. 억지로 풀면 «다른 글»이 사용자의
+    // 클립보드에 앉는다 — 조용히 틀린 클립보드는 못 쓰는 것보다 나쁘다.
+    let mut state = SessionState::new();
+    for bad in ["67aZ7J2", "not base64!!", "", "/w=="] {
+        state.apply(clipboard_msg(1, bad));
+        assert_eq!(state.take_clipboard(), None, "{bad:?} 가 통과했다");
+    }
+}
+
+#[test]
+fn a_clipboard_write_is_not_a_repaint() {
+    // 복사는 화면을 안 바꾼다. `true` 를 내면 앱이 선택할 때마다 전면 재그리기를 한다.
+    let mut state = SessionState::new();
+    assert!(!state.apply(clipboard_msg(1, "67aZ7J28IOq4gA==")));
+}

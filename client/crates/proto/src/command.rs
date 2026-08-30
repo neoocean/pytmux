@@ -1145,9 +1145,75 @@ fn b64_encode(raw: &[u8]) -> String {
     out
 }
 
+/// 표준 base64 디코드(패딩 포함, 공백 무시). 못 읽으면 `None`.
+///
+/// 인코더의 짝이다 — OSC 52 로 온 클립보드 본문을 푸는 데 쓴다(pytmux-420 ①).
+/// ⛔ **관대하게 굴지 않는다.** 표 밖 글자·어긋난 길이는 「잘렸거나 우리 것이 아니다」는
+/// 뜻이고, 그것을 억지로 풀면 «다른 글»이 사용자의 클립보드에 앉는다.
+pub(crate) fn b64_decode(text: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a') as u32 + 26),
+            b'0'..=b'9' => Some((c - b'0') as u32 + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let body: Vec<u8> = text
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect();
+    if body.is_empty() || body.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(body.len() / 4 * 3);
+    for quad in body.chunks(4) {
+        let pad = quad.iter().rev().take_while(|&&c| c == b'=').count();
+        if pad > 2 {
+            return None;
+        }
+        let mut n = 0u32;
+        for (i, &c) in quad.iter().enumerate() {
+            let v = if c == b'=' {
+                // 패딩은 **마지막 조각의 꼬리에서만** 합법이다.
+                if i < 4 - pad {
+                    return None;
+                }
+                0
+            } else {
+                val(c)?
+            };
+            n = (n << 6) | v;
+        }
+        out.push((n >> 16) as u8);
+        if pad < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if pad < 1 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_round_trips_and_refuses_garbage() {
+        for s in ["a", "ab", "abc", "가나다", "여러 줄\n둘째"] {
+            let enc = b64_encode(s.as_bytes());
+            assert_eq!(b64_decode(&enc).as_deref(), Some(s.as_bytes()), "{s:?}");
+        }
+        // 잘린 것(길이 어긋남) · 표 밖 글자 · 가운데 패딩은 전부 거절한다.
+        assert!(b64_decode("QUJD*").is_none());
+        assert!(b64_decode("QUJ").is_none());
+        assert!(b64_decode("Q=JD").is_none());
+        assert!(b64_decode("").is_none());
+    }
 
     #[test]
     fn frames_carry_the_kind_and_the_action_name() {

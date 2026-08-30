@@ -306,6 +306,10 @@ pub static EN: &[(&str, &str)] = &[
     ("setting\u{0004}드래그 인정 최소 이동(칸)", "Drag threshold (cells)"),
     ("setting\u{0004}모호폭 문자 처리", "Ambiguous-width chars"),
     ("setting\u{0004}복사 시 접힌 줄 펴기", "Unwrap folded lines on copy"),
+    (
+        "setting\u{0004}앱의 복사를 클립보드에(OSC 52)",
+        "App copies reach the clipboard (OSC 52)",
+    ),
     ("setting\u{0004}탭으로 쓰는 스크롤 UI", "Tap-driven scroll UI"),
     ("setting\u{0004}복사 모드 키", "Copy-mode keys"),
     ("setting\u{0004}붙여넣기 테두리 제거", "Strip pane borders on paste"),

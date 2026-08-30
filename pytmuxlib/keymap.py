@@ -178,6 +178,9 @@ def load_config(path: str | None = None) -> dict:
                                   #   (기본 3 — 짧은 클릭이 드래그로 오인되는 것 방지)
         set copy-unwrap on|off    # 마우스 복사 시 앱이 접은 줄바꿈·들여쓰기 펴기
                                   #   (기본 on — 긁어 복사한 명령을 바로 붙여넣기)
+        set set-clipboard on|off  # 패널 안 앱이 OSC 52 로 「이 글을 클립보드에」 한 것을
+                                  #   이 클라의 OS 클립보드에 반영(기본 on, tmux 동명)
+                                  #   끄면 ssh 너머 앱의 복사가 안 먹는다(pytmux-420)
         set ambiguous-width auto|narrow|wide  # East Asian Ambiguous 폭(→·— 등)
                                   #   auto(기본)=기동 시 단말 자동감지, wide=강제 2칸
                                   #   (CJK 로케일 단말), narrow=1칸
@@ -223,6 +226,11 @@ def load_config(path: str | None = None) -> dict:
                     elif opt in ("mouse-drag-copy", "mouse_drag_copy"):
                         # §2.4 좌드래그=pytmux 패널선택→자동복사(기본 on). off 면 앱 패스스루.
                         cfg["mouse_drag_copy"] = val.lower() in (
+                            "on", "true", "1", "yes")
+                    elif opt in ("set-clipboard", "set_clipboard"):
+                        # 패널 안 앱의 OSC 52 를 이 클라의 OS 클립보드에 반영할지
+                        # (tmux 의 `set-clipboard` 자리 · 기본 on · pytmux-420 ①).
+                        cfg["set_clipboard"] = val.lower() in (
                             "on", "true", "1", "yes")
                     elif opt in ("mouse-drag-threshold", "mouse_drag_threshold"):
                         # 드래그로 인정할 최소 이동(칸, 기본 3 — 클릭이 드래그로 오인돼
@@ -356,6 +364,7 @@ _OPT_ALIASES = {
     "mouse-drag-copy": ("mouse_drag_copy",),
     "mouse-drag-threshold": ("mouse_drag_threshold",),
     "copy-unwrap": ("copy_unwrap",),
+    "set-clipboard": ("set_clipboard",),
     "strip-box-drawing": ("strip_box_drawing",),
     "lang": ("language",),
 }

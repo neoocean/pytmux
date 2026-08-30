@@ -77,6 +77,14 @@ pub struct Config {
     /// 줄바꿈이 딸려 오는데, 붙여넣는 곳의 폭은 다르므로 그 줄바꿈은 뜻이 없다 —
     /// 오히려 문단을 조각낸다. 규칙은 `proto::unwrap`(정본 추출).
     pub copy_unwrap: bool,
+    /// 패널 안 앱이 `OSC 52` 로 「이 글을 클립보드에 넣어라」 한 것을 이 클라의 OS
+    /// 클립보드에 반영할까(tmux 의 `set-clipboard` 자리 · 기본 켜짐).
+    ///
+    /// 끄면 ssh 너머에서 도는 앱의 복사가 조용히 안 먹는다 — claude 의 fullscreen
+    /// 렌더러가 광고하는 «auto-copy on select» 가 그 길 하나로만 나간다(pytmux-420 ①).
+    /// 한 세션에 여럿이 붙어 있을 때 남의 복사가 내 클립보드를 덮는 것을 각자 끌 수
+    /// 있어야 해서 **클라마다** 정한다.
+    pub set_clipboard: bool,
     /// 단말의 **대체 스크롤 모드**(DECSET 1007)를 끌까(기본 켜짐 = 끈다).
     ///
     /// # 왜 이 설정이 있나
@@ -337,6 +345,7 @@ impl Default for Config {
             claude_command: "claude".to_owned(),
             strip_box_drawing: true,
             copy_unwrap: true,
+            set_clipboard: true,
             alt_scroll: true,
             set_titles: false,
             set_titles_string: "#S:#I:#W".to_owned(),
@@ -557,6 +566,7 @@ impl Config {
                 }
                 "strip-box-drawing" => config.strip_box_drawing = on_off(value),
                 "copy-unwrap" => config.copy_unwrap = on_off(value),
+                "set-clipboard" => config.set_clipboard = on_off(value),
                 "alt-scroll" => config.alt_scroll = on_off(value),
                 "set-titles" => config.set_titles = on_off(value),
                 // 빈 값도 뜻이 있다("제목을 비운다") — 되돌리기로 바꾸지 않는다.
@@ -723,6 +733,8 @@ pub struct SettingValues {
     pub strip_box_drawing: bool,
     /// 복사할 때 접힌 줄을 펼까(설정 파일).
     pub copy_unwrap: bool,
+    /// 패널 앱의 OSC 52 를 OS 클립보드에 반영할까(설정 파일).
+    pub set_clipboard: bool,
     pub alt_scroll: bool,
     /// 창(또는 단말) 제목을 세션 상태로 갱신할까(파이썬 `set-titles`, 기본 꺼짐).
     ///
@@ -783,6 +795,7 @@ impl Default for SettingValues {
             claude_command: String::new(),
             strip_box_drawing: false,
             copy_unwrap: false,
+            set_clipboard: false,
             alt_scroll: false,
             set_titles: false,
             set_titles_string: String::new(),
@@ -940,6 +953,11 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "copy-unwrap",
+        cat: "입력",
+        kind: SettingKind::ConfigToggle,
+    },
+    Setting {
+        key: "set-clipboard",
         cat: "입력",
         kind: SettingKind::ConfigToggle,
     },
@@ -1180,6 +1198,7 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("mouse-drag-threshold", "드래그 인정 최소 이동(칸)"),
     ("ambiguous-width", "모호폭 문자 처리"),
     ("copy-unwrap", "복사 시 접힌 줄 펴기"),
+    ("set-clipboard", "앱의 복사를 클립보드에(OSC 52)"),
     ("mode-keys", "복사 모드 키"),
     ("strip-box-drawing", "붙여넣기 테두리 제거"),
     ("alt-scroll", "휠 스크롤백(1007)"),

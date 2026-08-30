@@ -303,6 +303,7 @@
     "pytmuxlib/serverio.py:_advertised_mouse_track",
     "pytmuxlib/serverio.py:_append_blocks_frames",
     "pytmuxlib/serverio.py:_append_claude_frames",
+    "pytmuxlib/serverio.py:_append_clipboard_frames",
     "pytmuxlib/serverio.py:_append_cwd_frames",
     "pytmuxlib/serverio.py:_capture_version",
     "pytmuxlib/serverio.py:_cells_shape_key",

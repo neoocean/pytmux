@@ -1108,7 +1108,7 @@ COMMANDS = [
 # COMPLETIONS 에 "set <name>" 으로 병합한다(사용자 요청 2026-06-25).
 _SET_OPTION_NAMES = (
     "prefix", "mouse", "mouse-drag-copy", "mouse-drag-threshold",
-    "copy-unwrap", "mouse-debug", "alt-scroll",
+    "copy-unwrap", "mouse-debug", "alt-scroll", "set-clipboard",
     "ambiguous-width",
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
@@ -1125,6 +1125,7 @@ SET_OPTION_CHOICES = {
     "mouse-drag-copy": ("on", "off"),
     "mouse-drag-threshold": ("1", "2", "3", "5", "8"),
     "copy-unwrap": ("on", "off"),
+    "set-clipboard": ("on", "off"),
     "mouse-debug": ("on", "off"),
     "mode-keys": ("vi", "emacs"),
     "tab-bar": ("always", "auto"),
@@ -1243,6 +1244,8 @@ SETTINGS = [
      "backend": "config"},
     {"key": "copy-unwrap", "cat": "입력", "type": "bool",
      "cmd": "set copy-unwrap", "backend": "config"},
+    {"key": "set-clipboard", "cat": "입력", "type": "bool",
+     "cmd": "set set-clipboard", "backend": "config"},
     {"key": "mode-keys", "cat": "입력", "type": "enum",
      "choices": ["vi", "emacs"], "cmd": "set mode-keys", "backend": "config"},
     {"key": "alt-scroll", "cat": "입력", "type": "bool",

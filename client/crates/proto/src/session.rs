@@ -1275,6 +1275,13 @@ pub struct SessionState {
     /// 원격 탭에서 `None` 을 내는데(Claude 폴더 오판 방지), 이건 패널별이고 원격을
     /// 막지 않는다 — 자세한 이유는 [`Self::pane_cwd`].
     cwds: HashMap<i64, String>,
+    /// 패널 안 앱이 `OSC 52` 로 넣어 달라 한 **푼 글**. 뷰가 매 프레임 걷어
+    /// ([`Self::take_clipboard`]) OS 클립보드에 넣고 비운다.
+    ///
+    /// ⛔ 여기서 OS 클립보드를 **직접 건드리지 않는다.** `apply` 는 순수한 상태 접기라
+    /// 시험·재생이 같은 프레임을 여러 번 먹인다 — 그 안에서 밖으로 나가면 시험이 도는
+    /// 상자의 클립보드가 조용히 덮인다.
+    pending_clipboard: Option<String>,
     tabs: TabBar,
     /// 서버가 연결을 닫았는가.
     closed: bool,
@@ -1509,6 +1516,19 @@ impl SessionState {
                     Some(path) => self.cwds.insert(pane, path.clone()) != Some(path),
                     None => self.cwds.remove(&pane).is_some(),
                 }
+            }
+            ServerMessage::Clipboard { pane: _, data } => {
+                // 서버는 base64 를 안 푼다(OS 클립보드가 없다). 못 푸는 값은 **버린다** —
+                // 잘린 base64 는 반쪽 글이 아니라 쓰레기이고, 억지로 풀면 «다른 글»이
+                // 사용자의 클립보드에 앉는다. 화면은 안 바뀌므로 `false` 다.
+                if let Some(bytes) = crate::command::b64_decode(&data) {
+                    if let Ok(text) = String::from_utf8(bytes) {
+                        if !text.is_empty() {
+                            self.pending_clipboard = Some(text);
+                        }
+                    }
+                }
+                false
             }
             ServerMessage::Bye => {
                 self.closed = true;
@@ -2711,6 +2731,15 @@ impl SessionState {
     /// 밑줄은 멀쩡히 그어지고 복사한 값만 틀린다 — 조용한 오답이다.
     pub fn pane_cwd(&self, pane_id: i64) -> Option<&str> {
         self.cwds.get(&pane_id).map(String::as_str)
+    }
+
+    /// 패널 앱이 `OSC 52` 로 넣어 달라 한 글을 **걷는다**(없으면 `None`).
+    ///
+    /// 뷰가 프레임마다 부르고, 값이 나오면 그때 OS 클립보드에 넣는다. 걷어 가므로 같은
+    /// 복사가 두 번 나가지 않는다 — 같은 글을 두 번 복사하는 것은 정상이지만, 한 번
+    /// 복사한 것이 프레임마다 다시 나가면 그것은 무한 복사다(pytmux-420 ①).
+    pub fn take_clipboard(&mut self) -> Option<String> {
+        self.pending_clipboard.take()
     }
 
     pub fn active_cwd(&self) -> Option<&str> {
