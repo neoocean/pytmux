@@ -482,6 +482,10 @@ class ServerPtyMixin:
             sess = self._session_of_pane(pane)
             if sess:
                 self._broadcast_session(sess)
+        # 포커스 리포트(1004)를 **방금 켠** 앱에는 지금 상태를 한 번 알린다(pytmux-421).
+        # 이 자리에 없으면 앱은 켠 직후부터 다음 포커스 전이까지 「모르는 채」다.
+        if pane._focus_armed:
+            self.sync_pane_focus(self._session_of_pane(pane))
         # 트래킹을 켠 앱의 프로세스 그룹을 기록한다(켜기를 본 슬라이스에서만). 그
         # 그룹이 사라졌는데 플래그가 남아 있으면 = 앱이 teardown 없이 죽은 stale
         # 상태이고, 그걸 마우스 경로에서 걷어낸다(serverio._reap_stale_mouse).

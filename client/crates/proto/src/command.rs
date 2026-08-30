@@ -900,6 +900,14 @@ pub enum Outgoing {
     /// RTT 측정 ping(`{"t":"ping","ts":..}` — G9u). 서버가 `ts` 를 echo 한 `pong` 을
     /// 즉시 돌려준다. 명령이 아니라 자기 프레임 종류라 변형을 나눈다(`Resize` 와 같다).
     Ping { ts: f64 },
+    /// 창이 포커스를 얻거나 잃었다(`{"t":"focus","on":..}` · pytmux-421).
+    ///
+    /// 서버는 이것으로 **포커스 리포트(DECSET 1004)를 켠 패널에만** `ESC[I`/`ESC[O` 를
+    /// 쓴다 — 앱은 그 신호로 깜빡임·폴링·자동 새로고침을 멈춘다. 안 보내면 앱은
+    /// 「단말이 늘 포커스」로 알고 살아, 배경에서도 포그라운드처럼 계속 돈다.
+    ///
+    /// 명령이 아니라 자기 프레임 종류다(`Resize`·`Ping` 과 같다).
+    Focus { on: bool },
 }
 
 impl Outgoing {
@@ -923,6 +931,7 @@ impl Outgoing {
                 serde_json::to_value(resize).expect("Resize 는 항상 직렬화된다")
             }
             Outgoing::Ping { ts } => serde_json::json!({ "t": "ping", "ts": ts }),
+            Outgoing::Focus { on } => serde_json::json!({ "t": "focus", "on": on }),
         }
     }
 }
@@ -1492,9 +1501,21 @@ mod tests {
             Outgoing::Input(b"x".to_vec()).to_frame(),
             Outgoing::Scroll(Scroll::by(1)).to_frame(),
             Outgoing::Resize(Resize::new(80, 24)).to_frame(),
+            Outgoing::Focus { on: true }.to_frame(),
         ];
         let kinds: Vec<&str> = frames.iter().map(|f| f["t"].as_str().unwrap()).collect();
-        assert_eq!(kinds, vec!["cmd", "input", "scroll", "resize"]);
+        assert_eq!(kinds, vec!["cmd", "input", "scroll", "resize", "focus"]);
+    }
+
+    /// 포커스 프레임의 **모양**(pytmux-421). 서버는 `msg.get("on")` 한 칸만 읽는다 —
+    /// 이름이나 타입이 어긋나면 서버가 `bool(None)` = `False` 로 읽어, 창이 포커스를
+    /// 얻어도 **영원히 blur** 다. 조용한 오답이라 눈으로 못 찾는다.
+    #[test]
+    fn focus_frames_say_which_way_the_focus_went() {
+        let on = Outgoing::Focus { on: true }.to_frame();
+        assert_eq!((on["t"].as_str(), on["on"].as_bool()), (Some("focus"), Some(true)));
+        let off = Outgoing::Focus { on: false }.to_frame();
+        assert_eq!(off["on"].as_bool(), Some(false));
     }
 
     #[test]

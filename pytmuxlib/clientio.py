@@ -83,6 +83,28 @@ class _InputMixin:
         event.stop()
 
     # ---- 이벤트 ----
+    async def _send_focus(self, on: bool):
+        """단말이 포커스를 얻고 잃은 것을 서버에 알린다(pytmux-421).
+
+        서버는 이것으로 **포커스 리포트(DECSET 1004)를 켠 패널에만** `ESC[I`/`ESC[O` 를
+        쓴다 — 앱은 그 신호로 깜빡임·폴링·자동 새로고침을 멈춘다. 안 보내면 앱은
+        「단말이 늘 포커스」로 알고 살아, 배경 탭에서도 포그라운드처럼 계속 돈다.
+
+        ⛔ **실패해도 조용하다.** 포커스 하나 때문에 클라가 죽거나 화면에 오류가 뜨면
+        안 된다 — 창을 스치기만 해도 나는 사건이라 시끄러운 실패는 곧 도배다."""
+        if not self.writer:
+            return
+        try:
+            await write_msg(self.writer, {"t": "focus", "on": bool(on)})
+        except (OSError, ConnectionError):
+            pass
+
+    async def on_app_focus(self, event):
+        await self._send_focus(True)
+
+    async def on_app_blur(self, event):
+        await self._send_focus(False)
+
     async def on_resize(self, event):
         if self.writer:
             cols, rows = self._content_size()

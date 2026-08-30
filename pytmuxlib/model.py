@@ -220,6 +220,12 @@ _ALT_RE = re.compile(rb"\x1b\[\?(1049|1047|47)(h|l)")
 # → 전체 파라미터 목록을 잡은 뒤 관심 모드만 추린다.
 _MOUSE_DECSET_RE = re.compile(rb"\x1b\[\?([0-9;]+)(h|l)")
 _MOUSE_TRACK_MODES = frozenset((1000, 1002, 1003))
+# 포커스 이벤트 리포트(DECSET 1004 · pytmux-421). 켜 둔 앱은 단말이 포커스를 얻고 잃을
+# 때 `ESC[I`·`ESC[O` 를 받길 기대하고, 그것으로 깜빡임·폴링·자동 새로고침을 멈춘다.
+# ★ **마우스와 같은 스캔에 얹는다.** 두 번 훑으면 뜨거운 경로 비용이 두 배이고, 무엇보다
+#   carry(경계 이월)를 각자 들면 조각 경계에서 두 스캔의 판정이 **갈릴 수 있다** —
+#   같은 바이트를 보고 한쪽만 해제를 놓치는 부류의 결함이 실제로 있었다(위 결합 DECSET).
+_FOCUS_MODE = 1004
 # DECSET 이 PTY read/FEED_SLICE(8KiB) 경계에 걸쳐 쪼개져도 놓치지 않게 보관하는 직전
 # 데이터 꼬리 길이. 스캔이 stateless 라 `\x1b[?1000;1002;1003;1006l` 한 개가 두 조각으로
 # 갈리면 **해제를 통째로 놓쳐** 트래킹이 켜진 채 남는다(= 앱 종료 후 셸 프롬프트에 SGR
@@ -394,6 +400,14 @@ class Pane:
         # 그 그룹이 사라졌는데 트래킹이 남아 있으면 = 앱이 teardown 없이 죽은 stale
         # 상태다(serverio._mouse_tracking_stale).
         self._mouse_owner_pgid = 0
+        # 앱이 포커스 리포트(1004)를 켰는가. 켜 둔 패널에만 `ESC[I`/`ESC[O` 를 쓴다 —
+        # 안 켠 앱에 쓰면 그 두 바이트가 **글자로** 화면에 박힌다.
+        self.focus_track = False
+        # 이번 슬라이스에서 **켜졌다**. 서버가 그때 지금 상태를 한 번 알려 준다 —
+        # 안 알리면 앱은 켠 직후부터 다음 전이까지 「모르는 채」이고 그 사이 그림이 틀린다.
+        self._focus_armed = False
+        # 서버가 이 패널에 마지막으로 알려 준 포커스(None=아직 안 알렸다).
+        self._focus_sent = None
         self.pipe_proc = None    # pipe-pane 대상 프로세스
         # PTY 백엔드 핸들(pty_backend.PtyProcess). 서버가 spawn 직후 주입한다.
         # 렌더 전용(replay/진단) 패널은 None — master_fd/child_pid 만 -1 로 둔다.
@@ -647,9 +661,14 @@ class Pane:
         self._mouse_carry = b""
         self._mouse_on_seen = False
         self._mouse_owner_pgid = 0
+        # 포커스 리포트도 앱의 것이다 — 셸이 새로 뜨면 아무도 안 켠 상태로 돌아간다.
+        self.focus_track = False
+        self._focus_armed = False
+        self._focus_sent = None
 
     def update_mouse_modes(self, data: bytes) -> bool:
-        """피드 데이터에서 마우스 트래킹 DECSET(1000/1002/1003/1006)을 추적한다.
+        """피드 데이터에서 앱이 켠 DECSET 을 추적한다 — 마우스(1000/1002/1003/1006)와
+        **포커스 리포트(1004)**.
         bracketed paste(2004) 추적과 같은 위치에서 호출. 상태가 바뀌면 True 를
         반환해 서버가 클라이언트에 레이아웃을 다시 보내게 한다.
 
@@ -678,6 +697,10 @@ class Pane:
                 mode = int(tok)
                 if mode == 1006:
                     self.mouse_sgr = on
+                elif mode == _FOCUS_MODE:
+                    if on and not self.focus_track:
+                        self._focus_armed = True
+                    self.focus_track = on
                 elif mode in _MOUSE_TRACK_MODES:
                     if on:
                         self._mouse_modes.add(mode)
@@ -1436,4 +1459,9 @@ class ClientConn:
         # 크기로 쓴다. last_seen(ping 포함 아무 메시지나) 과 달리 사용자 조작만 센다 —
         # keepalive ping 만 오는 유휴 클라가 '최근 조작'으로 오인돼 크기를 뺏지 않게.
         self.last_active: float = 0.0
+        # 이 클라(창·단말)가 지금 포커스를 갖고 있나(pytmux-421). 클라가 `focus` 프레임으로
+        # 알린다. **기본이 True** 인 이유: 안 알리는 구클라를 「영원히 포커스 없음」으로
+        # 두면, 그 클라만 붙어 있는 패널의 앱이 계속 blur 상태로 굴러 그림이 틀린다 —
+        # 모르면 종전과 같이 구는 편이 안전하다.
+        self.has_focus: bool = True
 

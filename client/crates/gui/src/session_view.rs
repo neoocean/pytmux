@@ -504,6 +504,8 @@ pub struct SessionView {
     /// **닫기는 여기 안 온다** — 그건 `quit_requested` 와 같은 길을 탄다(뒤처리가 이미
     /// 그쪽 한 곳에 있다). 그래서 이 값에 남는 것은 최소화·최대화 둘뿐이다.
     window_op: Option<titlebar::Button>,
+    /// 서버에 마지막으로 알린 창 포커스(None=아직 안 알렸다 · pytmux-421).
+    window_focus: Option<bool>,
     quit_requested: bool,
     /// 이번 펌프에서 창을 전체 화면으로 넣었다 뺄까(§10-21ⓘ3).
     ///
@@ -773,6 +775,7 @@ impl SessionView {
             last_title: None,
             titlebar_band: None,
             window_op: None,
+            window_focus: None,
             quit_requested: false,
             fullscreen_requested: false,
             paste_requested: false,
@@ -3513,6 +3516,7 @@ impl SessionView {
         // 보고와 같은 자리다 — 그 둘이 이 판에만 있는 이유가 같다.
         self.refresh_title(ctx);
         self.refresh_titlebar_band(ctx);
+        self.refresh_window_focus(ctx);
         self.pump_tail(dirty)
     }
 
@@ -6628,6 +6632,32 @@ impl SessionView {
         }
         window.set_titlebar_height(band as f64);
         self.titlebar_band = Some(band);
+    }
+
+    /// 창 포커스가 바뀌었으면 서버에 알린다(pytmux-421).
+    ///
+    /// 서버는 이것으로 **포커스 리포트(DECSET 1004)를 켠 패널에만** `ESC[I`/`ESC[O` 를
+    /// 쓴다 — 앱은 그 신호로 깜빡임·폴링·자동 새로고침을 멈춘다.
+    ///
+    /// # 왜 이벤트가 아니라 프레임마다 물어보나
+    ///
+    /// `refresh_titlebar_band` 와 같은 이유다 — **우리 기억이 아니라 창이 실제로 쓰는
+    /// 값**과 견주므로, 포커스 전이를 놓치는 경로가 새로 생겨도 다음 프레임에 저절로
+    /// 되돌아온다. 비용은 프레임마다 getter 한 번이고, **바뀔 때만** 프레임을 보낸다.
+    ///
+    /// 첫 프레임에는 `window_focus` 가 `None` 이라 **지금 상태를 한 번 보낸다** — 서버의
+    /// 기본은 「포커스 있음」이므로 포커스 없이 뜬 창이 그 사실을 알릴 길이 그것뿐이다.
+    fn refresh_window_focus(&mut self, ctx: &mut ViewContext<Self>) {
+        // ⛔ 창 핸들에 물어보지 않는다 — 상류 `platform::Window` 트레이트에는 포커스를
+        // 되읽는 자리가 없고, 그것을 더하려면 구현 넷(mac·winit·headless·test)을 다
+        // 건드려야 한다. 창 관리자는 이미 답을 안다: `active_window_id` 의 정의가
+        // 「타이핑 포커스를 가진 창」이고, 앱 자체가 비활성이면 `None` 이다.
+        let on = ctx.windows().active_window() == Some(ctx.window_id());
+        if self.window_focus == Some(on) {
+            return;
+        }
+        self.window_focus = Some(on);
+        self.pending.push(Outgoing::Focus { on });
     }
 
     /// 활성 패널 입력칸에 **지금 들어 있는 글**(패리티 G9c). 못 긁으면 빈 문자열.

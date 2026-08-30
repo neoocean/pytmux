@@ -733,6 +733,11 @@ class ServerIOMixin:
         for c in self.clients:
             if c.session is sess:
                 asyncio.create_task(self._send_full(c))
+        # 활성 패널·탭이 바뀌었을 수 있다 = 포커스의 주인이 바뀌었다(pytmux-421).
+        # 여기 한 자리에 두는 이유: 활성 패널을 옮기는 길이 여럿(키·마우스·명령·
+        # 패널 종료)인데 **전부 이 함수로 모인다**. 자리마다 부르면 한 곳이 빠지고,
+        # 빠진 곳의 증상은 「가끔 앱이 blur 인 줄 안다」라 눈으로 못 찾는다.
+        self.sync_pane_focus(sess)
 
     def _notify_no_sessions(self):
         for c in self.clients:
@@ -1578,6 +1583,18 @@ class ServerIOMixin:
                         for c in [x for x in self.clients
                                   if x.session is client.session]:
                             await self._send_full(c)
+                    elif mt == "focus":
+                        # 클라(창·단말)가 포커스를 얻거나 잃었다(pytmux-421). 사용자
+                        # **조작이 아니므로** `last_active` 는 안 건드린다 — 창을 스쳐
+                        # 지나가는 것만으로 window-size=latest 의 주인이 바뀌면 안 된다.
+                        # §1.7 원격 보기 중이면 상류에도 알린다 — 그 화면을 그리는 것은
+                        # 상류의 앱이고, 그 앱이 포커스를 알아야 한다.
+                        on = bool(msg.get("on"))
+                        if client.remote_view:
+                            self.remote_relay(client, msg)
+                        if on != client.has_focus:
+                            client.has_focus = on
+                            self.sync_pane_focus(client.session)
                     elif mt == "scroll":
                         if client.remote_view and self.remote_relay(client, msg):
                             continue
@@ -1620,6 +1637,10 @@ class ServerIOMixin:
                         await self._send_full(c)
                     except Exception:
                         self._log_error("send_full(teardown)")
+                # 이 클라가 갖고 있던 포커스가 사라졌다 — 마지막 클라가 떨어지면 그
+                # 패널의 앱은 blur 를 받아야 한다(pytmux-421). 붙는 쪽은
+                # `_broadcast_session` 이 덮는다.
+                self.sync_pane_focus(sess)
 
     def _handle_input(self, client: ClientConn, msg: dict):
         sess = client.session
@@ -1687,6 +1708,64 @@ class ServerIOMixin:
                     t.pty.write(data)
             except OSError:
                 pass
+
+    def sync_pane_focus(self, sess=None) -> None:
+        """포커스 리포트(DECSET 1004)를 켠 패널에 `ESC[I`/`ESC[O` 를 쓴다(pytmux-421).
+
+        **규칙 한 줄**: 어떤 패널이 포커스를 갖는다 = 「포커스를 가진 클라가 그 패널을
+        활성으로 보고 있다」. 여러 클라가 붙는 멀티플렉서라 클라 한 대의 창 포커스만으로는
+        답이 안 나온다 — 두 사람이 다른 탭을 보고 있으면 **둘 다** 포커스다.
+
+        ⛔ **1004 를 안 켠 패널에는 아무것도 안 쓴다.** 그 두 바이트는 앱이 안 읽으면
+        화면에 **글자로 박힌다**(`ESC[I` → `[I`). 마우스 리포트가 셸 프롬프트에 텍스트로
+        박히던 것과 같은 부류다.
+
+        ⛔ **바뀔 때만 쓴다**(`_focus_sent`). 매 프레임 쓰면 앱이 포커스 전이를 그때마다
+        처리해 다시 그린다 — 조용한 화면이 30Hz 로 깜빡인다.
+
+        `sess` 를 주면 그 세션만, 안 주면 전부. 원격 보기 중인 클라는 **자기 로컬 패널의
+        포커스 주인이 아니다** — 그 사람이 보고 있는 것은 상류 화면이라, 그동안 로컬
+        패널은 아무도 안 보는 것이 맞다.
+        """
+        focused = set()
+        for c in self.clients:
+            # ⛔ `c.has_focus` 로 직접 읽지 않는다 — `self.clients` 에는 온전한
+            # `ClientConn` 말고도 대역(테스트 스텁·릴레이 자리)이 들어온다. 없는 칸을
+            # 곧바로 읽으면 그 자리에서 AttributeError 가 나고, 이 함수는 세션이 죽는
+            # 경로에서도 불리므로 **정리 도중에** 터진다.
+            # 기본이 True 인 것은 `ClientConn.has_focus` 와 같은 규칙이다 — 모르면
+            # 종전과 같이(포커스 있음) 군다.
+            if (not getattr(c, "has_focus", True)
+                    or getattr(c, "remote_view", False)
+                    or getattr(c, "session", None) is None):
+                continue
+            if sess is not None and c.session is not sess:
+                continue
+            win = c.session.active_window
+            if win is not None and win.active_pane is not None:
+                focused.add(win.active_pane.id)
+        for s in ({c.session for c in self.clients if getattr(c, "session", None)}
+                  if sess is None else {sess}):
+            for t in s.tabs:
+                for p in t.window.panes():
+                    want = p.id in focused
+                    # 앱이 방금 1004 를 켰으면(`_focus_armed`) 값이 안 바뀌었어도 한 번
+                    # 알린다 — 켠 순간의 상태를 모르면 다음 전이까지 그림이 틀린다.
+                    armed = p._focus_armed
+                    p._focus_armed = False
+                    if not p.focus_track:
+                        p._focus_sent = None    # 껐으면 다음에 켤 때 다시 알린다
+                        continue
+                    if want == p._focus_sent and not armed:
+                        continue
+                    p._focus_sent = want
+                    pty = getattr(p, "pty", None)
+                    if pty is None:
+                        continue
+                    try:
+                        pty.write(b"\x1b[I" if want else b"\x1b[O")
+                    except OSError:
+                        pass        # 종료 중인 패널 — 포커스 하나 때문에 안 죽는다
 
     def _handle_scroll(self, client: ClientConn, msg: dict):
         sess = client.session
