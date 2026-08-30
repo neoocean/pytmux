@@ -27,7 +27,7 @@ ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from qa import inventory, oracles, scenarios                         # noqa: E402
+from qa import inventory, oracles, scenarios, screens                # noqa: E402
 from qa.env import HomeSlot, Refused, SLOT_BASE, new_run_id          # noqa: E402
 from qa.findings import Finding, Run, Skipped, fingerprint, render_report, write_findings  # noqa: E402
 from qa.ledger import LEDGER_SCENARIO, Ledger, render_ledger         # noqa: E402
@@ -49,6 +49,13 @@ class _FakeCtx:
         self.session = session
         self.scenario = scenario
         self.current = current
+        self.run_dir = ""                        # 산출물 자리가 없으면 증거는 안 남는다
+        self.kept = []
+
+    def evidence(self, name, raw):
+        """실 `Ctx.evidence` 와 **같은 계약**: 남길 것이 없으면 빈 문자열."""
+        self.kept.append((name, raw))
+        return f"\n증거(캡처 원시 바이트): {name}.ansi" if raw else ""
 
 
 def _slot():
@@ -157,6 +164,11 @@ class _RecCtx:
 
     def fail(self, *, oracle, key, severity, title, expected, actual, **kw):
         self.findings.append((oracle, severity, key, actual))
+
+    run_dir = ""
+
+    def evidence(self, name, raw):
+        return f"\n증거(캡처 원시 바이트): {name}.ansi" if raw else ""
 
 
 def test_multi_client_mirror_oracle_bites_when_the_broadcast_goes_one_way():
@@ -490,6 +502,134 @@ def test_the_kill_by_name_gate_actually_bites():
         assert any("pkill" in a for a in atoms), "심은 호출을 게이트가 못 봤다"
         assert sum("pkill" in a for a in atoms) == 1, \
             "독스트링까지 셌다 — 설명이 자기 게이트를 깨는 함정이 되살아났다"
+
+
+def _fixed_wait_captures(path):
+    """`capture_client(...)` 를 **`until` 없이** 부르는 자리들(줄 번호).
+
+    ⚠ 소스 문자열 검색으로 하면 이 규율을 적어 둔 주석·독스트링이 자기 게이트를 깬다
+    (`_code_atoms` 머리말과 같은 함정). AST 로 호출 노드만 본다.
+    """
+    import ast
+    out = []
+    for node in ast.walk(ast.parse(open(path, encoding="utf-8").read())):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+        if name != "capture_client":
+            continue
+        if not any(kw.arg == "until" for kw in node.keywords):
+            out.append(node.lineno)
+    return out
+
+
+def test_real_client_capture_never_waits_a_fixed_time():
+    """⛔ 실 클라 캡처는 **폴링**한다 — 고정 대기는 부하 회차를 결함으로 신고한다.
+
+    pytmux-425·426·427 이 그것이다: `qa-20260831-040007`(시나리오 넷 동시)에서 폴링하는
+    T2 는 통과했는데 고정 6초인 T0·T1 은 「화면 0자」 셋을 냈다 — 같은 기계·같은 시각이다.
+    한가할 때 첫 그리기는 0.6~1.2초라 상한의 5분의 1이고, 그래서 평소엔 안 보인다.
+    ⚠ **사람이 지키는 규약으로 두면 다음 시나리오가 그대로 다시 밟는다** — 여기서 센다.
+    """
+    bad = []
+    for path in _qa_sources():
+        for line in _fixed_wait_captures(path):
+            bad.append(f"{os.path.relpath(path, ROOT)}:{line}")
+    assert not bad, ("실 클라를 고정 대기로 잡는 자리가 생겼다 — until 을 준다: "
+                     + ", ".join(bad))
+
+
+def test_the_fixed_wait_gate_actually_bites():
+    """⛔ 게이트 자체를 변이로 검증한다 — 안 무는 게이트는 초록을 파는 장식이다."""
+    with tempfile.TemporaryDirectory() as d:
+        planted = os.path.join(d, "mutant.py")
+        with open(planted, "w", encoding="utf-8") as fh:
+            fh.write('"""capture_client 를 설명만 하는 독스트링."""\n'
+                     'def run(s):\n'
+                     '    a = s.capture_client(seconds=6.0)\n'
+                     '    b = s.capture_client(until=lambda t: True)\n'
+                     '    return a, b\n')
+        assert _fixed_wait_captures(planted) == [3], \
+            "심은 고정 대기를 게이트가 못 봤거나, 폴링하는 자리까지 셌다"
+
+
+def test_capture_client_refuses_a_fixed_wait():
+    """게이트를 지나쳐도 **런타임이 한 번 더 막는다** — 새 호출부가 잊는 자리다."""
+    from qa.session import Session
+
+    s = Session(HomeSlot(new_run_id() + "-selftest"))
+    try:
+        s.capture_client()
+    except Refused:
+        pass
+    except Exception as e:                       # NotSupported(Windows) 는 여기 뜻이 아니다
+        raise AssertionError(f"Refused 가 아니라 {type(e).__name__} 이 났다: {e}")
+    else:
+        raise AssertionError("until 없는 캡처가 그냥 통과했다 — 규율이 런타임에 없다")
+
+
+def test_the_settle_predicate_is_the_same_question_as_the_verdict():
+    """★ 기다림과 판정이 **한 술어**인가(`qa/screens.py` 머리말의 규율).
+
+    ⛔ 기다림이 판정보다 **약하면** 덜 그린 화면을 통과시킨다(거짓 초록) — 그것이
+    이 게이트의 값이다. 강하면 다 그린 회차까지 상한을 태운다(느려질 뿐이지만 그 또한
+    「왜 느리지」로 사람을 태운다). 그래서 양쪽으로 잰다.
+    """
+    from qa.scenarios.t0_core_loop import _judge_screen, _settled
+
+    class _C(_FakeCtx):
+        def __init__(self):
+            super().__init__(_slot(), _FakeSession())
+            self.findings = []
+
+        def fail(self, *, oracle, key, severity, title, expected, actual, **kw):
+            self.findings.append(oracle)
+
+    #: (화면, 다 그렸나) — 가운데 둘이 부하 회차의 실제 모양이다(테두리만·탭 하나만).
+    for text, done in (
+            ("", False),
+            ("┌──┐\n└──┘", False),
+            ("┌──┐\n│ 1:zsh │\n└──┘", False),
+            ("┌──┐\n│ 1:zsh  2:zsh │\n└──┘", True),
+            (screens.TRACEBACK + "\n  …", True),      # 더 기다려도 안 나아진다
+    ):
+        assert _settled(text) is done, f"기다림의 판정이 어긋났다: {text!r}"
+        if done and not screens.has_traceback(text):
+            c = _C()
+            _judge_screen(c, text, True, "probe")
+            assert c.findings == [], \
+                f"기다림은 «다 됐다»는데 판정은 결함을 냈다 — 두 술어다: {c.findings}"
+
+
+def test_a_blank_verdict_keeps_the_capture_as_evidence():
+    """⛔ 붉을 때 **재료를 남긴다** — 안 남기면 다음 사람이 아무것도 못 한다.
+
+    pytmux-425·426·427 의 본문이 그 증거다: 「하네스가 화면을 못 받았나 클라가 첫 프레임
+    전에 멈춰 섰나」를 나란히 적어 두고 **고르지 못한 채** 이슈가 셋 열렸다. 그 회차가
+    남긴 증거 자리는 `qa/out/<run>/—`(빈 자리)였다. 여기서 두 가지를 잰다 —
+    ⑴ 파일이 실제로 써지고 ⑵ 그 경로가 **결함 본문에 실린다**(써 놓고 안 가리키면
+    리포트만 보는 사람에게는 없는 것과 같다).
+    """
+    from qa.run import Ctx
+    from qa.scenarios.t0_core_loop import _judge_screen
+
+    with tempfile.TemporaryDirectory() as d:
+        ctx = Ctx(_slot(), _FakeSession(), "T0-core-loop", 1, run_dir=d)
+        _judge_screen(ctx, "", True, "first", raw=b"\x1b[2Jrubbish")
+        assert len(ctx.findings) == 1, ctx.findings
+        f = ctx.findings[0]
+        assert f.oracle == "client/paints_anything", f.oracle
+        kept = os.path.join(d, "captures", "T0-core-loop-first.ansi")
+        assert os.path.exists(kept), f"증거를 안 남겼다: {os.listdir(d)}"
+        assert open(kept, "rb").read() == b"\x1b[2Jrubbish", "남긴 것이 캡처가 아니다"
+        assert kept in f.actual, f"남겼는데 본문이 안 가리킨다: {f.actual!r}"
+
+    # ⚠ 산출물 자리가 없으면(부분 런·자기 시험) **조용히 넘어간다** — 여기서 터지면
+    #    진짜 결함이 IO 예외에 묻힌다(`qa/screens.py` 머리말과 같은 규율).
+    quiet = Ctx(_slot(), _FakeSession(), "T0-core-loop", 1, run_dir="")
+    _judge_screen(quiet, "", True, "first", raw=b"x")
+    assert "증거" not in quiet.findings[0].actual, quiet.findings[0].actual
 
 
 def test_scenario_registry_is_the_ssot():

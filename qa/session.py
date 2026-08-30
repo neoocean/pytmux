@@ -33,7 +33,7 @@ import sys
 import time
 from dataclasses import dataclass
 
-from .env import ROOT, IS_WINDOWS, HomeSlot
+from .env import ROOT, IS_WINDOWS, HomeSlot, Refused
 
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 import ptyshot                                   # noqa: E402
@@ -50,6 +50,12 @@ _DUMPED = re.compile(r"frame-dump:\s*(?P<path>.+?)\s*\((?P<w>\d+)x(?P<h>\d+)\)")
 #: ⛔ **둘 중 «새것»을 고른다** — 이름 순으로 고르면 몇 주 묵은 `release` 를 잡고도
 #:    QA 는 초록을 판다("고쳤다"와 "돈다"는 다른 사건이다 · 루트 CLAUDE.md §배포).
 GUI_BINARIES = ("client/target/release/pytmux-gui", "client/target/debug/pytmux-gui")
+
+#: 실 클라가 화면을 그릴 때까지의 **상한**(초). ⚠ 기다림이 아니라 상한이다 —
+#: `capture_client` 는 `until` 이 참이 되면 그 자리에서 끝낸다(실측 0.6~1.2초).
+#: T2 가 같은 것을 `DRAW_TIMEOUT` 이라는 같은 이름·같은 값으로 이미 쓰고 있었고,
+#: 그쪽만 폴링이라 부하 회차에 그쪽만 살아남았다(pytmux-425·426·427).
+DRAW_TIMEOUT = 25.0
 
 
 class EnvBroken(Exception):
@@ -211,20 +217,34 @@ class Session:
         return int(m.group(1)), int(m.group(2))
 
     # ── 관찰 ─────────────────────────────────────────────────────────────────
-    def capture_client(self, seconds: float = 6.0, feed: bytes | None = None):
+    def capture_client(self, seconds: float = DRAW_TIMEOUT, feed: bytes | None = None,
+                       until=None):
         """실 Textual 클라를 가짜 터미널 아래 붙여 화면(ANSI 프레임)을 잡는다.
 
         반환 `(raw, alive, text)`. `alive=False` 면 캡처 시간 안에 클라가 **스스로**
         끝난 것이고 그건 곧 크래시 신호다. 캡처가 끝나면 클라는 SIGKILL 로 죽는데,
         **서버는 그래도 살아 있어야 한다** — 그것이 이 제품의 첫째 계약이라
         `T0-core-loop` 의 재부착 스텝이 그걸 곧바로 잰다.
+
+        ⛔ **`until` 을 반드시 준다**(pytmux-425·426·427). `seconds` 는 상한이지
+        기다림이 아니다 — 안 주면 이 함수는 상한을 통째로 쉬고 그때 화면에 있는 것을
+        판정 재료로 삼는데, 부하가 걸린 회차에는 클라가 아직 안 그렸다. 실측
+        2026-08-31 `qa-20260831-040007`(시나리오 넷 동시): 폴링하는 T2 는 통과했고
+        고정 6초인 T0·T1 은 「화면 0자」 셋을 신고했다 — 셋 다 제품이 아니라 하네스가
+        낸 것이다(한가할 때 첫 그리기 실측 0.6~1.2초 · 상한의 5분의 1).
+        ⛔ 그리고 `until` 은 **판정과 같은 술어**여야 한다 — 약하면 덜 그린 화면을
+        통과시키고(거짓 초록), 강하면 다 그린 회차까지 상한을 태운다.
+        `tests/test_qa_layer.py` 의 AST 게이트가 「안 준 캡처」를 센다.
         """
         if IS_WINDOWS:
             raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
+        if until is None:
+            raise Refused("capture_client 에 until 이 없다 — 고정 대기는 부하 때 "
+                          "안 그린 화면을 결함으로 신고한다(pytmux-425·426·427)")
         raw, alive = ptyshot.capture(
             self.client_argv(),
             cols=self.cols, rows=self.rows, seconds=seconds, feed=feed,
-            env={"PYTMUX_HOME": self.slot.home})
+            until=until, env={"PYTMUX_HOME": self.slot.home})
         return raw, alive, ptyshot.screen_text(raw)
 
     def client_argv(self) -> list[str]:

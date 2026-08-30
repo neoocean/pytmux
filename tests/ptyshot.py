@@ -45,11 +45,16 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[\]P^_][^\x07\x1b]*(?:\x07|\x
 def capture(argv, *, cols: int = 100, rows: int = 30, seconds: float = 4.0,
             env: dict | None = None, feed: bytes | None = None,
             ready=None, until=None, feed_delay: float = 0.6,
-            feed_settle: float = 0.4, feed_retry: float = 2.0):
+            feed_settle: float = 0.4, feed_retry: float = 2.0,
+            reap_grace: float = 0.5):
     """argv 를 PTY(가짜 터미널) 아래 실행하고 출력을 모은 뒤 종료한다.
 
     반환: (raw_bytes, alive_at_end). alive_at_end=False 면 캡처 시간 안에 프로세스가
     스스로 종료한 것(=즉시 종료/크래시 신호).
+
+    ⛔ **`alive` 는 짐작이 아니라 `waitpid` 로 판정한다.** 자식이 소리 없이 죽으면
+    pty 마스터가 EOF 를 내는데, 그 자리에서 그냥 빠져나오면 「살아 있는데 화면이
+    비었다」는 **없는 부류**가 만들어진다(pytmux-425·426·427 · 아래 `reap_grace`).
 
     `seconds` 는 **상한(deadline)** 이지 고정 대기가 아니다 — `until` 이 참이 되면
     그 자리에서 끝낸다. 이 저장소가 `wait_until`(harness)로 pilot 쪽 고정 대기를
@@ -79,6 +84,7 @@ def capture(argv, *, cols: int = 100, rows: int = 30, seconds: float = 4.0,
     buf = bytearray()
     t0 = time.time()
     alive = True
+    eof = False                                   # pty 마스터가 닫혔나(=자식이 갔다)
     fed_at = None if feed is not None else -1.0   # -1 = 먹일 것이 없다
     ready_at = None
     while time.time() - t0 < seconds:
@@ -87,8 +93,10 @@ def capture(argv, *, cols: int = 100, rows: int = 30, seconds: float = 4.0,
             try:
                 data = os.read(fd, 65536)
             except OSError:
+                eof = True
                 break
             if not data:
+                eof = True
                 break
             buf += data
         now = time.time() - t0
@@ -113,6 +121,27 @@ def capture(argv, *, cols: int = 100, rows: int = 30, seconds: float = 4.0,
         if wpid:
             alive = False
             break
+    # ⛔ **`alive` 를 짐작하지 않는다**(pytmux-425·426·427). 종전에는 pty 마스터의
+    #    EOF/EIO 로 빠져나온 자리가 `waitpid` 를 **한 번도 안 지나** 갓 죽은 자식을
+    #    `alive=True` 로 돌려줬다 — 실측: 0.03초에 소리 없이 죽는 자식이
+    #    `alive=True · 화면 0자`. 그 조합을 받은 QA 는 「살아 있는데 아무것도 안
+    #    그렸다」(S2)로 신고하고, **정작 맞는 판정인 「스스로 종료했다」(S1)에는
+    #    영영 못 닿는다** — 출력 없이 죽는 크래시가 바로 그 부류다.
+    #    EOF 뒤 자식이 실제로 끝나기까지는 찰나가 걸리므로 그만큼만 기다려 본다.
+    if eof:
+        end = time.time() + reap_grace
+        while True:
+            try:
+                wpid, _ = os.waitpid(pid, os.WNOHANG)
+            except OSError:                       # 이미 거둬졌다
+                alive = False
+                break
+            if wpid:
+                alive = False
+                break
+            if time.time() >= end:
+                break                             # 정말로 아직 살아 있다
+            time.sleep(0.01)
     try:
         os.kill(pid, signal.SIGKILL)
     except OSError:

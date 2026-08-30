@@ -220,3 +220,45 @@ async def test_real_client_delta_render():
         harness.assert_no_server_errors(sock)
     finally:
         _cleanup(d, sock)
+
+
+def test_capture_never_calls_a_dead_child_alive():
+    """⛔ **`alive` 는 짐작이 아니라 `waitpid` 다**(pytmux-425·426·427).
+
+    소리 없이 죽는 자식은 pty 마스터에 EOF 를 내는데, 종전에는 그 자리에서 그냥
+    빠져나와 `waitpid` 를 한 번도 안 지났다 — 그래서 0.03초에 죽은 자식이
+    `alive=True · 화면 0자` 로 돌아왔고, 그것을 받은 QA 는 「살아 있는데 아무것도
+    안 그렸다」(S2)로 신고했다. **맞는 판정인 「스스로 종료했다」(S1)에는 영영 못 닿는다.**
+    ⚠ 그 셋을 가르는 것이 이 시험이므로 **양쪽을 다 잰다** — 죽은 것은 False,
+    살아서 안 그리는 것은 True 여야 한다(뒤엣것까지 False 면 오라클이 통째로 뒤집힌다).
+    """
+    import sys
+
+    raw, alive = ptyshot.capture([sys.executable, "-c", "raise SystemExit(0)"], seconds=6.0)
+    assert raw == b"", f"출력이 없어야 하는 자식이 뭔가 냈다: {raw[:80]!r}"
+    assert alive is False, "출력 없이 죽은 자식을 살아 있다고 보고했다"
+
+    raw, alive = ptyshot.capture(
+        [sys.executable, "-c", "import os; os.close(1); os.close(2); raise SystemExit(3)"],
+        seconds=6.0)
+    assert alive is False, "출력 없이 크래시한 자식을 살아 있다고 보고했다"
+
+    raw, alive = ptyshot.capture([sys.executable, "-c", "import time; time.sleep(30)"],
+                                 seconds=1.0)
+    assert alive is True, "상한까지 살아 있던 자식을 죽었다고 보고했다 — 오라클이 뒤집혔다"
+
+
+def test_capture_stops_as_soon_as_until_is_true():
+    """`seconds` 는 상한이지 기다림이 아니다 — QA 가 그 차이로 오신고를 냈다.
+
+    `until` 을 안 주면 상한을 통째로 쉬고, 그때 화면에 있는 것이 판정 재료가 된다.
+    """
+    import sys, time
+
+    argv = [sys.executable, "-c",
+            "import sys, time; sys.stdout.write('READY'); sys.stdout.flush(); time.sleep(30)"]
+    t0 = time.time()
+    raw, alive = ptyshot.capture(argv, seconds=10.0, until=lambda t: "READY" in t)
+    dt = time.time() - t0
+    assert "READY" in ptyshot.screen_text(raw), "조건이 참인데 화면에 그 글자가 없다"
+    assert alive is True and dt < 5.0, f"조건이 참이 됐는데 상한까지 쉬었다: {dt:.1f}초"

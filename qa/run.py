@@ -132,6 +132,24 @@ class Ctx:
             scenario=self.scenario, oracle=oracle, key=key, severity=severity,
             title=title, expected=expected, actual=actual, step=self.current, **kw))
 
+    def evidence(self, name: str, raw: bytes | None) -> str:
+        """재료를 **런 산출물 자리**에 남기고 결함 본문에 붙일 한 줄을 돌려준다.
+
+        ⛔ **붉을 때 재료를 안 남기면 다음 사람이 아무것도 못 한다**(pytmux-425·426·427).
+        그 셋의 본문에 실린 증거 자리는 `qa/out/<run>/—`(빈 자리)였고, 그래서 「하네스가
+        화면을 못 받았나 클라가 첫 프레임 전에 멈춰 섰나」를 **아무도 가를 수 없었다** —
+        본문이 그 둘을 나란히 적어 두고 고르지 못한 채로 이슈가 셋 열렸다.
+        ⚠ 슬롯이 아니라 런 자리에 남긴다 — 슬롯은 런이 끝나면 지워진다(T3 와 같은 규율).
+        """
+        if not raw or not self.run_dir:
+            return ""
+        d = os.path.join(self.run_dir, "captures")
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, f"{self.scenario}-{name}.ansi")
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        return f"\n증거(캡처 원시 바이트): {path}"
+
 
 def run_scenario(mod, slot: HomeSlot, seed: int, ledger: Ledger | None = None,
                  run_dir: str = "") -> Ctx:
