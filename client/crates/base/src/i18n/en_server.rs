@@ -75,6 +75,20 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("머신별 총계 →", "By machine →"),
     ("일별 집계 →", "Daily totals →"),
+    // ── claude-code · 계층 트리가 **글자를 지을 때** 쓰는 말들(pytmux-419) ──
+    //
+    // ★ 이 다섯이 여기 없었던 이유가 곧 결함이었다: 정본 쪽 원문이 `screens.py`
+    //   (Textual) 카탈로그에만 있어서 `gen_server_strings.py` 의 그물에 안 걸렸다.
+    //   그물은 **서버가 무는 모듈**을 훑는데 서버는 그 파일을 안 읽는다. 그래서
+    //   ⑴ 서버가 `i18n.t` 로 부르면 **키가 그대로** 나왔고(`pscreen.weekdays` 는
+    //   `split(",")` 가 원소 하나라 기간 탭이 `IndexError` 로 아예 안 떴다)
+    //   ⑵ 설령 떴어도 이 표에 없으니 **영어 사용자에게 한국어로** 보였다.
+    //   원문을 `__init__.py` 로 옮겨 둘 다 고쳤고, 여기는 그 ⑵ 쪽이다.
+    ("월,화,수,목,금,토,일", "Mo,Tu,We,Th,Fr,Sa,Su"),
+    ("시", "h"),
+    ("── 이번 달 이전 주 ──", "── earlier weeks this month ──"),
+    ("── 이전 달 ──", "── earlier months ──"),
+    ("이 머신", "this machine"),
     // ── claude-code · 판을 잇는 줄(pytmux-371 ④) ──
     ("모델·컨텍스트 고르기 →", "Pick model/context →"),
     ("한도(/usage) 보기 →", "Show limits (/usage) →"),

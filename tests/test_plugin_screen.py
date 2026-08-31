@@ -491,6 +491,226 @@ async def test_the_period_tree_expands_and_the_client_holds_which_rows_are_open(
     assert out2 and out2.get("t") != "plugin_screen_close", out2
 
 
+async def test_the_period_tree_remembers_every_row_that_was_opened_not_just_the_last():
+    """★ 펼침은 **쌓여야** 한다 — 서버가 그 집합을 되쓰지 않으면 한 번에 하나만 펴진다.
+
+    `state` 는 클라가 프레임에 실어 보내는 것이 아니라 **서버가 연결마다 드는 dict**
+    다(`ClientConn.plugin_state` · `servercmd._plugin_screen_reply` 가 그 자리를
+    `req["state"]` 로 넣는다). 그래서 여기서 계산한 «뒤집은 집합»을 그 dict 에 **되쓰지
+    않으면** 다음 누름이 다시 빈 집합에서 출발한다 — 방금 누른 노드 하나만 뒤집힌 채로
+    다시 그려지고, 두 노드를 동시에 펼 수도 접을 수도 없다(pytmux-419 ④).
+
+    ⛔ 이 시험이 판(`rows`)이 아니라 **state 를 보는 이유**: 되쓰기가 곧 계약이고,
+    대역 서버에는 집계 DB 가 없어 트리 줄이 안 선다(`_tree_rows` 가 `None`). 트리 산수가
+    맞는지는 위 시험이 이미 잰다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    # 서버가 드는 그 dict 한 벌 — 왕복마다 **같은 객체**가 온다.
+    state = {}
+    ss.action(srv, None, {"id": "claude-token-period", "do": "toggle",
+                          "row": 0, "input": "day:2026-08-25", "state": state})
+    ss.action(srv, None, {"id": "claude-token-period", "do": "toggle",
+                          "row": 1, "input": "day:2026-08-26", "state": state})
+    got = set(state.get("tree_open") or [])
+    assert got == {"day:2026-08-25", "day:2026-08-26"}, (
+        f"펼침이 안 쌓인다 — 두 번 눌렀는데 집합은 {sorted(got)} 다. "
+        "action() 이 계산한 집합을 state 에 되쓰지 않는다(pytmux-419 ④)")
+    # 같은 노드를 다시 누르면 **빠진다**(대칭차 — 정본 `_tree_open` 의 뜻).
+    ss.action(srv, None, {"id": "claude-token-period", "do": "toggle",
+                          "row": 0, "input": "day:2026-08-25", "state": state})
+    assert set(state.get("tree_open") or []) == {"day:2026-08-26"}, state
+    # `→`/`←` 도 같은 자리에 쌓인다(더하기·빼기라 대칭차가 아니다).
+    ss.action(srv, None, {"id": "claude-token-period", "do": "expand",
+                          "row": 0, "input": "day:2026-08-27", "state": state})
+    assert "day:2026-08-27" in set(state.get("tree_open") or []), state
+    ss.action(srv, None, {"id": "claude-token-period", "do": "collapse",
+                          "row": 0, "input": "day:2026-08-27", "state": state})
+    assert "day:2026-08-27" not in set(state.get("tree_open") or []), state
+
+
+async def test_the_warn_history_remembers_every_day_that_was_opened():
+    """경고 이력도 같은 자리다 — `warn_open` 이 안 쌓이면 날짜 둘을 동시에 못 편다.
+
+    같은 뿌리라 같은 회차에서 잰다(pytmux-419 ④ 는 두 판을 한 줄로 적었다).
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    spec = ss.open_spec(srv, None, "warn-history")
+    days = [r for r in spec["rows"] if r.get("depth") == 0 and r.get("expand")]
+    assert len(days) == 2, spec["rows"]
+    # 판이 처음 선 상태(최신 날짜만 펴짐)를 그대로 담고 시작한다.
+    state = {"warn_open": [d["key"] for d in days if d["expand"] == "open"]}
+    ss.action(srv, None, {"id": "claude-warn-history", "do": "toggle",
+                          "input": days[1]["key"], "state": state})
+    got = set(state.get("warn_open") or [])
+    assert got == {days[0]["key"], days[1]["key"]}, (
+        f"두 날짜를 동시에 못 편다 — {sorted(got)}. state 되쓰기가 없다(pytmux-419 ④)")
+
+
+async def test_the_fold_survives_a_tab_hop_but_a_fresh_open_starts_folded():
+    """접힘의 수명 — **탭을 옮겨도 살고 · 판을 다시 열면 기본으로 돌아간다**(정본 그대로).
+
+    정본에서 이 다섯은 한 팝업의 탭이라 접힘을 화면 인스턴스가 든다(`_tree_toggled`).
+    ⑴ [기간] 에서 트리를 펴고 [세션] 에 들렀다 돌아오면 **편 채로 있고**,
+    ⑵ 팝업을 닫았다 다시 열면 새 인스턴스라 **기본 접힘**이다.
+    보관함(`ClientConn.plugin_state`)은 연결 수명이라, 되돌리는 손이 없으면 ⑵ 에서
+    어제 편 노드가 오늘 판에 남는다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    state = {}
+    ss.open_spec(srv, None, "token-period", state=state)
+    ss.action(srv, None, {"id": "claude-token-period", "do": "toggle",
+                          "row": 0, "input": "day:2026-08-25", "state": state})
+    assert set(state["tree_open"]) == {"day:2026-08-25"}, state
+
+    # ⑴ 잇는 줄로 [세션] 에 갔다가 다시 [기간] 으로 — **판이** 편 채로 돌아온다.
+    #    ⛔ 보관함만 보면 모자란다: 되돌아온 판을 지을 때 그 집합을 **안 건네도**
+    #       보관함은 그대로라 시험이 초록이 된다(실측 — 뮤테이션이 안 물렸다).
+    #       그래서 자료를 먹여 **줄까지** 잰다.
+    import time
+    now = time.time()
+    recs = [{"ts": now - i * 3600, "tokens": 1000 + i, "account": "a"}
+            for i in range(30)]
+    with harness.patched(ss, _usage_records=lambda _srv, limit=4000: recs):
+        st2 = {}
+        first = ss.open_spec(srv, None, "token-period", state=st2)
+        # 기본으로 펴져 있는 오늘 행을 골라 **접는다**(뒤집은 집합에 실린다).
+        today = next(r["key"] for r in first["rows"] if r.get("expand") == "open")
+        ss.action(srv, None, {"id": "claude-token-period", "do": "toggle",
+                              "row": 0, "input": today, "state": st2})
+        hop = ss.action(srv, None, {"id": "claude-token-period", "do": "apply",
+                                    "input": ss._GOTO_SESSIONS, "state": st2})
+        assert hop and hop["id"] == "claude-token-sessions", hop
+        back = ss.action(srv, None, {"id": "claude-token-sessions", "do": "apply",
+                                     "input": ss._GOTO_PERIOD, "state": st2})
+        assert back and back["id"] == "claude-token-period", back
+        got = next((r["expand"] for r in back["rows"] if r["key"] == today), None)
+        assert got == "shut", (
+            f"탭을 옮겼다 오니 접은 것이 도로 펴졌다({today}={got}) — 되돌아온 판에 "
+            f"보관함의 집합을 안 건넸다: {st2}")
+    assert set(state["tree_open"]) == {"day:2026-08-25"}, (
+        f"탭을 옮겼다 오니 접힘이 날아갔다: {state}")
+
+    # ⑵ 판을 새로 열면 되돌아간다.
+    ss.open_spec(srv, None, "token-period", state=state)
+    assert not state.get("tree_open"), f"새로 연 판에 옛 접힘이 남았다: {state}"
+
+
+async def test_collapsing_every_warning_day_is_not_read_as_no_choice_at_all():
+    """⛔ 대조군 — 경고 판에서 **다 접은 것**과 **아직 안 건드린 것**은 다르다.
+
+    그 집합은 대칭차가 아니라 그냥 «펴진 날짜»라 빈 집합에 뜻이 있다. 없는 것을 빈
+    것으로 접으면, 다 접어 둔 판이 다음 왕복에 «최신 날짜만 펴진» 기본 모양으로
+    되살아난다 — 사용자가 접은 것이 저 혼자 펴진다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    spec = ss.open_spec(srv, None, "warn-history")
+    days = [r for r in spec["rows"] if r.get("depth") == 0 and r.get("expand")]
+    newest = next(d["key"] for d in days if d["expand"] == "open")
+    # 최신 날짜를 눌러 **다 접는다** → 보관함에는 빈 목록이 남는다.
+    state = {}
+    ss.action(srv, None, {"id": "claude-warn-history", "do": "toggle",
+                          "input": newest, "state": state})
+    assert state.get("warn_open") == [], state
+    # 그 상태로 탭을 옮겼다 돌아와도 **여전히 다 접혀 있다**.
+    back = ss._hub_open(srv, None, ss._GOTO_WARNS, state)
+    assert back and back["id"] == "claude-warn-history", back
+    assert not [r for r in back["rows"] if r.get("expand") == "open"], (
+        f"다 접어 뒀는데 저 혼자 펴졌다: {back['rows']}")
+
+
+async def test_every_pscreen_word_the_server_speaks_is_registered_where_the_server_reads():
+    """★ **전수 게이트** — 서버가 짓는 글은 서버가 읽는 카탈로그에 있어야 한다(pytmux-419).
+
+    `screens.py` 는 Textual 이라 **서버가 안 읽는다**(플러그인 머리말의 무게 규칙 — 화면은
+    실제로 열 때 지연 import 한다). 그런데 화면 **스펙**을 짓는 것은 서버다. 그래서 서버가
+    쓰는 `pscreen.*` 를 `screens.py` 카탈로그에만 적어 두면 `i18n.t` 가 **키를 그대로**
+    돌려주고, 그 값이 어디로 흘러가느냐에 따라 둘로 갈린다:
+
+    - `pscreen.weekdays` — `"pscreen.weekdays".split(",")` 는 원소가 **하나**라
+      `weekdays[wd]` 가 월요일 말고는 전부 `IndexError` 다. GUI 기간 탭이 **자료가 있는
+      홈에서 아예 안 떴다**(다섯 중 하나가 이랬다).
+    - 나머지는 안 터지고 **키 문자열이 그대로 화면에 뜬다** — 더 조용하다.
+
+    ⛔ 정본 팝업은 `screens.py` 를 이미 물고 있어 멀쩡했다. 그래서 이 갈림은 **GUI 에서만**
+    보이고 오래 안 잡혔다 — 사람이 지키는 규칙이 아니라 게이트로 센다.
+
+    ⚠ **자식 프로세스에서 잰다**: 이 스위트는 전 모듈을 한 프로세스에서 돌아서, 앞서 도는
+    시험이 `screens.py` 를 한 번이라도 import 하면 카탈로그가 채워져 **가짜 초록**이 된다.
+    """
+    import subprocess, sys, os, json, textwrap
+    probe = textwrap.dedent('''
+        import sys, os, re, io, importlib
+        sys.path.insert(0, os.getcwd())
+        base = os.path.join("pytmuxlib", "plugins", "claude-code")
+        # 서버 프로세스가 실제로 무는 모듈들(Textual 없이 도는 것).
+        server_mods = ["screenspec.py", "usagetree.py", "usagelog.py",
+                       "__init__.py", "servermixin.py", "usagedb.py"]
+        used = {}
+        for m in server_mods:
+            fp = os.path.join(base, m)
+            if not os.path.exists(fp):
+                continue
+            src = io.open(fp, encoding="utf-8").read()
+            for k in re.findall(r'i18n\.(?:t|phrase)\(\s*"(pscreen\.[a-z0-9_]+)"', src):
+                used.setdefault(k, set()).add(m)
+        i18n = importlib.import_module("pytmuxlib.i18n")
+        importlib.import_module("pytmuxlib.plugins.claude-code")   # 서버가 무는 만큼만
+        assert "pytmuxlib.plugins.claude-code.screens" not in sys.modules, \
+            "탐침이 Textual 화면을 물어 버렸다 — 이 시험은 아무것도 못 잰다"
+        missing = sorted(k for k in used if i18n.t(k) == k)
+        print(repr((len(used), missing, {k: sorted(v) for k, v in used.items()
+                                         if k in missing})))
+    ''')
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                         text=True, cwd=os.getcwd(), timeout=120)
+    assert out.returncode == 0, f"탐침이 죽었다:\n{out.stderr}"
+    total, missing, where = eval(out.stdout.strip())
+    assert total >= 20, f"키를 {total}개밖에 못 찾았다 — 정규식이 낡았다"
+    assert not missing, (
+        f"서버가 쓰는 pscreen.* {len(missing)}개가 서버 카탈로그에 없다: "
+        f"{where}. `screens.py`(Textual)에만 적으면 서버는 못 읽는다 — "
+        f"`__init__.py` 의 `i18n.register` 로 옮길 것(pytmux-419)")
+
+
+async def test_the_period_tree_actually_builds_on_a_server_that_never_loaded_textual():
+    """⛔ 위 게이트의 **대조군** — 키가 비면 판이 «안 예쁘다» 가 아니라 **안 선다**.
+
+    글자 하나가 빠졌을 때의 값이 얼마인지를 못박는다: 서버 모양(Textual 미로드)에서
+    기간 판을 실제로 지어 본다. 이것이 GUI 사용자가 보던 그 자리다.
+    """
+    import subprocess, sys, os, textwrap
+    probe = textwrap.dedent('''
+        import sys, os, time, importlib
+        sys.path.insert(0, os.getcwd())
+        ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+        assert "pytmuxlib.plugins.claude-code.screens" not in sys.modules
+        recs = [{"ts": time.time() - i * 3600, "tokens": 1000 + i, "account": "a"}
+                for i in range(30)]
+        ss._usage_records = lambda _s, limit=4000: recs
+        class Srv:
+            def _tokens_db_conn(self): return object()
+        spec = ss._period_spec(Srv())
+        rows = [r for r in spec["rows"] if not str(r["key"]).startswith("goto:")]
+        assert rows, "트리가 비었다"
+        assert any(r["expand"] in ("open", "shut") for r in rows), "펼칠 행이 없다"
+        # 요일 이름이 실제로 붙는다 — 키가 비면 여기서 IndexError 로 죽는다.
+        print("OK", len(rows))
+    ''')
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                         text=True, cwd=os.getcwd(), timeout=120)
+    assert out.returncode == 0, (
+        "Textual 을 안 문 서버에서 기간 판이 안 선다 — GUI 의 `:claude-token-period` 가 "
+        f"자료 있는 홈에서 그대로 터지는 자리다(pytmux-419):\n{out.stderr}")
+
+
 async def test_the_bars_are_scaled_to_the_biggest_row_not_to_the_total():
     """막대 기준은 **그 목록의 최대값**이다(정본 `bmax` 와 같다).
 
