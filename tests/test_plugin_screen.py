@@ -626,62 +626,13 @@ async def test_collapsing_every_warning_day_is_not_read_as_no_choice_at_all():
         f"다 접어 뒀는데 저 혼자 펴졌다: {back['rows']}")
 
 
-async def test_every_pscreen_word_the_server_speaks_is_registered_where_the_server_reads():
-    """★ **전수 게이트** — 서버가 짓는 글은 서버가 읽는 카탈로그에 있어야 한다(pytmux-419).
-
-    `screens.py` 는 Textual 이라 **서버가 안 읽는다**(플러그인 머리말의 무게 규칙 — 화면은
-    실제로 열 때 지연 import 한다). 그런데 화면 **스펙**을 짓는 것은 서버다. 그래서 서버가
-    쓰는 `pscreen.*` 를 `screens.py` 카탈로그에만 적어 두면 `i18n.t` 가 **키를 그대로**
-    돌려주고, 그 값이 어디로 흘러가느냐에 따라 둘로 갈린다:
-
-    - `pscreen.weekdays` — `"pscreen.weekdays".split(",")` 는 원소가 **하나**라
-      `weekdays[wd]` 가 월요일 말고는 전부 `IndexError` 다. GUI 기간 탭이 **자료가 있는
-      홈에서 아예 안 떴다**(다섯 중 하나가 이랬다).
-    - 나머지는 안 터지고 **키 문자열이 그대로 화면에 뜬다** — 더 조용하다.
-
-    ⛔ 정본 팝업은 `screens.py` 를 이미 물고 있어 멀쩡했다. 그래서 이 갈림은 **GUI 에서만**
-    보이고 오래 안 잡혔다 — 사람이 지키는 규칙이 아니라 게이트로 센다.
-
-    ⚠ **자식 프로세스에서 잰다**: 이 스위트는 전 모듈을 한 프로세스에서 돌아서, 앞서 도는
-    시험이 `screens.py` 를 한 번이라도 import 하면 카탈로그가 채워져 **가짜 초록**이 된다.
-    """
-    import subprocess, sys, os, json, textwrap
-    probe = textwrap.dedent('''
-        import sys, os, re, io, importlib
-        sys.path.insert(0, os.getcwd())
-        base = os.path.join("pytmuxlib", "plugins", "claude-code")
-        # 서버 프로세스가 실제로 무는 모듈들(Textual 없이 도는 것).
-        server_mods = ["screenspec.py", "usagetree.py", "usagelog.py",
-                       "__init__.py", "servermixin.py", "usagedb.py"]
-        used = {}
-        for m in server_mods:
-            fp = os.path.join(base, m)
-            if not os.path.exists(fp):
-                continue
-            src = io.open(fp, encoding="utf-8").read()
-            for k in re.findall(r'i18n\.(?:t|phrase)\(\s*"(pscreen\.[a-z0-9_]+)"', src):
-                used.setdefault(k, set()).add(m)
-        i18n = importlib.import_module("pytmuxlib.i18n")
-        importlib.import_module("pytmuxlib.plugins.claude-code")   # 서버가 무는 만큼만
-        assert "pytmuxlib.plugins.claude-code.screens" not in sys.modules, \
-            "탐침이 Textual 화면을 물어 버렸다 — 이 시험은 아무것도 못 잰다"
-        missing = sorted(k for k in used if i18n.t(k) == k)
-        print(repr((len(used), missing, {k: sorted(v) for k, v in used.items()
-                                         if k in missing})))
-    ''')
-    out = subprocess.run([sys.executable, "-c", probe], capture_output=True,
-                         text=True, cwd=os.getcwd(), timeout=120)
-    assert out.returncode == 0, f"탐침이 죽었다:\n{out.stderr}"
-    total, missing, where = eval(out.stdout.strip())
-    assert total >= 20, f"키를 {total}개밖에 못 찾았다 — 정규식이 낡았다"
-    assert not missing, (
-        f"서버가 쓰는 pscreen.* {len(missing)}개가 서버 카탈로그에 없다: "
-        f"{where}. `screens.py`(Textual)에만 적으면 서버는 못 읽는다 — "
-        f"`__init__.py` 의 `i18n.register` 로 옮길 것(pytmux-419)")
-
-
 async def test_the_period_tree_actually_builds_on_a_server_that_never_loaded_textual():
-    """⛔ 위 게이트의 **대조군** — 키가 비면 판이 «안 예쁘다» 가 아니라 **안 선다**.
+    """⛔ 카탈로그 게이트의 **대조군** — 키가 비면 판이 «안 예쁘다» 가 아니라 **안 선다**.
+
+    게이트 자체는 저장소 한 벌이다(`test_i18n.py::
+    test_every_word_the_server_speaks_is_registered_where_the_server_reads` —
+    처음에는 여기 `pscreen.*` 만 세는 사본이 있었는데, 같은 것을 두 곳에서 세면 한쪽만
+    고쳐진다). 여기 남는 것은 **값이 얼마인지**를 못박는 이 대조군이다.
 
     글자 하나가 빠졌을 때의 값이 얼마인지를 못박는다: 서버 모양(Textual 미로드)에서
     기간 판을 실제로 지어 본다. 이것이 GUI 사용자가 보던 그 자리다.

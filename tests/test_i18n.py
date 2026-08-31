@@ -376,3 +376,78 @@ async def test_a_notice_with_a_reason_fragment_does_not_mix_languages():
     assert "i18n" not in msg, msg
     # 종전 칸은 그대로다 — 정본 클라는 `detail` 로 자기 로케일 조각을 끼운다.
     assert msg["detail"] == {"text": "연결 거부됨"} and msg["kw"]["why"] == "연결 거부됨"
+
+
+async def test_every_word_the_server_speaks_is_registered_where_the_server_reads():
+    """★ **전수 게이트** — 서버가 짓는 글은 서버가 읽는 카탈로그에 있어야 한다(pytmux-34).
+
+    이 저장소의 카탈로그는 여러 모듈이 `i18n.register` 로 나눠 든다. 그 중 몇은
+    **Textual 을 무는 파일**(정본 클라 화면)이라 **서버 프로세스가 안 읽는다** — 화면은
+    실제로 열 때 지연 import 하는 것이 규약이기 때문이다. 그런데 화면 **스펙**(GUI 로
+    내려가는 선언형 판)을 짓는 것은 서버다. 그래서 서버가 쓰는 키를 클라 전용 파일에만
+    적으면 `t()` 가 **키를 그대로** 돌려주고, 그 값이 어디로 흘러가느냐로 둘이 갈린다:
+
+    - 값을 **쪼개 쓰면 터진다** — 실측(pytmux-419): `"pscreen.weekdays".split(",")` 가
+      원소 하나라 `weekdays[wd]` 가 월요일 말고는 전부 `IndexError` 였고, GUI 의 기간
+      탭이 자료가 있는 홈에서 **아예 안 떴다**. 정본 팝업은 그 파일을 이미 물고 있어
+      멀쩡했다 — 그래서 GUI 에서만 나는 갈림이 오래 안 잡혔다.
+    - 값을 **그냥 그리면 조용하다** — 키 문자열이 화면에 그대로 뜨거나(`pscreen.*`),
+      서버가 실은 한국어 `text` 로 떨어져 **영어 사용자에게 한국어로** 뜬다(`msg.*`).
+
+    ⛔ 사람이 지키는 규칙이 아니라 **여기서 센다**. 규칙 자체는 이미 코드 주석에 있었다
+    (`plugins/claude-code/screens.py` 가 `pscreen.perm_title` 에 대해 적어 둔 그것) —
+    적혀 있는데도 다섯이 새로 새어 나갔다.
+
+    ⚠ **자식 프로세스에서** 잰다: 이 스위트는 전 모듈이 한 프로세스라, 앞서 도는 시험이
+    클라 화면 모듈을 한 번이라도 import 하면 카탈로그가 채워져 **가짜 초록**이 된다.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    probe = textwrap.dedent('''
+        import io, importlib, os, re, sys
+        sys.path.insert(0, os.getcwd())
+        # 서버가 무는 파일 = Textual 을 import 안 하는 파일.
+        server_files = []
+        for dp, _dn, fns in os.walk("pytmuxlib"):
+            for fn in fns:
+                if not fn.endswith(".py"):
+                    continue
+                fp = os.path.join(dp, fn)
+                src = io.open(fp, encoding="utf-8", errors="replace").read()
+                if not re.search(r"^\\s*(from|import)\\s+textual", src, re.M):
+                    server_files.append((fp, src))
+        # 네임스페이스 키만 본다(한국어 원문을 키로 쓰는 관례가 따로 있다 —
+        # 그쪽은 못 찾아도 원문이 그대로 뜨므로 이 게이트의 대상이 아니다).
+        NS = re.compile(
+            r"[\\"\\']((?:pscreen|msg|ui|cmd|opt|nc|mdir|claude|tok|status|word|setting)"
+            r"\\.[a-z0-9_.]+)[\\"\\']")
+        used = {}
+        for fp, src in server_files:
+            for k in NS.findall(src):
+                used.setdefault(k, set()).add(fp)
+        i18n = importlib.import_module("pytmuxlib.i18n")
+        # 서버가 무는 만큼만 싣는다 — 플러그인 레지스트리가 하는 그대로.
+        for name in sorted(os.listdir(os.path.join("pytmuxlib", "plugins"))):
+            d = os.path.join("pytmuxlib", "plugins", name)
+            if os.path.isdir(d) and os.path.exists(os.path.join(d, "__init__.py")):
+                importlib.import_module("pytmuxlib.plugins." + name)
+        leaked = [m for m in sys.modules if m.startswith("textual")]
+        assert not leaked, "탐침이 Textual 을 물어 버렸다: %r" % leaked[:3]
+        missing = sorted(k for k in used if i18n.t(k) == k)
+        print(repr((len(used), missing,
+                    {k: sorted(used[k]) for k in missing})))
+    ''')
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                         text=True, cwd=os.getcwd(), timeout=180)
+    assert out.returncode == 0, f"탐침이 죽었다:\n{out.stderr}"
+    total, missing, where = eval(out.stdout.strip())
+    assert total >= 100, f"키를 {total}개밖에 못 찾았다 — 정규식이 낡았다"
+    # `cmd.exe` 는 Windows 셸 이름이라 키가 아니다(pty 계열 넷이 문자열로 든다).
+    missing = [k for k in missing if k != "cmd.exe"]
+    assert not missing, (
+        f"서버가 쓰는 키 {len(missing)}개가 서버 카탈로그에 없다: "
+        f"{ {k: where[k] for k in missing} }. Textual 을 무는 파일의 "
+        f"`i18n.register` 에만 적으면 서버는 못 읽는다 — 서버도 읽는 모듈"
+        f"(플러그인 `__init__.py` · `pytmuxlib/i18n.py`)로 옮길 것(pytmux-34)")
