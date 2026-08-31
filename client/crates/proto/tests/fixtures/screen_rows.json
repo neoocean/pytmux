@@ -1,0 +1,57 @@
+{
+  "rows": {
+    "confirm": [],
+    "form": [
+      "cols",
+      "key",
+      "label"
+    ],
+    "list": [
+      "cols",
+      "depth",
+      "expand",
+      "i18n",
+      "key",
+      "label",
+      "tag"
+    ],
+    "panel": [
+      "cols",
+      "key",
+      "label",
+      "tag"
+    ],
+    "prompt": [],
+    "table": [
+      "bar",
+      "cols",
+      "depth",
+      "expand",
+      "i18n",
+      "key",
+      "label",
+      "until"
+    ],
+    "text": []
+  },
+  "sites": {
+    "form": [
+      "pytmuxlib/plugins/claude-code/screenspec.py"
+    ],
+    "list": [
+      "pytmuxlib/plugins/claude-code/screenspec.py",
+      "pytmuxlib/plugins/claude-prompt-history/__init__.py",
+      "pytmuxlib/plugins/claude-resume/__init__.py",
+      "pytmuxlib/plugins/ncd/__init__.py",
+      "pytmuxlib/plugins/p4-show-submitted-changelists/__init__.py"
+    ],
+    "panel": [
+      "pytmuxlib/plugins/mdir/__init__.py"
+    ],
+    "table": [
+      "pytmuxlib/plugins/claude-code/screenspec.py",
+      "pytmuxlib/plugins/claude-name-sync/screenspec.py"
+    ]
+  },
+  "unresolved": []
+}
