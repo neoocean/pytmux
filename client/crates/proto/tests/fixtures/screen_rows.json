@@ -25,6 +25,7 @@
     "table": [
       "bar",
       "cols",
+      "coltags",
       "depth",
       "expand",
       "i18n",

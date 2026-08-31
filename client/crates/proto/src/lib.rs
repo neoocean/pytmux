@@ -28,6 +28,8 @@ pub mod clock;
 pub mod command;
 pub mod compose;
 pub mod arghist;
+/// 플러그인 화면 **칸**의 의미 등급(`ok`·`warn`·`crit` — pytmux-419 ⑥).
+pub mod celltag;
 pub mod endpoint;
 pub mod footer;
 pub mod framing;

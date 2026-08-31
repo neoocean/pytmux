@@ -24,6 +24,40 @@ from . import usagelog
 #: 원산지가 이 머신인 적재분에 `usagedb` 가 다는 이름표(`host` 칸이 NULL 인 줄).
 LOCAL_HOST = "<local>"
 
+#: 비율이 「주의」로 넘어가는 눈금(%). 정본 상태줄의 한도 배지와 **같은 임계**다.
+PCT_WARN = 50
+#: 비율이 「위험」으로 넘어가는 눈금(%).
+PCT_CRIT = 80
+#: `pct_level` 이 낼 수 있는 이름 전부 — 낮은 것부터. 소비자(클라)가 전수를 잰다.
+PCT_LEVELS = ("ok", "warn", "crit")
+
+
+def pct_level(pct):
+    """비율 → **의미 이름**(`ok`·`warn`·`crit`). 값이 없으면 빈 문자열.
+
+    # 왜 색이 아니라 이름인가 (pytmux-419 ⑥)
+
+    이 판정은 두 클라가 함께 쓴다. 정본은 rich 색 이름으로(`green`/`yellow`/`red`),
+    GUI 는 제 크롬 의미색으로 칠하는데(`theme::{OK,WARN,ERROR}` — pytmux-412 ⓑ1 이
+    「크롬 의미색은 팔레트에서 뗀다」로 정한 자리다), **눈금은 하나**여야 한다. 색을
+    실어 보내면 서버가 UI 를 알게 되고(설계 §10 위험표) 두 클라의 임계가 갈리는
+    날에도 아무도 안 운다.
+
+    ⛔ **임계를 다른 데서 다시 적지 말 것** — `screens.py` 의 두 셀(`_lim5h_cell`·
+    `_lim_week_cell`)과 `screenspec._limit_cols` 가 전부 이 함수를 부른다.
+    """
+    if pct is None:
+        return ""
+    try:
+        p = float(pct)
+    except (TypeError, ValueError):
+        return ""
+    if p >= PCT_CRIT:
+        return "crit"
+    if p >= PCT_WARN:
+        return "warn"
+    return "ok"
+
 
 def limit_summary(usage):
     """머리줄 **접두** — `5h 17% · 주 14% · `. 실측이 없으면 빈 문자열.

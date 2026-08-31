@@ -716,9 +716,9 @@ async def test_a_half_missing_limit_pair_keeps_its_place_instead_of_shifting_lef
     import importlib
     ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
     node = {"kind": "hour", "bk": "2026-08-31 22:00"}
-    assert ss._limit_cols(node, {}, {"2026-08-31 22:00": 63}) == ["", "63%"]
-    assert ss._limit_cols(node, {"2026-08-31 22:00": 9}, {}) == ["9%", ""]
-    assert ss._limit_cols(node, {}, {}) == []
+    assert ss._limit_cols(node, {}, {"2026-08-31 22:00": 63}) == (["", "63%"], ["", "warn"])
+    assert ss._limit_cols(node, {"2026-08-31 22:00": 9}, {}) == (["9%", ""], ["ok", ""])
+    assert ss._limit_cols(node, {}, {}) == ([], [])
     # 시각이 아닌 행 · 조인키가 없는 행은 언제나 빈다.
     #
     # ⚠ 첫 줄은 **`bk` 가 있는 날짜 행**이다. 오늘 `usagetree` 는 시각 노드에만 `bk` 를
@@ -726,9 +726,94 @@ async def test_a_half_missing_limit_pair_keeps_its_place_instead_of_shifting_lef
     #   아무 시험이 안 운다(실측 — 뮤테이션이 안 물렸다). 조인키가 다른 종류로 번져도
     #   이 칸이 안 따라가는 것이 계약이므로 여기서 그 계약을 직접 문다.
     assert ss._limit_cols({"kind": "day", "bk": "2026-08-31 22:00"},
-                          {"2026-08-31 22:00": 9}, {"2026-08-31 22:00": 63}) == []
-    assert ss._limit_cols({"kind": "day", "bk": None}, {"x": 1}, {"x": 2}) == []
-    assert ss._limit_cols({"kind": "hour", "bk": None}, {"x": 1}, {"x": 2}) == []
+                          {"2026-08-31 22:00": 9}, {"2026-08-31 22:00": 63}) == ([], [])
+    assert ss._limit_cols({"kind": "day", "bk": None}, {"x": 1}, {"x": 2}) == ([], [])
+    assert ss._limit_cols({"kind": "hour", "bk": None}, {"x": 1}, {"x": 2}) == ([], [])
+
+
+async def test_the_pct_columns_carry_their_meaning_next_to_their_value():
+    """정본은 `5h%`·`1w%` 를 비율에 따라 초록·노랑·빨강으로 칠한다(pytmux-419 ⑥).
+
+    ☠ **줄 태그로는 못 말한다** — 같은 줄 안에서 토큰 칸은 한 색이고 뒤 둘만 갈린다.
+    그래서 칸마다의 뜻을 `coltags` 로 싣고, 그 차례는 `cols` 와 **같아야** 한다: 어긋나면
+    5h% 의 뜻이 1w% 칸에 붙어 **색이 조용히 거짓말을 한다**(값이 어긋나는 것과 같은 부류).
+
+    ⛔ 실려 가는 것은 **이름**이다(색이 아니다) — 색을 실으면 서버가 UI 를 알게 되고
+    (설계 §10 위험표), 두 클라가 각자 임계를 적으면 갈리는 날 아무도 안 운다.
+    """
+    import importlib, time
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    now = time.time()
+    recs = [{"ts": now - i * 3600, "tokens": 1000 + i, "account": "a"}
+            for i in range(6)]
+    keys = sorted({time.strftime("%Y-%m-%d %H:00", time.localtime(r["ts"]))
+                   for r in recs})
+    # 세 등급이 다 나오게 심는다 — 한 등급만 재면 「늘 그 이름」인 판도 통과한다.
+    p5 = {k: v for k, v in zip(keys, (9, 55, 94, 9, 55, 94))}
+    p1 = {k: 100 for k in keys}
+
+    class _Srv(_TokenSrv):
+        def _tokens_db_conn(self):
+            return object()
+
+    with harness.patched(ss, _usage_records=lambda _s, limit=4000: recs,
+                         _limit_pcts=lambda _s: (p5, p1)):
+        spec = ss.open_spec(_Srv(), None, "token-period")
+    rows = [r for r in spec["rows"] if not str(r["key"]).startswith("goto:")]
+    hours = [r for r in rows if r["label"].endswith(("시", "h"))]
+    assert hours, f"시각 행이 없다: {[r['label'] for r in rows]}"
+    seen = set()
+    for r in hours:
+        tags = r.get("coltags")
+        assert tags is not None, f"시각 행에 칸의 뜻이 없다({r['label']}): {r}"
+        assert len(tags) == len(r["cols"]), (
+            f"뜻과 칸의 길이가 다르다({r['label']}): {tags} vs {r['cols']} — "
+            "어긋나면 색이 옆 칸의 뜻을 진다")
+        assert tags[0] == "", f"토큰 칸에 뜻을 달았다({r['label']}): {tags}"
+        # 값과 뜻이 **짝이 맞나** — 숫자를 다시 읽어 임계로 견준다.
+        pct = int(r["cols"][1].rstrip("%"))
+        want = "crit" if pct >= 80 else "warn" if pct >= 50 else "ok"
+        assert tags[1] == want, f"{pct}% 의 뜻이 {tags[1]!r} 다({r['label']})"
+        seen.add(tags[1])
+        assert tags[2] == "crit", f"1w% 100% 가 위험이 아니다: {tags}"
+    assert seen == {"ok", "warn", "crit"}, f"세 등급이 다 안 나왔다: {seen}"
+    # ⛔ 대조군 — 뜻이 없는 행(일·월)은 뜻도 안 싣는다. 빈 이름을 늘 실으면 소비자가
+    #    「등급 없음」과 「초록」을 못 가른다.
+    for r in rows:
+        if r not in hours:
+            assert not r.get("coltags"), (
+                f"시각이 아닌 행에 칸의 뜻이 붙었다({r['label']}): {r.get('coltags')}")
+
+
+async def test_the_pct_threshold_is_one_ruler_both_clients_read():
+    """⛔ **눈금은 한 벌이다** — 정본의 두 셀과 스펙이 같은 함수를 부른다.
+
+    종전에는 `screens.py` 의 `_lim5h_cell`·`_lim_week_cell` 이 `pct >= 80` 을 **각자**
+    적고 있었다. 그 자리는 Textual 을 무는 화면 안이라 서버가 못 읽고, 그래서 GUI 로
+    내려보낼 길이 없었다(머리줄이 없던 사정과 같다 — pytmux-419 ②). 두 벌로 두면
+    한쪽만 고치는 날 같은 비율이 두 화면에서 다른 색으로 뜬다.
+    """
+    import importlib, inspect
+    uh = importlib.import_module("pytmuxlib.plugins.claude-code.usagehead")
+    scr = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
+    for meth in (scr.TokenLogScreen._lim5h_cell, scr.TokenLogScreen._lim_week_cell):
+        src = inspect.getsource(meth)
+        assert "_pct_style(" in src, (
+            f"{meth.__name__} 이 공유 눈금을 안 부른다 — 임계가 두 벌이 됐다")
+        assert ">= 80" not in src and ">= 50" not in src, (
+            f"{meth.__name__} 이 임계를 다시 적고 있다: 판정은 usagehead.pct_level 한 벌이다")
+    assert "usagehead.pct_level" in inspect.getsource(scr._pct_style)
+    # 그리고 그 한 벌이 정본 그림 그대로를 가른다(첨부의 초록 9% · 노랑 63% · 붉은 94%).
+    assert uh.pct_level(9) == "ok"
+    assert uh.pct_level(49.9) == "ok"
+    assert uh.pct_level(50) == "warn"
+    assert uh.pct_level(63) == "warn"
+    assert uh.pct_level(79) == "warn"
+    assert uh.pct_level(80) == "crit"
+    assert uh.pct_level(94) == "crit"
+    # 값이 없으면 **등급도 없다** — 0% 로 접으면 「모른다」가 「여유롭다」로 읽힌다.
+    assert uh.pct_level(None) == ""
+    assert uh.pct_level("") == ""
 
 
 async def test_every_token_panel_carries_the_same_shared_header(): 

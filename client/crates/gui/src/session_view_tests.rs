@@ -5091,6 +5091,69 @@ fn a_leaf_row_in_a_table_gets_no_arrow_that_would_lie() {
     );
 }
 
+/// 정본 `[기간]` 탭의 시각 행 — 토큰 칸 + 비율 칸 둘, 그리고 **칸마다의 뜻**.
+///
+/// 서버(`screenspec._limit_cols`)는 `cols` 와 같은 차례로 `coltags` 를 싣는다. 첫 칸
+/// (토큰)은 뜻이 없어 빈 이름이다 — 정본도 그 칸은 한 색이다.
+fn period_pct_spec() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-period", "kind": "table",
+        "title": "토큰 사용량(추정) · 기간별", "hint": "↑↓ 이동 · Esc 닫기",
+        "rows": [
+            {"key": "", "label": "09시", "cols": ["39", "9%", "22%"], "depth": 2,
+             "expand": "", "coltags": ["", "ok", "ok"]},
+            {"key": "", "label": "10시", "cols": ["40", "63%", "22%"], "depth": 2,
+             "expand": "", "coltags": ["", "warn", "ok"]},
+            {"key": "", "label": "11시", "cols": ["41", "94%", "100%"], "depth": 2,
+             "expand": "", "coltags": ["", "crit", "crit"]},
+        ],
+        "text": "", "note": "", "selected": 0
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_columns_meaning_paints_that_column_and_only_that_column() {
+    // ★ pytmux-419 ⑥ — 정본은 `5h%`·`1w%` 를 비율에 따라 초록·노랑·빨강으로 칠한다.
+    //   ☠ **줄 태그(`tag`)로는 못 말하는 갈림이다**: 같은 줄 안에서 `Tokens` 칸은 한
+    //     색이고 뒤 두 칸만 갈린다. 그래서 서버가 칸마다 이름을 싣고(`coltags`) 여기서
+    //     등급으로 푼다(`proto::celltag`).
+    //   ⛔ 눈금(≥50·≥80)은 여기 없다 — 정본 `usagehead.pct_level` 한 벌이다.
+    let painted = painted_colors(vec![layout_one_pane(), period_pct_spec()], &[]);
+    let of = |needle: &str| -> Vec<ColorU> {
+        painted.iter().filter(|(t, _)| t == needle).map(|(_, c)| *c).collect()
+    };
+    assert_eq!(of("9%"), vec![theme::OK], "여유로운 비율이 초록이 아니다: {painted:?}");
+    assert_eq!(of("63%"), vec![theme::WARN], "주의 비율이 노랑이 아니다: {painted:?}");
+    assert_eq!(of("94%"), vec![theme::ERROR], "위험 비율이 빨강이 아니다: {painted:?}");
+    // ★ **그 칸만** 이다 — 토큰 칸까지 물들면 「이 줄이 위험하다」로 읽혀 뜻이 넓어진다.
+    assert_eq!(of("41"), vec![palette::DIM], "뜻이 없는 칸까지 칠했다: {painted:?}");
+}
+
+#[test]
+fn a_column_without_a_meaning_stays_the_plain_colour() {
+    // ⛔ 대조군 — 뜻을 안 실은 표(mdir·세션 목록 …)는 종전 그대로다. 이것이 없으면
+    //    위 시험은 «칸을 늘 초록으로 칠하는» 판에도 통과한다(그때 `9%` 는 맞고 나머지
+    //    둘만 틀리는데, 셋을 다 재는 지금도 그 함정은 값 하나로 좁혀지지 않는다).
+    let plain: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "x", "kind": "table", "title": "t", "hint": "h",
+        "rows": [{"key": "a", "label": "row", "cols": ["9%", "63%", "94%"],
+                  "depth": 0, "expand": ""}],
+        "text": "", "note": "", "selected": 0
+    }))
+    .unwrap();
+    let painted = painted_colors(vec![layout_one_pane(), plain], &[]);
+    for needle in ["9%", "63%", "94%"] {
+        let got: Vec<ColorU> =
+            painted.iter().filter(|(t, _)| t == needle).map(|(_, c)| *c).collect();
+        assert_eq!(
+            got,
+            vec![palette::DIM],
+            "뜻을 안 실은 칸에 색을 짐작해 칠했다({needle}): {painted:?}"
+        );
+    }
+}
+
 #[test]
 fn a_panel_head_is_drawn_above_the_rows_and_costs_a_row_of_budget() {
     // ★ pytmux-419 ② — 정본 토큰 팝업은 다섯 탭이 **머리줄 두 줄을 공유**한다

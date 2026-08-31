@@ -60,6 +60,10 @@ const GUI_SRC: &str = include_str!("../../gui/src/session_view.rs");
 const READS: &[(&str, &str)] = &[
     ("label", "say_label()"),
     ("cols", "say_cols()"),
+    // 칸의 **뜻**은 이름으로 오고 등급으로 풀린다(pytmux-419 ⑥) — 그리는 자리가
+    // `coltags` 를 직접 읽지 않고 `col_level(i)` 를 부르는 것이 계약이다(표를 두
+    // 벌로 적지 않으려는 것 · `proto::celltag`).
+    ("coltags", "col_level("),
     ("tag", ".tag"),
     ("depth", ".depth"),
     ("expand", ".expand"),

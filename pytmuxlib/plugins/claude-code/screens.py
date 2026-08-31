@@ -598,6 +598,24 @@ _MODEL_LABELS = {
 # (green/cyan/magenta/yellow)와 겹치지 않는 밝은 오렌지(테마 accent 와 같은 계열).
 _ACTIVE_SESSION_COLOR = "orange1"
 
+# 비율 **의미 이름** → 이 화면의 색(pytmux-419 ⑥). 눈금(≥50 주의·≥80 위험)은 여기
+# 없다 — `usagehead.pct_level` 한 벌이고, GUI 는 같은 이름을 제 크롬 의미색으로 푼다
+# (`proto::celltag` → `theme::{OK,WARN,ERROR}`). 색을 서버가 실어 보내면 서버가 UI 를
+# 알게 되므로(설계 §10 위험표) **옮겨 다니는 것은 이름**이다.
+_PCT_COLORS = {"ok": "green", "warn": "yellow", "crit": "red"}
+
+
+def _pct_style(pct):
+    """비율 하나의 (색, 스타일) — 색은 `_PCT_COLORS`, 굵게는 「주의」부터.
+
+    ⛔ 임계를 여기 적지 않는다(`usagehead.pct_level` 이 판정한다) — 종전에는 이
+    파일의 두 셀이 `pct >= 80` 을 각자 적고 있었고, 그래서 GUI 로 그 판정을 내려보낼
+    길이 없었다(그 자리는 Textual 을 무는 화면 안이다 — pytmux-419 ② 와 같은 사정).
+    """
+    level = usagehead.pct_level(pct)
+    color = _PCT_COLORS.get(level, "green")
+    return color, (f"bold {color}" if level != "ok" else color)
+
 
 def _session_id_of_label(label):
     """'세션 27 (탭1:p1)' → 27. group_key 가 만든 라벨은 로케일 무관하게 항상
@@ -1158,8 +1176,7 @@ class TokenLogScreen(ModalScreen):
         if span is None:
             return Text("·", justify="right", style="dim")
         start, pct = span
-        color = "red" if pct >= 80 else "yellow" if pct >= 50 else "green"
-        style = f"bold {color}" if pct >= 50 else color
+        color, style = _pct_style(pct)
         if cells <= 0:
             return Text(f"{pct:>3}%", justify="right", style=style)
         lead, fill = bar_floating_segments(start, pct, 100, cells)
@@ -1176,8 +1193,7 @@ class TokenLogScreen(ModalScreen):
         pct = self._hourly_week_pct.get(hour_key) if hour_key else None
         if pct is None:
             return Text("·", justify="left", style="dim")
-        color = "red" if pct >= 80 else "yellow" if pct >= 50 else "green"
-        style = f"bold {color}" if pct >= 50 else color
+        _color, style = _pct_style(pct)
         # 좌측 정렬: 헤더('1w% (in 6d)')가 좌측 정렬이라 데이터도 좌측에 둬 헤더
         # '1w%' 아래에 정렬되게 한다. 우측 정렬이면 넓어진 헤더 폭만큼 데이터가
         # 박스 우측 테두리로 밀려 작은 폭에서 잘렸다(사용자 요청 2026-06-20).

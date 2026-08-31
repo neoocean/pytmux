@@ -1,0 +1,9 @@
+{
+  "levels": [
+    "ok",
+    "warn",
+    "crit"
+  ],
+  "warn_at": 50,
+  "crit_at": 80
+}

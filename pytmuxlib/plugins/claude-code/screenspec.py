@@ -1046,7 +1046,7 @@ def _limit_pcts(server):
 
 
 def _limit_cols(node, pct5h, pct1w):
-    """한 노드의 `5h%`·`1w%` 칸. **시각 행에만** 붙는다(정본과 같은 자리).
+    """한 노드의 `5h%`·`1w%` **칸과 그 칸의 뜻** — `(cols, tags)`. **시각 행에만** 붙는다.
 
     정본은 `show5h = (self._bucket == "hour" …)` 로 시각 뷰에서만 이 열을 켠다 — 5h 창은
     시간 단위 개념이라 일·주·월 행에 붙이면 「그 날의 5h%」라는 없는 뜻이 생긴다.
@@ -1055,17 +1055,24 @@ def _limit_cols(node, pct5h, pct1w):
     ⚠ 두 칸은 **함께 움직인다** — 하나만 있으면 뒤 칸이 앞으로 당겨져 5h% 자리에 1w%
     값이 서고, 그러면 숫자가 조용히 거짓말을 한다. 그래서 둘 다 없으면 아무것도 안 붙이고
     하나만 있으면 나머지는 빈 칸으로 자리를 지킨다.
+
+    ★ **뜻(`tags`)도 여기서 함께 낸다**(pytmux-419 ⑥). 정본은 이 두 칸을 비율에 따라
+    초록·노랑·빨강으로 칠하는데, 그 판정은 `usagehead.pct_level` 한 벌이고 실려 가는
+    것은 **이름**이다(색을 실으면 서버가 UI 를 알게 된다 — 설계 §10 위험표). 칸이 빈
+    자리는 뜻도 비어야 한다 — 값이 없는데 초록이면 그 초록이 「여유롭다」로 읽힌다.
     """
+    from . import usagehead
     if node.get("kind") != "hour":
-        return []
+        return [], []
     bk = node.get("bk")
     if not bk:
-        return []
+        return [], []
     a, b = pct5h.get(bk), pct1w.get(bk)
     if a is None and b is None:
-        return []
-    return ["" if a is None else f"{int(a)}%",
-            "" if b is None else f"{int(b)}%"]
+        return [], []
+    return (["" if a is None else f"{int(a)}%",
+             "" if b is None else f"{int(b)}%"],
+            [usagehead.pct_level(a), usagehead.pct_level(b)])
 
 
 def _tree_rows(server, opened=()):
@@ -1099,10 +1106,16 @@ def _tree_rows(server, opened=()):
                          "depth": n["level"], "expand": ""})
             continue
         tok = int(n["tokens"] or 0)
+        lim_cols, lim_tags = _limit_cols(n, pct5h, pct1w)
         rows.append({
             "key": n["key"] or "",
             "label": n["label"],
-            "cols": [f"{tok:,}"] + _limit_cols(n, pct5h, pct1w),
+            "cols": [f"{tok:,}"] + lim_cols,
+            # 칸마다의 **뜻** — `cols` 와 같은 차례다(pytmux-419 ⑥). 토큰 칸은 뜻이
+            # 없어 빈 이름이고(정본도 그 칸은 한 색이다), 뒤 둘만 비율 의미색을 진다.
+            # ⚠ 길이를 맞춰 실는다: 어긋나면 5h% 의 뜻이 1w% 칸에 붙어 **색이 조용히
+            #   거짓말을 한다**(칸 값이 어긋나는 것과 같은 부류의 사고다).
+            "coltags": ([""] + lim_tags) if lim_tags else [],
             "depth": n["level"],
             # 접힘과 **잎**은 다르다 — 안 열리는 화살표를 붙이면 그 화살표가 거짓말이다.
             "expand": ("open" if n["expanded"] else "shut") if n["expandable"] else "",

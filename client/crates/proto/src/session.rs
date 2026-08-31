@@ -633,6 +633,22 @@ pub struct PluginRow {
     pub label: String,
     #[serde(default)]
     pub cols: Vec<String>,
+    /// 칸마다의 **뜻** — [`cols`](Self::cols) 와 같은 차례(`""` = 뜻 없음).
+    ///
+    /// # 왜 줄이 아니라 칸인가 (pytmux-419 ⑥)
+    ///
+    /// [`tag`](Self::tag) 는 **줄 하나**가 무엇인지를 말한다(mdir 의 디렉터리·숨은 파일).
+    /// 정본 토큰 팝업의 `[기간]` 탭은 그 눈금이 다르다 — 같은 줄 안에서 `Tokens` 칸은 한
+    /// 색이고 `5h%`·`1w%` 칸만 비율에 따라 초록·노랑·빨강으로 갈린다. 줄 태그로는 그것을
+    /// 말할 수 없다.
+    ///
+    /// 값이 아니라 **이름**이 오는 이유는 [`crate::celltag`] 머리말에 있다(눈금은 정본
+    /// `usagehead.pct_level` 한 벌이 쥔다).
+    ///
+    /// ⚠ 짧으면 나머지 칸은 뜻이 없는 것이다 — 길이를 맞춰 실어 오는 것이 서버의 몫이고,
+    /// 어긋나면 색이 옆 칸의 뜻을 진다(그 부류의 사고는 값이 어긋나는 것과 같다).
+    #[serde(default)]
+    pub coltags: Vec<String>,
     /// 이 줄이 **무엇인가** — 색을 정하는 의미 이름(`dir`·`hidden`·`tagged` …).
     ///
     /// # 왜 스타일이 아니라 이름인가 (pytmux-11·12 A)
@@ -710,6 +726,14 @@ pub struct PluginRow {
 }
 
 impl PluginRow {
+    /// `i` 번째 칸의 **의미 등급**. 뜻이 없거나 모르는 이름이면 `None`(안 칠한다).
+    ///
+    /// 이름을 등급으로 푸는 표는 [`crate::celltag`] 한 곳이다 — 뷰마다 풀면 같은 칸이
+    /// 두 클라에서 다른 뜻이 된다.
+    pub fn col_level(&self, i: usize) -> Option<crate::celltag::Level> {
+        self.coltags.get(i).and_then(|n| crate::celltag::level(n))
+    }
+
     /// `until` 까지 남은 시간을 `H:MM:SS` 로. 시각이 없거나 이미 지났으면 `None`.
     ///
     /// # 왜 여기서 짓나

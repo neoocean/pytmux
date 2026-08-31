@@ -5987,8 +5987,27 @@ impl SessionView {
                     }
                     // 칸은 플러그인이 **적은 말**이라 우리 로케일로 다시 읽는다
                     // (이름은 자료라 그대로 — `PluginRow::say_cols`).
-                    for col in item.say_cols() {
-                        line = line.with_child(self.text(col, 12., palette::DIM));
+                    //
+                    // ★ **칸마다 뜻이 있으면 그 색으로**(pytmux-419 ⑥). 정본 `[기간]` 탭은
+                    //   `5h%`·`1w%` 를 비율에 따라 초록·노랑·빨강으로 칠한다 — 같은 줄
+                    //   안에서도 `Tokens` 칸은 한 색이라 **줄 태그(`tag`)로는 못 말하는**
+                    //   갈림이고, 그래서 서버가 칸마다 이름을 싣는다(`coltags`).
+                    //
+                    //   ⚠ 색은 **크롬 의미색**이다(`theme::{OK,WARN,ERROR}`) — 여기에
+                    //     `palette::{GREEN,YELLOW,RED}` 를 끌어오면 pytmux-412 ⓑ1 이 떼어
+                    //     놓은 것(«SGR 표는 정본 충실도 · 크롬은 가독»)이 조용히 되살아난다.
+                    //   ⛔ 눈금(≥50 주의 · ≥80 위험)을 여기서 다시 세지 않는다: 판정은
+                    //     정본 `usagehead.pct_level` 한 벌이고 여기는 **이름을 색으로만**
+                    //     푼다. 두 클라가 각자 임계를 적으면 갈리는 날 아무도 안 운다.
+                    for (i, col) in item.say_cols().into_iter().enumerate() {
+                        let fg = match item.col_level(i) {
+                            Some(proto::celltag::Level::Ok) => theme::OK,
+                            Some(proto::celltag::Level::Warn) => theme::WARN,
+                            Some(proto::celltag::Level::Crit) => theme::ERROR,
+                            // 뜻이 없는 칸은 종전 그대로 흐리게 — 대부분의 표가 그렇다.
+                            None => palette::DIM,
+                        };
+                        line = line.with_child(self.text(col, 12., fg));
                     }
                     // ★ **카운트다운**(pytmux-371 ④) — 정본 `[한도]` 탭이 다음 리셋까지를
                     //   큰 글자로 센다. 서버는 **언제인지**만 싣고(`until`) 남은 시간은
