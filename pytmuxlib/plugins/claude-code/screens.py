@@ -99,15 +99,11 @@ i18n.register({
         "pscreen.tklog_disp": " (표시 {n})",
         # §10-D P6: 트랜스크립트 실측 Σ(캐시 읽기/쓰기 분리) + 스크랩 활동 보조신호.
         "pscreen.tklog_xc": "Σ{full} 실측(캐시 읽기{cr}+쓰기{cc}) · 활동~{scrape}",
-        "pscreen.tklog_host_local": "이 머신",
         # 계정 미상 비중(사용자 결정 2026-07-25 — 미상은 별항, 그 몫을 보인다).
         "pscreen.tklog_unknown": "미상 {pct}%",
         "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 · l한도 u/usage · Esc닫기",
-        # 계층 타임라인 트리 구역 구분선(2026-06-21).
-        "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
-        "pscreen.tree_earlier_months": "── 이전 달 ──",
-        "pscreen.weekdays": "월,화,수,목,금,토,일",
-        "pscreen.hour_suffix": "시",
+        # (계층 트리의 요일·시각 접미사·구역 구분선·"이 머신" 다섯은 `__init__.py`
+        #  로 갔다 — 그 글을 짓는 것은 서버이고, 서버는 이 파일을 안 읽는다.)
         "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
         "pscreen.win_week": "이번 주 ~Σ{tok}(리셋 {left} 후)",
         # 한도 전용 서브뷰(상단 7줄 블록을 표 자리로 이동 — 작은 화면 정리).
@@ -170,13 +166,8 @@ i18n.register({
         "pscreen.tklog_scope": "{sigma}",
         "pscreen.tklog_disp": " (shown {n})",
         "pscreen.tklog_xc": "Σ{full} real (cache r{cr}+w{cc}) · activity~{scrape}",
-        "pscreen.tklog_host_local": "this machine",
         "pscreen.tklog_unknown": "unattributed {pct}%",
         "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session · l limit u /usage · Esc close",
-        "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",
-        "pscreen.tree_earlier_months": "── earlier months ──",
-        "pscreen.weekdays": "Mo,Tu,We,Th,Fr,Sa,Su",
-        "pscreen.hour_suffix": "h",
         "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
         "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
         "pscreen.tklog_limit_title": "Token usage · Model/Context · Limit (/usage)",

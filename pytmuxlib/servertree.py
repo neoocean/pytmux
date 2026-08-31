@@ -805,8 +805,9 @@ class ServerTreeMixin:
         복귀한다(§10-F 원격 탭 활성 튐 — auto-rename 방송이 이 누락의 원인이었다)."""
         for c in self.clients:
             if c.session is sess:
-                asyncio.create_task(
-                    self._send_to(c, self._status_msg(sess, client=c)))
+                self._spawn(
+                    self._send_to(c, self._status_msg(sess, client=c)),
+                    "status_broadcast")
 
     def kill_window(self, sess: Session):
         win = sess.active_window

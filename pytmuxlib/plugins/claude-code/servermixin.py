@@ -2521,7 +2521,7 @@ class ServerClaudeMixin:
         self._usage_probe_handle = None
         if not self._usage_probe_allowed() or not self.running:
             return
-        asyncio.create_task(self.refresh_usage())
+        self._spawn(self.refresh_usage(), "usage_probe")
 
     def _usage_near_limit(self) -> bool:
         """마지막 실측 사용률이 한도 부근(세션/주간 중 하나라도 _USAGE_NEAR_LIMIT_PCT

@@ -3588,6 +3588,70 @@ async def test_shift_drag_forwards_mouse_events_to_app():
     await _with_app(body)
 
 
+async def test_mouse_drag_copy_shift_swaps_plain_and_shift_drag():
+    """`set mouse-drag-copy shift` = 평드래그와 Shift 의 역할을 맞바꾼다.
+
+    왜 세 번째 값인가(pytmux-422 · 사람의 결정 2026-08-31): 평드래그를 pytmux 가
+    가져가는 규칙은 **claude 에 선택 기능이 없던 때**(2026-07-11 사용자 요청) 세운
+    것인데, 지금 fullscreen claude 는 제 선택과 auto-copy 를 갖는다 — 그대로 두면
+    그 선택은 켜져 있는데 닿을 수 없다. 뒤집으면 「긁어 복사」 손버릇이 사라지므로
+    **사람이 고르게** 값을 하나 늘렸다.
+
+    여기서 재는 것 셋:
+    ⑴ 마우스 앱 위 평드래그 = 앱에 press→drag→release (복사 아님)
+    ⑵ 같은 자리 Shift+드래그 = pytmux 선택 → 복사
+    ⑶ ★ **마우스를 안 켠 패널 위 평드래그는 여전히 복사다** — 넘길 앱이 없는데
+       드래그를 버리면 그 패널에서 복사할 길이 통째로 사라진다(셸 패널이 그렇다).
+    """
+    async def body(app, pilot, srv):
+        v = app.view
+        app.layout = {"panes": [{"id": 7, "x": 2, "y": 1, "w": 10, "h": 5,
+                                 "box": [1, 0, 12, 7], "mouse": 2,
+                                 "mouse_sgr": True, "active": True},
+                                # 마우스를 안 켠 패널(보통 셸) — ⑶ 의 대조군.
+                                {"id": 9, "x": 20, "y": 1, "w": 10, "h": 5,
+                                 "box": [19, 0, 30, 7], "mouse": 0,
+                                 "active": False}],
+                      "dividers": [], "active": 7, "cols": 100, "rows": 30}
+        app.mode = "normal"
+        app.mouse_drag_copy = "shift"
+        app.mouse_drag_threshold = 3
+        sent = []
+        copied = []
+        app.send_mouse = lambda pid, data: sent.append((pid, data))
+        app.send_cmd = lambda action, **kw: None
+        app.copy_text = lambda t: copied.append(t)
+        v._extract_selection = lambda: "SELTEXT"
+        # ⑴ 평드래그 → 앱. 종전(on)에는 down 이 미결이었다.
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        assert sent == [(7, b"\x1b[<0;4;3M")], f"평드래그 down=press 전달: {sent}"
+        assert v._mouse_fwd == 7 and v._sel_pending is None
+        v.on_mouse_move(_FakeMouse(7, 3, 1))
+        assert sent[-1] == (7, b"\x1b[<32;6;3M"), f"move=drag 전달: {sent}"
+        v.on_mouse_up(_FakeMouse(7, 3, 1))
+        assert sent[-1] == (7, b"\x1b[<0;6;3m"), f"up=release 전달: {sent}"
+        assert v._mouse_fwd is None and copied == [], "앱에 넘긴 드래그는 복사 아님"
+        # ⑵ Shift+드래그 → pytmux 선택→복사(앱 전달 없음).
+        sent.clear()
+        v.on_mouse_down(_FakeMouse(5, 3, 1, shift=True))
+        assert v._sel_pending is not None and sent == [], \
+            f"Shift+down=미결(앱 전달 X): {sent}"
+        v.on_mouse_move(_FakeMouse(9, 3, 1, shift=True))
+        assert v._sel_start is not None, "Shift+이동=선택 시작"
+        v.on_mouse_up(_FakeMouse(9, 3, 1, shift=True))
+        assert copied == ["SELTEXT"] and sent == [], "Shift+드래그=복사"
+        # ⑶ 마우스를 안 켠 패널 위 평드래그는 넘길 데가 없다 → 종전대로 선택→복사.
+        sent.clear()
+        copied.clear()
+        v.on_mouse_down(_FakeMouse(23, 3, 1))
+        assert v._sel_pending is not None and sent == [], \
+            f"마우스 안 켠 패널: 평드래그도 미결(선택): {sent}"
+        v.on_mouse_move(_FakeMouse(27, 3, 1))
+        v.on_mouse_up(_FakeMouse(27, 3, 1))
+        assert copied == ["SELTEXT"], copied
+    await _with_app(body)
+
+
 async def test_mouse_debug_logging():
     import os
     import tempfile

@@ -14,6 +14,7 @@ from rich.style import Style
 from rich.terminal_theme import DEFAULT_TERMINAL_THEME, TerminalTheme
 
 from . import i18n, proc
+from .keymap import DRAG_COPY_VALUES
 from .cellwidth import char_advance, char_cells
 
 def _shell_argv(cmd: str) -> list:
@@ -1122,7 +1123,7 @@ SET_OPTION_CHOICES = {
     "ambiguous-width": ("auto", "narrow", "wide"),
     "alt-scroll": ("on", "off"),
     "mouse": ("on", "off"),
-    "mouse-drag-copy": ("on", "off"),
+    "mouse-drag-copy": DRAG_COPY_VALUES,
     "mouse-drag-threshold": ("1", "2", "3", "5", "8"),
     "copy-unwrap": ("on", "off"),
     "set-clipboard": ("on", "off"),
@@ -1237,7 +1238,9 @@ SETTINGS = [
     # 입력/키
     {"key": "mouse", "cat": "입력", "type": "bool",
      "cmd": "set mouse", "backend": "config"},
-    {"key": "mouse-drag-copy", "cat": "입력", "type": "bool",
+    # 값이 셋이라 bool 이 아니다(on·off·shift — 뜻은 keymap.drag_copy_policy 한 곳).
+    {"key": "mouse-drag-copy", "cat": "입력", "type": "enum",
+     "choices": list(DRAG_COPY_VALUES),
      "cmd": "set mouse-drag-copy", "backend": "config"},
     {"key": "mouse-drag-threshold", "cat": "입력", "type": "int",
      "lo": 1, "hi": 20, "step": 1, "cmd": "set mouse-drag-threshold",

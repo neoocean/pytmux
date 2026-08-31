@@ -207,6 +207,71 @@ async def test_the_c_key_types_a_cd_too():
         assert target in typed and typed.endswith("\r"), typed
 
 
+async def test_a_swallowed_send_says_why_instead_of_going_quiet():
+    """★ 못 넣었으면 **말한다**(pytmux-417 ③ⓐ).
+
+    가드 셋(패널 없음 · pty 없음 · `OSError`)은 전부 조용해서, 걸리면 사용자에게는
+    「Enter 를 눌렀는데 아무 일도 안 남」으로 보인다 — [[pytmux-173]] 이 남긴 것과 **글자
+    그대로 같은 그림**인데 트레이스백조차 없어 로그에도 단서가 없다. 실제로 제보
+    (2026-08-30)를 받고도 세 갈래 중 어느 것인지 소스만으로 못 갈랐다.
+    ⛔ **터지면 안 된다** — 여기서 예외를 올리면 판까지 안 닫힌다(173 이 겪은 자리).
+    """
+    class _Server:
+        def __init__(self):
+            self.logged = []
+
+        def _log_error(self, where, detail=""):
+            self.logged.append((where, detail))
+
+    class _Boom:
+        def write(self, _data):
+            raise OSError("EIO")
+
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        target = os.path.join(td, "a")
+
+        for label, pane, hint in (
+                ("pty 가 없다", _pane_without_pty(), "pty"),
+                ("write 가 거절한다", _pane_with(_Boom()), "EIO"),
+        ):
+            server = _Server()
+            resp = PLUGIN.plugin_screen(
+                server, _Sess(pane),
+                {"id": "ncd", "do": "into", "row": 0, "input": target, "state": {}},
+            )
+            assert resp["t"] == "plugin_screen_close", f"{label}: 판이 안 닫혔다 — {resp}"
+            assert server.logged, f"{label}: 조용히 삼켰다 — 로그가 비었다"
+            where, detail = server.logged[-1]
+            assert where == "ncd_send_to_pane", (label, where)
+            assert hint in detail, f"{label}: 이유를 안 적었다 — {detail!r}"
+            assert target in detail, f"{label}: 넣으려던 글자를 안 적었다 — {detail!r}"
+
+    # ⚠ **성공한 회차는 조용해야 한다** — 안 그러면 이 로그가 곧 잡음이 되고,
+    #    잡음이 된 로그는 다음 사람이 안 읽는다(위양성 쪽도 함께 잰다).
+    with tempfile.TemporaryDirectory() as td:
+        _mktree(td)
+        server = _Server()
+        PLUGIN.plugin_screen(
+            server, _Sess(_Pane()),
+            {"id": "ncd", "do": "into", "row": 0,
+             "input": os.path.join(td, "a"), "state": {}},
+        )
+        assert not server.logged, f"멀쩡히 넣고도 로그를 남겼다: {server.logged}"
+
+
+def _pane_without_pty():
+    p = _Pane()
+    p.pty = None
+    return p
+
+
+def _pane_with(pty):
+    p = _Pane()
+    p.pty = pty
+    return p
+
+
 async def test_an_into_survives_a_pane_without_a_pty():
     """`pane.pty` 는 `None` 일 수 있다(`model.py` 의 `self.pty = None` · `reinit` 직후).
     거기서 터지면 `plugin_screen_close` 가 안 나가서 **화면이 안 닫힌다** — 오타 때와
@@ -403,6 +468,49 @@ async def test_windows_can_move_to_another_drive():
         assert d["expand"] == "open", _labels(spec)
         work = next(r for r in spec["rows"] if r["key"] == "D:\\work")
         assert work["depth"] == d["depth"] + 1, _labels(spec)
+        # ★ **커서도 단언한다**(pytmux-417 ②). 종전엔 줄만 봐서, 편 뒤 커서가 `cwd` 로
+        #   튀어도 초록이었다 — 그리고 클라는 새 스펙의 `selected` 를 그대로 적용하므로
+        #   (「커서의 주인은 스펙」) 사용자에겐 **「D: 트리가 안 열린다」**로 보인다.
+        assert spec["rows"][spec["selected"]]["key"] == "D:\\", (
+            "편 줄에 커서가 안 남았다: "
+            + spec["rows"][spec["selected"]]["key"] + " · " + _labels(spec))
+
+
+async def test_collapsing_keeps_the_cursor_where_you_pressed_it():
+    """접기도 같은 규약이다 — `←→` 를 번갈아 눌러도 자리가 안 흔들려야 한다."""
+    with _windows():
+        mine = {"path": "C:\\Users\\me", "cwd": "C:\\Users\\me"}
+        PLUGIN._open_tree(mine)
+        PLUGIN._expand(mine, "D:\\")
+        spec = PLUGIN._collapse(mine, "D:\\")
+        assert next(r for r in spec["rows"] if r["key"] == "D:\\")["expand"] == "shut"
+        assert spec["rows"][spec["selected"]]["key"] == "D:\\", (
+            "접은 줄에 커서가 안 남았다: "
+            + spec["rows"][spec["selected"]]["key"] + " · " + _labels(spec))
+
+
+async def test_collapsing_a_shut_row_climbs_to_the_parent():
+    """이미 접힌 줄에서 `←` 는 **부모로 올라간다**(정본 `←` 의 두 번째 뜻).
+    커서 규약을 고치면서 이 뜻이 깨지지 않았는지 함께 잰다."""
+    with _windows():
+        mine = {"path": "C:\\Users\\me", "cwd": "C:\\Users\\me"}
+        PLUGIN._open_tree(mine)
+        # `C:\\Windows` 는 이미 접혀 있는 줄(자식이 없다) — 거기서 `←` 는 부모로 간다.
+        spec = PLUGIN._collapse(mine, "C:\\Windows")
+        assert spec["rows"][spec["selected"]]["key"] == "C:\\", _labels(spec)
+
+
+async def test_the_hint_says_what_the_keys_actually_do():
+    """힌트가 동작과 어긋나면 **화면이 스스로 틀린 기대를 만든다**(pytmux-417).
+
+    종전 힌트는 「Enter 들어가기」였는데 실제 `Enter` 는 정본과 같이 **그 자리로 cd** 다.
+    그리고 항해 키 넷은 정본 힌트에 적혀 있고 이제 GUI 에서도 먹는다."""
+    from pytmuxlib import i18n
+    hint = i18n.t("ncd.hint")
+    assert "Enter cd" in hint, hint
+    assert "들어가기" not in hint, hint
+    for k in ("Home/End", "PgUp/PgDn", "펼치기", "접기"):
+        assert k in hint, (k, hint)
 
 
 async def test_windows_drive_row_uses_the_canonical_spelling():

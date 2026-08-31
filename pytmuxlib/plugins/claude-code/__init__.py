@@ -437,6 +437,37 @@ i18n.register({
     },
 })
 
+# 사용량 트리가 **글자를 지을 때** 읽는 말들 — 요일·시각 접미사·구역 구분선·이 머신.
+#
+# ⚠ **여기 사는 이유는 위 `PERM_MODES` 와 같다.** 종전에는 `screens.py`(Textual)의
+# 카탈로그에만 있었는데, 그 트리를 짓는 `usagetree.build` 와 `screenspec` 은 **서버**에서
+# 돌고 서버는 `screens.py` 를 안 읽는다(이 파일 머리말의 무게 규칙 — 화면은 실제로 열 때
+# 지연 import 한다). 그래서 서버가 부르면 `i18n.t` 가 **키를 그대로 돌려줬다**:
+#
+#   - `pscreen.weekdays` — `"pscreen.weekdays".split(",")` 는 원소가 **하나**라
+#     `weekdays[wd]` 가 월요일 말고는 전부 `IndexError` 다. ⇒ GUI 의 기간 탭
+#     (`:claude-token-period`)이 **자료가 있는 홈에서 아예 안 뜬다**(pytmux-419).
+#     정본 팝업은 `screens.py` 를 이미 물고 있어 멀쩡했다 — 그래서 오래 안 보였다.
+#   - 나머지 넷은 안 터지고 **키 문자열이 그대로 화면에 뜬다**(더 조용하다).
+#
+# ⛔ `screens.py` 에 사본을 남기지 않는다 — 같은 키가 두 벌이면 한쪽만 고쳐진다.
+i18n.register({
+    "ko": {
+        "pscreen.weekdays": "월,화,수,목,금,토,일",
+        "pscreen.hour_suffix": "시",
+        "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
+        "pscreen.tree_earlier_months": "── 이전 달 ──",
+        "pscreen.tklog_host_local": "이 머신",
+    },
+    "en": {
+        "pscreen.weekdays": "Mo,Tu,We,Th,Fr,Sa,Su",
+        "pscreen.hour_suffix": "h",
+        "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",
+        "pscreen.tree_earlier_months": "── earlier months ──",
+        "pscreen.tklog_host_local": "this machine",
+    },
+})
+
 
 def perm_modes(current, bypass_available=False):
     """이 패널에 보일 `(키, 라벨)` 목록 — 정본 팝업과 화면 스펙이 **같은 것**을 부른다.
@@ -1246,9 +1277,10 @@ class _ClaudeCodePlugin:
         if action == "token_sync":
             # 키 생성·네트워크가 섞여 있어 **여기서 기다리지 않는다** — 태스크로 띄우고
             # 결과만 notice 로 돌려준다(블로킹-온-루프 금지, 이 프로젝트 재발 항목).
-            asyncio.create_task(
+            server._spawn(
                 _token_sync_cmd(server, client, str(msg.get("sub") or "status"),
-                                str(msg.get("arg") or "")))
+                                str(msg.get("arg") or "")),
+                "token_sync")
             return "handled"
         if action == "set_autoresume":
             server.set_autoresume(sess, value=msg.get("value"),
@@ -1279,7 +1311,7 @@ class _ClaudeCodePlugin:
                                         repeat=msg.get("repeat"))
             return "broadcast"
         if action == "refresh_usage":                 # M19 그림자 /usage 질의
-            asyncio.create_task(server.refresh_usage())
+            server._spawn(server.refresh_usage(), "refresh_usage")
             return "send_full"
         if action == "set_token_debug":               # §10-D 토큰 회계 진단 로그 토글
             server.set_token_debug(msg.get("value"))

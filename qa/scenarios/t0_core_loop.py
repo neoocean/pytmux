@@ -49,11 +49,11 @@ def run(ctx) -> None:
     # `client/CLAUDE.md` 에 적어 둔 "GUI 배선 누락")는 여기서만 잡힌다.
     with ctx.step("client-render") as st:
         try:
-            _, alive, text = s.capture_client(seconds=6.0)
+            raw, alive, text = s.capture_client(until=_settled)
         except NotSupported as e:
             st.skip(str(e))
         else:
-            _judge_screen(ctx, text, alive, key_prefix="first")
+            _judge_screen(ctx, text, alive, key_prefix="first", raw=raw)
 
     # ── 재부착 ─────────────────────────────────────────────────────────────────
     # 캡처는 끝에 클라를 SIGKILL 로 죽인다. **서버와 셸 세션은 그래도 살아 있어야 한다** —
@@ -67,11 +67,11 @@ def run(ctx) -> None:
                      expected="클라 종료 뒤에도 2 tabs, 3 panes",
                      actual=f"{tabs} tabs, {panes} panes")
         try:
-            _, alive, text = s.capture_client(seconds=6.0)
+            raw, alive, text = s.capture_client(until=_settled)
         except NotSupported as e:
             st.skip(str(e))
         else:
-            _judge_screen(ctx, text, alive, key_prefix="reattach")
+            _judge_screen(ctx, text, alive, key_prefix="reattach", raw=raw)
 
     with ctx.step("kill-server"):
         s.stop()
@@ -83,7 +83,18 @@ def run(ctx) -> None:
                      actual="; ".join(left))
 
 
-def _judge_screen(ctx, text: str, alive: bool, key_prefix: str) -> None:
+def _settled(text: str) -> bool:
+    """캡처를 끝낼 조건. ★ **`_judge_screen` 이 보는 것과 같은 술어다**.
+
+    다 그렸으면(=판정이 할 말이 없으면) 더 볼 것이 없고, 트레이스백이 떴으면 더
+    기다려도 나아지지 않는다 — 둘 다 그 자리에서 끝낸다. 그 밖에는 상한까지 기다리고,
+    그러고도 모자란 것이 곧 결함이다(pytmux-425·426·427).
+    """
+    return screens.has_traceback(text) or not screens.missing_tree(text)
+
+
+def _judge_screen(ctx, text: str, alive: bool, key_prefix: str,
+                  raw: bytes | None = None) -> None:
     """실 클라가 그린 화면 판정.
 
     ⚠ **판정 재료를 좁게 고른다.** 화면 전체를 골든으로 굳히면 시각·호스트명·셸 프롬프트가
@@ -95,14 +106,15 @@ def _judge_screen(ctx, text: str, alive: bool, key_prefix: str) -> None:
         ctx.fail(oracle="client/alive", key=f"{key_prefix}-died", severity="S1",
                  title="실 PTY 아래 붙인 클라가 스스로 종료한다",
                  expected="캡처 시간 동안 클라 프로세스가 살아 있다",
-                 actual="캡처 중 스스로 종료(즉시 종료/크래시 신호)")
+                 actual=f"캡처 중 스스로 종료(즉시 종료/크래시 신호) · "
+                        f"화면 {len(text)}자{ctx.evidence(key_prefix, raw)}")
         return
-    if "Traceback (most recent call last)" in text:
+    if screens.has_traceback(text):
         ctx.fail(oracle="client/no_traceback", key=f"{key_prefix}-traceback",
                  severity="S1",
                  title="실 클라 화면에 파이썬 트레이스백이 그려진다",
                  expected="화면에 트레이스백이 없다",
-                 actual=screens.around(text, "Traceback (most recent call last)"))
+                 actual=screens.around(text, screens.TRACEBACK))
         return
     # ⛔ **「아무것도 못 그렸다」와 「잘못 그렸다」를 한 지문에 접지 않는다**(pytmux-149).
     #   종전에는 빈 캡처(0자)도 아래 `renders_tree` 로 떨어졌다 — 그 오라클+키는
@@ -119,13 +131,10 @@ def _judge_screen(ctx, text: str, alive: bool, key_prefix: str) -> None:
                  title="실 클라가 살아 있는데 화면에 아무것도 안 그렸다",
                  expected="테두리든 탭바든 클라가 그린 것이 화면에 있다",
                  actual=f"화면 {len(text)}자 · 그린 것으로 볼 만한 글자가 하나도 없다 — "
-                        f"하네스가 화면을 못 받았거나 클라가 첫 프레임 전에 멈춰 선 것이다")
+                        f"클라는 상한까지 살아 있었는데 첫 프레임이 안 왔다"
+                        f"{ctx.evidence(key_prefix, raw)}")
         return
-    missing = [n for n, ok in (
-        ("탭 1", "1:" in text),
-        ("탭 2", "2:" in text),
-        ("패널 테두리", "┌" in text and "└" in text),
-    ) if not ok]
+    missing = screens.missing_tree(text)
     if missing:
         # ⚠ **무엇이 없다**만 적으면 이슈를 받은 사람이 아무것도 못 한다(실측: 첫 진짜
         #   결함의 본문이 "안 보이는 것: 탭 1 · 화면 9683자" 뿐이었다). 화면의 마지막
@@ -135,4 +144,5 @@ def _judge_screen(ctx, text: str, alive: bool, key_prefix: str) -> None:
                  title="실 클라 화면에 탭바·패널 테두리가 안 그려진다",
                  expected="탭 둘(1:·2:)과 패널 테두리가 화면에 있다",
                  actual=f"안 보이는 것: {', '.join(missing)} · 화면 {len(text)}자\n"
-                        f"상태줄: {screens.tabbar(text) or '(못 찾음)'}")
+                        f"상태줄: {screens.tabbar(text) or '(못 찾음)'}"
+                        f"{ctx.evidence(key_prefix, raw)}")

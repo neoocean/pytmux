@@ -86,8 +86,11 @@
             선택은 <strong>텍스트에 붙어</strong> 이어집니다(화면 위로 넘어간 부분은 경계에서 잘려 보일 뿐, 복사에는 그대로 들어갑니다).</figcaption>
         </figure>
         <div class="callout">
-          앱에 마우스 드래그를 넘기고 싶으면 <code>set mouse-drag-copy off</code> — 그때 선택은
-          <strong>Shift+드래그</strong>나 위 스크롤백(copy-mode)에서 드래그로 합니다.
+          앱에 마우스 드래그를 넘기고 싶으면 값이 <strong>둘</strong>입니다.
+          <code>set mouse-drag-copy shift</code> 면 평드래그가 앱에게 가고 <strong>복사는 Shift+드래그</strong>가 됩니다.
+          <code>set mouse-drag-copy off</code> 면 <strong>Shift+드래그까지</strong> 앱에게 가므로, 그때 선택은 위
+          스크롤백(copy-mode)에서 드래그로 합니다.
+          어느 값이든 <strong>마우스를 안 켠 패널</strong>(보통 셸)에서는 넘길 앱이 없어 평드래그가 그대로 선택입니다.
         </div>
       </section>
 

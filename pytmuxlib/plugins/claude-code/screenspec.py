@@ -776,8 +776,64 @@ def _hub_rows(current_sid):
     return rows
 
 
-def _hub_open(server, sess, picked):
-    """잇는 줄을 눌렀을 때 열 판. 내 줄이 아니면 `None`."""
+#: 접힘·펼침을 드는 두 자리 — 기간 트리와 경고 이력(pytmux-419 ④).
+_FOLD_KEYS = ("tree_open", "warn_open")
+
+
+def _folds(state, key):
+    """`state` 에 적힌 «뒤집은 집합»을 꺼낸다. 없거나 상태가 없으면 빈 집합."""
+    if not isinstance(state, dict):
+        return set()
+    return set(state.get(key) or ())
+
+
+def _folds_or_none(state, key):
+    """적힌 것이 **없을 때**와 «다 접었다»를 가른다.
+
+    경고 판의 집합은 대칭차가 아니라 그냥 «펴진 날짜»라, 빈 집합은 «다 접었다»라는
+    뜻이 있다. 없는 것을 빈 것으로 접으면 다 접어 둔 판이 다음 왕복에 최신 날짜만
+    펴진 기본 모양으로 되살아난다.
+    """
+    if not isinstance(state, dict) or state.get(key) is None:
+        return None
+    return set(state.get(key) or ())
+
+
+def _remember_folds(state, key, opened):
+    """계산한 집합을 **서버가 든 그 dict 에 되쓴다**(pytmux-419 ④).
+
+    ⛔ 이 되쓰기가 없으면 다음 누름이 다시 **빈 집합에서 출발**한다 — 방금 누른 노드
+    하나만 뒤집힌 채로 다시 그려져서, 두 노드를 동시에 펼 수도 접을 수도 없다. 종전에
+    이 자리 주석이 *"펼침 상태는 클라가 든다"* 라고 적고 있었는데, 그 말이 가리키던
+    「클라」는 실은 **서버가 연결마다 드는 보관함**(`ClientConn.plugin_state`)이다 —
+    `plugin_action` 프레임의 계약은 `id`·`do`·`row`·`input` 넷뿐이라 클라는 이 집합을
+    실어 보낼 칸이 애초에 없다(`proto::Command::PluginAction`). 뜻은 그대로다(연결마다
+    따로라 클라 둘이 서로의 펼침을 안 흔든다) — 다만 **적어 두는 손이 우리 쪽**이다.
+    """
+    if isinstance(state, dict):
+        state[key] = sorted(opened)
+    return opened
+
+
+def _reset_folds(state):
+    """새로 연 판은 **기본 접힘으로 시작한다** — 정본과 같다.
+
+    정본은 이 다섯이 한 팝업의 탭이라 접힘을 화면 인스턴스가 들고(`_tree_toggled`·
+    `_warn_open`), 팝업을 **다시 열면 새 인스턴스**라 기본값으로 돌아간다. 보관함은
+    연결 수명이라 안 지우면 어제 편 노드가 오늘 판에 남는다.
+    """
+    if isinstance(state, dict):
+        for key in _FOLD_KEYS:
+            state.pop(key, None)
+
+
+def _hub_open(server, sess, picked, state=None):
+    """잇는 줄을 눌렀을 때 열 판. 내 줄이 아니면 `None`.
+
+    ★ 접힘은 **탭을 옮겨도 산다** — 정본에서 이 판들은 한 팝업의 탭이라 트리를 펴 놓고
+    [세션] 에 들렀다 [기간] 으로 돌아오면 편 채로 있다(화면 인스턴스가 그대로다).
+    그래서 여는 판에 보관함의 집합을 그대로 건넨다(pytmux-419 ④).
+    """
     for key, _label, sid in _HUB + _HUB_ACTIONS:
         if picked != key:
             continue
@@ -790,11 +846,11 @@ def _hub_open(server, sess, picked):
         if sid == "claude-token-machines":
             return _machines_spec(server)
         if sid == "claude-warn-history":
-            return _warn_spec(server)
+            return _warn_spec(server, open_days=_folds_or_none(state, "warn_open"))
         if sid == "claude-token-log":
             return _token_log_spec(server)
         if sid == "claude-token-period":
-            return _period_spec(server)
+            return _period_spec(server, opened=_folds(state, "tree_open"))
         if sid == "claude-token-sessions":
             return _sessions_spec(server)
     return None
@@ -921,6 +977,51 @@ def _bar_rows(items):
 _PERIOD_TREE = "tree"
 
 
+def _limit_pcts(server):
+    """시각별 **5h%·1w%** 두 표(`{시각키: 비율}`). 없으면 빈 표 둘.
+
+    정본 `[기간]` 탭은 토큰 옆에 이 둘을 별도 칸으로 세운다 — 스크랩 Σ(토큰 칸)는 5h
+    소비를 과소반영하므로 «그 시각에 창이 얼마나 찼나»의 진짜 신호는 이쪽이다(권위는
+    `/usage` 스냅샷). 조인키는 트리 노드의 `bk` 다.
+
+    ⛔ 여기서 다시 집계하지 않는다 — `usagedb` 의 두 함수가 정본 화면이 부르는 그것이다.
+    """
+    from . import usagedb
+    getconn = getattr(server, "_tokens_db_conn", None)
+    conn = getconn() if callable(getconn) else None
+    if conn is None:
+        return {}, {}
+    try:
+        return (usagedb.hourly_limit_pct(conn) or {},
+                usagedb.hourly_week_pct(conn) or {})
+    except Exception:
+        # 옛 판 DB(limits 표 없음) — 칸 둘이 빠질 뿐 트리는 그대로 선다.
+        return {}, {}
+
+
+def _limit_cols(node, pct5h, pct1w):
+    """한 노드의 `5h%`·`1w%` 칸. **시각 행에만** 붙는다(정본과 같은 자리).
+
+    정본은 `show5h = (self._bucket == "hour" …)` 로 시각 뷰에서만 이 열을 켠다 — 5h 창은
+    시간 단위 개념이라 일·주·월 행에 붙이면 「그 날의 5h%」라는 없는 뜻이 생긴다.
+    여기서는 버킷 대신 **노드 종류**로 같은 판정을 한다(트리는 한 판에 다 있다).
+
+    ⚠ 두 칸은 **함께 움직인다** — 하나만 있으면 뒤 칸이 앞으로 당겨져 5h% 자리에 1w%
+    값이 서고, 그러면 숫자가 조용히 거짓말을 한다. 그래서 둘 다 없으면 아무것도 안 붙이고
+    하나만 있으면 나머지는 빈 칸으로 자리를 지킨다.
+    """
+    if node.get("kind") != "hour":
+        return []
+    bk = node.get("bk")
+    if not bk:
+        return []
+    a, b = pct5h.get(bk), pct1w.get(bk)
+    if a is None and b is None:
+        return []
+    return ["" if a is None else f"{int(a)}%",
+            "" if b is None else f"{int(b)}%"]
+
+
 def _tree_rows(server, opened=()):
     """정본과 **같은 산수**로 만든 계층 트리 줄들(pytmux-371 ①).
 
@@ -940,6 +1041,7 @@ def _tree_rows(server, opened=()):
     from . import usagetree
     hourly = getattr(server, "_hourly_index", None)
     nodes, _total = usagetree.build(recs, None, hourly, opened)
+    pct5h, pct1w = _limit_pcts(server)
     leaf = [n["tokens"] for n in nodes if n["kind"] in ("day", "hour")]
     top = max(leaf, default=0)
     rows = []
@@ -954,7 +1056,7 @@ def _tree_rows(server, opened=()):
         rows.append({
             "key": n["key"] or "",
             "label": n["label"],
-            "cols": [f"{tok:,}"],
+            "cols": [f"{tok:,}"] + _limit_cols(n, pct5h, pct1w),
             "depth": n["level"],
             # 접힘과 **잎**은 다르다 — 안 열리는 화살표를 붙이면 그 화살표가 거짓말이다.
             "expand": ("open" if n["expanded"] else "shut") if n["expandable"] else "",
@@ -1017,8 +1119,10 @@ def open_spec(server, sess, name, args=(), state=None):
     if name in LIMITS:
         return _limits_spec(server)
     if name in WARNS:
+        _reset_folds(state)
         return _warn_spec(server)
     if name in PERIOD:
+        _reset_folds(state)
         return _period_spec(server)
     if name in SESSIONS:
         return _sessions_spec(server)
@@ -1099,7 +1203,7 @@ def action(server, sess, req):
                 return jumped
         # ⑵ 줄을 눌러 잇는 길(마우스·Enter). GUI 의 문법은 «누를 자리가 보이는 것»이라
         #    글자 키와 **둘 다** 둔다 — 정본도 탭 버튼과 글자 키를 함께 갖는다.
-        jumped = _hub_open(server, sess, str(picked or ""))
+        jumped = _hub_open(server, sess, str(picked or ""), req.get("state"))
         if jumped is not None:
             return jumped
     if sid == "model":
@@ -1113,10 +1217,17 @@ def action(server, sess, req):
             # 들면 클라마다 다른 판을 봐야 할 때 갈린다. 클라가 지금 펴진 날짜 목록을
             # 실어 보내고 우리는 그 목록으로 다시 짓는다.
             state = req.get("state")
-            opened = set((state or {}).get("warn_open") or [])                 if isinstance(state, dict) else set()
+            opened = _folds_or_none(state, "warn_open")
+            if opened is None:
+                # 판이 처음 선 모양(최신 날짜만 펴짐)이 곧 출발점이다 — 그것을 안 담고
+                # 빈 집합에서 출발하면 첫 누름이 «최신 날짜를 접는다» 가 아니라 «두
+                # 번째 날짜만 편다» 가 되어 판이 눈앞에서 튄다.
+                data, _n = _warn_rows(server)
+                opened = {data[0][0]} if data else set()
             picked_day = str(picked or "").split("/")[0]
             if picked_day:
                 opened.symmetric_difference_update({picked_day})
+            _remember_folds(state, "warn_open", opened)
             return _warn_spec(server, row, open_days=opened)
         return None
     if sid == "claude-token-period":
@@ -1126,7 +1237,7 @@ def action(server, sess, req):
             # 어느 노드가 펴져 있나는 **클라가 든다**(경고 판과 같은 처방 — 서버가 들면
             # 같은 서버를 보는 클라 둘이 서로의 펼침을 흔든다).
             state = req.get("state")
-            opened = set((state or {}).get("tree_open") or [])                 if isinstance(state, dict) else set()
+            opened = _folds(state, "tree_open")
             key = str(picked or "")
             if key:
                 # 정본 `_tree_open` 은 `기본값 ^ 토글`이라 «펼침 집합»이 아니라
@@ -1137,6 +1248,7 @@ def action(server, sess, req):
                     opened.add(key)
                 else:
                     opened.discard(key)
+            _remember_folds(state, "tree_open", opened)
             return _period_spec(server, selected=row, opened=opened)
         return None
     if sid == "claude-token-sessions":

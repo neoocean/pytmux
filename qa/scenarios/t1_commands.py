@@ -160,7 +160,12 @@ def run(ctx) -> None:
     # 부류는 여기서만 잡힌다(`client/CLAUDE.md` 의 GUI 배선 누락과 같은 자리).
     with ctx.step("client-render") as st:
         try:
-            _, alive, text = s.capture_client(seconds=6.0)
+            # ⛔ 기다림의 조건은 **아래 판정과 같은 술어**다 — 고정 대기로 잡으면
+            #    부하 회차에 아직 안 그린 화면을 「아무것도 안 그렸다」로 신고한다
+            #    (pytmux-425·426·427 · `session.capture_client` 머리말).
+            raw, alive, text = s.capture_client(
+                until=lambda t: (screens.drawn(t) and RENAME_MARK in t)
+                or screens.has_traceback(t))
         except NotSupported as e:
             st.skip(str(e))
         else:
@@ -168,7 +173,8 @@ def run(ctx) -> None:
                 ctx.fail(oracle="client/alive", key="t1-died", severity="S1",
                          title="실 PTY 아래 붙인 클라가 스스로 종료한다",
                          expected="캡처 시간 동안 클라 프로세스가 살아 있다",
-                         actual="캡처 중 스스로 종료(즉시 종료/크래시 신호)")
+                         actual=f"캡처 중 스스로 종료(즉시 종료/크래시 신호) · "
+                                f"화면 {len(text)}자{ctx.evidence('t1', raw)}")
             elif not screens.drawn(text):
                 # T0 `_judge_screen` 과 같은 규율(pytmux-149) — 「아무것도 못 그렸다」는
                 # rename 이 화면까지 안 간 것과 **다른 결함**이라 지문을 가른다.
@@ -176,14 +182,17 @@ def run(ctx) -> None:
                          severity="S2",
                          title="실 클라가 살아 있는데 화면에 아무것도 안 그렸다",
                          expected="테두리든 탭바든 클라가 그린 것이 화면에 있다",
-                         actual=f"화면 {len(text)}자 · 그린 것으로 볼 만한 글자가 하나도 없다")
+                         actual=f"화면 {len(text)}자 · 그린 것으로 볼 만한 글자가 "
+                                f"하나도 없다 — 클라는 상한까지 살아 있었는데 첫 "
+                                f"프레임이 안 왔다{ctx.evidence('t1', raw)}")
             elif RENAME_MARK not in text:
                 ctx.fail(oracle="client/renders_rename", key="t1-rename",
                          severity="S2",
                          title="rename-tab 이 실 클라 화면의 탭바에 안 나타난다",
                          expected=f"탭바에 `{RENAME_MARK}` 가 그려진다",
                          actual=f"화면 {len(text)}자에 없다 · "
-                                f"탭바: {screens.tabbar(text) or '(못 찾음)'}")
+                                f"탭바: {screens.tabbar(text) or '(못 찾음)'}"
+                                f"{ctx.evidence('t1', raw)}")
 
     with ctx.step("kill-server"):
         # ⚠ 제어 라인의 `kill-server` 는 **실제로 서버를 내린다**(0.2초 지연 shutdown).

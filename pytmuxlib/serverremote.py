@@ -827,7 +827,7 @@ class ServerRemoteMixin:
             if c.remote_view == link.host:
                 c.remote_view = None
                 if notify:
-                    asyncio.create_task(self._send_full(c))
+                    self._spawn(self._send_full(c), "remote_send_full")
         if notify:
             self._remote_status_broadcast()
         if reconnect:
@@ -849,7 +849,7 @@ class ServerRemoteMixin:
                    else list(remotes.values()) if not name else [])
         for link in targets:
             self._remote_sticky_forget(link.host)
-            asyncio.create_task(self.remote_drop(link))
+            self._spawn(self.remote_drop(link), "remote_drop")
         if name is None:
             # detach-all: 재연결을 이미 포기한 호스트(reconn·remotes 어디에도 없어
             # 위 두 루프에 안 잡힘)의 고아 sticky 까지 버린다 — 안 그러면 나중에 그
@@ -883,7 +883,7 @@ class ServerRemoteMixin:
         for c in list(self.clients):
             if getattr(c, "remote_view", None) == link.host:
                 c.remote_view = None
-                asyncio.create_task(self._send_full(c))
+                self._spawn(self._send_full(c), "remote_send_full")
         self._remote_status_broadcast()
         return True
 
@@ -1030,7 +1030,7 @@ class ServerRemoteMixin:
                                severity=severity, **kw)
         for c in list(self.clients):
             if c.session is sess:
-                asyncio.create_task(self._send_to(c, dict(msg)))
+                self._spawn(self._send_to(c, dict(msg)), "remote_relay_msg")
 
     # ---- 재시작(re-exec) 후 링크 복원(Stage 3) ----
     def remote_restore_links(self):
@@ -1557,7 +1557,7 @@ class ServerRemoteMixin:
         for sess in self.sessions.values():
             for c in [c for c in self.clients if c.session is sess]:
                 frame = frame_msg(self._status_msg(sess, full=False, client=c))
-                asyncio.create_task(self._send_frames_to(c, [frame]))
+                self._spawn(self._send_frames_to(c, [frame]), "remote_frames")
 
     def _remote_viewer_status(self, link: RemoteLink):
         """이 링크를 보는 클라에게만 status 재전송(업스트림 부가필드 갱신 반영)."""
@@ -1565,7 +1565,7 @@ class ServerRemoteMixin:
             if c.remote_view == link.host and c.session is not None:
                 frame = frame_msg(
                     self._status_msg(c.session, full=False, client=c))
-                asyncio.create_task(self._send_frames_to(c, [frame]))
+                self._spawn(self._send_frames_to(c, [frame]), "remote_frames")
 
     def _remote_status_override(self, sess, client):
         """보는 클라용 status(Stage 3): 업스트림 status 누적본을 기반으로 —
@@ -1633,7 +1633,7 @@ class ServerRemoteMixin:
         if msg.get("action") in _REMOTE_REQ_TOKEN_ACTIONS:
             msg = dict(msg, _req_token=id(client))
         try:
-            asyncio.create_task(self._link_write(link, msg))
+            self._spawn(self._link_write(link, msg), "link_write")
         except (OSError, ConnectionError):
             return False
         return True
@@ -1661,7 +1661,7 @@ class ServerRemoteMixin:
         out = dict(msg)
         out["src"] = ri                       # 병합 전역 index → 원격 로컬 index
         try:
-            asyncio.create_task(self._link_write(link, out))
+            self._spawn(self._link_write(link, out), "link_write")
         except (OSError, ConnectionError):
             return False
         return True

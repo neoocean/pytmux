@@ -21,13 +21,19 @@ from pytmuxlib import i18n
 i18n.register({
     "ko": {
         "ncd.title": "디렉터리 — {path}",
-        "ncd.hint": "↑↓ 이동 · Enter 들어가기 · c 여기로 cd · Esc 닫기",
+        # ⛔ 「Enter 들어가기」는 **평면 목록 시절의 글**이었다(pytmux-417). 지금 이
+        # 화면은 트리이고 `Enter` 는 정본과 같이 **그 자리로 cd** 다 — 화면이 스스로
+        # 틀린 기대를 만들고 있었다. 정본 화면의 힌트(`ncd/screen.py:_HINT`)와 같은
+        # 뜻으로 맞춘다(항해 키 넷은 pytmux-417 ① 에서 실제로 먹게 됐다).
+        "ncd.hint": ("↑↓·PgUp/PgDn·Home/End 이동 · →펼치기 ←접기 · "
+                     "Enter cd · c 여기로 cd · Esc 닫기"),
         "ncd.empty": "하위 디렉터리가 없습니다",
         "ncd.too_many": "줄이 너무 많아 일부만 보입니다 — 접으면 줄어듭니다",
     },
     "en": {
         "ncd.title": "Directory — {path}",
-        "ncd.hint": "↑↓ move · Enter open · c cd here · Esc close",
+        "ncd.hint": ("↑↓·PgUp/PgDn·Home/End move · → expand ← collapse · "
+                     "Enter cd · c cd here · Esc close"),
         "ncd.empty": "No subdirectories",
         "ncd.too_many": "Too many rows — collapse to see fewer",
     },
@@ -272,14 +278,35 @@ class _NcdPlugin:
         ⛔ **가짜를 `pane` 에 달아 재지 마라** — 그것이 이 결함을 살려 둔 길이다
         (`tests/test_ncd_tree.py` §`_Pane` · 전수 오라클은
         `tests/test_pane_write_typo.py`).
+
+        ★ **못 넣었으면 «말한다»**(pytmux-417 ③ⓐ). 가드 셋(패널 없음 · pty 없음 ·
+        `OSError`)은 전부 조용해서, 걸리면 사용자에게는 **「Enter 를 눌렀는데 아무 일도
+        안 남」**으로 보인다 — pytmux-173 이 남긴 것과 **글자 그대로 같은 그림**인데
+        이번엔 트레이스백조차 없어 로그에도 단서가 없다. 그래서 제보(2026-08-30
+        「경로에서 엔터를 눌러도 프롬프트에 cd 가 안 생긴다」)를 받고도 세 갈래 중
+        어느 것인지 **소스만으로는 못 갈랐다**.
+        ⛔ 고치는 것이 아니라 **세고 적는다** — 여기서 예외를 올리면 `plugin_screen`
+        이 죽어 판까지 안 닫힌다(173 이 겪은 그 자리다).
         """
         win = sess.active_window if sess else None
         pane = win.active_pane if win else None
+        why = ""
         try:
-            if pane is not None and pane.pty is not None:
+            if pane is None:
+                why = "활성 패널이 없다"
+            elif pane.pty is None:
+                why = "패널에 pty 가 없다(reinit 직후이거나 죽은 패널)"
+            else:
                 pane.pty.write(text.encode("utf-8", "replace"))
-        except OSError:
-            pass
+        except OSError as e:
+            why = f"pty.write 가 거절했다: {e!r}"
+        if why:
+            log = getattr(server, "_log_error", None)
+            if log:
+                # 예외 없는 진단 로그다 — 스위트의 error.log 만능가드는 트레이스백만
+                # 세므로 이 줄은 초록을 안 깬다(루트 CLAUDE.md §서버 예외 만능가드).
+                log("ncd_send_to_pane", f"{why} · 넣으려던 글자: {text!r}")
+        return not why
 
     # ---- 트리(pytmux-11 B) --------------------------------------------------
     #
@@ -474,14 +501,35 @@ class _NcdPlugin:
             "i18n": {"title": title_spec},
         }
 
+    def _select(self, spec, path):
+        """스펙의 커서를 `path` 줄에 둔다(그 줄이 없으면 그대로).
+
+        ⛔ **이 함수가 있어야 하는 이유**(pytmux-417 ②): `_tree_spec` 은 상태 함수가
+        아니라 **매번 다시 계산**하고, 커서 기본값이 언제나 「셸이 서 있는 줄(cwd)」이다.
+        그리고 클라는 새 스펙이 올 때마다 그 값을 그대로 적용한다(「커서의 주인은
+        스펙」). 그래서 커서를 옮긴 응답은 **스스로 그 사실을 실어야** 한다 — 안 실으면
+        `D:` 드라이브를 펴도 화면과 커서가 셸이 선 드라이브의 cwd 로 되돌아가고, 사용자에겐
+        「다른 드라이브 트리가 안 열린다」로 보인다.
+        `_collapse` 는 이것을 손으로 하고 있었고 `_expand` 는 안 하고 있었다."""
+        key = self._norm(path)
+        for i, r in enumerate(spec["rows"]):
+            if self._norm(r["key"]) == key:
+                spec["selected"] = i
+                break
+        return spec
+
     def _expand(self, mine, path):
-        """그 줄을 편다. 이미 펴져 있으면 그대로(첫 자식으로 내려가는 것은 `↓` 의 일)."""
+        """그 줄을 편다. 이미 펴져 있으면 그대로(첫 자식으로 내려가는 것은 `↓` 의 일).
+
+        편 줄에 **커서를 남긴다** — 편 다음에 커서가 딴 데 있으면 그 조작은 아무것도 안
+        한 것처럼 보인다(위 `_select`)."""
         if path:
             opened = set(mine.get("open") or [])
             if self._kids(mine, path):
                 opened.add(self._norm(path))
                 mine["open"] = sorted(opened)
-        return self._tree_spec(mine)
+        spec = self._tree_spec(mine)
+        return self._select(spec, path) if path else spec
 
     def _collapse(self, mine, path):
         """접는다. **이미 접혀 있으면 부모로 올라간다** — 정본 `←` 의 두 뜻이다.
@@ -496,15 +544,10 @@ class _NcdPlugin:
         if me in opened:
             opened.discard(me)
             mine["open"] = sorted(opened)
-            return self._tree_spec(mine)
-        parent = self._parent(path)
-        spec = self._tree_spec(mine)
-        pkey = self._norm(parent)
-        for i, r in enumerate(spec["rows"]):
-            if self._norm(r["key"]) == pkey:
-                spec["selected"] = i
-                break
-        return spec
+            # 접은 줄에 커서를 남긴다 — 접고 나서 커서가 cwd 로 튀면 `←→` 를 번갈아
+            # 누를 때 자리가 왔다 갔다 한다(`_expand` 와 같은 결).
+            return self._select(self._tree_spec(mine), path)
+        return self._select(self._tree_spec(mine), self._parent(path))
 
 
 def _quote(path: str) -> str:

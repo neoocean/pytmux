@@ -50,8 +50,9 @@ from .clientwidgets import (  # noqa: F401  (PytmuxApp.compose·ghost suggester)
     MultiplexerView, SepInsensitiveSuggester, StatusBar, TabBar,
     _visual_tab_order)
 from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
-                     config_path_for_write, load_config, normalize_binding_key,
-                     set_config_option, textual_key_to_tmux)
+                     config_path_for_write, drag_copy_policy, load_config,
+                     normalize_binding_key, set_config_option,
+                     textual_key_to_tmux)
 from .protocol import (CLIENT_CAPS, MIN_H, MIN_W, PROTO_VERSION,
                        read_msg, write_msg)
 from .clientconn import (  # noqa: F401  (PytmuxApp 믹스인 — 4-1 파일 분할)
@@ -785,7 +786,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 선택→OS 클립보드 자동복사로 잡는다(클릭은 앱에 전달). 호스트 터미널이 Shift
             # 선택을 가로채 pane 외곽선까지 긁히던 불편을 없앤다(사용자 요청 2026-07-11).
             # off 면 종전대로 좌드래그를 마우스 앱에 패스스루한다(선택은 Shift·copy-mode).
-            self.mouse_drag_copy = config.get("mouse_drag_copy", True)
+            # shift 면 그 둘을 맞바꾼다 — 값 셋의 뜻은 keymap.drag_copy_policy 한 곳이 쥔다.
+            self.mouse_drag_copy = drag_copy_policy(
+                config.get("mouse_drag_copy"))
             # 드래그로 인정할 최소 이동 거리(칸, 기본 3). 종전엔 **1칸만 움직여도**
             # 드래그 확정이라, 창을 포그라운드로 올리려는 짧은 클릭에도 손이 미세하게
             # 밀리면 선택→클립보드가 덮어써졌다(제보 2026-07-28). 임계 이상 움직여야
@@ -1862,7 +1865,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif name == "mouse":
                 self.mouse_enabled = val.lower() in ("on", "true", "1", "yes")
             elif name in ("mouse-drag-copy", "mouse_drag_copy"):
-                self.mouse_drag_copy = val.lower() in ("on", "true", "1", "yes")
+                self.mouse_drag_copy = drag_copy_policy(val)
             elif name in ("set-clipboard", "set_clipboard"):
                 # 패널 안 앱이 OSC 52 로 넣으라 한 글을 **이 클라의** OS 클립보드에
                 # 쓸지. 클라마다 따로 정한다 — 한 세션에 여러 사람이 붙어 있을 때
@@ -2028,7 +2031,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             if key == "mouse":
                 return "on" if self.mouse_enabled else "off"
             if key in ("mouse-drag-copy", "mouse_drag_copy"):
-                return "on" if self.mouse_drag_copy else "off"
+                return drag_copy_policy(self.mouse_drag_copy)
             if key in ("set-clipboard", "set_clipboard"):
                 return "on" if self.set_clipboard else "off"
             if key in ("mouse-drag-threshold", "mouse_drag_threshold"):
@@ -2087,7 +2090,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             lines = [
                 f"prefix      {self.prefix_key}",
                 f"mouse       {'on' if self.mouse_enabled else 'off'}",
-                f"mouse-drag-copy {'on' if self.mouse_drag_copy else 'off'}",
+                f"mouse-drag-copy {drag_copy_policy(self.mouse_drag_copy)}",
                 f"mouse-drag-threshold {self.mouse_drag_threshold}",
                 f"copy-unwrap {'on' if self.copy_unwrap else 'off'}",
                 f"set-clipboard {'on' if self.set_clipboard else 'off'}",

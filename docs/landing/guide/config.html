@@ -57,7 +57,7 @@
           <tbody>
             <tr><td><code>prefix</code></td><td><code>C-a</code> 등 (<code>C-b</code>)</td><td>prefix 키</td></tr>
             <tr><td><code>mouse</code></td><td><code>on|off</code> (on)</td><td>마우스 on/off</td></tr>
-            <tr><td><code>mouse-drag-copy</code></td><td><code>on|off</code> (on)</td><td>좌드래그로 선택→클립보드 자동 복사(off=앱에 전달)</td></tr>
+            <tr><td><code>mouse-drag-copy</code></td><td><code>on|off|shift</code> (on)</td><td>좌드래그로 선택→클립보드 자동 복사(off=앱에 전달 / <code>shift</code>=평드래그를 앱에 주고 <strong>복사는 Shift+드래그</strong>로 — 제 선택 기능을 가진 fullscreen 앱을 마우스로 쓸 때)</td></tr>
             <tr><td><code>mouse-drag-threshold</code></td><td><code>1~20</code> (3)</td><td>드래그로 인정할 최소 이동 칸수 — 짧은 클릭이 드래그로 오인돼 클립보드가 바뀌는 것을 막습니다(1=예전 감도)</td></tr>
             <tr><td><code>copy-unwrap</code></td><td><code>on|off</code> (on)</td><td>마우스로 긁어 복사할 때 <strong>앱이 접은</strong> 줄바꿈과 그에 딸린 들여쓰기를 펴서, 여러 줄로 보이던 명령을 바로 붙여넣을 수 있게 합니다</td></tr>
             <tr><td><code>alt-scroll</code></td><td><code>on|off</code> (on)</td><td>on=pytmux 가 휠 스크롤백 처리 / off=터미널 기본</td></tr>
