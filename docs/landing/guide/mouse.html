@@ -37,7 +37,7 @@
           <thead><tr><th>제스처</th><th>동작</th></tr></thead>
           <tbody>
             <tr><td>왼쪽 클릭</td><td>패널 포커스(마우스 쓰는 앱이면 앱으로 전달)</td></tr>
-            <tr><td>왼쪽 드래그</td><td><strong>텍스트 선택 → OS 클립보드 자동 복사</strong>(<code>mouse-drag-copy on</code>, 시작한 패널 안으로만 가둠)</td></tr>
+            <tr><td>왼쪽 드래그</td><td><strong>텍스트 선택 → OS 클립보드 자동 복사</strong>(<code>mouse-drag-copy on</code>, 시작한 패널 안으로만 가둠). <code>set mouse-drag-copy shift</code> 면 반대로 <strong>앱에 전달</strong>되고 복사는 Shift+드래그가 맡습니다</td></tr>
             <tr><td>Shift + 왼쪽 드래그</td><td>마우스 쓰는 앱에 <strong>드래그 전달</strong>(예: 에디터 패널 <strong>스플리터</strong> 이동). 앱이 마우스 모드가 아니면 평드래그처럼 텍스트 선택 → 복사</td></tr>
             <tr><td>오른쪽 클릭</td><td>컨텍스트 메뉴(먼저 그 패널을 활성화). 앱의 마우스 모드보다 우선</td></tr>
             <tr><td>휠 ↑ / ↓</td><td>스크롤백(마우스 쓰는 앱이면 앱으로 전달)</td></tr>
@@ -99,6 +99,11 @@
           <li>Claude 등 마우스 앱 위에서도 <strong>평드래그</strong>는 선택에 양보합니다(클릭은 앱으로).</li>
           <li><strong>Shift+드래그</strong>는 마우스 쓰는 앱(에디터 <strong>스플리터</strong> 등)에 드래그를 <strong>넘깁니다</strong> —
             평드래그 복사는 그대로 둔 채 <code>Shift</code> 로만 앱에 전달합니다. (모든 드래그를 앱에 넘기려면 <code>set mouse-drag-copy off</code>.)</li>
+          <li><strong>두 손잡이를 맞바꿀 수 있습니다 — <code>set mouse-drag-copy shift</code>.</strong> 그러면 <strong>평드래그가
+            앱에게</strong> 가고 <strong>복사는 Shift+드래그</strong>가 됩니다. Claude Code 의 fullscreen 화면처럼 <strong>자기 선택과
+            자동 복사를 가진 앱</strong>을 마우스로 쓰려면 평드래그가 그 앱에 닿아야 하는데, 기본값에서는 pytmux 가 먼저
+            가져가서 그 기능에 닿을 길이 없었습니다. 마우스를 안 켠 패널(보통 셸) 위에서는 <strong>이 값에서도 평드래그가
+            그대로 복사</strong>입니다 — 넘길 앱이 없는 자리까지 드래그를 버리면 그 패널에서 복사할 방법이 사라지기 때문입니다.</li>
         </ul>
       </section>
 

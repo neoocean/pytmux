@@ -23,6 +23,7 @@ from . import clientnotices, i18n
 from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
                          _char_cells, _deemoji_text, norm_sep, path_at,
                          remote_title_display, theme_color)
+from .keymap import drag_copy_policy
 
 
 def _backdrop_dim_active(app) -> bool:
@@ -454,6 +455,10 @@ class MultiplexerView(Widget):
         self.app._log_mouse("down", event.x, event.y, event.button)
         if not self.app.mouse_enabled:
             return
+        # `mouse-drag-copy` 는 값이 **셋**이다(on·off·shift — 뜻은
+        # keymap.drag_copy_policy 한 곳). 이 함수의 두 갈래(Shift+드래그·평드래그)가
+        # 그 값을 함께 보므로 여기서 한 번만 읽어 둔다.
+        drag_pol = drag_copy_policy(getattr(self.app, "mouse_drag_copy", "on"))
         # §10-21ⓧ2: 밑줄이 그어진 자리는 **그 뜻이 먼저**다 — 그어 놓고 눌렀는데
         # 선택 드래그가 시작되면 그 밑줄이 거짓말이 된다. 왼쪽 버튼만이다(오른쪽은
         # 패널 메뉴이고, 그건 정본이 이미 하던 일이다).
@@ -488,7 +493,11 @@ class MultiplexerView(Widget):
         # 기존 패스스루 경로가 drag(1002+)/release 를 전달한다. 좌표·버튼만 인코딩하고
         # Shift 비트는 안 실어(_encode_mouse) 앱엔 순수 드래그로 보인다. 구 Shift=텍스트
         # 선택은 폐지(평드래그 복사가 대체). divider/passthrough 보다 먼저 가로챈다.
+        # ⚠ `mouse-drag-copy shift` 에서는 **이 갈래를 안 탄다** — 그 값은 평드래그와
+        # Shift 의 역할을 맞바꾼 것이라, Shift 는 아래 평드래그(복사) 경로로 흘러야
+        # 한다(사람의 결정 2026-08-31 · pytmux-422).
         if (getattr(event, "shift", False) and event.button == 1
+                and drag_pol != "shift"
                 and self.app.mode == "normal"):
             tp = self._mouse_target(event.x, event.y)
             if tp is not None:
@@ -603,14 +612,22 @@ class MultiplexerView(Widget):
         # pytmux 선택에 양보한다 — 호스트 터미널이 Shift 선택을 가로채 pane 외곽선까지
         # 긁히던 불편 해소(사용자 요청 2026-07-11). `set mouse-drag-copy off` 로 아래
         # 앱 패스스루를 복원한다. Shift+드래그·copy-mode 는 위에서 이미 처리했다.
-        if (getattr(self.app, "mouse_drag_copy", True) and event.button == 1
+        # `shift` 값이면 그 자리에 **마우스를 켠 앱**이 있을 때만 양보한다 — 평드래그는
+        # 그 앱 것이고(claude fullscreen 처럼 제 선택을 가진 앱이 마우스를 못 받던
+        # 자리다) 복사는 Shift 로 간다. 앱이 마우스를 안 켰으면(보통 셸) 넘길 데가
+        # 없으므로 종전대로 여기서 복사한다 — 안 그러면 그 패널에서 복사가 사라진다.
+        if (drag_pol != "off" and event.button == 1
                 and self.app.mode == "normal"
-                and self._pane_at(event.x, event.y) is not None):
+                and self._pane_at(event.x, event.y) is not None
+                and not (drag_pol == "shift"
+                         and not getattr(event, "shift", False)
+                         and self._mouse_target(event.x, event.y) is not None)):
             self._sel_pending = (event.x, event.y)
             self.capture_mouse()
             event.stop()
             return
-        # (mouse-drag-copy off) 내부 앱 마우스 패스스루(content 영역, 마우스 모드 on).
+        # 내부 앱 마우스 패스스루(content 영역, 마우스 모드 on) — 여기로 오는 길은
+        # 둘이다: `mouse-drag-copy off` · `shift` 의 평드래그.
         tp = self._mouse_target(event.x, event.y)
         if tp is not None:
             if not tp.get("active"):     # 비활성 패널 클릭 시에만 포커스 이동

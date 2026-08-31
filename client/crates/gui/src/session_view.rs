@@ -2698,13 +2698,19 @@ impl SessionView {
     ///    그 자리에서 마우스만 앱으로 새면 모드가 반쪽이 된다.
     /// 2. **그 자리의 앱이 마우스를 원한다.** 안 켠 앱에 리포트를 보내면 그 바이트가
     ///    프롬프트에 **글자로 찍힌다**.
-    /// 3. **Shift 를 눌렀거나, 평드래그 복사가 꺼져 있다.**
+    /// 3. **`mouse-drag-copy` 가 이 누름을 앱에게 주기로 했다**(`DragCopy::press_to_app`).
     ///
-    /// # 3번이 왜 그 모양인가 (pytmux-19)
+    /// # 3번이 왜 그 모양인가 (pytmux-19 · pytmux-422)
     ///
     /// `mouse-drag-copy` 가 켜져 있으면(기본) 평드래그는 **복사**이고, 앱에게 드래그를
     /// 줄 자리는 Shift 뿐이다 — 이 클라에는 마우스 캡처를 대신 풀어 줄 바깥 터미널이
     /// 없어서, 평드래그를 넘기면 화면의 글자를 꺼낼 방법이 사라진다.
+    ///
+    /// `shift` 값은 그 둘을 **맞바꾼다**(pytmux-422) — 평드래그가 앱에게 가고 복사는
+    /// Shift 다. 위 걱정은 그대로 풀린다: 넘기는 것은 **마우스를 켠 앱 위**뿐이고
+    /// (조건 2), 그 밖에서는 평드래그가 여전히 선택이다.
+    ///
+    /// ⛔ **세 값의 판정을 여기 다시 적지 마라** — `base::config::DragCopy` 한 곳이 쥔다.
     ///
     /// ⚠ 그렇다고 **평클릭까지** 앱에서 뺏으면 안 된다. 클릭은 드래그가 아니고 복사와
     /// 겹치지도 않는다 — 그 자리를 비워 뒀더니 패널 안 앱의 버튼·링크가 통째로 죽었다
@@ -2721,9 +2727,9 @@ impl SessionView {
         mode: InputMode,
         (x, y): (u16, u16),
         shift: bool,
-        drag_copy: bool,
+        drag_copy: base::config::DragCopy,
     ) -> bool {
-        (shift || !drag_copy)
+        drag_copy.press_to_app(shift)
             && mode == InputMode::Normal
             && state.mouse_pane_at(x, y).is_some()
     }
@@ -3123,8 +3129,9 @@ impl SessionView {
         // 가고, 반전이 화면에 남아 있으면 아직 진행 중인 것처럼 보인다).
         if let Some(selection) = self.selection.take()
             && !selection.is_collapsed()
-            // 설정으로 끌 수 있다(`mouse-drag-copy`).
-            && self.config.mouse_drag_copy
+            // 설정으로 끌 수 있다(`mouse-drag-copy off`). `shift` 는 복사한다 —
+            // 그 값이 바꾼 것은 «어느 드래그가 선택이 되나»이지 복사 여부가 아니다.
+            && self.config.mouse_drag_copy.copies()
         {
             let (a, b) = selection.ordered();
             // 접힘을 되돌릴 때 쓸 기하를 지금 재 둔다 — 회신에는 글자만 온다.

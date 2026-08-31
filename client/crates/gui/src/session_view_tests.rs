@@ -496,7 +496,7 @@ fn tracking_state() -> SessionState {
 #[test]
 fn shift_drag_over_a_mouse_app_goes_to_the_app() {
     let state = tracking_state();
-    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true, true));
+    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true, base::config::DragCopy::On));
 }
 
 #[test]
@@ -504,7 +504,7 @@ fn a_plain_drag_is_a_selection_even_over_a_mouse_app() {
     // ★ 평드래그를 앱에게 넘기면 **화면의 글자를 꺼낼 방법이 사라진다** — 이 클라에는
     // 마우스 캡처를 대신 풀어 줄 바깥 터미널이 없다.
     let state = tracking_state();
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, base::config::DragCopy::On));
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn a_plain_click_reaches_the_app_even_though_a_plain_drag_does_not() {
     let state = tracking_state();
     assert!(SessionView::click_goes_to_app(&state, InputMode::Normal, (10, 5)));
     // 드래그 쪽 판정은 안 넓어졌다 — 평드래그는 여전히 복사다.
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, base::config::DragCopy::On));
 }
 
 #[test]
@@ -535,7 +535,30 @@ fn a_click_where_no_app_wants_the_mouse_stays_ours() {
 fn turning_off_drag_copy_hands_the_plain_press_to_the_app() {
     // `mouse-drag-copy off` 는 "복사를 포기하고 앱에게 다 준다"는 뜻이다(정본과 같다).
     let state = tracking_state();
-    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, false));
+    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, base::config::DragCopy::Off));
+}
+
+#[test]
+fn drag_copy_shift_swaps_the_plain_drag_and_the_shift_drag() {
+    // `mouse-drag-copy shift`(pytmux-422 · 사람의 결정 2026-08-31) — 평드래그를 pytmux 가
+    // 가져가는 규칙은 **claude 에 선택 기능이 없던 때** 세운 것이라, 제 선택과 auto-copy 를
+    // 가진 fullscreen 앱을 쓰려면 평드래그가 그 앱에 닿아야 한다. 그 대신 복사는 Shift 다.
+    use base::config::DragCopy;
+    let state = tracking_state();
+    assert!(
+        SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), false, DragCopy::Shift),
+        "평드래그가 마우스 앱에게 안 갔다"
+    );
+    assert!(
+        !SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true, DragCopy::Shift),
+        "Shift 는 pytmux 선택이어야 한다"
+    );
+    // ★ **마우스를 안 켠 패널에서는 평드래그가 여전히 우리 것**이다(조건 2가 잡는다) —
+    // 넘길 앱이 없는데 드래그를 버리면 그 패널에서 복사할 길이 사라진다.
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 5), false, DragCopy::Shift));
+    // 그리고 `shift` 는 **복사를 끄지 않는다** — 그 값이 바꾼 것은 어느 드래그가
+    // 선택이 되나이지 복사 여부가 아니다(`handle_mouse_up` 의 관문).
+    assert!(DragCopy::Shift.copies() && DragCopy::On.copies() && !DragCopy::Off.copies());
 }
 
 #[test]
@@ -544,7 +567,7 @@ fn nothing_is_forwarded_while_the_user_is_talking_to_pytmux() {
     let state = tracking_state();
     for mode in [InputMode::Command, InputMode::Scroll] {
         assert!(
-            !SessionView::press_goes_to_app(&state, mode, (10, 5), true, true),
+            !SessionView::press_goes_to_app(&state, mode, (10, 5), true, base::config::DragCopy::On),
             "{mode:?} 에서 넘어갔다"
         );
     }
@@ -554,9 +577,9 @@ fn nothing_is_forwarded_while_the_user_is_talking_to_pytmux() {
 fn an_app_that_never_asked_for_the_mouse_gets_nothing() {
     // 안 켠 앱에 리포트를 보내면 그 바이트가 프롬프트에 **글자로 찍힌다**.
     let state = tracking_state();
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 5), true, true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 5), true, base::config::DragCopy::On));
     // 캔버스 밖도 마찬가지다.
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 99), true, true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 99), true, base::config::DragCopy::On));
 }
 
 /// 뒤 패널이 추적을 켠 채, 추적을 켠 앱이 든 팝업이 떠 있는 판(popup.mouse).
@@ -578,10 +601,10 @@ fn popup_tracking_state() -> SessionState {
 fn a_shift_press_inside_the_popup_goes_to_the_popup_app() {
     // 서버가 popup.mouse 를 광고하면 GUI 판정도 팝업 안 앱을 대상으로 잡는다.
     let state = popup_tracking_state();
-    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (12, 7), true, true));
+    assert!(SessionView::press_goes_to_app(&state, InputMode::Normal, (12, 7), true, base::config::DragCopy::On));
     // 테두리와 팝업 밖(뒤 패널이 추적 중이어도)은 아니다 — 모달 규칙.
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true, true));
-    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 20), true, true));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (10, 5), true, base::config::DragCopy::On));
+    assert!(!SessionView::press_goes_to_app(&state, InputMode::Normal, (60, 20), true, base::config::DragCopy::On));
 }
 
 // ── 붙여넣기 조합(슬라이스 9 · pytmux-364) ──────────────────────────────────

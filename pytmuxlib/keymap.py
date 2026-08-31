@@ -156,6 +156,49 @@ def _key_to_ctrl_bytes(prefix_key: str) -> bytes:
     return b"\x02"
 
 
+# ── `mouse-drag-copy` 의 값 셋 ───────────────────────────────────────────────
+# 이 옵션은 2026-08-31 에 on/off 둘에서 **셋**이 됐다(pytmux-422 · 사람의 결정
+# 2026-08-31 — 「4) 설정으로 — mouse-drag-copy 에 세 번째 값을 준다」).
+#
+# ⛔ **판정은 여기 한 곳이다.** 파이썬 클라의 네 자리(설정 파일 로드·`set` 런타임
+# 적용·현재값 표시·드래그 처리)가 전부 이 함수를 지난다 — 값을 세 갈래로 늘리면서
+# 자리마다 `val.lower() in (...)` 를 다시 적으면 한 자리만 빠져도 **조용히** 갈린다
+# (그 자리는 `off` 로 떨어지고, 사용자는 자기가 켠 값이 안 먹는 것만 본다).
+#
+#   값      평드래그                              Shift+드래그
+#   ------  ------------------------------------  ---------------------
+#   on      pytmux 선택 → OS 클립보드 (기본)      앱에 넘김
+#   off     앱에 넘김                             앱에 넘김
+#   shift   앱에 넘김(마우스 앱일 때만 ·          pytmux 선택 → 클립보드
+#           아니면 선택 → 클립보드)
+#
+# `shift` 는 「앱이 마우스를 켰으면 평드래그는 그 앱 것」이다 — claude 의 fullscreen
+# 처럼 **제 선택과 auto-copy 를 가진 앱**을 마우스로 쓰려면 평드래그가 그 앱에
+# 닿아야 한다(pytmux-420 조사). 그 대신 복사는 Shift 로 옮겨 간다.
+# ⚠ 마우스를 안 켠 패널(보통 셸) 위에서는 `shift` 도 평드래그가 복사다 — 넘길 앱이
+# 없는데 드래그를 버리면 그 패널에서는 **복사할 길이 사라진다**.
+DRAG_COPY_VALUES = ("on", "off", "shift")
+
+
+def drag_copy_policy(value) -> str:
+    """`mouse-drag-copy` 의 값을 세 갈래 중 하나로 정규화한다.
+
+    bool 도 받는다 — 이 옵션은 오래 bool 이었고 그 값을 그대로 넣는 자리(옛 설정
+    딕셔너리·테스트·플러그인)가 남아 있다. `True`→`on`, `False`→`off`.
+
+    ⚠ **모르는 값은 `off` 다** — 종전 파서가 `on|true|1|yes` 아닌 것을 전부 꺼짐으로
+    읽었으므로 그 판정을 그대로 잇는다(오타 하나로 «다른» 새 동작이 켜지는 쪽이 더 나쁘다).
+    """
+    if value is None or value is True:
+        return "on"           # 미설정 = 기본값(on) · bool True
+    if value is False:
+        return "off"
+    v = str(value).strip().lower()
+    if v == "shift":
+        return "shift"
+    return "on" if v in ("on", "true", "1", "yes") else "off"
+
+
 def load_config(path: str | None = None) -> dict:
     """설정 파일을 읽어 클라이언트 설정 딕셔너리를 만든다.
 
@@ -224,9 +267,9 @@ def load_config(path: str | None = None) -> dict:
                     elif opt == "mouse":
                         cfg["mouse"] = val.lower() in ("on", "true", "1", "yes")
                     elif opt in ("mouse-drag-copy", "mouse_drag_copy"):
-                        # §2.4 좌드래그=pytmux 패널선택→자동복사(기본 on). off 면 앱 패스스루.
-                        cfg["mouse_drag_copy"] = val.lower() in (
-                            "on", "true", "1", "yes")
+                        # §2.4 좌드래그=pytmux 패널선택→자동복사(기본 on). off 면 앱
+                        # 패스스루, shift 면 평드래그↔Shift 를 맞바꾼다(위 표).
+                        cfg["mouse_drag_copy"] = drag_copy_policy(val)
                     elif opt in ("set-clipboard", "set_clipboard"):
                         # 패널 안 앱의 OSC 52 를 이 클라의 OS 클립보드에 반영할지
                         # (tmux 의 `set-clipboard` 자리 · 기본 on · pytmux-420 ①).

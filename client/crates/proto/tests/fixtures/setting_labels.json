@@ -98,6 +98,7 @@
     "ko": "한국어",
     "off": "꺼짐",
     "on": "켜짐",
+    "shift": "Shift 로",
     "top": "위"
   },
   "setval_en": {
@@ -108,6 +109,7 @@
     "ko": "Korean",
     "off": "off",
     "on": "on",
+    "shift": "on Shift",
     "top": "top"
   },
   "used_values": [
@@ -127,6 +129,7 @@
     "off",
     "on",
     "pyte",
+    "shift",
     "smallest",
     "top",
     "vi",

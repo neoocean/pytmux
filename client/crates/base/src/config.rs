@@ -27,6 +27,70 @@ use crate::keymap::{Action, EnumOpt, ServerOpt};
 use crate::keys::{Key, Mods};
 use crate::screens::Prompt;
 
+/// `mouse-drag-copy` 의 값 셋(정본 `keymap.drag_copy_policy`).
+///
+/// 2026-08-31 에 on/off 둘에서 셋이 됐다(pytmux-422 · 사람의 결정 — 「설정으로 —
+/// mouse-drag-copy 에 세 번째 값을 준다」). 왜 셋이 필요했나: 평드래그를 pytmux 가
+/// 가져가는 규칙은 **claude 에 선택 기능이 없던 때**(2026-07-11) 세운 것인데, 지금
+/// fullscreen claude 는 제 선택과 auto-copy 를 갖는다 — 그대로 두면 그 선택에 닿을
+/// 길이 없고, 뒤집으면 「긁어 복사」라는 손버릇이 사라진다. 그래서 사람이 고른다.
+///
+/// | 값 | 평드래그 | Shift+드래그 |
+/// | --- | --- | --- |
+/// | `On`(기본) | pytmux 선택 → 클립보드 | 앱에 넘김 |
+/// | `Off` | 앱에 넘김 | 앱에 넘김 |
+/// | `Shift` | 앱에 넘김(마우스 앱일 때 · 아니면 선택) | pytmux 선택 → 클립보드 |
+///
+/// ⛔ **`bool` 로 되돌리지 마라** — 그러면 「앱에 넘기나」와 「뗄 때 복사하나」가 한 칸에
+/// 얹혀 `Shift` 가 표현되지 않는다(그 둘은 `Shift` 에서 **서로 다른 답**이다).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragCopy {
+    /// 평드래그가 복사(정본 기본값).
+    On,
+    /// 복사 안 함 — 드래그는 늘 앱에게.
+    Off,
+    /// 평드래그는 앱에게, 복사는 Shift 로.
+    Shift,
+}
+
+/// 설정 화면·자동완성이 내미는 값 낱말(정본 `keymap.DRAG_COPY_VALUES` 와 같은 순서).
+pub const DRAG_COPY_VALUES: &[&str] = &["on", "off", "shift"];
+
+impl DragCopy {
+    /// 설정 파일의 낱말 하나를 값으로. **모르는 값은 `Off`** — 정본이 `on|true|1|yes`
+    /// 아닌 것을 전부 꺼짐으로 읽으므로 그 판정을 그대로 잇는다.
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "shift" => Self::Shift,
+            v if on_off(v) => Self::On,
+            _ => Self::Off,
+        }
+    }
+
+    /// 설정 파일에 적을 낱말(정본과 같은 철자).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+            Self::Shift => "shift",
+        }
+    }
+
+    /// 뗄 때 **복사할까**. `Shift` 도 복사한다 — 바뀐 것은 «어느 드래그가» 선택이 되나다.
+    pub fn copies(self) -> bool {
+        self != Self::Off
+    }
+
+    /// 이 누름을 **앱에게 넘길까**(그 자리에 마우스를 켠 앱이 있다는 전제).
+    pub fn press_to_app(self, shift: bool) -> bool {
+        match self {
+            Self::On => shift,
+            Self::Off => true,
+            Self::Shift => !shift,
+        }
+    }
+}
+
 /// 사용자 설정.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -41,8 +105,8 @@ pub struct Config {
     pub inactive_dim_ratio: f32,
     /// 마우스를 쓸까(기본 켜짐). 끄면 클릭·드래그·휠이 **패널로 그대로** 간다.
     pub mouse: bool,
-    /// 평드래그를 놓으면 복사할까(기본 켜짐).
-    pub mouse_drag_copy: bool,
+    /// 평드래그를 놓으면 복사할까(기본 켜짐 · 값 셋은 [`DragCopy`]).
+    pub mouse_drag_copy: DragCopy,
     /// 탭바를 **항상** 보일까(`always`), 탭이 둘 이상일 때만 보일까(`auto`).
     pub tab_bar_always: bool,
     /// 새 탭·분할이 시작할 자리(`current`/`home`/절대경로). 서버가 해석한다.
@@ -339,7 +403,7 @@ impl Default for Config {
             inactive_dim: true,
             inactive_dim_ratio: 0.18,
             mouse: true,
-            mouse_drag_copy: true,
+            mouse_drag_copy: DragCopy::On,
             tab_bar_always: true,
             default_path: "current".to_owned(),
             claude_command: "claude".to_owned(),
@@ -531,7 +595,7 @@ impl Config {
                 }
                 "inactive-dim" => config.inactive_dim = on_off(value),
                 "mouse" => config.mouse = on_off(value),
-                "mouse-drag-copy" => config.mouse_drag_copy = on_off(value),
+                "mouse-drag-copy" => config.mouse_drag_copy = DragCopy::parse(value),
                 // 파이썬은 `always`/`auto` 두 값이다. 모르는 값이면 기본값 그대로 —
                 // 오타 하나 때문에 탭바가 사라지면 무엇이 잘못됐는지 알 수 없다.
                 "tab-bar" => match value {
@@ -726,7 +790,7 @@ pub struct SettingValues {
     /// 공유 크기 규칙(서버 옵션).
     pub window_size: String,
     pub mouse: bool,
-    pub mouse_drag_copy: bool,
+    pub mouse_drag_copy: DragCopy,
     pub tab_bar_always: bool,
     pub default_path: String,
     pub claude_command: String,
@@ -789,7 +853,7 @@ impl Default for SettingValues {
             vt_parser: String::new(),
             window_size: String::new(),
             mouse: false,
-            mouse_drag_copy: false,
+            mouse_drag_copy: DragCopy::Off,
             tab_bar_always: false,
             default_path: String::new(),
             claude_command: String::new(),
@@ -942,9 +1006,10 @@ pub const SETTINGS: &[Setting] = &[
         kind: SettingKind::ConfigToggle,
     },
     Setting {
+        // 값이 셋이라 토글이 아니다([`DragCopy`] · pytmux-422).
         key: "mouse-drag-copy",
         cat: "입력",
-        kind: SettingKind::ConfigToggle,
+        kind: SettingKind::ConfigEnum(DRAG_COPY_VALUES),
     },
     Setting {
         key: "mouse-drag-threshold",
@@ -1242,6 +1307,8 @@ pub static SETTING_VALUE_LABELS: &[(&str, &str)] = &[
     ("ko", "한국어"),
     ("off", "꺼짐"),
     ("on", "켜짐"),
+    // `mouse-drag-copy shift` — 평드래그는 앱에, 복사는 Shift 로(pytmux-422).
+    ("shift", "Shift 로"),
     ("top", "위"),
 ];
 
@@ -1359,7 +1426,7 @@ impl Setting {
             // 서버가 `status` 로 알려 주는 값 그대로. 아직 못 받았으면 빈 문자열이라
             // 아래에서 `?` 가 된다.
             "mouse" => on(values.mouse),
-            "mouse-drag-copy" => on(values.mouse_drag_copy),
+            "mouse-drag-copy" => values.mouse_drag_copy.as_str().to_owned(),
             "tab-bar" => if values.tab_bar_always { "always" } else { "auto" }.to_string(),
             "default-path" => values.default_path.clone(),
             "claude-command" => values.claude_command.clone(),
@@ -1543,10 +1610,6 @@ pub fn flip_config(key: &str, now: &Config) -> Option<(Config, std::io::Result<P
             next.mouse = !now.mouse;
             next.mouse
         }
-        "mouse-drag-copy" => {
-            next.mouse_drag_copy = !now.mouse_drag_copy;
-            next.mouse_drag_copy
-        }
         "strip-box-drawing" => {
             next.strip_box_drawing = !now.strip_box_drawing;
             next.strip_box_drawing
@@ -1700,6 +1763,8 @@ pub fn set_config(
     let mut next = now.clone();
     match key {
         "tab-bar" => next.tab_bar_always = value == "always",
+        // 값이 셋이라 `flip_config` 가 아니라 여기다(pytmux-422).
+        "mouse-drag-copy" => next.mouse_drag_copy = DragCopy::parse(value),
         "mode-keys" => next.mode_keys = value.to_owned(),
         "ambiguous-width" => next.ambiguous_width = value.to_owned(),
         "status-position" => next.status_position = value.to_owned(),

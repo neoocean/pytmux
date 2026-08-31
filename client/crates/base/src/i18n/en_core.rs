@@ -341,6 +341,7 @@ pub static EN: &[(&str, &str)] = &[
     ("setval\u{0004}한국어", "Korean"),
     ("setval\u{0004}꺼짐", "off"),
     ("setval\u{0004}켜짐", "on"),
+    ("setval\u{0004}Shift 로", "on Shift"),
     ("setval\u{0004}위", "top"),
     ("setting\u{0004}열기", "open"),
     ("setting\u{0004}미설정", "unset"),

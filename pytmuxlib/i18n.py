@@ -331,6 +331,8 @@ register({
         # 설정 값 표시 라벨(저장값→사람친화 라벨; 미등록값은 원값 그대로)
         "setval.on": "켜짐",
         "setval.off": "꺼짐",
+        # `mouse-drag-copy` 의 세 번째 값 — 평드래그는 앱에, 복사는 Shift 로.
+        "setval.shift": "Shift 로",
         "setval.always": "항상",
         "setval.auto": "자동",
         "setval.top": "위",
@@ -437,6 +439,7 @@ register({
         "setting.restart": "takes effect on restart",
         "setval.on": "on",
         "setval.off": "off",
+        "setval.shift": "on Shift",
         "setval.always": "always",
         "setval.auto": "auto",
         "setval.top": "top",

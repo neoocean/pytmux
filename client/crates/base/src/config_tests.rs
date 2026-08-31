@@ -90,7 +90,7 @@ fn every_setting_row_shows_a_value() {
         nest_auto_attach: false,
         win_mouse_motion: false,
         mouse: true,
-        mouse_drag_copy: true,
+        mouse_drag_copy: DragCopy::On,
         tab_bar_always: true,
         default_path: "current".into(),
         strip_box_drawing: true,
@@ -126,7 +126,7 @@ fn the_values_are_the_ones_we_were_given() {
         nest_auto_attach: false,
         win_mouse_motion: false,
         mouse: true,
-        mouse_drag_copy: true,
+        mouse_drag_copy: DragCopy::On,
         tab_bar_always: true,
         default_path: "current".into(),
         strip_box_drawing: true,
@@ -168,7 +168,7 @@ fn picking_a_toggle_row_gives_an_action_and_a_text_row_gives_a_question() {
         nest_auto_attach: false,
         win_mouse_motion: false,
         mouse: true,
-        mouse_drag_copy: true,
+        mouse_drag_copy: DragCopy::On,
         tab_bar_always: true,
         default_path: "current".into(),
         strip_box_drawing: true,
@@ -394,7 +394,7 @@ fn a_value_we_have_not_heard_shows_a_question_mark() {
         nest_auto_attach: false,
         win_mouse_motion: false,
         mouse: true,
-        mouse_drag_copy: true,
+        mouse_drag_copy: DragCopy::On,
         tab_bar_always: true,
         default_path: "current".into(),
         strip_box_drawing: true,
@@ -424,7 +424,7 @@ fn a_value_we_have_not_heard_shows_a_question_mark() {
 #[test]
 fn the_new_settings_have_python_defaults() {
     let c = Config::default();
-    assert!(c.mouse && c.mouse_drag_copy && c.tab_bar_always);
+    assert!(c.mouse && c.mouse_drag_copy == DragCopy::On && c.tab_bar_always);
     assert_eq!(c.default_path, "current");
 }
 
@@ -433,7 +433,57 @@ fn the_config_file_can_turn_the_mouse_off() {
     let c = Config::parse("set mouse off
 set mouse-drag-copy off
 ");
-    assert!(!c.mouse && !c.mouse_drag_copy);
+    assert!(!c.mouse && c.mouse_drag_copy == DragCopy::Off);
+}
+
+#[test]
+fn drag_copy_has_a_third_value_and_an_unknown_word_is_off() {
+    // pytmux-422(사람의 결정 2026-08-31) — 값이 셋이다. 정본은 `keymap.drag_copy_policy`.
+    //
+    // ⚠ **모르는 낱말이 `Off` 인 것도 계약이다**: 정본 파서가 `on|true|1|yes` 아닌 것을
+    // 전부 꺼짐으로 읽는다. 오타 하나로 «다른» 새 동작이 켜지면 더 나쁘다.
+    assert_eq!(Config::parse("set mouse-drag-copy shift\n").mouse_drag_copy, DragCopy::Shift);
+    assert_eq!(Config::parse("set mouse_drag_copy SHIFT\n").mouse_drag_copy, DragCopy::Shift);
+    assert_eq!(Config::parse("set mouse-drag-copy yes\n").mouse_drag_copy, DragCopy::On);
+    assert_eq!(Config::parse("set mouse-drag-copy shfit\n").mouse_drag_copy, DragCopy::Off);
+    // 낱말과 값이 왕복한다 — 설정 화면이 고른 값이 파일에 적히고 다시 읽힌다.
+    for v in DRAG_COPY_VALUES {
+        assert_eq!(DragCopy::parse(v).as_str(), *v);
+    }
+}
+
+#[test]
+fn the_drag_copy_row_offers_three_words_not_a_toggle() {
+    // 토글로 두면 세 번째 값을 **화면에서 고를 길이 없다**(뒤집기는 둘 사이만 오간다).
+    let row = SETTINGS.iter().find(|s| s.key == "mouse-drag-copy").expect("줄");
+    assert_eq!(row.choices(), Some(DRAG_COPY_VALUES));
+    let mut values = base_values();
+    values.mouse_drag_copy = DragCopy::Shift;
+    assert_eq!(row.value(&values), "shift");
+    // 그 줄을 고르면 **쓰기**로 간다(뒤집기가 아니다).
+    let idx = SETTINGS.iter().position(|s| s.key == "mouse-drag-copy").expect("줄");
+    assert!(matches!(
+        setting_pick_at(idx, &values, 0),
+        Some(SettingPick::Set("mouse-drag-copy", "on"))
+    ));
+    // 그리고 그 쓰기가 실제로 값을 옮긴다(`flip_config` 에서 뺀 자리의 대체).
+    //
+    // ☠ **쓰기를 사물함으로 먼저 돌린다** — `set_config` 는 설정 **파일**에도 적는다.
+    // 안 돌리면 이 테스트가 `$PYTMUX_CONFIG` 에 `set mouse-drag-copy shift` 를 남기고,
+    // 같은 파일을 쓰는 **GUI 스위트가 그 값으로 뜬다**(실측 2026-08-31: 그렇게
+    // `a_click_on_a_mouse_app_sends_press_and_release_from_where_it_was_pressed` 가
+    // 붉어졌다 — 이 크레이트의 테스트가 남의 크레이트를 넘어뜨린 것이다).
+    // ⛔ 그 사물함도 **런마다 제 몫**이라야 한다(pytmux-424) — 이름이 고정이면 이번엔
+    //    같은 기계에서 도는 두 `cargo test` 가 그 한 장을 나눠 쓴다(바로 위 함정의
+    //    한 겹 바깥이다).
+    redirect_writes(std::env::temp_dir().join(format!(
+        "pytmux-base-test-config-{}",
+        std::process::id()
+    )));
+    let now = Config::default();
+    let (next, _) = set_config("mouse-drag-copy", "shift", &now).expect("설정");
+    assert_eq!(next.mouse_drag_copy, DragCopy::Shift);
+    assert!(flip_config("mouse-drag-copy", &now).is_none(), "토글 경로가 남아 있다");
 }
 
 #[test]
@@ -513,7 +563,7 @@ fn base_values() -> SettingValues {
         nest_auto_attach: false,
         win_mouse_motion: false,
         mouse: true,
-        mouse_drag_copy: true,
+        mouse_drag_copy: DragCopy::On,
         tab_bar_always: true,
         default_path: "current".into(),
         strip_box_drawing: true,
