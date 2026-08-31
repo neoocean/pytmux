@@ -94,6 +94,37 @@ pub const INVERT_BG: ColorU = c(0x7a, 0xa2, 0xf7);
 /// 반전 칩의 글자 — 배경 위에서 읽히도록 어두운 쪽으로 뺀다.
 pub const INVERT_FG: ColorU = c(0x16, 0x16, 0x1e);
 /// 팝업 뒤 캔버스를 가라앉히는 딤. 알파가 뜻이다 — 아래가 비쳐 보이되 읽히지는 않게.
+// ── 의미색 — 「무슨 일이 났나」를 말하는 네 색 (pytmux-412 ⓑ1) ─────────────────
+//
+// # 왜 팔레트가 아니라 여기인가 (사람의 결정 2026-08-31)
+//
+// 이 넷은 오래 `palette` 의 SGR 상수를 빌려 썼다(`RED`·`YELLOW`·`GREEN`·`MAGENTA`).
+// 그 자리는 **두 가지 일을 겸하고 있었다** — ⑴ 터미널 셀의 SGR 색 ⑵ 크롬의 의미색.
+// ⑴ 의 근거는 「정본에 충실하다」이고 ⑵ 의 근거는 「읽힌다」인데, 근거가 둘인 값을 한
+// 상수가 지면 **한쪽을 정하는 순간 다른 쪽이 조용히 끌려간다.**
+//
+// 실제로 그렇게 됐다: `pytmux-187` 이 SGR 표를 xterm 으로 갈자 `Severity::Error` 가
+// 창 바탕 위 **2.93:1** 이 됐다(13px 본문에 WCAG AA 4.5:1 미달). 사람이 답한 물음은
+// 「SGR 30–37·90–97 을 어느 표로 삼을까」였는데 **답하지 않은 것까지 움직인 것이다.**
+// 그리고 그 변화는 `cargo test -p gui` 434 통과 · 0 실패로 **조용히 지나갔다** — 그때
+// 대비를 재던 오라클 넷이 전부 안 바뀐 상수만 보고 있었다.
+//
+// ⇒ 이제 캔버스는 **정본 충실도**로, 크롬은 **가독**으로 각자 근거를 갖는다.
+// 값은 SGR 표가 xterm 으로 가기 전 이 자리들이 실제로 지고 있던 색(tokyonight)이다 —
+// 새로 고른 것이 아니라 **되찾은 것**이고, 넷 다 창 바탕 위 7:1 을 넘는다.
+//
+// ⛔ **여기에 `palette::` 를 다시 끌어오지 마라.** 그러면 위 결함이 그대로 되살아난다.
+//    `the_chrome_meaning_colors_stay_readable` 가 그 자리를 지킨다.
+
+/// 「실패했다」 — 상태줄 심각도 · 블록 `Failed` · 툴 `Failed` · 끊긴 패널 테두리.
+pub const ERROR: ColorU = c(0xf7, 0x76, 0x8e);
+/// 「주의하라 · 도는 중이다」 — 상태줄 심각도 · 블록 `Unknown` · 툴 `Running`.
+pub const WARN: ColorU = c(0xe0, 0xaf, 0x68);
+/// 「됐다」 — 상태줄 심각도 · 블록 `Ok` · 툴 `Ok`.
+pub const OK: ColorU = c(0x9e, 0xce, 0x6a);
+/// 「사람의 차례 · 거절됐다」 — 블록 `Turn` · 툴 `Denied` · 거절 머리줄.
+pub const TURN: ColorU = c(0xbb, 0x9a, 0xf7);
+
 pub const DIM_SCRIM: ColorU = ColorU { r: 0x10, g: 0x10, b: 0x18, a: 0xb0 };
 
 /// 탭 라운드.
@@ -237,6 +268,40 @@ mod tests {
         let dim = luminance(crate::session_view::palette::DIM);
         let fg = luminance(crate::session_view::palette::FG);
         assert!(fg / dim >= 1.8, "본문과 흐린 글자가 한 밝기가 됐다: {:.2}배", fg / dim);
+    }
+
+    #[test]
+    fn the_chrome_meaning_colors_stay_readable() {
+        // ⛔ 크롬의 의미색은 **13px 본문 글자**를 진다(상태줄 한 줄·블록 이름·툴 이름) —
+        //    본문 기준 4.5:1 이다. 이 오라클이 없던 동안 `Severity::Error` 가 2.93:1 로
+        //    떨어진 채 스위트 434건이 전부 초록이었다(pytmux-412).
+        // ⚠ 바탕 **둘 다** 잰다 — 상태줄은 `SURFACE` 위에, 판 안의 블록은 `BG` 위에 선다.
+        for (name, color) in [("ERROR", ERROR), ("WARN", WARN), ("OK", OK), ("TURN", TURN)] {
+            for (where_, bg) in [("창 바탕", BG), ("상태줄", SURFACE)] {
+                let ratio = contrast(color, bg);
+                assert!(ratio >= 4.5, "{name} 가 {where_} 위에서 안 읽힌다: {ratio:.2}:1");
+            }
+        }
+        // ★ **넷이 서로 갈려야 한다** — 같은 값이 둘이면 「실패」와 「사람 차례」가 한 색이
+        //   되고, 그건 안 읽히는 것만큼 나쁘다(뜻이 사라진다).
+        let all = [ERROR, WARN, OK, TURN];
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                assert_ne!(all[i], all[j], "의미색 둘이 같은 값이다");
+            }
+        }
+    }
+
+    #[test]
+    fn the_meaning_colors_are_not_the_sgr_table_any_more() {
+        // ⛔ **끌어다 쓰면 조용히 되돌아간다**(pytmux-412 ⓑ1). SGR 표는 정본 충실도로,
+        //    크롬은 가독으로 각자 근거를 갖기로 한 것이 이 결정의 전부다 — 값이 다시
+        //    같아지면 그 갈림이 없어진 것이고, 그때는 표를 갈면 크롬이 또 끌려간다.
+        use crate::session_view::palette;
+        assert_ne!(ERROR, palette::RED, "의미색이 SGR 표로 되돌아갔다");
+        assert_ne!(WARN, palette::YELLOW, "의미색이 SGR 표로 되돌아갔다");
+        assert_ne!(OK, palette::GREEN, "의미색이 SGR 표로 되돌아갔다");
+        assert_ne!(TURN, palette::MAGENTA, "의미색이 SGR 표로 되돌아갔다");
     }
 
     #[test]

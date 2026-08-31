@@ -143,10 +143,12 @@ fn the_sixteen_colors_are_the_xterm_standard_table() {
     // (SGR, 이름, xterm 리소스 = X11 색이름, 값)
     let table: [(u16, NamedColor, &str, (u8, u8, u8)); 16] = [
         (30, NamedColor::Black, "color0 = black", (0x00, 0x00, 0x00)),
+        // ⚠ SGR 34 한 칸만 **어두운 바탕 보정을 거친 값**이다(pytmux-412 ⓐ3). 원본과
+        //    규칙은 `the_dark_background_correction_is_the_rule_not_a_taste` 가 잰다.
         (31, NamedColor::Red, "color1 = red3", (0xcd, 0x00, 0x00)),
         (32, NamedColor::Green, "color2 = green3", (0x00, 0xcd, 0x00)),
         (33, NamedColor::Yellow, "color3 = yellow3", (0xcd, 0xcd, 0x00)),
-        (34, NamedColor::Blue, "color4 = blue2", (0x00, 0x00, 0xee)),
+        (34, NamedColor::Blue, "color4 = blue2 + 보정", (0x52, 0x52, 0xf3)),
         (35, NamedColor::Magenta, "color5 = magenta3", (0xcd, 0x00, 0xcd)),
         (36, NamedColor::Cyan, "color6 = cyan3", (0x00, 0xcd, 0xcd)),
         (37, NamedColor::White, "color7 = gray90", (0xe5, 0xe5, 0xe5)),
@@ -174,6 +176,93 @@ fn the_sixteen_colors_are_the_xterm_standard_table() {
     }
     // ⛔ 목록이 전수인가 — 한 줄을 지우면 위 루프는 조용히 통과한다.
     assert_eq!(table.len(), ALL_NAMED.len(), "표가 열여섯 칸을 다 안 적었다");
+}
+
+/// ⓐ3 의 **규칙**을 그대로 다시 계산해 팔레트와 맞춰 본다 (pytmux-412 · 사람의 결정
+/// 2026-08-31).
+///
+/// ⛔ **값을 베껴 적는 시험이 아니다.** 위 표는 「지금 값이 이것이다」를 못박고, 이쪽은
+/// 「그 값이 **규칙에서 나온다**」를 못박는다 — 둘 다 없으면 다음 사람은 두 칸이 왜
+/// xterm 과 다른지 알 길이 없고, 「표류했나 정한 건가」를 못 가린다.
+///
+/// 규칙(모듈 문서 §어두운 바탕 보정과 **같은 것**):
+///   ⑴ `BG` 대비가 3:1 미만인 칸만 손댄다
+///   ⑵ **3.1:1**(= 기준선 3.0 + 여유 0.1)을 넘기는 가장 작은 `t`(0.01 단위)로 흰색 쪽에
+///      섞는다 — `c' = c + (255-c)·t`. 여유를 두는 이유는 모듈 문서에 있다(3.0 에 딱
+///      맞추면 부동소수 한 톨로 값이 갈린다 — 실측으로 파이썬과 러스트가 갈렸다).
+///   ⑶ 밝은 짝이 **1.05배 이상 밝아야** 한다. ⛔ 그 휘도는
+///      [`the_bright_half_of_every_pair_is_actually_brighter`] 가 쓰는 것과 **같은 식**
+///      (감마 인코딩 값 그대로)이라야 한다 — 한 물음을 두 술어로 물으면 이 규칙이
+///      통과시킨 값을 저쪽 오라클이 떨어뜨린다(실제로 그렇게 한 번 붉었다).
+///   ⑷ ⑵·⑶ 을 함께 못 지키는 칸은 **xterm 값 그대로** 둔다 — 못 고치는 것도 결과다.
+#[test]
+fn the_dark_background_correction_is_the_rule_not_a_taste() {
+    fn channel(v: u8) -> f64 {
+        let c = v as f64 / 255.0;
+        if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    }
+    /// 대비를 재는 휘도(WCAG — 선형화한다).
+    fn wcag(c: ColorU) -> f64 {
+        0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+    }
+    fn contrast(a: ColorU, b: ColorU) -> f64 {
+        let (x, y) = (wcag(a), wcag(b));
+        let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+    fn lighten(c: ColorU, t: f64) -> ColorU {
+        let f = |v: u8| (v as f64 + (255.0 - v as f64) * t).round().min(255.0) as u8;
+        ColorU { r: f(c.r), g: f(c.g), b: f(c.b), a: 0xff }
+    }
+    fn rgb(r: u8, g: u8, b: u8) -> ColorU {
+        ColorU { r, g, b, a: 0xff }
+    }
+
+    // xterm 원본(밝은 바탕용) — 어두운 절반의 유채색 여섯.
+    let source: [(&str, NamedColor, ColorU, ColorU); 6] = [
+        ("31/91", NamedColor::Red, rgb(0xcd, 0x00, 0x00), named(NamedColor::BrightRed)),
+        ("32/92", NamedColor::Green, rgb(0x00, 0xcd, 0x00), named(NamedColor::BrightGreen)),
+        ("33/93", NamedColor::Yellow, rgb(0xcd, 0xcd, 0x00), named(NamedColor::BrightYellow)),
+        ("34/94", NamedColor::Blue, rgb(0x00, 0x00, 0xee), named(NamedColor::BrightBlue)),
+        ("35/95", NamedColor::Magenta, rgb(0xcd, 0x00, 0xcd), named(NamedColor::BrightMagenta)),
+        ("36/96", NamedColor::Cyan, rgb(0x00, 0xcd, 0xcd), named(NamedColor::BrightCyan)),
+    ];
+    let bg = crate::theme::BG;
+    let mut touched = 0usize;
+    for (pair, name, xterm, bright) in source {
+        let want = if contrast(xterm, bg) >= 3.0 {
+            xterm // ⑴ 이미 읽힌다 — 한 톨도 안 옮긴다
+        } else {
+            // ⑶ 의 휘도는 **짝 오라클과 같은 식**이다 — `luminance` 는 이 파일의 그것을
+            //    그대로 쓴다(감마 인코딩 값 · 선형화하지 않는다).
+            match (0..=100)
+                .map(|i| lighten(xterm, i as f64 / 100.0))
+                .find(|&c| {
+                    contrast(c, bg) >= 3.1
+                        && luminance(bright) as f64 >= luminance(c) as f64 * 1.05
+                }) {
+                Some(c) => {
+                    touched += 1;
+                    c
+                }
+                // ⑷ 못 고치는 칸 — xterm 값 그대로. SGR 31 이 그것이다(짝이 순수
+                //    `#ff0000` 이라 조금만 밝혀도 31 이 91 을 앞지른다).
+                None => xterm,
+            }
+        };
+        let got = named(name);
+        assert_eq!(
+            (got.r, got.g, got.b),
+            (want.r, want.g, want.b),
+            "SGR {pair} 의 어두운 칸이 규칙의 값이 아니다 — 규칙이 내는 값은 \
+             #{:02x}{:02x}{:02x}({:.2}:1)인데 팔레트는 #{:02x}{:02x}{:02x}({:.2}:1)이다",
+            want.r, want.g, want.b, contrast(want, bg),
+            got.r, got.g, got.b, contrast(got, bg),
+        );
+    }
+    // ⛔ **규칙이 아무것도 안 하게 되면 이 시험은 장식이다** — 임계값이나 바탕이 움직여
+    //    손댈 칸이 없어졌으면 그것은 조용한 통과가 아니라 **말해야 할 사건**이다.
+    assert_eq!(touched, 1, "보정이 닿는 칸 수가 하나가 아니다 — 바탕이나 임계가 움직였다");
 }
 
 // ── 블록 구역(P4) ────────────────────────────────────────────────────────────
@@ -900,9 +989,11 @@ fn the_line_is_not_always_red() {
     // ★ 이 줄은 빨강 고정이었다. 복사 결과까지 여기 오면서 **성공이 오류로 읽히던**
     //   자리다 — 색은 심각도가 정하고, 표는 알림 이력과 같은 것을 쓴다.
     use proto::session::Severity;
-    assert_eq!(SessionView::severity_color(Severity::Ok), palette::GREEN);
-    assert_eq!(SessionView::severity_color(Severity::Error), palette::RED);
-    assert_eq!(SessionView::severity_color(Severity::Warn), palette::YELLOW);
+    // ⚠ 표는 **크롬의 의미색**이다 — SGR 팔레트가 아니다(pytmux-412 ⓑ1). 그 둘이 다시
+    //    같아지면 `theme` 의 `the_meaning_colors_are_not_the_sgr_table_any_more` 가 운다.
+    assert_eq!(SessionView::severity_color(Severity::Ok), theme::OK);
+    assert_eq!(SessionView::severity_color(Severity::Error), theme::ERROR);
+    assert_eq!(SessionView::severity_color(Severity::Warn), theme::WARN);
     assert_ne!(
         SessionView::severity_color(Severity::Ok),
         SessionView::severity_color(Severity::Error),
@@ -4556,9 +4647,9 @@ fn a_degraded_link_paints_every_frame_red() {
     let segs = SessionView::frame_segments(&canvas, Some(&layout), BorderTint::Degraded);
     assert!(!segs.is_empty(), "빈 목록은 통과가 아니라 고장이다");
     assert!(
-        segs.iter().all(|s| s.color == palette::RED),
+        segs.iter().all(|s| s.color == theme::ERROR),
         "빨갛지 않은 칸이 있다: {:?}",
-        segs.iter().find(|s| s.color != palette::RED).map(|s| (s.x, s.y))
+        segs.iter().find(|s| s.color != theme::ERROR).map(|s| (s.x, s.y))
     );
 }
 
@@ -4570,7 +4661,7 @@ fn a_local_tab_leaves_the_canvas_colours_alone() {
     let segs = SessionView::frame_segments(&canvas, Some(&layout), BorderTint::Local);
     assert!(!segs.is_empty());
     assert!(
-        segs.iter().all(|s| s.color != REMOTE_PINK && s.color != palette::RED),
+        segs.iter().all(|s| s.color != REMOTE_PINK && s.color != theme::ERROR),
         "평소인데 상태색을 칠했다"
     );
 }

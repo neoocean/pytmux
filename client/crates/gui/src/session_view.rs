@@ -120,22 +120,74 @@ pub(crate) mod palette {
     /// 사유·밝기 근거는 그쪽 문서에 있다(pytmux-372).
     pub const SELECTED_BG: ColorU = c(0x37, 0x46, 0x72);
 
-    // ── xterm 표준 16색 ──────────────────────────────────────────────────────
+    // ── xterm 표준 16색 (+ 어두운 바탕 보정 두 칸) ───────────────────────────
     //
     // 값은 xterm 의 기본 리소스(`XTerm-col.ad` / `charproc.c`)이고 X11 색이름을 함께
     // 적어 둔다 — 다음 사람이 「이게 정말 그 표인가」를 밖에서 대조할 수 있어야 한다.
-    // ⛔ 여기에 손으로 값을 고르는 자리는 없다(위 모듈 문서).
+    // ⛔ 여기에 **손으로** 값을 고르는 자리는 없다(위 모듈 문서). 아래 보정도 손이 아니라
+    //    규칙이고, 그 규칙과 그 결과를 시험이 **다시 계산해서** 잰다.
+    //
+    // # 어두운 바탕 보정 (pytmux-412 ⓐ3 · 사람의 결정 2026-08-31)
+    //
+    // xterm 의 표는 **밝은 바탕**을 전제로 골라진 값이다(xterm 자신의 기본 배경이 흰색이다).
+    // 그 표를 `BG`(`#1a1b26`) 위에 그대로 놓으면 어두운 칸이 바탕에 붙는다 — 제보가 짚은
+    // 것이 `SGR 34`(1.82:1)다.
+    //
+    // ★ **연산은 xterm 자신의 선례다.** xterm 은 이 표에서 딱 한 칸을 손으로 밝혔다 —
+    //   `color12` 는 X11 `blue` 가 아니라 `rgb:5c/5c/ff` 다(순 파랑은 어두운 바탕에서 안
+    //   읽힌다). 그 값은 「흰색 쪽으로 t 만큼 섞는다」(`c' = c + (255-c)·t`)를 `color4` 에
+    //   t≈0.36 으로 먹인 것과 **거의 같다**: 계산값 `#5c5cf4`, xterm 의 값 `#5c5cff`.
+    //   ⇒ 우리가 새로 지어낸 연산이 아니라 **그 표가 이미 쓴 연산**이다.
+    //
+    // 규칙(=`the_dark_background_correction_is_the_rule_not_a_taste` 가 그대로 재계산한다):
+    //
+    //   ⑴ `BG` 대비가 **3:1**(WCAG 비문자·큰글자 기준) 미만인 칸만 손댄다.
+    //      ⚠ 4.5:1 이 아니다 — 파랑은 짝(`color12`, 3.61:1)을 넘지 않고는 거기 못 간다.
+    //   ⑵ **3.1:1** 을 넘기는 가장 작은 t(0.01 단위)를 쓴다. 필요한 만큼만 옮긴다.
+    //      ⚠ 기준선이 3.0 인데 3.1 을 요구하는 것은 **여유 0.1 을 일부러 두는 것**이다 —
+    //      3.0 에 딱 맞추면 부동소수 한 톨로 t 가 갈린다(실측: 같은 규칙을 파이썬과
+    //      러스트로 계산했더니 0.04 와 0.03 으로 갈렸다). 이 저장소는 그 부류를 토큰으로
+    //      두지 않기로 이미 정했다(`theme::DIM` 의 「한 단 아래는 4.4996 이라 걸터앉는다」).
+    //   ⑶ 그러고도 **밝은 짝이 1.05배 이상 밝아야** 한다. 「밝은 쪽이 더 밝다」는 이 표의
+    //      성질이고(`the_bright_half_of_every_pair_is_actually_brighter`), 재는 휘도는
+    //      **그 오라클이 쓰는 것과 같은 식**이라야 한다(감마 인코딩된 값 그대로 · 선형화
+    //      하지 않는다). ⛔ 한 물음을 두 술어로 물으면 규칙이 통과시킨 값을 오라클이
+    //      떨어뜨린다 — 실제로 그렇게 한 번 붉었다.
+    //   ⑷ ⑵·⑶ 을 **함께** 못 지키는 칸은 xterm 값 그대로 둔다. 못 고치는 것도 결과다.
+    //
+    // 손대는 칸은 **하나**다:
+    //
+    //   SGR 34  #0000ee  1.82 → t=0.32 → #5252f3  3.14   (짝 3.61 · 짝이 1.11배 밝다)
+    //
+    // ★ **왜 파랑만 되나** — 그 칸의 짝(`color12`)이 xterm 이 손수 밝힌 `#5c5cff` 라서다.
+    //   xterm 이 어두운 바탕을 위해 낸 그 한 칸이, 지금 우리가 `color4` 를 밀어 올릴
+    //   **자리를 만들어 준다.** 같은 연산 · 같은 이유 · 한 칸 아래.
+    // ⛔ **SGR 31 은 보정 못 한다**(2.93:1 인데도). 짝인 `color9` 가 순수 `#ff0000` 이라
+    //    t=0.05 만 돼도 31 이 91 을 앞지른다 — 읽히게 만들려다 표의 성질을 깨는 것이다.
+    //    그 칸이 지던 「읽혀야 하는 붉은색」은 크롬으로 옮겼다([`crate::theme::ERROR`]).
+    // ⚠ 나머지 열넷은 **한 톨도 안 움직였다** — 초록·노랑·청록은 이미 8~10:1 이고,
+    //    검정(SGR 30)이 어두운 바탕에서 안 보이는 것은 어느 표에서나 그렇고 결함이 아니다.
 
     /// xterm `color0` = X11 `black`.
     pub const BLACK: ColorU = c(0x00, 0x00, 0x00);
     /// xterm `color1` = X11 `red3`.
+    ///
+    /// ⚠ **보정 못 한다**(pytmux-412 · 아래 §어두운 바탕 보정 ⑷). 창 바탕 위 2.93:1 로
+    /// 기준선 아래인데, 짝인 `color9` 가 **순수 `#ff0000`** 이라 조금만 밝혀도 SGR 31 이
+    /// 91 을 앞질러 「밝은 쪽이 더 밝다」가 깨진다(실측: t=0.05 에서 이미 뒤집힌다).
+    /// ⇒ 읽혀야 하는 붉은색은 캔버스가 아니라 **크롬**의 것이고, 그 자리는
+    /// [`crate::theme::ERROR`] 다(6.46:1 · pytmux-412 ⓑ1).
     pub const RED: ColorU = c(0xcd, 0x00, 0x00);
     /// xterm `color2` = X11 `green3`.
     pub const GREEN: ColorU = c(0x00, 0xcd, 0x00);
     /// xterm `color3` = X11 `yellow3`.
     pub const YELLOW: ColorU = c(0xcd, 0xcd, 0x00);
-    /// xterm `color4` = X11 `blue2`.
-    pub const BLUE: ColorU = c(0x00, 0x00, 0xee);
+    /// xterm `color4` = X11 `blue2`(`#0000ee`) — **어두운 바탕 보정을 거친 값**(아래 참조).
+    ///
+    /// 이 칸이 이 이슈의 제보 그 자체다: `#0000ee` 는 창 바탕(`#1a1b26`) 위에서 **1.82:1**
+    /// 이라 사실상 안 읽힌다. 파랑의 휘도 계수는 0.0722 로 초록(0.7152)의 **십분의 일**이라,
+    /// 채도를 유지한 채 읽히는 칸까지 갈 수 없는 색은 열여섯 중 이것 하나다.
+    pub const BLUE: ColorU = c(0x52, 0x52, 0xf3);
     /// xterm `color5` = X11 `magenta3`.
     pub const MAGENTA: ColorU = c(0xcd, 0x00, 0xcd);
     /// xterm `color6` = X11 `cyan3`.
@@ -226,7 +278,8 @@ fn tint_color(tint: base::tint::BorderTint, active: bool) -> Option<ColorU> {
     match tint {
         BorderTint::Local => None,
         BorderTint::Remote => Some(if active { REMOTE_PINK } else { REMOTE_PINK_DIM }),
-        BorderTint::Degraded => Some(palette::RED),
+        // 끊긴 패널 테두리는 **크롬의 의미색**이다(pytmux-412 ⓑ1) — SGR 표가 아니다.
+        BorderTint::Degraded => Some(theme::ERROR),
     }
 }
 
@@ -5407,16 +5460,16 @@ impl SessionView {
     /// 하는 것은 **어느 블록이 어느 부류인가**이고, 그건 [`Block::tone`] 한 곳이 정한다.
     fn block_color(tone: Tone) -> ColorU {
         match tone {
-            Tone::Ok => palette::GREEN,
-            Tone::Failed => palette::RED,
+            Tone::Ok => theme::OK,
+            Tone::Failed => theme::ERROR,
             // 종료코드를 **모르는** 것은 성공이 아니다. 초록으로 칠하면 사용자가 끝났고
             // 잘됐다고 읽는다(TUI 와 같은 규칙).
-            Tone::Unknown => palette::YELLOW,
+            Tone::Unknown => theme::WARN,
             Tone::Running => palette::CYAN,
             Tone::Idle => palette::DIM,
             // 턴은 성패 축 밖이다 — 초록/빨강/노랑 어디에도 안 붙는 색이라야 목록을
             // 훑을 때 "이건 다른 부류"가 한눈에 온다.
-            Tone::Turn => palette::MAGENTA,
+            Tone::Turn => theme::TURN,
         }
     }
 
@@ -5472,10 +5525,10 @@ impl SessionView {
     /// 그 둘은 사용자가 할 일이 정반대다.
     fn claude_color(item: &ClaudeItem) -> ColorU {
         match item.state() {
-            Some(ToolState::Ok) => palette::GREEN,
-            Some(ToolState::Failed) => palette::RED,
-            Some(ToolState::Running) => palette::YELLOW,
-            Some(ToolState::Denied) => palette::MAGENTA,
+            Some(ToolState::Ok) => theme::OK,
+            Some(ToolState::Failed) => theme::ERROR,
+            Some(ToolState::Running) => theme::WARN,
+            Some(ToolState::Denied) => theme::TURN,
             // 사람이 친 것과 Claude 가 말한 것 — 상태가 없다.
             None => match item.kind {
                 claude::ItemKind::Prompt => palette::CYAN,
@@ -5612,9 +5665,9 @@ impl SessionView {
     /// 알림 이력과 **같은 표**로 심각도 → 색.
     fn severity_color(severity: Severity) -> ColorU {
         match severity {
-            Severity::Error => palette::RED,
-            Severity::Warn => palette::YELLOW,
-            Severity::Ok => palette::GREEN,
+            Severity::Error => theme::ERROR,
+            Severity::Warn => theme::WARN,
+            Severity::Ok => theme::OK,
             Severity::Info => palette::FG,
         }
     }
@@ -6871,7 +6924,7 @@ impl SessionView {
     /// 색으로 가르지만(`-focus` = `$warning`), 우리는 "지금 이걸 누르면 닫힌다"라는 한
     /// 가지 사실만 말하면 되므로 한 색이다.
     fn info_close_chip(&self, hot: bool) -> Box<dyn Element> {
-        Container::new(self.ui_text("[x]", 12., if hot { palette::FG } else { palette::RED }))
+        Container::new(self.ui_text("[x]", 12., if hot { palette::FG } else { theme::ERROR }))
             .with_horizontal_padding(6.)
             .with_vertical_padding(2.)
             .with_corner_radius(theme::TAB_RADIUS)
@@ -7410,9 +7463,9 @@ impl SessionView {
         {
             drawn += 1;
             let color = match notice.severity {
-                proto::session::Severity::Error => palette::RED,
-                proto::session::Severity::Warn => palette::YELLOW,
-                proto::session::Severity::Ok => palette::GREEN,
+                proto::session::Severity::Error => theme::ERROR,
+                proto::session::Severity::Warn => theme::WARN,
+                proto::session::Severity::Ok => theme::OK,
                 proto::session::Severity::Info => palette::FG,
             };
             // 채움 줄과 **같은 상자**다(pytmux-373 ⑴) — 안 씌우면 알림이 하나 늘 때마다
@@ -8307,7 +8360,8 @@ impl SessionView {
         // 사용자는 무엇을 보고 판단할지 알 수 없다.
         let mut column = column;
         for line in self.screens.confirm_detail().lines().filter(|l| !l.is_empty()) {
-            column = column.with_child(self.text(line.to_owned(), 13., palette::RED));
+            // 13px **본문**이 지는 뜻이다 — 크롬 의미색이지 SGR 표가 아니다(pytmux-412 ⓑ1).
+            column = column.with_child(self.text(line.to_owned(), 13., theme::ERROR));
         }
         let mut column = column.with_child(self.text(self.screens.confirm_question(), 14., palette::FG));
         if screen == Screen::Prompt {
@@ -8442,8 +8496,9 @@ impl SessionView {
             if picked {
                 // 되돌릴 수 없는 판이면 강조가 **붉다**(정본 `.sel.danger`). 아무 데나
                 // 칠하면 붉은색이 값을 잃으므로 경계는 core 가 쥔다.
+                // `theme::FOCUS` 의 위험 쪽 쌍이다 — 그러니 같은 표(크롬)에 산다.
                 let accent = if self.screens.confirm_is_dangerous() {
-                    palette::RED
+                    theme::ERROR
                 } else {
                     theme::FOCUS
                 };
@@ -8675,7 +8730,7 @@ impl SessionView {
         for (text, kind) in lines.into_iter().take(budget.saturating_sub(cut as usize)) {
             let color = match kind {
                 DetailKind::PlanHead => palette::BLUE,
-                DetailKind::DeniedHead => palette::MAGENTA,
+                DetailKind::DeniedHead => theme::TURN,
                 DetailKind::Body | DetailKind::Blank => palette::FG,
             };
             column = column.with_child(self.text(
@@ -8862,7 +8917,7 @@ impl SessionView {
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(8.);
         if esc_menu {
-            header = header.with_child(self.chip(t(Screen::COMPOSE_ESC_BADGE), palette::RED));
+            header = header.with_child(self.chip(t(Screen::COMPOSE_ESC_BADGE), theme::ERROR));
         }
         // 확인 판은 **물음이 제목을 정한다**(정본과 같다) — 마지막 탭이면 `pytmux 종료`.
         // 판을 여는 순간 가장 먼저 읽히는 글이라, 거기서 손이 멈춘다.
