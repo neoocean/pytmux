@@ -453,6 +453,14 @@ i18n.register({
 # ⛔ `screens.py` 에 사본을 남기지 않는다 — 같은 키가 두 벌이면 한쪽만 고쳐진다.
 i18n.register({
     "ko": {
+        # 머리줄(`usagehead.summary_line`)이 짓는 여섯 — 위 다섯과 **같은 이유로**
+        # 여기 산다(pytmux-419 ②).
+        "pscreen.tklog_scope": "{sigma}",
+        "pscreen.tklog_disp": " (표시 {n})",
+        "pscreen.tklog_xc": "Σ{full} 실측(캐시 읽기{cr}+쓰기{cc}) · 활동~{scrape}",
+        "pscreen.tklog_unknown": "미상 {pct}%",
+        "pscreen.lim_5h": "5h {p}%",
+        "pscreen.lim_wk": "주 {p}%",
         "pscreen.weekdays": "월,화,수,목,금,토,일",
         "pscreen.hour_suffix": "시",
         "pscreen.tree_earlier_weeks": "── 이번 달 이전 주 ──",
@@ -460,6 +468,12 @@ i18n.register({
         "pscreen.tklog_host_local": "이 머신",
     },
     "en": {
+        "pscreen.tklog_scope": "{sigma}",
+        "pscreen.tklog_disp": " (shown {n})",
+        "pscreen.tklog_xc": "Σ{full} real (cache r{cr}+w{cc}) · activity~{scrape}",
+        "pscreen.tklog_unknown": "unattributed {pct}%",
+        "pscreen.lim_5h": "5h {p}%",
+        "pscreen.lim_wk": "wk {p}%",
         "pscreen.weekdays": "Mo,Tu,We,Th,Fr,Sa,Su",
         "pscreen.hour_suffix": "h",
         "pscreen.tree_earlier_weeks": "── earlier weeks this month ──",

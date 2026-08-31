@@ -731,6 +731,75 @@ async def test_a_half_missing_limit_pair_keeps_its_place_instead_of_shifting_lef
     assert ss._limit_cols({"kind": "hour", "bk": None}, {"x": 1}, {"x": 2}) == []
 
 
+async def test_every_token_panel_carries_the_same_shared_header(): 
+    """★ 정본은 이 다섯이 **한 팝업의 탭**이라 머리줄을 나눠 쓴다(pytmux-419 ②).
+
+    GUI 는 판이 여럿이라 같은 뜻을 **판마다 같은 줄**로 낸다 — 판을 옮겼다고 「지금 얼마나
+    찼나」가 사라지면 그건 갈림이다. `_HUB` 를 전수로 재는 시험과 **같은 이유로** 여기서도
+    전수로 잰다: 판마다 손으로 적으면 새 판이 생길 때 어떤 판에서는 안 보인다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    # ⚠ **모델 고르개는 이 다섯이 아니다.** `_HUB` 에 있지만 정본에서 그것은 [한도] 탭이
+    #   여는 **딸린 판**(`모델·컨텍스트 고르기 →`)이라 탭 띠의 칸이 아니고, 머리줄도 없다.
+    #   여기 세는 것은 토큰 판들(`claude-*`)이다.
+    sids = [sid for _k, _l, sid in ss._HUB if sid.startswith("claude-")]
+    assert len(sids) >= 5, sids
+    with harness.patched(ss, _summary_head=lambda _s: "5h 29% · 주 22% · ~Σ7"):
+        for sid in sids:
+            name = sid if sid != "claude-usage-panel" else "limits"
+            spec = ss.open_spec(srv, None, name)
+            assert spec is not None, f"{sid} 판이 안 열린다"
+            assert spec.get("head") == "5h 29% · 주 22% · ~Σ7", (
+                f"{sid} 에 공유 머리줄이 없다: {spec.get('head')!r}")
+
+
+async def test_the_shared_header_is_the_same_words_the_canonical_popup_writes():
+    """⛔ **산수는 한 벌이다** — 정본 팝업과 스펙이 같은 함수를 부른다.
+
+    종전에는 그 글을 `screens.py`(Textual) 안의 네 메서드가 지었고, 서버는 그 파일을 안
+    읽으니 GUI 판에는 머리줄이 **아예 없었다**([[pytmux-371]] ⓑ). 옮기면서 두 벌이 되면
+    같은 값이 두 화면에서 다른 글로 뜬다 — `usagetree` 를 뽑을 때와 같은 자리다.
+    """
+    import importlib, inspect
+    uh = importlib.import_module("pytmuxlib.plugins.claude-code.usagehead")
+    scr = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
+    for meth, fn in ((scr.TokenLogScreen._limit_summary, "usagehead.limit_summary"),
+                     (scr.TokenLogScreen._sigma_text, "usagehead.sigma_text"),
+                     (scr.TokenLogScreen._host_text, "usagehead.host_text"),
+                     (scr.TokenLogScreen._unknown_text, "usagehead.unknown_text")):
+        src = inspect.getsource(meth)
+        assert fn in src, f"정본이 공유 한 벌을 안 부른다({fn}) — 산수가 두 벌이 됐다"
+    # 그리고 그 한 벌이 정본 그림 그대로를 짓는다(제보 첨부의 그 줄).
+    line = uh.summary_line(
+        {"session": {"pct": 29}, "week_all": {"pct": 22}},
+        15_000_000, 15_000_000,
+        {"full": 22641900000, "cache_read": 22308900000, "cache_create": 262200000},
+        {"<local>": 15, "91ddca94": 85}, {"total": 100, "unknown": 45})
+    for want in ("5h 29%", "22%", "Σ22641.9M", "91ddca94 85%", "45%"):
+        assert want in line, f"{want!r} 가 머리줄에 없다: {line!r}"
+
+
+async def test_a_server_with_nothing_to_say_sends_no_header_instead_of_zeros():
+    """⛔ 대조군 — 자료가 없으면 **빈 줄**이고, 클라는 빈 `head` 를 안 그린다.
+
+    없는 값을 `0` 으로 적으면 「안 쓴 것」과 「모르는 것」이 한 그림이 된다. 그리고 머리줄이
+    늘 있으면 위 전수 시험은 아무 일도 안 해도 통과한다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+
+    class _Bare:
+        def _tokens_db_conn(self):
+            return None
+
+        def _read_warn_history(self, limit=50):
+            return []
+
+    assert ss._summary_head(_Bare()) == "", ss._summary_head(_Bare())
+
+
 async def test_the_bars_are_scaled_to_the_biggest_row_not_to_the_total():
     """막대 기준은 **그 목록의 최대값**이다(정본 `bmax` 와 같다).
 

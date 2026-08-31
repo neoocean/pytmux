@@ -5792,8 +5792,23 @@ impl SessionView {
         let Some(spec) = self.state.plugin_screen() else {
             return column;
         };
-        let budget = self.panel_budget();
+        let mut budget = self.panel_budget();
         let mut column = column;
+        // ★ **판 위 한 줄**(`spec.head`) — 정본 토큰 팝업의 공유 머리줄이 이 자리로 온다
+        //   (pytmux-419 ②). 정본은 그 다섯이 한 팝업의 탭이라 머리줄을 나눠 쓰는데,
+        //   여기는 판이 여럿이라 판마다 같은 줄이 실려 온다.
+        //
+        //   ⚠ **예산을 먼저 뗀다**: 이 줄도 한 줄을 먹는다. 안 떼면 목록이 그만큼
+        //     아래로 넘친다(같은 실수를 `text` 갈래가 구분선에서 한 번 했다).
+        //   ⚠ `hint_text` 로 그린다 — 접히게 하려는 것이다(pytmux-371 ⓐ · CL 74348).
+        //     이 줄은 길고(Σ·캐시·머신 귀속·미상이 한 줄이다) 잘리면 값이 사라진다.
+        //   ⛔ `note` 와 다른 자리다: 저것은 실패·빈 목록이라 평상시엔 비고, 이것은
+        //      평상시에 늘 있는 자료다.
+        if !spec.head.is_empty() {
+            budget = budget.saturating_sub(1);
+            column = column.with_child(self.hint_text(spec.say_head(), self.ui_font, 12., palette::DIM));
+        }
+        let budget = budget;
         // 실패했거나 비었을 때의 한 줄 — **빈 목록과 실패는 다르다**(스펙의 `note`).
         if !spec.note.is_empty() {
             column = column.with_child(self.text(spec.say_note(), 13., palette::DIM));

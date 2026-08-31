@@ -21,11 +21,15 @@ from rich.style import Style
 from pytmuxlib import i18n
 from pytmuxlib.clientutil import REMOTE_PINK, theme_color
 from . import CTX_CHOICES, MODEL_CHOICES, SAVER_ROWS
+# 머리줄 산수 한 벌 — Textual 을 안 문다(서버도 같은 것을 부른다 · pytmux-419 ②).
+from . import usagehead
 
 # usage_xc.host 가 NULL(=이 머신 적재분)인 덩어리를 가리키는 표시 키.
 # 서버쪽 정본은 usagedb.LOCAL_HOST — 클라 화면이 저장소 모듈을 import 하지
 # 않도록(계층 유지) 문자열만 맞춰 둔다. 회귀가 두 값의 일치를 못박는다.
-_LOCAL_HOST = "<local>"
+#: `usagehead.LOCAL_HOST` 의 이름이다 — 이 파일의 옛 이름을 참조하는 곳이
+#: 있어 별칭으로 남긴다(값의 정본은 그쪽 한 벌).
+_LOCAL_HOST = usagehead.LOCAL_HOST
 
 # §6 ⑤ 플러그인 설정/로그 모달 문자열(token-saver·rules·model·perm·token-log). 정적 문자열은
 # 키=원문 한국어(gettext 식 — 렌더가 t(원문) 로 단순 조회), 포맷 문자열만 pscreen.* semantic
@@ -95,12 +99,10 @@ i18n.register({
         # (pscreen.perm_title 은 __init__.py 로 갔다 — 화면 스펙도 그 글을 지어야
         #  하고 그것을 짓는 것은 서버라, 여기(Textual)에 두면 서버가 못 읽는다.)
         "pscreen.tklog_title2": "토큰 사용량(추정) · {what}별",
-        "pscreen.tklog_scope": "{sigma}",
-        "pscreen.tklog_disp": " (표시 {n})",
+        # (머리줄 여섯은 `__init__.py` 로 갔다 — 그 글을 짓는 `usagehead` 를 서버도
+        #  부르고, 서버는 이 파일을 안 읽는다. pytmux-419 ②)
         # §10-D P6: 트랜스크립트 실측 Σ(캐시 읽기/쓰기 분리) + 스크랩 활동 보조신호.
-        "pscreen.tklog_xc": "Σ{full} 실측(캐시 읽기{cr}+쓰기{cc}) · 활동~{scrape}",
         # 계정 미상 비중(사용자 결정 2026-07-25 — 미상은 별항, 그 몫을 보인다).
-        "pscreen.tklog_unknown": "미상 {pct}%",
         "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 · l한도 u/usage · Esc닫기",
         # (계층 트리의 요일·시각 접미사·구역 구분선·"이 머신" 다섯은 `__init__.py`
         #  로 갔다 — 그 글을 짓는 것은 서버이고, 서버는 이 파일을 안 읽는다.)
@@ -121,8 +123,6 @@ i18n.register({
         "pscreen.warn_history_label": "── 이전 경고 (펼쳐서 보기) ──",
         "pscreen.tklog_warn_hint": "Enter/←→ 펼침·접힘 · 다른 탭 이동 · u/usage · Esc닫기",
         # 상단 1줄 한도 요약(상세는 한도 탭).
-        "pscreen.lim_5h": "5h {p}%",
-        "pscreen.lim_wk": "주 {p}%",
         "pscreen.left_hm": "{h}시간{m}분",
         "pscreen.left_m": "{m}분",
         "pscreen.left_d": "{d}일{h}시간",
@@ -163,10 +163,6 @@ i18n.register({
     },
     "en": {
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
-        "pscreen.tklog_scope": "{sigma}",
-        "pscreen.tklog_disp": " (shown {n})",
-        "pscreen.tklog_xc": "Σ{full} real (cache r{cr}+w{cc}) · activity~{scrape}",
-        "pscreen.tklog_unknown": "unattributed {pct}%",
         "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session · l limit u /usage · Esc close",
         "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
         "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
@@ -182,8 +178,6 @@ i18n.register({
         "pscreen.tklog_warn_empty": "No active Claude warning (already cleared).",
         "pscreen.warn_history_label": "── Past warnings (expand to view) ──",
         "pscreen.tklog_warn_hint": "Enter/←→ expand·collapse · switch tab · u /usage · Esc close",
-        "pscreen.lim_5h": "5h {p}%",
-        "pscreen.lim_wk": "wk {p}%",
         "pscreen.left_hm": "{h}h {m}m",
         "pscreen.left_m": "{m}m",
         "pscreen.left_d": "{d}d {h}h",
@@ -1191,19 +1185,14 @@ class TokenLogScreen(ModalScreen):
         return Text(f"{pct:>3}%", justify="left", style=style)
 
     def _limit_summary(self):
-        """상단 1줄 한도 요약 접두('5h 17% · 주 14% · '). 상세(막대·리셋·계정·창Σ)는
-        [한도] 뷰로 옮겼고(작은 화면 정리, 2026-06-14), 기본 화면엔 이 요약만 둔다.
-        usage 실측이 없으면 빈 문자열(요약 생략 → scope 만 보인다)."""
-        u = self._usage
-        if not isinstance(u, dict):
-            return ""
-        parts = []
-        for key, fmt in (("session", "pscreen.lim_5h"),
-                         ("week_all", "pscreen.lim_wk")):
-            d = u.get(key)
-            if isinstance(d, dict) and d.get("pct") is not None:
-                parts.append(i18n.t(fmt, p=d["pct"]))
-        return (" · ".join(parts) + " · ") if parts else ""
+        """상단 1줄 한도 요약 접두('5h 17% · 주 14% · ').
+
+        ⛔ **산수는 여기 없다** — `usagehead` 한 벌이다(pytmux-419 ②). 종전에는 이
+        메서드와 아래 셋이 전부를 들고 있어서 **정본만** 이 줄을 지을 수 있었다:
+        `screenspec` 은 Textual 을 안 무는 것이 규약이라 GUI 로 내려보낼 길이 없었고,
+        그래서 GUI 판에는 이 머리줄이 아예 없었다. 옮긴 이유는 그 모듈 머리말에 있다.
+        """
+        return usagehead.limit_summary(self._usage)
 
     def _limit_clock_lines(self):
         """가장 이른 /usage 리셋까지 남은 시간을 **큰 블록 글자(HH:MM:SS)** 줄 목록으로
@@ -1524,16 +1513,7 @@ class TokenLogScreen(ModalScreen):
         동기화를 켜면 Σ 가 계정 전역으로 뛰는데(다른 머신 몫이 합쳐진다), 그게 어디서
         왔는지 보이지 않으면 "왜 갑자기 늘었나" 를 사람이 풀 수 없다. 비중 큰 순으로
         `⇅ 이 머신 62% · a1b2 38%` 처럼 붙인다(`⇅` = 동기화된 값이라는 표식)."""
-        hosts = {h: int(v) for h, v in (self._xc_hosts or {}).items() if v}
-        if len(hosts) < 2:
-            return ""
-        total = sum(hosts.values()) or 1
-        local = _LOCAL_HOST
-        parts = []
-        for h, v in sorted(hosts.items(), key=lambda kv: (-kv[1], kv[0]))[:4]:
-            name = i18n.t("pscreen.tklog_host_local") if h == local else h[:8]
-            parts.append("%s %d%%" % (name, round(100.0 * v / total)))
-        return "  ⇅ " + " · ".join(parts)
+        return usagehead.host_text(self._xc_hosts)
 
     def _unknown_text(self) -> str:
         """Σ 뒤에 붙는 **미상 계정 비중**(`· 미상 12%`). 사용자 결정 2026-07-25
@@ -1543,19 +1523,7 @@ class TokenLogScreen(ModalScreen):
         커버리지가 나빠지는 것도 안 보인다. 그래서 **비중을 한 조각으로 노출**한다.
         미상이 0(=전량 귀속)이면 빈 문자열 — 잘 되고 있을 때 잡음 0. 반올림이 0% 로
         떨어지는 소량은 `<1%` 로 적어 "있는데 0" 을 만들지 않는다."""
-        cov = self._xc_cov or {}
-        if not isinstance(cov, dict):
-            return ""     # 신뢰불가 상류(원격 보기 릴레이)가 실어 보낸 잡값
-        try:
-            total = int(cov.get("total") or 0)
-            unknown = int(cov.get("unknown") or 0)
-        except (TypeError, ValueError):
-            return ""     # 문자열·dict 등 — 팝업이 터지는 대신 표기를 생략한다
-        if total <= 0 or unknown <= 0 or unknown > total:
-            return ""
-        pct = 100.0 * unknown / total
-        shown = "<1" if pct < 0.5 else "%d" % round(pct)
-        return "  " + i18n.t("pscreen.tklog_unknown", pct=shown)
+        return usagehead.unknown_text(self._xc_cov)
 
     def _sigma_text(self, win):
         """상단 Σ 요약 문자열(평탄·트리 경로 공용). §10-D P6: 트랜스크립트 실측
@@ -1565,23 +1533,8 @@ class TokenLogScreen(ModalScreen):
         분리** 표기한다 — 둘은 단가·의미가 달라(읽기=재사용, 쓰기=새 캐시 적재) 합치면
         cache 구조를 못 본다. 실측이 없으면(구버전 서버/빈 usage_xc) 종전 스크랩 ~Σ
         (+표시창 n) 폴백."""
-        life = self._total_all
-        if life is None:
-            life = win
-        xc_full = self._xc.get("full", 0) if self._xc else 0
-        if xc_full > 0:
-            cr = self._xc.get("cache_read", 0)
-            cc = self._xc.get("cache_create", 0)
-            return i18n.t("pscreen.tklog_xc",
-                          full=usagelog._fmt_tokens(xc_full),
-                          cr=usagelog._fmt_tokens(cr),
-                          cc=usagelog._fmt_tokens(cc),
-                          scrape=usagelog._fmt_tokens(life)) \
-                + self._host_text() + self._unknown_text()
-        sigma = f"~Σ{usagelog._fmt_tokens(life)}"   # ~ = 추정 라벨(S6 T3)
-        if life != win:
-            sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
-        return sigma
+        return usagehead.sigma_text(self._total_all, win, self._xc,
+                                    self._xc_hosts, self._xc_cov)
 
     async def _refresh(self):
         self._sync_tabs()

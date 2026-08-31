@@ -5091,6 +5091,78 @@ fn a_leaf_row_in_a_table_gets_no_arrow_that_would_lie() {
     );
 }
 
+#[test]
+fn a_panel_head_is_drawn_above_the_rows_and_costs_a_row_of_budget() {
+    // ★ pytmux-419 ② — 정본 토큰 팝업은 다섯 탭이 **머리줄 두 줄을 공유**한다
+    //   (`5h 29% · wk 22% · Σ… · 91ddca94 85% · this machine 15% · unattributed 45%`).
+    //   GUI 는 판이 여럿이라 판마다 같은 줄이 `spec.head` 로 실려 온다. 종전에는
+    //   `"table"` 갈래가 그 칸을 아예 안 읽어서 **그 값이 화면에 없었다**.
+    let with_head: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-period", "kind": "table",
+        "title": "토큰 사용량", "hint": "h",
+        "head": "5h 29% · 주 22% · Σ22641.9M 실측 · 이 머신 15%",
+        "rows": [{"key": "a", "label": "행하나", "cols": ["1"]}],
+        "text": "", "note": "", "selected": 0
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), with_head], &[]).join("\n");
+    assert!(
+        painted.contains("5h 29%") && painted.contains("이 머신 15%"),
+        "머리줄이 안 그려졌다:\n{painted}"
+    );
+
+    // ⛔ 대조군 — `head` 가 비면 **아무 줄도 안 는다**. 늘 그리면 위 단언은 아무 일도 안
+    //    해도 통과하고, 종전 화면(mdir·ncd)에 없던 줄이 생기는 것은 회귀다.
+    let no_head: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "x", "kind": "table", "title": "t", "hint": "h",
+        "rows": [{"key": "a", "label": "행하나", "cols": ["1"]}],
+        "text": "", "note": "", "selected": 0
+    }))
+    .unwrap();
+    let bare = painted_after(vec![layout_one_pane(), no_head], &[]);
+    let headed = painted_after(vec![layout_one_pane(), {
+        let m: ServerMessage = serde_json::from_value(serde_json::json!({
+            "t": "plugin_screen", "id": "x", "kind": "table", "title": "t", "hint": "h",
+            "head": "머리줄",
+            "rows": [{"key": "a", "label": "행하나", "cols": ["1"]}],
+            "text": "", "note": "", "selected": 0
+        }))
+        .unwrap();
+        m
+    }], &[]);
+    assert!(
+        !bare.iter().any(|t| t.contains("머리줄")),
+        "머리줄이 없는 판에 무언가를 그렸다: {bare:?}"
+    );
+    assert_eq!(
+        headed.len(),
+        bare.len() + 1,
+        "머리줄이 정확히 한 줄이 아니다 — bare={bare:?} headed={headed:?}"
+    );
+
+    // ⛔ 그리고 그 한 줄은 **예산을 먹는다**. 안 떼면 목록이 그만큼 아래로 넘친다 —
+    //    줄이 예산보다 적으면 이 차이가 안 드러나므로(실측: 한 줄짜리 판으로는 뮤테이션이
+    //    안 물렸다) 예산을 확실히 넘기는 판으로 잰다.
+    let many = |head: &str| -> ServerMessage {
+        let rows: Vec<_> = (0..200)
+            .map(|i| serde_json::json!({"key": format!("k{i}"),
+                                        "label": format!("행{i:03}"), "cols": []}))
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "t": "plugin_screen", "id": "x", "kind": "table", "title": "t", "hint": "h",
+            "head": head, "rows": rows, "text": "", "note": "", "selected": 0
+        }))
+        .unwrap()
+    };
+    let long_bare = painted_after(vec![layout_one_pane(), many("")], &[]).len();
+    let long_head = painted_after(vec![layout_one_pane(), many("머리줄")], &[]).len();
+    assert_eq!(
+        long_head, long_bare,
+        "머리줄이 예산을 안 먹었다 — 목록이 그만큼 아래로 넘친다 \
+         (머리줄 없음 {long_bare}줄 · 있음 {long_head}줄)"
+    );
+}
+
 // ── 빈 목록도 말을 한다 (pytmux-405) ──────────────────────────────────────────────
 //
 // 정본은 목록이 비면 그 사실을 적는다(`(버퍼 없음)`·`(검색 결과 없음)`·`(지나간 알림 없음)`).

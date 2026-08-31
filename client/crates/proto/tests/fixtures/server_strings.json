@@ -255,6 +255,7 @@
     "pytmuxlib/plugins/claude-code/screenspec.py:_settings_spec",
     "pytmuxlib/plugins/claude-code/screenspec.py:_settings_toggle",
     "pytmuxlib/plugins/claude-code/screenspec.py:_spec",
+    "pytmuxlib/plugins/claude-code/screenspec.py:_summary_head",
     "pytmuxlib/plugins/claude-code/screenspec.py:_token_log_spec",
     "pytmuxlib/plugins/claude-code/screenspec.py:_token_rows",
     "pytmuxlib/plugins/claude-code/screenspec.py:_tree_rows",
