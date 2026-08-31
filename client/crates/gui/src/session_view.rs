@@ -5804,7 +5804,17 @@ impl SessionView {
         //     이 줄은 길고(Σ·캐시·머신 귀속·미상이 한 줄이다) 잘리면 값이 사라진다.
         //   ⛔ `note` 와 다른 자리다: 저것은 실패·빈 목록이라 평상시엔 비고, 이것은
         //      평상시에 늘 있는 자료다.
-        if !spec.head.is_empty() {
+        //
+        //   ☠ **`panel` 은 빼야 한다 — 그 갈래가 제 머리줄을 «제 서식으로» 이미 그린다**
+        //     (아래 `"panel" =>` 의 `mono_row(… PANEL_COLS … CYAN)` · CL 73249). 이 공통
+        //     줄이 CL 74528 로 서면서 그 판정을 안 봐, `mdir` 의 볼륨줄이 **두 번** 떴다:
+        //     여기서 한 번(UI 글꼴 · DIM), 판 안에서 한 번(고정폭 · 시안). 정본 mdir 은
+        //     그 줄을 판 안에 **한 줄만** 그리므로 ⓖ3(전면 1:1 대조)의 갈림이기도 하다.
+        //   ⛔ **여기를 지우고 공통 줄에 맡기지 마라** — 판의 머리줄은 열 폭(`PANEL_COLS`)
+        //     에 맞춰 자르고 고정폭으로 그려야 아래 격자와 자리가 맞는다. 그리고 판은
+        //     제 기하를 `panel_grid()` 가 따로 세는데(거기서 `head`·`foot` 줄을 이미
+        //     뺀다) 이 공통 줄은 그 셈 **밖**이라, 그리는 순간 판이 한 줄만큼 넘친다.
+        if !spec.head.is_empty() && spec.kind != "panel" {
             budget = budget.saturating_sub(1);
             column = column.with_child(self.hint_text(spec.say_head(), self.ui_font, 12., palette::DIM));
         }

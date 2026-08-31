@@ -9797,3 +9797,152 @@ fn home_then_enter_picks_the_first_row() {
     });
     assert_eq!(picked, Some((0, Some("68995".to_owned()))), "{out:?}");
 }
+
+// ── 같은 줄이 두 번 그려지지 않나 (원문 가드 · pytmux-33 ⓖ3) ─────────────────
+//
+// ☠ **이 부류는 「정본에 있는데 GUI 에 없다」의 반대라 눈으로 안 잡힌다.** 화면은
+// 여전히 그 줄을 보이므로 스크린샷 대조도 「있다」로 읽고, 단위 오라클은 값이 옳은지만
+// 잰다 — 같은 값을 **두 번** 그리는 것은 둘 다 초록이다.
+//
+// 실제로 그랬다: `mdir` 판의 볼륨 머리줄을 `"panel"` 갈래가 고정폭·시안으로 그리고
+// 있었는데(CL 73249), 토큰 판의 공유 머리줄(pytmux-419 ②)이 **공통 크롬**으로 서면서
+// (CL 74528) 그 판정을 안 봐 같은 줄이 UI 글꼴·DIM 으로 한 번 더 떴다. 정본 mdir 은
+// 그 줄을 판 안에 한 줄만 그리므로 ⓖ3(전면 1:1 대조)의 갈림이기도 하다.
+//
+// ⚠ 재는 것은 **배선**이다(이 크레이트에는 그린 것을 되읽는 하네스가 없다 — 위
+// §원문 가드의 사정 그대로). 그래서 "같은 스펙 칸을 두 자리가 그리나"까지만 잰다.
+
+/// `render_plugin_view` 를 **공통 크롬**과 **모양별 갈래**로 가른다.
+///
+/// 갈래 몸통은 깊이를 세어 자른다 — 정규식으로 긁으면 안쪽 `match` 의 갈래까지 딸려
+/// 온다(`proto/tests/plugin_screen_conformance.rs` 가 같은 자리에서 겪은 것).
+fn plugin_view_parts() -> (String, Vec<(String, String)>) {
+    let src = include_str!("session_view.rs");
+    const MATCH: &str = "match spec.kind.as_str() {";
+    let at = src
+        .find("fn render_plugin_view(")
+        .expect("원문에서 `render_plugin_view` 를 못 찾았다");
+    let m = src[at..].find(MATCH).expect("`render_plugin_view` 안에서 모양 갈래를 못 찾았다") + at;
+    let chrome = src[at..m].to_owned();
+
+    let open = m + MATCH.len();
+    let mut depth = 1usize;
+    let mut end = src.len();
+    for (i, ch) in src[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = open + i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &src[open..end];
+
+    // 갈래 머리는 **깊이 0** 에서 줄 앞에 오는 `"<이름>" =>` 다.
+    let mut heads: Vec<(usize, String)> = Vec::new();
+    let mut depth = 0usize;
+    let bytes = body.as_bytes();
+    for (i, ch) in body.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            '"' if depth == 0 && i > 0 && (bytes[i - 1] == b'\n' || bytes[i - 1] == b' ') => {
+                let rest = &body[i + 1..];
+                if let Some(q) = rest.find('"') {
+                    let name = &rest[..q];
+                    if !name.is_empty()
+                        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        && rest[q + 1..].trim_start().starts_with("=>")
+                    {
+                        heads.push((i, name.to_owned()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let arms = heads
+        .iter()
+        .enumerate()
+        .map(|(n, (pos, name))| {
+            let till = heads.get(n + 1).map(|(p, _)| *p).unwrap_or(body.len());
+            (name.clone(), body[*pos..till].to_owned())
+        })
+        .collect();
+    (chrome, arms)
+}
+
+/// 글로 그려지는 스펙 칸들 — `spec.say_<칸>()` 이 그 자리다.
+///
+/// `say_*` 로 세는 이유: 이 스펙의 글은 **전부** 그것을 지나 우리 로케일로 다시 지어진다
+/// (`proto::session` 의 `say_title`·`say_head` …). 원문(`spec.head`)은 "비었나"를 묻는
+/// 자리에도 쓰여서 그것으로 세면 판정이 그리는 것과 갈린다.
+fn drawn_fields(text: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("spec.say_") {
+        let tail = &rest[at + "spec.say_".len()..];
+        let n = tail.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(tail.len());
+        if tail[n..].starts_with("()") {
+            out.insert(tail[..n].to_owned());
+        }
+        rest = &tail[n..];
+    }
+    out
+}
+
+#[test]
+fn a_shared_chrome_line_is_not_drawn_again_by_a_kind_arm() {
+    let (chrome, arms) = plugin_view_parts();
+    let shared = drawn_fields(&chrome);
+    assert!(
+        !shared.is_empty(),
+        "공통 크롬이 아무 칸도 안 그린다 — 이 오라클이 재는 자리를 못 찾았다\
+         (`render_plugin_view` 의 모양 갈래 앞 구간을 봤다)"
+    );
+
+    for (kind, body) in &arms {
+        for field in drawn_fields(body).intersection(&shared) {
+            // 공통 쪽이 **그 모양을 뺐으면** 두 번이 아니다. 판정은 그 칸을 그리는
+            // `if` 의 조건 안에 있어야 한다 — 함수 아무 데나 있는 `kind !=` 를 세면
+            // 남의 갈래의 판정으로 이 칸이 면제된다.
+            let call = format!("spec.say_{field}()");
+            let at = chrome.find(&call).expect("방금 센 호출을 못 찾는다");
+            let cond = chrome[..at].rfind("if ").map(|i| &chrome[i..at]).unwrap_or("");
+            let excused = cond.contains(&format!("spec.kind != \"{kind}\""));
+            assert!(
+                excused,
+                "`{field}` 를 공통 크롬과 `\"{kind}\"` 갈래가 **둘 다** 그린다 — \
+                 그 화면에서는 같은 줄이 두 번 뜬다.\n\
+                 둘 중 하나를 지우거나, 공통 쪽 조건에 `spec.kind != \"{kind}\"` 를 넣을 것.\n\
+                 (갈래가 제 서식으로 그려야 하는 줄이면 공통 쪽이 빠지는 것이 맞다 — \
+                 판의 머리줄은 열 폭에 맞춰 고정폭으로 잘라야 격자와 자리가 맞고, \
+                 판의 기하는 `panel_grid()` 가 그 줄을 이미 세고 있다.)\n\
+                 공통 크롬의 조건: {cond}"
+            );
+        }
+    }
+}
+
+/// 위 오라클이 **갈래를 실제로 찾았나** — 못 찾으면 무엇을 견줘도 초록이다.
+///
+/// ⛔ 빈 목록을 통과로 두지 않는다(저장소 규율: 파싱 실패를 초록으로 위장하지 않는다).
+#[test]
+fn the_duplicate_line_oracle_actually_sees_the_kind_arms() {
+    let (_, arms) = plugin_view_parts();
+    let names: Vec<&str> = arms.iter().map(|(k, _)| k.as_str()).collect();
+    for want in ["list", "text", "table", "panel", "form"] {
+        assert!(
+            names.contains(&want),
+            "모양 갈래 `{want}` 를 원문에서 못 갈랐다 — 위 오라클이 헛돈다: {names:?}"
+        );
+    }
+    // 갈래 몸통이 **머리만** 잡혔으면(자르기가 깨졌으면) 역시 헛돈다.
+    let panel = arms.iter().find(|(k, _)| k == "panel").map(|(_, b)| b.len()).unwrap_or(0);
+    assert!(panel > 500, "`\"panel\"` 갈래의 몸통이 {panel}자다 — 자르기가 깨졌다");
+}
