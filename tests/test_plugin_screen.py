@@ -711,6 +711,75 @@ async def test_the_period_tree_actually_builds_on_a_server_that_never_loaded_tex
         f"자료 있는 홈에서 그대로 터지는 자리다(pytmux-419):\n{out.stderr}")
 
 
+async def test_the_period_tree_carries_the_5h_and_1w_columns_on_hour_rows_only():
+    """정본 `[기간]` 탭의 칸은 셋이다 — `Tokens` · `5h%` · `1w%`(pytmux-419 ⑤).
+
+    토큰 칸(스크랩 Σ)은 5h 소비를 **과소반영**하므로 「그 시각에 창이 얼마나 찼나」의
+    진짜 신호는 저 둘이다(권위 `/usage` 스냅샷). 조인키는 노드의 `bk`.
+
+    ★ **시각 행에만** 붙는다 — 정본이 `show5h = (bucket == "hour" …)` 로 같은 판정을
+    한다. 5h 창은 시간 단위 개념이라 일·주·월 행에 붙이면 「그 날의 5h%」라는 없는 뜻이
+    생긴다.
+    """
+    import importlib, time
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    now = time.time()
+    recs = [{"ts": now - i * 3600, "tokens": 1000 + i, "account": "a"}
+            for i in range(6)]
+    # 시각 키(`%Y-%m-%d %H:00`)로 두 표를 만든다 — usagedb 가 내는 그 모양이다.
+    keys = sorted({time.strftime("%Y-%m-%d %H:00", time.localtime(r["ts"]))
+                   for r in recs})
+    p5 = {k: 9 + i * 10 for i, k in enumerate(keys)}
+    p1 = {k: 63 for k in keys}
+
+    class _Srv(_TokenSrv):
+        def _tokens_db_conn(self):
+            return object()
+
+    with harness.patched(ss, _usage_records=lambda _s, limit=4000: recs,
+                         _limit_pcts=lambda _s: (p5, p1)):
+        spec = ss.open_spec(_Srv(), None, "token-period")
+    rows = [r for r in spec["rows"] if not str(r["key"]).startswith("goto:")]
+    hours = [r for r in rows if r["label"].endswith(("시", "h"))]
+    assert hours, f"시각 행이 없다: {[r['label'] for r in rows]}"
+    for r in hours:
+        assert len(r["cols"]) == 3, (
+            f"시각 행의 칸이 셋이 아니다({r['label']}): {r['cols']} — "
+            "정본은 Tokens·5h%·1w% 셋이다(pytmux-419 ⑤)")
+        assert r["cols"][2] == "63%", r["cols"]
+    # ⛔ 대조군 — 일·월 행에는 안 붙는다(붙으면 없는 뜻이 생긴다).
+    others = [r for r in rows if r not in hours and r["cols"]]
+    assert others, "비교할 상위 행이 없다"
+    for r in others:
+        assert len(r["cols"]) == 1, (
+            f"시각이 아닌 행에 5h%/1w% 가 붙었다({r['label']}): {r['cols']}")
+
+
+async def test_a_half_missing_limit_pair_keeps_its_place_instead_of_shifting_left():
+    """⛔ 두 칸은 **함께 움직인다** — 하나만 실으면 숫자가 조용히 거짓말을 한다.
+
+    `1w%` 만 있는 시각에 그 값 하나만 붙이면 소비자는 그것을 **`5h%` 자리**로 읽는다
+    (칸은 자리로 뜻이 정해진다). 그래서 하나만 있으면 나머지는 빈 칸으로 자리를 지키고,
+    둘 다 없으면 아무것도 안 붙인다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    node = {"kind": "hour", "bk": "2026-08-31 22:00"}
+    assert ss._limit_cols(node, {}, {"2026-08-31 22:00": 63}) == ["", "63%"]
+    assert ss._limit_cols(node, {"2026-08-31 22:00": 9}, {}) == ["9%", ""]
+    assert ss._limit_cols(node, {}, {}) == []
+    # 시각이 아닌 행 · 조인키가 없는 행은 언제나 빈다.
+    #
+    # ⚠ 첫 줄은 **`bk` 가 있는 날짜 행**이다. 오늘 `usagetree` 는 시각 노드에만 `bk` 를
+    #   실으므로 `kind` 검사 없이도 결과가 같은데, 그러면 그 줄이 «무력한 가드»라 지워도
+    #   아무 시험이 안 운다(실측 — 뮤테이션이 안 물렸다). 조인키가 다른 종류로 번져도
+    #   이 칸이 안 따라가는 것이 계약이므로 여기서 그 계약을 직접 문다.
+    assert ss._limit_cols({"kind": "day", "bk": "2026-08-31 22:00"},
+                          {"2026-08-31 22:00": 9}, {"2026-08-31 22:00": 63}) == []
+    assert ss._limit_cols({"kind": "day", "bk": None}, {"x": 1}, {"x": 2}) == []
+    assert ss._limit_cols({"kind": "hour", "bk": None}, {"x": 1}, {"x": 2}) == []
+
+
 async def test_the_bars_are_scaled_to_the_biggest_row_not_to_the_total():
     """막대 기준은 **그 목록의 최대값**이다(정본 `bmax` 와 같다).
 

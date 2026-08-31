@@ -5007,6 +5007,90 @@ fn a_row_without_a_ratio_gets_no_bar() {
     );
 }
 
+/// 정본 토큰 팝업의 `[기간]` 탭이 내려오는 모양 — **계층 트리를 실은 `table`**.
+///
+/// 서버(`screenspec._tree_rows`)는 줄마다 `depth`(월→주→일→시각)와 `expand`
+/// (`open`/`shut`/빈 것 = 잎)를 **싣는다**. 잎에 화살표를 안 붙이는 것도 서버의 뜻이다.
+fn period_tree_spec() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-period", "kind": "table",
+        "title": "토큰 사용량(추정) · 기간별", "hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Esc 닫기",
+        "rows": [
+            {"key": "month:2026-08", "label": "2026-08", "cols": ["4,167"],
+             "depth": 0, "expand": "open"},
+            {"key": "day:2026-08-31", "label": "08-31(월)", "cols": ["608"],
+             "depth": 1, "expand": "open", "bar": 1000},
+            {"key": "", "label": "23시", "cols": ["39"], "depth": 2, "expand": "",
+             "bar": 400},
+            {"key": "day:2026-08-30", "label": "08-30(일)", "cols": ["376"],
+             "depth": 1, "expand": "shut", "bar": 600},
+        ],
+        "text": "", "note": "", "selected": 0
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_table_that_carries_a_tree_is_drawn_as_a_tree_not_flat() {
+    // ★ pytmux-419 ③ — 정본 `[기간]` 탭은 월→주→일→시각을 **한 트리**로 보인다.
+    //   서버는 `depth`·`expand` 를 싣고 있는데 `"table"` 갈래가 그 둘을 **안 읽어서**
+    //   판이 통째로 평면이었다. 같은 자료를 받는 `"list"` 갈래는 오래전부터 읽는다
+    //   (pytmux-11 B) — 갈래 하나가 뒤처진 것이지 계약이 없던 것이 아니다.
+    //
+    //   ⛔ 들여쓰기를 서버가 글자로 넣지 않는 이유는 `"list"` 와 같다: 그러면 `label` 이
+    //      더는 자료가 아니게 되고 찾기·복사가 그 공백을 물고 간다.
+    let painted = painted_after(vec![layout_one_pane(), period_tree_spec()], &[]);
+    let joined = painted.join("\n");
+    assert!(
+        joined.contains('▾'),
+        "펼친 줄에 여는 화살표가 없다 — 표가 트리를 평면으로 그렸다:\n{joined}"
+    );
+    assert!(
+        joined.contains('▸'),
+        "접힌 줄에 닫힌 화살표가 없다:\n{joined}"
+    );
+    // 깊이가 다른 두 줄은 **들여쓰기가 다르다**(그래야 계층이 읽힌다).
+    // 월(0) = `"▾ "` · 일(1) = `"  ▾ "` — 앞의 공백 수가 곧 깊이다.
+    let prefixes: Vec<&String> = painted
+        .iter()
+        .filter(|t| t.ends_with("▾ ") || t.ends_with("▸ "))
+        .collect();
+    assert_eq!(prefixes.len(), 3, "펼침 표시가 셋이 아니다: {painted:?}");
+    let indents: Vec<usize> = prefixes
+        .iter()
+        .map(|t| t.len() - t.trim_start_matches(' ').len())
+        .collect();
+    assert!(
+        indents.contains(&0) && indents.contains(&2),
+        "깊이가 들여쓰기로 안 나온다(전부 같은 자리에 붙었다): {prefixes:?}"
+    );
+    // 시각 행(깊이 2 · 잎)은 화살표가 없어도 **그만큼 들여써져** 있다 — 안 그러면
+    // 잎이 부모와 같은 열에 서서 계층이 끊긴다.
+    assert!(
+        painted.iter().any(|t| t == "    "),
+        "잎이 깊이만큼 안 들여써졌다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_leaf_row_in_a_table_gets_no_arrow_that_would_lie() {
+    // ⛔ 대조군 — 잎(시각 행)은 눌러도 안 열린다. 거기에 화살표를 붙이면 그 화살표가
+    //    거짓말이고, 화살표를 **늘** 붙이면 위 시험은 아무 일도 안 해도 통과한다.
+    let plain: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "x", "kind": "table", "title": "t", "hint": "h",
+        "rows": [{"key": "a", "label": "leafrow", "cols": ["1"], "depth": 0,
+                  "expand": ""}],
+        "text": "", "note": "", "selected": 0
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), plain], &[]);
+    let joined = painted.join("\n");
+    assert!(
+        !joined.contains('▾') && !joined.contains('▸'),
+        "잎에 화살표를 붙였다 — 눌러도 안 열리는 줄이 열리는 것처럼 보인다:\n{joined}"
+    );
+}
+
 // ── 빈 목록도 말을 한다 (pytmux-405) ──────────────────────────────────────────────
 //
 // 정본은 목록이 비면 그 사실을 적는다(`(버퍼 없음)`·`(검색 결과 없음)`·`(지나간 알림 없음)`).

@@ -977,6 +977,51 @@ def _bar_rows(items):
 _PERIOD_TREE = "tree"
 
 
+def _limit_pcts(server):
+    """시각별 **5h%·1w%** 두 표(`{시각키: 비율}`). 없으면 빈 표 둘.
+
+    정본 `[기간]` 탭은 토큰 옆에 이 둘을 별도 칸으로 세운다 — 스크랩 Σ(토큰 칸)는 5h
+    소비를 과소반영하므로 «그 시각에 창이 얼마나 찼나»의 진짜 신호는 이쪽이다(권위는
+    `/usage` 스냅샷). 조인키는 트리 노드의 `bk` 다.
+
+    ⛔ 여기서 다시 집계하지 않는다 — `usagedb` 의 두 함수가 정본 화면이 부르는 그것이다.
+    """
+    from . import usagedb
+    getconn = getattr(server, "_tokens_db_conn", None)
+    conn = getconn() if callable(getconn) else None
+    if conn is None:
+        return {}, {}
+    try:
+        return (usagedb.hourly_limit_pct(conn) or {},
+                usagedb.hourly_week_pct(conn) or {})
+    except Exception:
+        # 옛 판 DB(limits 표 없음) — 칸 둘이 빠질 뿐 트리는 그대로 선다.
+        return {}, {}
+
+
+def _limit_cols(node, pct5h, pct1w):
+    """한 노드의 `5h%`·`1w%` 칸. **시각 행에만** 붙는다(정본과 같은 자리).
+
+    정본은 `show5h = (self._bucket == "hour" …)` 로 시각 뷰에서만 이 열을 켠다 — 5h 창은
+    시간 단위 개념이라 일·주·월 행에 붙이면 「그 날의 5h%」라는 없는 뜻이 생긴다.
+    여기서는 버킷 대신 **노드 종류**로 같은 판정을 한다(트리는 한 판에 다 있다).
+
+    ⚠ 두 칸은 **함께 움직인다** — 하나만 있으면 뒤 칸이 앞으로 당겨져 5h% 자리에 1w%
+    값이 서고, 그러면 숫자가 조용히 거짓말을 한다. 그래서 둘 다 없으면 아무것도 안 붙이고
+    하나만 있으면 나머지는 빈 칸으로 자리를 지킨다.
+    """
+    if node.get("kind") != "hour":
+        return []
+    bk = node.get("bk")
+    if not bk:
+        return []
+    a, b = pct5h.get(bk), pct1w.get(bk)
+    if a is None and b is None:
+        return []
+    return ["" if a is None else f"{int(a)}%",
+            "" if b is None else f"{int(b)}%"]
+
+
 def _tree_rows(server, opened=()):
     """정본과 **같은 산수**로 만든 계층 트리 줄들(pytmux-371 ①).
 
@@ -996,6 +1041,7 @@ def _tree_rows(server, opened=()):
     from . import usagetree
     hourly = getattr(server, "_hourly_index", None)
     nodes, _total = usagetree.build(recs, None, hourly, opened)
+    pct5h, pct1w = _limit_pcts(server)
     leaf = [n["tokens"] for n in nodes if n["kind"] in ("day", "hour")]
     top = max(leaf, default=0)
     rows = []
@@ -1010,7 +1056,7 @@ def _tree_rows(server, opened=()):
         rows.append({
             "key": n["key"] or "",
             "label": n["label"],
-            "cols": [f"{tok:,}"],
+            "cols": [f"{tok:,}"] + _limit_cols(n, pct5h, pct1w),
             "depth": n["level"],
             # 접힘과 **잎**은 다르다 — 안 열리는 화살표를 붙이면 그 화살표가 거짓말이다.
             "expand": ("open" if n["expanded"] else "shut") if n["expandable"] else "",

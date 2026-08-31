@@ -230,6 +230,8 @@
     "pytmuxlib/plugins/claude-code/screenspec.py:_hub_keys",
     "pytmuxlib/plugins/claude-code/screenspec.py:_hub_open",
     "pytmuxlib/plugins/claude-code/screenspec.py:_hub_rows",
+    "pytmuxlib/plugins/claude-code/screenspec.py:_limit_cols",
+    "pytmuxlib/plugins/claude-code/screenspec.py:_limit_pcts",
     "pytmuxlib/plugins/claude-code/screenspec.py:_limits_spec",
     "pytmuxlib/plugins/claude-code/screenspec.py:_machine_rows",
     "pytmuxlib/plugins/claude-code/screenspec.py:_machines_spec",

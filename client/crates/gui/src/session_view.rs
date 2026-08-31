@@ -5915,6 +5915,33 @@ impl SessionView {
                             ConstrainedBox::new(
                                 Flex::row()
                                     .with_main_axis_size(MainAxisSize::Min)
+                                    // ★ **표도 트리를 인다**(pytmux-419 ③). 정본 `[기간]`
+                                    //   탭은 월→주→일→시각을 한 트리로 보이고, 서버는
+                                    //   줄마다 `depth`·`expand` 를 **이미 싣고 있었다**
+                                    //   (`screenspec._tree_rows`). 이 갈래만 그 둘을 안
+                                    //   읽어서 판이 통째로 평면이었다 — `"list"` 갈래는
+                                    //   오래전부터 읽는다(pytmux-11 B). 계약이 없던 것이
+                                    //   아니라 소비자 하나가 뒤처진 것이다.
+                                    //
+                                    //   ⚠ **이름 상자 «안에»** 둔다: 표는 칸의 세로줄이
+                                    //   맞아야 읽히는 화면이라, 들여쓰기를 상자 밖에 두면
+                                    //   깊이마다 뒤 칸이 밀려 표가 아니게 된다.
+                                    .with_child(self.text(
+                                        format!(
+                                            "{}{}",
+                                            "  ".repeat(item.depth as usize),
+                                            // 잎에 화살표를 붙이면 그 화살표가 거짓말이다
+                                            // (눌러도 안 열린다) — 서버가 빈 값으로 그것을
+                                            // 말한다.
+                                            match item.expand.as_str() {
+                                                "open" => "▾ ",
+                                                "shut" => "▸ ",
+                                                _ => "",
+                                            }
+                                        ),
+                                        13.,
+                                        palette::DIM,
+                                    ))
                                     .with_child(self.text(item.say_label(), 13., fg))
                                     .finish(),
                             )
