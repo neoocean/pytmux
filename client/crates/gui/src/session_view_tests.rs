@@ -923,6 +923,39 @@ fn an_overlay_we_cannot_open_yet_says_why_instead_of_nothing() {
 }
 
 #[test]
+fn a_chrome_click_leaves_a_trace_before_any_gate_can_swallow_it() {
+    // ★ pytmux-366 — 시각을 눌러도 시계가 안 뜬다는 제보에서, 두 회차가 **판정 없이**
+    //   끝났다. 남은 물음은 하나다: 「클릭이 앱까지 왔나」. 그것을 재려면 종전에는
+    //   상류의 `dispatching typed action` 을 `RUST_LOG=debug` 로 켜야 했고, 실제로
+    //   2026-08-30 회차가 그것을 못 켜서 아무것도 못 갈랐다.
+    //
+    //   ⛔ 그리고 `set mouse off` 갈래는 **말없이** 돌아갔다 — 같은 증상의 옛 제보
+    //      (2026-08-02)의 뿌리가 바로 그것이었는데도.
+    //
+    // ⚠ 로그는 이 하네스가 못 읽는다(창도 없고 수집기도 없다). 그래서 재는 것은
+    //   **원문**이다 — 이 파일의 다른 원문 가드와 같은 사정이다.
+    let body = source_after("pub fn chrome_click(&mut self, target:", 1600);
+    let logged = body.find("log::info!").expect(&format!("크롬 클릭이 자취를 안 남긴다: {body}"));
+    let gate = body.find("if !self.config.mouse").expect("마우스 관문이 사라졌다");
+    assert!(
+        logged < gate,
+        "관문 **뒤에** 적는다 — 그러면 `set mouse off` 인 클릭은 여전히 자취가 없다: {body}"
+    );
+    // 관문이 삼킬 때도 왜인지 말한다 — 「닿았다」와 「닿았는데 껐다」는 다른 판정이다.
+    let swallowed = &body[gate..];
+    assert!(
+        swallowed.contains("log::info!"),
+        "마우스가 꺼져 있을 때 조용히 돌아간다 — 그 침묵이 옛 제보를 못 가르게 했다: {swallowed}"
+    );
+    // ⛔ 알림(`note_notice`)은 **안 띄운다** — 크롬 클릭은 잦고, 정본 TUI 는 마우스가
+    //    꺼졌을 때 아무 말도 안 한다(단말이 이벤트를 아예 안 보낸다).
+    assert!(
+        !body[..gate + 200.min(swallowed.len())].contains("note_notice"),
+        "마우스가 꺼졌다고 말풍선을 띄운다 — 정본에 없는 갈림이다: {body}"
+    );
+}
+
+#[test]
 fn the_palette_entry_and_the_key_meet_at_the_same_action() {
     // 입구가 둘이어도 경로는 하나다 — 팔레트의 `paste-clipboard` 도 키와 **같은 칸**에
     // 실려 창을 쥔 자리로 간다.
