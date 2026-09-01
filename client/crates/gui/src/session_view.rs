@@ -1259,6 +1259,8 @@ impl SessionView {
             self.settle_settings_cursor();
             // 플러그인 글 판도 같다(pytmux-184 ⑵) — 끝에서 더 눌러 둔 만큼 `↑` 가 헛돈다.
             self.settle_plugin_scroll();
+            // 그리고 플러그인 **목록** 판(pytmux-432) — 위 셋 중 어느 것도 그 판을 안 봤다.
+            self.settle_plugin_cursor();
             // 고른 것을 **뷰가 해석한다** — core 는 목록의 내용을 모른다(그 경계 덕에
             // 목록 화면이 늘어도 core 는 그대로다).
             match outcome {
@@ -7087,6 +7089,41 @@ impl SessionView {
             return;
         };
         self.screens.clamp_scroll(lines.saturating_sub(budget));
+    }
+
+    /// 플러그인 **목록 판**의 커서를 줄 수 안으로 되돌린다(pytmux-432).
+    ///
+    /// # 이 자리가 비어 있었다
+    ///
+    /// 같은 규약의 형제가 셋인데(`settle_info_tabs` · `settle_settings_cursor` ·
+    /// `settle_plugin_scroll`) **어느 것도 `Screen::PluginView` 의 목록을 안 봤다**:
+    /// 윗형은 `Settings`·`Plugins`·`Cursor` 만 보고, 바로 위 글 판 형제는 제 문서에
+    /// *"목록형은 `settle_settings_cursor` 계열이 접는다"* 고 적었는데 **그쪽은 이 화면을
+    /// 안 받는다.** 그래서 `press_list` 의 `Down`·`PageDown`·`End` 가 두고 간 자리를
+    /// 아무도 안 접었다.
+    ///
+    /// ☠ 특히 `End` 는 `usize::MAX` 를 둔다 — *"끝이 몇 번째인지는 뷰가 안다"* 는 규약
+    /// 위에 선 값인데(pytmux-417 ①) 그 뷰가 없었다. 실측(2026-09-01 · macOS · 실 GUI ·
+    /// `:usage-panel`): `End` 뒤 `↑` 를 **세 번** 눌러도 커서가 마지막 줄에 그대로 있다.
+    /// 되돌리려면 10^19 번을 눌러야 한다.
+    ///
+    /// ⛔ **그리는 쪽이 이미 `min(rows-1)` 로 자르는데 왜 또 접나** — 그 자름은 형제
+    /// 문서들이 적어 둔 그대로 **보이는 것**만 자른다. core 의 `selected` 는 그대로
+    /// 자라므로 사용자에게는 "이 판은 위로 안 간다"로 보인다.
+    ///
+    /// ⚠ 목록·표·판(`list`·`table`·`panel`) 모두 자리를 `spec.rows` 로 세므로 한 줄로 접는다.
+    /// 글 판(`text`)은 `rows` 가 비어 여기서 일찍 돌아간다 — 그쪽은 위 형제가 본다.
+    fn settle_plugin_cursor(&mut self) {
+        if self.screens.top() != Some(Screen::PluginView) {
+            return;
+        }
+        let Some(rows) = self.state.plugin_screen().map(|spec| spec.rows.len()) else {
+            return;
+        };
+        if rows == 0 {
+            return;
+        }
+        self.screens.clamp_selection(rows);
     }
 
     /// 설정·플러그인 판의 커서를 **줄 수 안으로** 되돌린다(pytmux-374 ⑶).

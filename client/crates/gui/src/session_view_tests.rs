@@ -6051,6 +6051,45 @@ fn the_text_panel_stops_scrolling_at_the_end_instead_of_running_away() {
 }
 
 #[test]
+fn the_list_panel_cursor_comes_back_from_the_end_in_one_press() {
+    // 제보(pytmux-432 · 실 GUI 로 잰 것): `:usage-panel` 에서 `End` 를 누른 뒤 `↑` 를
+    // **세 번** 눌러도 커서가 마지막 줄에 그대로 있었다.
+    //
+    // 까닭은 `press_list` 의 `End` 가 `usize::MAX` 를 두기 때문이다 — *"끝이 몇 번째인지는
+    // 뷰가 안다"* 는 규약 위에 선 값인데(pytmux-417 ①) **그 뷰가 없었다**: 형제 셋
+    // (`settle_info_tabs`·`settle_settings_cursor`·`settle_plugin_scroll`) 중 어느 것도
+    // `Screen::PluginView` 의 «목록»을 안 봤다. 되돌리려면 10^19 번을 눌러야 한다.
+    //
+    // ⛔ 값이 아니라 **그림**을 본다(형제 오라클과 같은 이유) — 자르는 자리가 어디든
+    //    사용자가 겪는 것은 「한 번 눌러 한 줄 올라가나」 하나다.
+    let rows: Vec<serde_json::Value> = (1..=8)
+        .map(|n| serde_json::json!({"key": format!("k{n}"), "cols": [format!("행{n:02}")]}))
+        .collect();
+    let list: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-usage-view", "kind": "list",
+        "title": "Claude usage limit (/usage)", "hint": "", "rows": rows,
+        "text": "", "note": "", "keys": {}
+    }))
+    .unwrap();
+
+    let end = vec![(Key::End, Mods::NONE)];
+    let mut end_up = end.clone();
+    end_up.push((Key::Up, Mods::NONE));
+
+    let at_end = painted_after(vec![layout_one_pane(), list.clone()], &end);
+    let after_up = painted_after(vec![layout_one_pane(), list], &end_up);
+
+    assert!(
+        at_end.iter().any(|t| t.contains("행08")),
+        "End 를 눌렀는데 마지막 줄이 안 보인다 — 이 오라클의 전제가 깨졌다: {at_end:?}"
+    );
+    assert_ne!(
+        at_end, after_up,
+        "`End` 뒤 `↑` 한 번이 아무것도 안 바꿨다 — 커서가 목록 밖으로 달아났다(pytmux-432)"
+    );
+}
+
+#[test]
 fn a_kind_we_cannot_draw_says_so_instead_of_showing_an_empty_panel() {
     // 조용한 누락이 이 저장소의 상습 결함이다(설계 §8-5).
     //
