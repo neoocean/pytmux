@@ -11,7 +11,7 @@ client.py 의 거대 클로저(build_client_app)에 갇혀 있던 그리기 헬�
 — 디렉토리를 지우면 그 그리기 코드도 함께 사라지는 완전한 delete-to-disable."""
 from __future__ import annotations
 
-from .cellwidth import char_advance, cluster_cells
+from .cellwidth import attaches, char_advance, cluster_cells
 from .clientutil import _char_cells
 
 
@@ -93,14 +93,22 @@ def paint_runs(cells, runs, W, H, theme):
             # ★ **폭 0 글자는 칸을 안 먹고 앞 칸의 글자에 얹힌다**(pytmux-407).
             #   제 칸을 주면 ⑴ 뒤따르는 글자가 한 칸씩 밀리고 ⑵ 그 글자가 앞 글자와
             #   갈려 셰이퍼에 홀로 가 **흑백**으로 그려진다.
-            if char_advance(ch) == 0:
-                if x > 0 and 0 <= y < H:
-                    at = x - 1
-                    # 넓은 글자의 **본체**에 얹는다(연속 칸이 아니라).
-                    if cells[y][at][0] == "" and at > 0:
-                        at -= 1
-                    prev_ch, prev_st = cells[y][at]
+            # ★ 얹히는 글자는 칸을 안 쓴다 — 폭 0 이거나 **군집이 이어질 때**
+            #   (pytmux-407 ⓐ · 판정은 `cellwidth.attaches` 한 벌이다).
+            #   ⚠ **자리를 먼저 가둔다**: 이 갈래는 이제 «폭 0 일 때만» 이 아니라
+            #     모든 글자에서 지난다 — 런이 행 오른쪽 끝을 넘어가면 `x - 1` 이 행
+            #     밖이라 그대로 색인하면 터진다(실측 2026-09-01: 좁은 창의 한도 판이
+            #     `list index out of range` 로 죽었다).
+            if 0 <= y < H and 0 < x <= W:
+                at = x - 1
+                # 넓은 글자의 **본체**에 얹는다(연속 칸이 아니라).
+                if cells[y][at][0] == "" and at > 0:
+                    at -= 1
+                prev_ch, prev_st = cells[y][at]
+                if prev_ch and attaches(prev_ch, ch):
                     cells[y][at] = (prev_ch + ch, prev_st)
+                    continue
+            if char_advance(ch) == 0:
                 continue
             w = _char_cells(ch)
             if w == 2 and x + 1 < W:

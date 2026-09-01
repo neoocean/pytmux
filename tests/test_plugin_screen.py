@@ -626,62 +626,13 @@ async def test_collapsing_every_warning_day_is_not_read_as_no_choice_at_all():
         f"다 접어 뒀는데 저 혼자 펴졌다: {back['rows']}")
 
 
-async def test_every_pscreen_word_the_server_speaks_is_registered_where_the_server_reads():
-    """★ **전수 게이트** — 서버가 짓는 글은 서버가 읽는 카탈로그에 있어야 한다(pytmux-419).
-
-    `screens.py` 는 Textual 이라 **서버가 안 읽는다**(플러그인 머리말의 무게 규칙 — 화면은
-    실제로 열 때 지연 import 한다). 그런데 화면 **스펙**을 짓는 것은 서버다. 그래서 서버가
-    쓰는 `pscreen.*` 를 `screens.py` 카탈로그에만 적어 두면 `i18n.t` 가 **키를 그대로**
-    돌려주고, 그 값이 어디로 흘러가느냐에 따라 둘로 갈린다:
-
-    - `pscreen.weekdays` — `"pscreen.weekdays".split(",")` 는 원소가 **하나**라
-      `weekdays[wd]` 가 월요일 말고는 전부 `IndexError` 다. GUI 기간 탭이 **자료가 있는
-      홈에서 아예 안 떴다**(다섯 중 하나가 이랬다).
-    - 나머지는 안 터지고 **키 문자열이 그대로 화면에 뜬다** — 더 조용하다.
-
-    ⛔ 정본 팝업은 `screens.py` 를 이미 물고 있어 멀쩡했다. 그래서 이 갈림은 **GUI 에서만**
-    보이고 오래 안 잡혔다 — 사람이 지키는 규칙이 아니라 게이트로 센다.
-
-    ⚠ **자식 프로세스에서 잰다**: 이 스위트는 전 모듈을 한 프로세스에서 돌아서, 앞서 도는
-    시험이 `screens.py` 를 한 번이라도 import 하면 카탈로그가 채워져 **가짜 초록**이 된다.
-    """
-    import subprocess, sys, os, json, textwrap
-    probe = textwrap.dedent('''
-        import sys, os, re, io, importlib
-        sys.path.insert(0, os.getcwd())
-        base = os.path.join("pytmuxlib", "plugins", "claude-code")
-        # 서버 프로세스가 실제로 무는 모듈들(Textual 없이 도는 것).
-        server_mods = ["screenspec.py", "usagetree.py", "usagelog.py",
-                       "__init__.py", "servermixin.py", "usagedb.py"]
-        used = {}
-        for m in server_mods:
-            fp = os.path.join(base, m)
-            if not os.path.exists(fp):
-                continue
-            src = io.open(fp, encoding="utf-8").read()
-            for k in re.findall(r'i18n\.(?:t|phrase)\(\s*"(pscreen\.[a-z0-9_]+)"', src):
-                used.setdefault(k, set()).add(m)
-        i18n = importlib.import_module("pytmuxlib.i18n")
-        importlib.import_module("pytmuxlib.plugins.claude-code")   # 서버가 무는 만큼만
-        assert "pytmuxlib.plugins.claude-code.screens" not in sys.modules, \
-            "탐침이 Textual 화면을 물어 버렸다 — 이 시험은 아무것도 못 잰다"
-        missing = sorted(k for k in used if i18n.t(k) == k)
-        print(repr((len(used), missing, {k: sorted(v) for k, v in used.items()
-                                         if k in missing})))
-    ''')
-    out = subprocess.run([sys.executable, "-c", probe], capture_output=True,
-                         text=True, cwd=os.getcwd(), timeout=120)
-    assert out.returncode == 0, f"탐침이 죽었다:\n{out.stderr}"
-    total, missing, where = eval(out.stdout.strip())
-    assert total >= 20, f"키를 {total}개밖에 못 찾았다 — 정규식이 낡았다"
-    assert not missing, (
-        f"서버가 쓰는 pscreen.* {len(missing)}개가 서버 카탈로그에 없다: "
-        f"{where}. `screens.py`(Textual)에만 적으면 서버는 못 읽는다 — "
-        f"`__init__.py` 의 `i18n.register` 로 옮길 것(pytmux-419)")
-
-
 async def test_the_period_tree_actually_builds_on_a_server_that_never_loaded_textual():
-    """⛔ 위 게이트의 **대조군** — 키가 비면 판이 «안 예쁘다» 가 아니라 **안 선다**.
+    """⛔ 카탈로그 게이트의 **대조군** — 키가 비면 판이 «안 예쁘다» 가 아니라 **안 선다**.
+
+    게이트 자체는 저장소 한 벌이다(`test_i18n.py::
+    test_every_word_the_server_speaks_is_registered_where_the_server_reads` —
+    처음에는 여기 `pscreen.*` 만 세는 사본이 있었는데, 같은 것을 두 곳에서 세면 한쪽만
+    고쳐진다). 여기 남는 것은 **값이 얼마인지**를 못박는 이 대조군이다.
 
     글자 하나가 빠졌을 때의 값이 얼마인지를 못박는다: 서버 모양(Textual 미로드)에서
     기간 판을 실제로 지어 본다. 이것이 GUI 사용자가 보던 그 자리다.
@@ -765,9 +716,9 @@ async def test_a_half_missing_limit_pair_keeps_its_place_instead_of_shifting_lef
     import importlib
     ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
     node = {"kind": "hour", "bk": "2026-08-31 22:00"}
-    assert ss._limit_cols(node, {}, {"2026-08-31 22:00": 63}) == ["", "63%"]
-    assert ss._limit_cols(node, {"2026-08-31 22:00": 9}, {}) == ["9%", ""]
-    assert ss._limit_cols(node, {}, {}) == []
+    assert ss._limit_cols(node, {}, {"2026-08-31 22:00": 63}) == (["", "63%"], ["", "warn"])
+    assert ss._limit_cols(node, {"2026-08-31 22:00": 9}, {}) == (["9%", ""], ["ok", ""])
+    assert ss._limit_cols(node, {}, {}) == ([], [])
     # 시각이 아닌 행 · 조인키가 없는 행은 언제나 빈다.
     #
     # ⚠ 첫 줄은 **`bk` 가 있는 날짜 행**이다. 오늘 `usagetree` 는 시각 노드에만 `bk` 를
@@ -775,9 +726,163 @@ async def test_a_half_missing_limit_pair_keeps_its_place_instead_of_shifting_lef
     #   아무 시험이 안 운다(실측 — 뮤테이션이 안 물렸다). 조인키가 다른 종류로 번져도
     #   이 칸이 안 따라가는 것이 계약이므로 여기서 그 계약을 직접 문다.
     assert ss._limit_cols({"kind": "day", "bk": "2026-08-31 22:00"},
-                          {"2026-08-31 22:00": 9}, {"2026-08-31 22:00": 63}) == []
-    assert ss._limit_cols({"kind": "day", "bk": None}, {"x": 1}, {"x": 2}) == []
-    assert ss._limit_cols({"kind": "hour", "bk": None}, {"x": 1}, {"x": 2}) == []
+                          {"2026-08-31 22:00": 9}, {"2026-08-31 22:00": 63}) == ([], [])
+    assert ss._limit_cols({"kind": "day", "bk": None}, {"x": 1}, {"x": 2}) == ([], [])
+    assert ss._limit_cols({"kind": "hour", "bk": None}, {"x": 1}, {"x": 2}) == ([], [])
+
+
+async def test_the_pct_columns_carry_their_meaning_next_to_their_value():
+    """정본은 `5h%`·`1w%` 를 비율에 따라 초록·노랑·빨강으로 칠한다(pytmux-419 ⑥).
+
+    ☠ **줄 태그로는 못 말한다** — 같은 줄 안에서 토큰 칸은 한 색이고 뒤 둘만 갈린다.
+    그래서 칸마다의 뜻을 `coltags` 로 싣고, 그 차례는 `cols` 와 **같아야** 한다: 어긋나면
+    5h% 의 뜻이 1w% 칸에 붙어 **색이 조용히 거짓말을 한다**(값이 어긋나는 것과 같은 부류).
+
+    ⛔ 실려 가는 것은 **이름**이다(색이 아니다) — 색을 실으면 서버가 UI 를 알게 되고
+    (설계 §10 위험표), 두 클라가 각자 임계를 적으면 갈리는 날 아무도 안 운다.
+    """
+    import importlib, time
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    now = time.time()
+    recs = [{"ts": now - i * 3600, "tokens": 1000 + i, "account": "a"}
+            for i in range(6)]
+    keys = sorted({time.strftime("%Y-%m-%d %H:00", time.localtime(r["ts"]))
+                   for r in recs})
+    # 세 등급이 다 나오게 심는다 — 한 등급만 재면 「늘 그 이름」인 판도 통과한다.
+    p5 = {k: v for k, v in zip(keys, (9, 55, 94, 9, 55, 94))}
+    p1 = {k: 100 for k in keys}
+
+    class _Srv(_TokenSrv):
+        def _tokens_db_conn(self):
+            return object()
+
+    with harness.patched(ss, _usage_records=lambda _s, limit=4000: recs,
+                         _limit_pcts=lambda _s: (p5, p1)):
+        spec = ss.open_spec(_Srv(), None, "token-period")
+    rows = [r for r in spec["rows"] if not str(r["key"]).startswith("goto:")]
+    hours = [r for r in rows if r["label"].endswith(("시", "h"))]
+    assert hours, f"시각 행이 없다: {[r['label'] for r in rows]}"
+    seen = set()
+    for r in hours:
+        tags = r.get("coltags")
+        assert tags is not None, f"시각 행에 칸의 뜻이 없다({r['label']}): {r}"
+        assert len(tags) == len(r["cols"]), (
+            f"뜻과 칸의 길이가 다르다({r['label']}): {tags} vs {r['cols']} — "
+            "어긋나면 색이 옆 칸의 뜻을 진다")
+        assert tags[0] == "", f"토큰 칸에 뜻을 달았다({r['label']}): {tags}"
+        # 값과 뜻이 **짝이 맞나** — 숫자를 다시 읽어 임계로 견준다.
+        pct = int(r["cols"][1].rstrip("%"))
+        want = "crit" if pct >= 80 else "warn" if pct >= 50 else "ok"
+        assert tags[1] == want, f"{pct}% 의 뜻이 {tags[1]!r} 다({r['label']})"
+        seen.add(tags[1])
+        assert tags[2] == "crit", f"1w% 100% 가 위험이 아니다: {tags}"
+    assert seen == {"ok", "warn", "crit"}, f"세 등급이 다 안 나왔다: {seen}"
+    # ⛔ 대조군 — 뜻이 없는 행(일·월)은 뜻도 안 싣는다. 빈 이름을 늘 실으면 소비자가
+    #    「등급 없음」과 「초록」을 못 가른다.
+    for r in rows:
+        if r not in hours:
+            assert not r.get("coltags"), (
+                f"시각이 아닌 행에 칸의 뜻이 붙었다({r['label']}): {r.get('coltags')}")
+
+
+async def test_the_pct_threshold_is_one_ruler_both_clients_read():
+    """⛔ **눈금은 한 벌이다** — 정본의 두 셀과 스펙이 같은 함수를 부른다.
+
+    종전에는 `screens.py` 의 `_lim5h_cell`·`_lim_week_cell` 이 `pct >= 80` 을 **각자**
+    적고 있었다. 그 자리는 Textual 을 무는 화면 안이라 서버가 못 읽고, 그래서 GUI 로
+    내려보낼 길이 없었다(머리줄이 없던 사정과 같다 — pytmux-419 ②). 두 벌로 두면
+    한쪽만 고치는 날 같은 비율이 두 화면에서 다른 색으로 뜬다.
+    """
+    import importlib, inspect
+    uh = importlib.import_module("pytmuxlib.plugins.claude-code.usagehead")
+    scr = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
+    for meth in (scr.TokenLogScreen._lim5h_cell, scr.TokenLogScreen._lim_week_cell):
+        src = inspect.getsource(meth)
+        assert "_pct_style(" in src, (
+            f"{meth.__name__} 이 공유 눈금을 안 부른다 — 임계가 두 벌이 됐다")
+        assert ">= 80" not in src and ">= 50" not in src, (
+            f"{meth.__name__} 이 임계를 다시 적고 있다: 판정은 usagehead.pct_level 한 벌이다")
+    assert "usagehead.pct_level" in inspect.getsource(scr._pct_style)
+    # 그리고 그 한 벌이 정본 그림 그대로를 가른다(첨부의 초록 9% · 노랑 63% · 붉은 94%).
+    assert uh.pct_level(9) == "ok"
+    assert uh.pct_level(49.9) == "ok"
+    assert uh.pct_level(50) == "warn"
+    assert uh.pct_level(63) == "warn"
+    assert uh.pct_level(79) == "warn"
+    assert uh.pct_level(80) == "crit"
+    assert uh.pct_level(94) == "crit"
+    # 값이 없으면 **등급도 없다** — 0% 로 접으면 「모른다」가 「여유롭다」로 읽힌다.
+    assert uh.pct_level(None) == ""
+    assert uh.pct_level("") == ""
+
+
+async def test_every_token_panel_carries_the_same_shared_header(): 
+    """★ 정본은 이 다섯이 **한 팝업의 탭**이라 머리줄을 나눠 쓴다(pytmux-419 ②).
+
+    GUI 는 판이 여럿이라 같은 뜻을 **판마다 같은 줄**로 낸다 — 판을 옮겼다고 「지금 얼마나
+    찼나」가 사라지면 그건 갈림이다. `_HUB` 를 전수로 재는 시험과 **같은 이유로** 여기서도
+    전수로 잰다: 판마다 손으로 적으면 새 판이 생길 때 어떤 판에서는 안 보인다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    # ⚠ **모델 고르개는 이 다섯이 아니다.** `_HUB` 에 있지만 정본에서 그것은 [한도] 탭이
+    #   여는 **딸린 판**(`모델·컨텍스트 고르기 →`)이라 탭 띠의 칸이 아니고, 머리줄도 없다.
+    #   여기 세는 것은 토큰 판들(`claude-*`)이다.
+    sids = [sid for _k, _l, sid in ss._HUB if sid.startswith("claude-")]
+    assert len(sids) >= 5, sids
+    with harness.patched(ss, _summary_head=lambda _s: "5h 29% · 주 22% · ~Σ7"):
+        for sid in sids:
+            name = sid if sid != "claude-usage-panel" else "limits"
+            spec = ss.open_spec(srv, None, name)
+            assert spec is not None, f"{sid} 판이 안 열린다"
+            assert spec.get("head") == "5h 29% · 주 22% · ~Σ7", (
+                f"{sid} 에 공유 머리줄이 없다: {spec.get('head')!r}")
+
+
+async def test_the_shared_header_is_the_same_words_the_canonical_popup_writes():
+    """⛔ **산수는 한 벌이다** — 정본 팝업과 스펙이 같은 함수를 부른다.
+
+    종전에는 그 글을 `screens.py`(Textual) 안의 네 메서드가 지었고, 서버는 그 파일을 안
+    읽으니 GUI 판에는 머리줄이 **아예 없었다**([[pytmux-371]] ⓑ). 옮기면서 두 벌이 되면
+    같은 값이 두 화면에서 다른 글로 뜬다 — `usagetree` 를 뽑을 때와 같은 자리다.
+    """
+    import importlib, inspect
+    uh = importlib.import_module("pytmuxlib.plugins.claude-code.usagehead")
+    scr = importlib.import_module("pytmuxlib.plugins.claude-code.screens")
+    for meth, fn in ((scr.TokenLogScreen._limit_summary, "usagehead.limit_summary"),
+                     (scr.TokenLogScreen._sigma_text, "usagehead.sigma_text"),
+                     (scr.TokenLogScreen._host_text, "usagehead.host_text"),
+                     (scr.TokenLogScreen._unknown_text, "usagehead.unknown_text")):
+        src = inspect.getsource(meth)
+        assert fn in src, f"정본이 공유 한 벌을 안 부른다({fn}) — 산수가 두 벌이 됐다"
+    # 그리고 그 한 벌이 정본 그림 그대로를 짓는다(제보 첨부의 그 줄).
+    line = uh.summary_line(
+        {"session": {"pct": 29}, "week_all": {"pct": 22}},
+        15_000_000, 15_000_000,
+        {"full": 22641900000, "cache_read": 22308900000, "cache_create": 262200000},
+        {"<local>": 15, "91ddca94": 85}, {"total": 100, "unknown": 45})
+    for want in ("5h 29%", "22%", "Σ22641.9M", "91ddca94 85%", "45%"):
+        assert want in line, f"{want!r} 가 머리줄에 없다: {line!r}"
+
+
+async def test_a_server_with_nothing_to_say_sends_no_header_instead_of_zeros():
+    """⛔ 대조군 — 자료가 없으면 **빈 줄**이고, 클라는 빈 `head` 를 안 그린다.
+
+    없는 값을 `0` 으로 적으면 「안 쓴 것」과 「모르는 것」이 한 그림이 된다. 그리고 머리줄이
+    늘 있으면 위 전수 시험은 아무 일도 안 해도 통과한다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+
+    class _Bare:
+        def _tokens_db_conn(self):
+            return None
+
+        def _read_warn_history(self, limit=50):
+            return []
+
+    assert ss._summary_head(_Bare()) == "", ss._summary_head(_Bare())
 
 
 async def test_the_bars_are_scaled_to_the_biggest_row_not_to_the_total():

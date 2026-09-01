@@ -164,14 +164,21 @@ i18n.register({
 
 
 def _spec(sid, kind, title, hint, rows=(), text="", note="", keys=None, selected=0,
-          carried=None):
+          carried=None, head=""):
     """스펙 한 판 — 칸을 빠뜨리지 않게 한 곳에서 짓는다.
 
     `rows`·`text` 를 늘 싣는 이유: 클라 파서가 `default` 로 채우긴 하지만, 빠진 칸은
-    "안 온 것"과 "빈 것"의 구분을 사람이 못 하게 만든다."""
+    "안 온 것"과 "빈 것"의 구분을 사람이 못 하게 만든다.
+
+    `head` 는 판 **위** 한 줄이다(`PluginScreen::head` — `mdir` 의 볼륨 줄이 그 자리다).
+    토큰 판 다섯이 이 칸으로 정본의 **공유 머리줄**을 낸다(pytmux-419 ②) — 정본은 그
+    다섯이 한 팝업의 탭이라 머리줄을 나눠 쓰는데, GUI 는 판이 여럿이라 **판마다 같은
+    줄**을 실어 같은 뜻을 낸다.
+    ⛔ `note` 와 다른 것이다: 저것은 실패·빈 목록이라 평상시엔 비고, 이것은 평상시에 늘
+    있는 자료다(그 구분은 `proto::session` 의 `head`/`note` 주석이 못박아 뒀다)."""
     return {
         "t": "plugin_screen", "id": sid, "kind": kind,
-        "title": title, "hint": hint,
+        "title": title, "hint": hint, "head": head,
         "rows": list(rows), "text": text, "note": note,
         "selected": max(0, int(selected)),
         "keys": dict(keys or {}),
@@ -484,6 +491,7 @@ def _token_log_spec(server, selected=0):
     return _spec("claude-token-log", "table", title,
                  i18n.t("pscreen.spec_tklog_hint"),
                  rows=rows, note=note, selected=selected,
+                 head=_summary_head(server),
                  keys=_hub_keys("claude-token-log"),
                  carried={"title": title_spec})
 
@@ -530,6 +538,7 @@ def _machines_spec(server, selected=0):
     return _spec("claude-token-machines", "table", title,
                  i18n.t("pscreen.spec_machines_hint"),
                  rows=rows, note=note, selected=selected,
+                 head=_summary_head(server),
                  keys=_hub_keys("claude-token-machines"),
                  carried={"title": title_spec})
 
@@ -607,6 +616,7 @@ def _limits_spec(server, selected=0):
                  i18n.t("ccmsg.usage_title"), i18n.t("cusage.hint"),
                  rows=rows, selected=selected,
                  note=("" if has_data else i18n.t("ccmsg.usage_no_data")),
+                 head=_summary_head(server),
                  keys=_hub_keys("claude-usage-panel", {"enter": "apply"}))
 
 
@@ -912,6 +922,7 @@ def _warn_spec(server, selected=0, open_days=None):
                  i18n.t("pscreen.spec_warns_title"),
                  i18n.t("pscreen.spec_warns_hint"),
                  rows=rows, note=note, selected=selected,
+                 head=_summary_head(server),
                  keys=_hub_keys("claude-warn-history", {"enter": "toggle"}))
 
 
@@ -940,11 +951,10 @@ def _agg_rows(server, bucket="day", dim="account", order="time"):
         return None, i18n.t("pscreen.spec_tklog_nodb")
     if not recs:
         return [], i18n.t("pscreen.spec_tklog_empty")
-    from . import usagelog
-    weekdays = i18n.t("pscreen.weekdays").split(",")
+    from . import usagelog, hour_suffix, weekday_names
     view = usagelog.agg_view(recs, bucket, None, dim, order,
-                             weekdays=weekdays,
-                             hour_suffix=i18n.t("pscreen.hour_suffix"))
+                             weekdays=weekday_names(),
+                             hour_suffix=hour_suffix())
     key = "groups" if dim == "session" else "buckets"
     return view.get(key) or [], ""
 
@@ -977,6 +987,41 @@ def _bar_rows(items):
 _PERIOD_TREE = "tree"
 
 
+def _summary_head(server):
+    """토큰 판 다섯이 나눠 쓰는 **공유 머리줄** 한 줄(pytmux-419 ②).
+
+    ⛔ 산수는 여기 없다 — `usagehead.summary_line` 한 벌이고 **정본 팝업도 그것을
+    부른다**(`screens.TokenLogScreen._limit_summary`·`_sigma_text`). 두 벌로 적으면 같은
+    값이 두 화면에서 다른 글로 뜬다(`usagetree` 와 같은 처방).
+
+    자료가 없으면 **빈 문자열**이고, 그러면 클라가 그 줄을 안 그린다 — 없는 값을 0 으로
+    적으면 「안 쓴 것」과 「모르는 것」이 한 그림이 된다.
+    """
+    from . import usagedb, usagehead
+    getconn = getattr(server, "_tokens_db_conn", None)
+    conn = getconn() if callable(getconn) else None
+    total_all = xc = hosts = cov = None
+    if conn is not None:
+        try:
+            total_all = usagedb.total_all(conn) if hasattr(usagedb, "total_all") else None
+            xc = usagedb.xc_totals(conn) if hasattr(usagedb, "xc_totals") else {}
+            _h = getattr(usagedb, "xc_totals_by_host", None)
+            hosts = _h(conn) if _h else {}
+            _c = getattr(usagedb, "xc_account_coverage", None)
+            cov = _c(conn) if _c else {}
+        except Exception:
+            # 옛 판 DB — 머리줄이 빠질 뿐 판은 그대로 선다.
+            return ""
+    usage = getattr(server, "_usage", None)
+    if not isinstance(usage, dict) and not total_all and not (xc or {}).get("full"):
+        # ⛔ **아무것도 모를 때는 아무 말도 안 한다.** 여기서 그냥 지으면 `~Σ0` 이 나오고,
+        #    그 글자는 「토큰을 안 썼다」로 읽힌다 — 실제로는 「모른다」다(DB 가 없거나
+        #    아직 안 읽었다). 빈 줄이면 클라가 그 자리를 아예 안 그린다.
+        return ""
+    win = int(total_all or 0)
+    return usagehead.summary_line(usage, total_all, win, xc, hosts, cov).strip()
+
+
 def _limit_pcts(server):
     """시각별 **5h%·1w%** 두 표(`{시각키: 비율}`). 없으면 빈 표 둘.
 
@@ -1000,7 +1045,7 @@ def _limit_pcts(server):
 
 
 def _limit_cols(node, pct5h, pct1w):
-    """한 노드의 `5h%`·`1w%` 칸. **시각 행에만** 붙는다(정본과 같은 자리).
+    """한 노드의 `5h%`·`1w%` **칸과 그 칸의 뜻** — `(cols, tags)`. **시각 행에만** 붙는다.
 
     정본은 `show5h = (self._bucket == "hour" …)` 로 시각 뷰에서만 이 열을 켠다 — 5h 창은
     시간 단위 개념이라 일·주·월 행에 붙이면 「그 날의 5h%」라는 없는 뜻이 생긴다.
@@ -1009,17 +1054,24 @@ def _limit_cols(node, pct5h, pct1w):
     ⚠ 두 칸은 **함께 움직인다** — 하나만 있으면 뒤 칸이 앞으로 당겨져 5h% 자리에 1w%
     값이 서고, 그러면 숫자가 조용히 거짓말을 한다. 그래서 둘 다 없으면 아무것도 안 붙이고
     하나만 있으면 나머지는 빈 칸으로 자리를 지킨다.
+
+    ★ **뜻(`tags`)도 여기서 함께 낸다**(pytmux-419 ⑥). 정본은 이 두 칸을 비율에 따라
+    초록·노랑·빨강으로 칠하는데, 그 판정은 `usagehead.pct_level` 한 벌이고 실려 가는
+    것은 **이름**이다(색을 실으면 서버가 UI 를 알게 된다 — 설계 §10 위험표). 칸이 빈
+    자리는 뜻도 비어야 한다 — 값이 없는데 초록이면 그 초록이 「여유롭다」로 읽힌다.
     """
+    from . import usagehead
     if node.get("kind") != "hour":
-        return []
+        return [], []
     bk = node.get("bk")
     if not bk:
-        return []
+        return [], []
     a, b = pct5h.get(bk), pct1w.get(bk)
     if a is None and b is None:
-        return []
-    return ["" if a is None else f"{int(a)}%",
-            "" if b is None else f"{int(b)}%"]
+        return [], []
+    return (["" if a is None else f"{int(a)}%",
+             "" if b is None else f"{int(b)}%"],
+            [usagehead.pct_level(a), usagehead.pct_level(b)])
 
 
 def _tree_rows(server, opened=()):
@@ -1053,10 +1105,16 @@ def _tree_rows(server, opened=()):
                          "depth": n["level"], "expand": ""})
             continue
         tok = int(n["tokens"] or 0)
+        lim_cols, lim_tags = _limit_cols(n, pct5h, pct1w)
         rows.append({
             "key": n["key"] or "",
             "label": n["label"],
-            "cols": [f"{tok:,}"] + _limit_cols(n, pct5h, pct1w),
+            "cols": [f"{tok:,}"] + lim_cols,
+            # 칸마다의 **뜻** — `cols` 와 같은 차례다(pytmux-419 ⑥). 토큰 칸은 뜻이
+            # 없어 빈 이름이고(정본도 그 칸은 한 색이다), 뒤 둘만 비율 의미색을 진다.
+            # ⚠ 길이를 맞춰 실는다: 어긋나면 5h% 의 뜻이 1w% 칸에 붙어 **색이 조용히
+            #   거짓말을 한다**(칸 값이 어긋나는 것과 같은 부류의 사고다).
+            "coltags": ([""] + lim_tags) if lim_tags else [],
             "depth": n["level"],
             # 접힘과 **잎**은 다르다 — 안 열리는 화살표를 붙이면 그 화살표가 거짓말이다.
             "expand": ("open" if n["expanded"] else "shut") if n["expandable"] else "",
@@ -1079,6 +1137,7 @@ def _period_spec(server, selected=0, opened=None):
                  i18n.t("pscreen.spec_period_title"),
                  i18n.t("pscreen.spec_period_hint"),
                  rows=rows, note=note, selected=selected,
+                 head=_summary_head(server),
                  keys=_hub_keys("claude-token-period",
                                 {"enter": "toggle", "right": "expand",
                                  "left": "collapse"}))
@@ -1092,6 +1151,7 @@ def _sessions_spec(server, selected=0):
                  i18n.t("pscreen.spec_sessions_title"),
                  i18n.t("pscreen.spec_sessions_hint"),
                  rows=rows, note=note, selected=selected,
+                 head=_summary_head(server),
                  keys=_hub_keys("claude-token-sessions", {"enter": "apply"}))
 
 

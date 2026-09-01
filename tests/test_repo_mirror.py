@@ -28,12 +28,13 @@ class _Gate:
     """`scripts/publish_check.py` 대역. 부른 자리를 기록해 **안 부른 것**도 잰다."""
 
     def __init__(self, *, stale=(), unmeasured=(), drifts=(), wip=(),
-                 dunmeasured=()):
+                 dunmeasured=(), baseline=None):
         self._stale = list(stale)
         self._unmeasured = list(unmeasured)
         self._drifts = list(drifts)
         self._wip = list(wip)
         self._dunmeasured = list(dunmeasured)
+        self._baseline = baseline
         self.calls = []
 
     def run(self, cmd, cwd=None):
@@ -41,10 +42,11 @@ class _Gate:
 
     def measure_freshness(self, remote=True):
         self.calls.append("freshness")
-        return list(self._stale), list(self._unmeasured)
+        return list(self._stale), list(self._unmeasured), self._baseline
 
-    def measure_drift(self):
+    def measure_drift(self, baseline=None):
         self.calls.append("drift")
+        self.baseline_seen = baseline
         return list(self._drifts), list(self._wip), list(self._dunmeasured)
 
 
@@ -143,6 +145,43 @@ async def test_p4_only_workspace_skips_instead_of_failing():
         findings, skipped, steps = repo.audit()
     assert not findings, findings
     assert skipped and "git 클론이 아니다" in skipped[0].reason, skipped
+
+
+_BASELINE = {"ref": "origin/main", "what": "git 기준선",
+             "detail": "로컬 HEAD 가 origin/main 보다 6커밋 뒤 — 로컬 커밋이 없어 "
+                       "origin/main 이 상위집합이다. 그래서 «그것»을 기준으로 잰다",
+             "fix": "git fetch origin && git reset --mixed origin/main"}
+
+
+async def test_a_clone_that_is_merely_behind_does_not_stop_the_nightly_audit():
+    """★ **미룬 판정이 빚을 가렸다**(pytmux-388).
+
+    로컬 HEAD 가 뒤처지기만 한 것(로컬 커밋 없음)은 「잴 수 없다」가 아니다 —
+    `origin/main` 이 상위집합이라 그것이 곧 신선한 기준선이다. 그런데도 멈추던 시절,
+    이 감시는 같은 「기준선이 낡았다」를 **엿새 · 7회** 냈고 그 붉은 줄 뒤에서 진짜 빚
+    (내용이 갈린 114 파일 · 미러가 depot 보다 39 CL 뒤)이 아무에게도 안 보였다.
+
+    그래서 이 갈래는 ⑴ 드리프트를 **재고** ⑵ 그 기준선을 **아래로 넘기고**
+    ⑶ 「낡음」을 결함으로는 안 세운다(잴 자가 있었으니 사람이 고칠 빚이 아니다).
+    """
+    gate = _Gate(baseline=_BASELINE,
+                 drifts=[_drift("git-unpushed-content", "S3", "git 미푸시", "…",
+                                ["a.py", "b.py"])])
+    findings, skipped, steps = _audit(gate)
+    assert "drift" in gate.calls, (
+        "뒤처지기만 한 클론인데 드리프트를 안 쟀다 — 이것이 빚을 엿새 가린 그 동작이다")
+    assert gate.baseline_seen == _BASELINE, (
+        "기준선을 안 넘기면 아래에서 다시 «낡은 HEAD» 로 잰다: %r" % (gate.baseline_seen,))
+    assert [f.key for f in findings] == ["git-unpushed-content"], [f.key for f in findings]
+    assert "baseline-stale" not in [f.key for f in findings]
+
+
+async def test_a_behind_clone_is_still_said_out_loud_even_when_the_mirror_is_clean():
+    """⛔ 결함이 아니라고 **안 보여도** 되는 것은 아니다 — 그 클론은 사람이 당겨야 한다."""
+    gate = _Gate(baseline=_BASELINE)
+    findings, skipped, steps = _audit(gate)
+    assert not findings and not skipped, (findings, skipped)
+    assert "origin/main" in steps[0][2] and "reset --mixed" in steps[0][2], steps
 
 
 async def test_gate_crash_is_reported_not_swallowed():

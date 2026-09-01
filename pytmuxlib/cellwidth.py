@@ -86,6 +86,82 @@ def cluster_cells(text: str) -> int:
     return char_cells(text[0]) if text else 1
 
 
+#: ZWJ — 이 글자로 끝나는 셀은 **군집이 아직 안 끝났다**는 뜻이다.
+ZWJ = "\u200d"
+#: 피부톤 수정자(U+1F3FB~U+1F3FF) — 앞 이모지에 얹힌다.
+_MODIFIERS = (0x1F3FB, 0x1F3FF)
+#: 지역 지시자(U+1F1E6~U+1F1FF) — **둘이 모여** 한 깃발이다.
+_REGIONAL = (0x1F1E6, 0x1F1FF)
+#: 그림 글자(Extended_Pictographic)의 **실용 근사**. 아래 `joins_previous` 머리말 참조.
+_PICTO_RANGES = (
+    (0x1F000, 0x1FAFF),   # 이모지 본진(패·이모티콘·기호·깃발·확장A)
+    (0x2600, 0x27BF),     # 기타 기호 + 딩뱃(☀ ✋ ⚕ ♀ ✈ …)
+    (0x2B00, 0x2BFF),     # 기타 기호와 화살표(⭐ ⬛ …)
+)
+#: 위 범위 밖에 홀로 있는 그림 글자들(레거시 자리).
+_PICTO_SINGLES = frozenset((0x00A9, 0x00AE, 0x203C, 0x2049, 0x2122, 0x2139, 0x3030, 0x303D))
+
+
+def _in(o: int, span: tuple[int, int]) -> bool:
+    return span[0] <= o <= span[1]
+
+
+def is_pictographic(ch: str) -> bool:
+    """그림 글자인가 — **Extended_Pictographic 의 실용 근사**.
+
+    ⚠ 표준 속성이 아니다. `unicodedata` 는 그 속성을 안 주고 러스트 쪽 의존
+    (`unicode-width`)도 안 준다 — 표를 통째로 들이는 대신 **범위 넷**으로 근사한다.
+    한 벌이 두 언어에 같은 글로 적혀 있어야 하므로 판정은 **코드포인트 범위**뿐이고
+    (유니코드 범주 조회를 쓰면 러스트가 못 따라온다), 갈리는지는 픽스처가 잰다
+    (`client/crates/proto/tests/fixtures/clusters.json`).
+    """
+    o = ord(ch)
+    return o in _PICTO_SINGLES or any(_in(o, r) for r in _PICTO_RANGES)
+
+
+def joins_previous(prev: str, ch: str) -> bool:
+    """`ch` 가 앞 셀의 **문자소 군집에 이어지나**(pytmux-407 ⓐ).
+
+    # 무엇을 정하나
+
+    종전 격자는 **폭 0 글자만** 앞 칸에 얹었다(`char_advance` 가 0 인 것들 — 변이
+    선택자·ZWJ·결합 표시). 그래서 뒤따르는 조각이 **제 폭을 가진** 군집은 칸이 여럿으로
+    갈렸다: `👨‍👩‍👧` 가 여섯 칸(셀 셋)이고 화면에는 **이모지 셋**이 뜬다(실측 2026-09-01).
+
+    사람이 고른 규약(2026-09-01)은 **군집의 폭 = 밑글자의 폭**이다(tmux 3.4·현대 단말과
+    같다). 그 규약을 지키는 판정이 이 함수다 — 참이면 부르는 쪽이 이 글자를 **앞 셀에
+    붙이고 커서를 안 움직인다.**
+
+    # 세 갈래 (유니코드 UAX #29 의 GB11·GB9b·GB12/13 의 실용판)
+
+    ⑴ **ZWJ 뒤** — 앞 셀이 ZWJ 로 끝나고 이 글자가 그림 글자면 잇는다(`🧑‍💻`·`👨‍👩‍👧`).
+       ⛔ 그림 글자일 것을 **묻는다**: ZWJ 는 데바나가리 등에서 이음/끊음 제어로도 쓰이는데
+          거기서 두 글자를 한 칸에 접으면 그 줄이 어긋난다.
+    ⑵ **피부톤 수정자** — 밑글자 뒤에 얹힌다(`👍🏿`).
+    ⑶ **지역 지시자** — 앞 셀 끝의 지역 지시자가 **홀수 개**일 때만 잇는다(`🇰🇷`).
+       짝수면 그 깃발은 이미 완성이라 새 깃발이 시작한다(`🇰🇷🇯🇵` = 깃발 둘).
+
+    ⚠ 판정은 **앞 셀의 글 전체**를 본다(마지막 글자만이 아니다) — ⑶ 이 홀짝을 세야 하고,
+    ⑴ 은 앞 셀이 이미 군집일 수 있다(`👨‍👩` 뒤에 `‍👧`).
+    """
+    if not prev or not ch:
+        return False
+    if prev.endswith(ZWJ):
+        return is_pictographic(ch)
+    o = ord(ch)
+    if _in(o, _MODIFIERS):
+        return True
+    if _in(o, _REGIONAL):
+        tail = 0
+        for c in reversed(prev):
+            if _in(ord(c), _REGIONAL):
+                tail += 1
+            else:
+                break
+        return tail % 2 == 1
+    return False
+
+
 @lru_cache(maxsize=8192)
 def char_advance(ch: str) -> int:
     """이 글자가 격자에서 **밀어내는 칸 수**. 폭 0 글자는 0 이다.
@@ -104,6 +180,36 @@ def char_advance(ch: str) -> int:
     ⚠ 비출력 문자(wcwidth < 0)는 0 이 아니다 — 종전대로 한 칸으로 센다(폭을 알 수
     없는 것과 폭이 0 인 것은 다르다)."""
     return 0 if wcwidth(ch) == 0 else char_cells(ch)
+
+
+def attaches(prev: str, ch: str) -> bool:
+    """이 글자가 앞 셀에 **얹히나** — 폭 0 이거나 군집이 이어질 때(pytmux-407 ⓐ).
+
+    격자에 글자를 앉히는 자리가 여럿이고(서버 화면 모델 · 클라 합성 · 재생 합성 ·
+    렌더), 각자 두 갈래를 적으면 한 곳만 고쳐지는 날이 온다 — 그날 그 줄이 어긋난다.
+    러스트 짝은 `proto::compose::attaches` 다.
+    """
+    return char_advance(ch) == 0 or joins_previous(prev, ch)
+
+
+def line_cells(text: str) -> int:
+    """합성된 **한 줄의 시각 폭**(pytmux-407 ⓐ).
+
+    ⚠ 글자 수가 아니라 **군집 수**를 센다. 얹힌 조각(변이 선택자·ZWJ·둘째 이모지 …)은
+    칸을 안 쓰므로 여기서도 안 센다 — 낱개로 세면 이모지가 든 줄이 「폭 == cols」 계약을
+    깬 것처럼 보인다(실측: 조합 문자 둘이 든 80칸 줄이 82 로 읽혔다).
+
+    러스트 짝은 `proto::compose::display_width` 다.
+    """
+    width = 0
+    cluster = ""
+    for ch in text:
+        if cluster and attaches(cluster, ch):
+            cluster += ch
+            continue
+        width += char_cells(ch)
+        cluster = ch
+    return width
 
 
 def ambiguous_wide() -> bool:

@@ -35,6 +35,10 @@ cs = g = mo = vtconst
 _wcwidth = vtconst.wcwidth
 
 from .protocol import HISTORY
+# 군집 판정 한 벌 — 서버 격자와 두 클라가 **같은 함수**를 봐야 한다(pytmux-407 ⓐ).
+# ⚠ `cellwidth` 는 이쪽을 모듈 최상위에서 import 하지 않는다(지연 import 라 순환이
+#   안 난다 — `_patch_native_width` 안의 `from . import nativescreen`).
+from .cellwidth import joins_previous as _joins
 
 # 폭 축소 직후 autowrap 을 잠깐 끄는 전환 윈도우(model.WRAP_GUARD_SEC 와 동일값). 순환
 # import 를 피하려 상수만 복제한다(값이 갈리면 안 됨 — 둘 다 0.4).
@@ -61,6 +65,21 @@ def _attaches_to_previous(char: str) -> bool:
     셀의 글이 화면에 없는 글자를 물고 다니고, 그것을 복사·검색이 그대로 집는다.
     """
     return unicodedata.category(char) in ("Mn", "Me", "Cf")
+
+
+def _joins_previous_cell(screen, char: str) -> bool:
+    """`char` 가 앞 셀의 군집에 이어지면 **거기 붙이고** 참을 돌려준다(pytmux-407 ⓐ).
+
+    판정은 `cellwidth.joins_previous` 한 벌이다 — 클라도 같은 함수(러스트는 그 동형)로
+    행을 다시 격자에 앉히므로, 여기서 따로 적으면 서버와 클라가 **다른 격자**를 갖는다.
+    """
+    found = screen._base_cell()
+    if found is None:
+        return False
+    line, x = found
+    if not _joins(line[x].data, char):
+        return False
+    return screen._attach_to_base(char, normalize=False)
 
 
 class Char(NamedTuple):
@@ -319,11 +338,63 @@ class _NativeBase:
                 self.mode.add(mo.DECAWM)
             self._drawing = False
 
+    def _base_cell(self):
+        """커서 **바로 앞**의 밑글자 셀 — `(줄, x)`. 없으면 `None`.
+
+        ⛔ `cursor.x - 1` 로는 부족하다: 넓은 글자는 뒤에 **연속 셀**(`data == ""`)을
+        두므로 그 자리가 앞 셀이면 얹는 글자가 **연속 표식을 덮어쓴다**. 실측
+        (2026-09-01)으로 `|🧑‍💻|` 의 ZWJ 가 그렇게 연속 셀에 앉아 있었다 — 화면에는
+        안 보이지만 그 셀은 더 이상 「앞 글자의 뒤칸」이 아니고, 군집 판정
+        (`cellwidth.joins_previous`)도 밑글자를 못 본다.
+
+        줄 맨 앞이면 **앞 줄의 마지막 셀**을 본다(종전 결합 문자 갈래와 같은 규칙 —
+        줄바꿈으로 갈린 군집도 한 덩어리다).
+        """
+        line, x = self.buffer[self.cursor.y], self.cursor.x
+        if x == 0:
+            if not self.cursor.y:
+                return None
+            line, x = self.buffer[self.cursor.y - 1], self.columns
+        x -= 1
+        # 연속 셀을 건너 밑글자까지 되짚는다(넓은 글자는 한 칸이지만 방어적으로 센다).
+        while x > 0 and line[x].data == "":
+            x -= 1
+        return (line, x)
+
+    def _attach_to_base(self, char: str, normalize: bool) -> bool:
+        """`char` 를 앞 밑글자 셀에 얹는다 — 얹었으면 참(커서는 안 움직인다)."""
+        found = self._base_cell()
+        if found is None:
+            return False
+        line, x = found
+        last = line[x]
+        text = last.data + char
+        if normalize:
+            text = unicodedata.normalize("NFC", text)
+        line[x] = last._replace(data=text)
+        if line is not self.buffer[self.cursor.y]:
+            # **앞 행**을 고쳤으니 그 행도 dirty 다(아래 dirty.add 는 현재 행만 찍는다).
+            # 안 찍으면 render 의 행 캐시(dirty 행만 재직렬화)가 그 행을 옛 내용 그대로
+            # 재사용해, 화면엔 빠진 채 남고 전체 재그리기 전까지 안 고쳐진다 —
+            # dirty 퍼저가 잡았다.
+            self.dirty.add(self.cursor.y - 1)
+        return True
+
     def _draw_impl(self, data: str) -> None:
         data = data.translate(
             self.g1_charset if self.charset else self.g0_charset)
         for char in data:
             char_width = _wcwidth(char)
+            # ★ **군집이 이어지면 앞 셀에 붙이고 칸을 안 쓴다**(pytmux-407 ⓐ · 사람이
+            #   고른 규약 2026-09-01: 군집의 폭 = 밑글자의 폭 · tmux 3.4 와 같다).
+            #   종전에는 폭 0 인 조각만 얹었고, 제 폭을 가진 조각(둘째 이모지 · 둘째
+            #   지역 지시자 · 피부톤 수정자)은 **새 칸을 열었다** — 그래서 `👨‍👩‍👧` 가
+            #   여섯 칸이었고 화면에는 이모지 셋이 떴다.
+            #
+            #   ⚠ 폭 판정보다 **먼저** 본다: 이 자리에서 잇지 않으면 아래 줄바꿈 검사가
+            #     먼저 돌아 군집 한가운데서 줄이 넘어간다.
+            if char_width > 0 and _joins_previous_cell(self, char):
+                continue
             if self.cursor.x == self.columns:
                 if mo.DECAWM in self.mode:
                     self.dirty.add(self.cursor.y)
@@ -342,22 +413,9 @@ class _NativeBase:
                     line[self.cursor.x + 1] = \
                         self.cursor.attrs._replace(data="")
             elif char_width == 0 and _attaches_to_previous(char):
-                if self.cursor.x:
-                    last = line[self.cursor.x - 1]
-                    normalized = unicodedata.normalize(
-                        "NFC", last.data + char)
-                    line[self.cursor.x - 1] = last._replace(data=normalized)
-                elif self.cursor.y:
-                    last = self.buffer[self.cursor.y - 1][self.columns - 1]
-                    normalized = unicodedata.normalize(
-                        "NFC", last.data + char)
-                    self.buffer[self.cursor.y - 1][self.columns - 1] = \
-                        last._replace(data=normalized)
-                    # **앞 행**을 고쳤으니 그 행도 dirty 다(아래 dirty.add 는 현재 행만
-                    # 찍는다). 안 찍으면 render 의 행 캐시(dirty 행만 재직렬화)가 그 행을
-                    # 옛 내용 그대로 재사용해, 화면엔 결합 문자가 빠진 채 남고 전체
-                    # 재그리기(prefix r) 전까지 안 고쳐진다 — dirty 퍼저가 잡았다.
-                    self.dirty.add(self.cursor.y - 1)
+                # ⛔ `cursor.x - 1` 을 직접 잡지 않는다 — 넓은 글자 뒤의 **연속 셀**을
+                #    덮어써 격자가 그 자리를 더는 「뒤칸」으로 못 읽는다(`_base_cell`).
+                self._attach_to_base(char, normalize=True)
             else:
                 # ⛔ **여기서 `break` 하면 그 줄의 나머지를 통째로 버린다**(pytmux-407).
                 #    pyte 에서 물려받은 손인데, 실측(2026-08-26)으로 `|A⚠️B| tail` 이

@@ -27,6 +27,12 @@
        · 못 잰 드리프트는 Skipped 로 남긴다 — ⛔ **초록이 아니다**(원칙 ⓑ · rc 3).
     ② measure_drift() → 갈래마다 Finding 하나
 
+★ **다만 「낡음」에 갈래가 둘이다**(pytmux-388). 로컬 HEAD 가 뒤처지기만 했으면(로컬 커밋
+없음) `measure_freshness` 가 `baseline` 을 돌려주고, 그때는 **멈추지 않고 그 기준선 위에서**
+잰다. 그 갈래를 멈추던 시절에 이 감시는 같은 「기준선이 낡았다」를 **엿새 · 7회** 냈고, 그
+붉은 줄 뒤에서 진짜 빚(내용이 갈린 114 파일 · 미러가 depot 보다 39 CL 뒤)이 아무에게도 안
+보였다. 미룬 판정이 빚을 가린 것이다.
+
 ## 지문
 
 `fingerprint(scenario, oracle, key)` 셋으로만 짓는다(`qa/findings.py`). 그래서 **key 는
@@ -106,7 +112,7 @@ def audit(remote: bool = True):
 
     try:
         where = _workspace(pc)
-        stale, unmeasured = pc.measure_freshness(remote=remote)
+        stale, unmeasured, baseline = pc.measure_freshness(remote=remote)
     except Exception as e:                                     # noqa: BLE001
         # 이 층이 터진 것도 조용히 넘기지 않는다(원칙 ⓑ) — 다만 미러의 빚은 아니다.
         findings.append(Finding(
@@ -134,7 +140,7 @@ def audit(remote: bool = True):
                                "목록은 남의 게시다(pytmux-153)"))
         return findings, skipped, [(NAME, STEP, "결함 1건 — 기준선이 낡아 미판정")]
 
-    drifts, wip, dunmeasured = pc.measure_drift()
+    drifts, wip, dunmeasured = pc.measure_drift(baseline=baseline)
     for u in dunmeasured:
         skipped.append(Skipped(NAME, STEP, f"{u['what']} — {u['detail']}"))
     for d in drifts:
@@ -153,4 +159,8 @@ def audit(remote: bool = True):
         verdict = "미검증 있음 — 초록 아님"
     else:
         verdict = f"OK — 미러 일치{f' (작업 중 {len(wip)}개)' if wip else ''}"
+    if baseline:
+        # ⛔ 결함이 아니다(잴 자가 있었다) — 그러나 **안 보이면 안 된다**. 이 클론이
+        #   뒤처졌다는 사실은 사람이 고칠 것이라 회차 줄에 실어 보낸다(pytmux-388).
+        verdict += f" · 기준선 {baseline['ref']}(로컬 클론이 뒤처졌다 → {baseline['fix']})"
     return findings, skipped, [(NAME, STEP, verdict)]

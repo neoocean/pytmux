@@ -36,6 +36,31 @@ have 리비전**. 둘 중 하나라도 낡으면 나오는 숫자는 드리프�
 멈춘다. ⛔ 「그래도 참고는 되지 않나」로 되돌리지 마라 — 143줄 중 참인 것이 1줄이면 그 목록은
 정보가 아니라 소음이고, 사람은 소음을 끄지 판별하지 않는다.
 
+## ★ 그러나 「낡음」에는 갈래가 둘이고, 한쪽은 **멈출 이유가 없다** (pytmux/pytmux-388)
+
+멈추는 것이 옳다는 말은 **잴 자가 없을 때**의 말이다. 로컬 HEAD 가 `origin/main` 보다 뒤인데
+**로컬 커밋이 없으면** 상황은 다르다 — 그때 `origin/main` 은 이 브랜치의 상위집합이고, 그것이
+곧 신선한 기준선이다. 잴 자가 손에 있는데 멈추는 것은 판정을 미루는 것일 뿐이다.
+
+☠ 실제로 그 대가를 치렀다(pytmux-388): 야간 감시가 「기준선이 낡았다」를 **엿새 · 7회** 냈고,
+아무도 그 한 줄짜리 처방을 안 돌렸다. 그 붉은 줄 **뒤에** 진짜 빚이 서 있었다 — p4 에만 있던
+13 파일 · git 에만 있던 4 파일 · 내용이 갈린 114 파일, 미러가 depot 보다 **39 CL** 뒤. 즉
+「판정을 미룬 것」이 「빚을 가린 것」이었다.
+
+그래서 지금은 이렇게 가른다:
+
+| 낡은 곳 | 로컬 커밋 | 무엇을 하나 |
+| --- | --- | --- |
+| git HEAD | 없음 | **`origin/main` 을 기준선으로 삼아 판정한다.** 낡음은 `·` 한 줄로 알린다(막지 않는다) |
+| git HEAD | 있음(갈라졌다) | 멈춘다 — 어느 쪽이 기준선인지 애매하다(처방은 `rebase`) |
+| p4 워크스페이스 | — | 멈춘다 — 안 받은 파일의 **내용을 볼 수가 없다**(과소평가한다) |
+
+⛔ 이때도 **낡은 기준선의 목록은 안 낸다** — 위 문단의 규율 그대로다. 다른 것은 기준선을
+`origin/main` 으로 **바꿔서** 재는 것뿐이고, 그 재기는 `git status`·`git ls-files`(둘 다 로컬
+HEAD·인덱스를 본다) 대신 `_at_ref()` 를 지난다. ⚠ 게이트는 **아무것도 안 고친다** — 임시
+인덱스(`GIT_INDEX_FILE`)에만 그 트리를 읽고, 작업 트리도 진짜 인덱스도 안 만진다(이 트리의
+파일은 p4 가 소유한다).
+
 ## 재는 것과 말하는 것을 가른다
 
 ⛔ **소비자가 둘이면 판정도 둘이 된다.** 야간 감시(`qa/repo.py`)가 이 파일의 **화면 문구를
@@ -47,6 +72,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -84,6 +110,44 @@ def run(cmd, cwd=ROOT):
     except (OSError, subprocess.TimeoutExpired) as e:
         return 127, f"{e}"
     return p.returncode, p.stdout
+
+
+def _at_ref(ref, argv):
+    """`ref` 의 트리를 **임시 인덱스**에 읽어 놓고 git 명령을 돌린다 → `(rc, stdout)`.
+
+    # 왜 필요한가 (pytmux-388)
+
+    `git status` 도 `git ls-files` 도 **로컬 HEAD·인덱스**를 기준선으로 쓴다. HEAD 가
+    `origin/main` 보다 뒤면 그 둘은 남이 이미 민 것을 「내 빚」이라고 말한다(모듈 머리말의
+    거짓 붉음). 그래서 기준선을 바꿔야 하는데, 이 트리의 파일은 **p4 가 소유**하므로
+    `reset`·`checkout` 으로 진짜 인덱스를 옮기는 길은 게이트가 쓸 수 없다.
+
+    `GIT_INDEX_FILE` 로 임시 인덱스를 세우면 그 자리에서만 다른 기준선이 선다 —
+    **작업 트리도 진짜 인덱스도 안 만진다.** 읽은 직후의 인덱스는 stat 정보가 비어 있어
+    `diff-index` 가 내용을 실제로 대조한다(실측 1168 파일 · 0.5초).
+    """
+    fd, idx = tempfile.mkstemp(prefix="publish-check-", suffix=".index")
+    os.close(fd)
+    os.unlink(idx)                      # read-tree 가 새로 만든다(빈 파일은 못 읽는다)
+    saved = os.environ.get("GIT_INDEX_FILE")
+    os.environ["GIT_INDEX_FILE"] = idx
+    try:
+        rc, txt = run(["git", "read-tree", ref])
+        if rc:
+            return rc, txt
+        # 갓 읽은 인덱스는 stat 이 비어 있다 — refresh 가 그것을 채우고, 못 맞춘 파일이
+        # 있으면 0 이 아닌 값을 낸다. 그것은 「다르다」는 뜻이라 실패가 아니다.
+        run(["git", "update-index", "-q", "--refresh"])
+        return run(["git"] + list(argv))
+    finally:
+        if saved is None:
+            os.environ.pop("GIT_INDEX_FILE", None)
+        else:
+            os.environ["GIT_INDEX_FILE"] = saved
+        try:
+            os.unlink(idx)
+        except OSError:
+            pass
 
 
 def rel(path):
@@ -218,14 +282,19 @@ def _int(txt, default=None):
 
 
 def measure_freshness(remote=True):
-    """**기준선이 신선한가** → `(stale, unmeasured)`. 둘 다 dict 목록이다.
+    """**기준선이 신선한가** → `(stale, unmeasured, baseline)`.
+
+    앞의 둘은 dict 목록이고, `baseline` 은 **판정을 어느 기준선 위에서 낼 것인가**다 —
+    `None` 이면 종전대로 로컬 HEAD·인덱스, dict 면 그 `ref`(지금은 `origin/main` 뿐).
 
     ⛔ 이것을 안 재고 드리프트를 세면 나오는 숫자가 남의 게시다(모듈 docstring §거짓 붉음).
+    ★ 그러나 **로컬 커밋이 없이 뒤처지기만 했으면 멈추지 않는다** — 그때 `origin/main` 이
+      곧 신선한 기준선이라 잴 수 있고, 멈추면 그 뒤의 진짜 빚이 함께 가려진다(pytmux-388).
     ⚠ `git fetch` 는 `refs/remotes/` 만 건드린다 — **작업 트리는 안 만진다.** 이 트리는 p4
       워크스페이스이고 남의 열린 파일이 그 안에 있으므로, 게이트가 스스로 `pull`·`sync` 하는
       길은 만들지 않는다(처방만 낸다 · 당길지는 사람이 정한다).
     """
-    stale, unmeasured = [], []
+    stale, unmeasured, baseline = [], [], None
 
     # ── git 기준선 ────────────────────────────────────────────────────────
     if remote:
@@ -245,19 +314,27 @@ def measure_freshness(remote=True):
     if behind is None:
         unmeasured.append({"what": "git 기준선",
                            "detail": "origin/main 을 못 읽었다 — 로컬 HEAD 의 신선도 미확인"})
-    elif behind:
-        # ★ 처방이 `pull` 이 아니다. 이 트리의 파일은 **p4 가 소유**하고 대개 origin 보다
-        #   앞서 있어서, `pull`(=merge)은 남의 열린 파일을 덮으려다 거절당하거나 덮는다.
-        #   로컬 커밋이 없으면 브랜치 포인터만 앞으로 옮기면 된다(`--mixed` 는 작업 트리를
-        #   안 건드린다). 로컬 커밋이 있으면 그것을 잃지 않게 rebase 로 보낸다.
-        fix = ("git fetch origin && git reset --mixed origin/main   "
-               "# 작업 트리는 안 건드린다(p4 소유)"
-               if not ahead else
-               "git fetch origin && git rebase origin/main   # 로컬 커밋이 있다 — 잃지 않게")
+    elif behind and ahead:
+        # 갈라졌다 — 어느 쪽이 기준선인지 애매하다. ★ 처방이 `pull` 이 아니다: 이 트리의
+        # 파일은 **p4 가 소유**하고 대개 origin 보다 앞서 있어서, `pull`(=merge)은 남의
+        # 열린 파일을 덮으려다 거절당하거나 덮는다. 로컬 커밋을 잃지 않게 rebase 로 보낸다.
         stale.append({"what": "git 기준선",
-                      "detail": f"로컬 HEAD 가 origin/main 보다 {behind}커밋 뒤 — "
-                                "이 HEAD 를 기준으로 잰 '미푸시'는 남의 게시다",
-                      "fix": fix})
+                      "detail": f"로컬 HEAD 가 origin/main 보다 {behind}커밋 뒤이고 "
+                                f"로컬 커밋 {ahead}개가 있다 — 어느 쪽도 기준선이 못 된다",
+                      "fix": "git fetch origin && git rebase origin/main   "
+                             "# 로컬 커밋이 있다 — 잃지 않게"})
+    elif behind:
+        # ★ 뒤처지기만 했다 = `origin/main` 이 이 브랜치의 **상위집합**이다. 그러면 잴 자가
+        #   손에 있으므로 멈추지 않고 **그것을 기준선으로** 잰다(pytmux-388). 낡음 자체는
+        #   사람이 고칠 것이라 처방과 함께 알리되, 판정을 막지는 않는다 — 엿새를 붉은 채로
+        #   서 있던 것이 이 이슈가 치른 값이다.
+        baseline = {
+            "ref": "origin/main",
+            "what": "git 기준선",
+            "detail": f"로컬 HEAD 가 origin/main 보다 {behind}커밋 뒤 — 로컬 커밋이 없어 "
+                      "origin/main 이 상위집합이다. 그래서 «그것»을 기준으로 잰다",
+            "fix": "git fetch origin && git reset --mixed origin/main   "
+                   "# 작업 트리는 안 건드린다(p4 소유)"}
 
     # ── p4 기준선 ─────────────────────────────────────────────────────────
     rc, txt = run(["p4", "sync", "-n", "./..."])
@@ -275,11 +352,15 @@ def measure_freshness(remote=True):
                 "detail": f"워크스페이스가 depot head 보다 뒤 — 안 받은 파일 {len(pending)}개. "
                           "내용 드리프트를 **과소평가**한다(2026-08-08 실측: 4개 → sync 후 19개)",
                 "fix": "p4 sync ./...   ⚠ 공유 워크스페이스다 — 남이 연 파일은 안 받아진다"})
-    return stale, unmeasured
+    return stale, unmeasured, baseline
 
 
-def measure_existence():
+def measure_existence(baseline=None):
     """**파일이 한쪽에만 존재**하는 드리프트 → `(drifts, unmeasured)`.
+
+    `baseline` 이 있으면 git 쪽 목록을 **인덱스가 아니라 그 ref 의 트리**에서 뽑는다 —
+    인덱스는 로컬 HEAD 를 따르므로, HEAD 가 뒤처져 있으면 남이 민 새 파일이 통째로
+    「git 에 없는 파일」로 올라온다(pytmux-388).
 
     내용 대조(`p4 diff -se` × `git status`)가 원리적으로 못 보는 구멍이다: depot 에 아예
     없는 파일은 `p4 diff -se` 에 안 나오고, git 에 커밋까지 끝난 파일은 `git status` 에
@@ -288,9 +369,15 @@ def measure_existence():
     depot = depot_files()
     if depot is None:
         return [], [{"what": "존재 대조", "detail": "p4 files 조회 실패"}]
-    rc, txt = run(["git", "ls-files"])
-    if rc:
-        return [], [{"what": "존재 대조", "detail": "git ls-files 실패"}]
+    if baseline:
+        ref = baseline["ref"]
+        rc, txt = run(["git", "ls-tree", "-r", "--name-only", ref])
+        if rc:
+            return [], [{"what": "존재 대조", "detail": f"git ls-tree {ref} 실패"}]
+    else:
+        rc, txt = run(["git", "ls-files"])
+        if rc:
+            return [], [{"what": "존재 대조", "detail": "git ls-files 실패"}]
     tracked = {ln.strip() for ln in txt.splitlines() if ln.strip()}
     git_only = sorted(tracked - depot)
     # depot 에만 있는 것은 gitignore 된 p4 전용 파일(docs/internal·captures·db)이 대부분이다.
@@ -309,7 +396,7 @@ def measure_existence():
     return drifts, []
 
 
-def measure_drift(pre_push=False):
+def measure_drift(pre_push=False, baseline=None):
     """미러 빚 전량 → `(drifts, wip, unmeasured)`.
 
     ⛔ **기준선 신선도는 여기서 안 본다** — 부르는 쪽이 `measure_freshness()` 로 먼저 재고,
@@ -355,6 +442,15 @@ def measure_drift(pre_push=False):
             continue
         code, path = ln[:2], ln[3:].strip().strip('"')
         (git_untracked if code.strip() == "??" else git_dirty).add(path)
+    if baseline:
+        # ★ 기준선을 갈아끼운다(pytmux-388). `git status` 가 방금 낸 두 집합은 **로컬
+        #   HEAD·인덱스** 기준이라, HEAD 가 뒤처져 있으면 남이 이미 민 것을 전부 담고 있다.
+        ref = baseline["ref"]
+        _, dtxt = _at_ref(ref, ["diff-index", "--name-only", ref])
+        git_dirty = {ln.strip() for ln in dtxt.splitlines() if ln.strip()}
+        # 「추적 안 됨」도 기준선을 탄다 — 그 ref 가 이미 든 파일은 새 파일이 아니다.
+        _, ttxt = run(["git", "ls-tree", "-r", "--name-only", ref])
+        git_untracked -= {ln.strip() for ln in ttxt.splitlines() if ln.strip()}
 
     ignored = git_ignored(sorted(depot_diff))
     # ① depot 과 다른데 git 은 clean → git 에만 있는 내용(p4 미제출)
@@ -373,7 +469,7 @@ def measure_drift(pre_push=False):
     wip = sorted(((git_dirty | git_untracked) & (depot_diff | opened))
                  | (git_untracked - depot_diff - opened))
 
-    edrifts, eunmeasured = measure_existence()
+    edrifts, eunmeasured = measure_existence(baseline=baseline)
     return drifts + edrifts, wip, unmeasured + eunmeasured
 
 
@@ -385,9 +481,9 @@ def render_drift(drift, out=print, limit=20):
     out(f"  → {drift['fix']}")
 
 
-def check_existence(out=print):
+def check_existence(out=print, baseline=None):
     """존재 드리프트 — `measure_existence()` 의 화면 판(반환값은 **갈래 수**)."""
-    drifts, unmeasured = measure_existence()
+    drifts, unmeasured = measure_existence(baseline=baseline)
     for u in unmeasured:
         out(f"· {u['detail']} — {u['what']} 생략")
     for d in drifts:
@@ -403,9 +499,13 @@ def check_mirror(out=print, remote=True, pre_push=False):
         return 1
 
     # ── ⛔ 기준선 신선도부터. 낡았으면 **판정을 내지 않는다** ────────────────
-    stale, unmeasured = measure_freshness(remote=remote)
+    stale, unmeasured, baseline = measure_freshness(remote=remote)
     for u in unmeasured:
         out(f"· 못 쟀다 — {u['what']}: {u['detail']}")
+    if baseline:
+        # ⚠ 막지 않는다 — 잴 자가 손에 있다(모듈 머리말 §낡음의 두 갈래 · pytmux-388).
+        out(f"· {baseline['what']}이 낡았지만 판정한다 — {baseline['detail']}")
+        out(f"  → {baseline['fix']}")
     if stale:
         out("✗ 기준선이 낡아 미러 판정을 내지 않는다 "
             "(지금 재면 남의 게시가 내 빚으로 보인다):")
@@ -416,7 +516,8 @@ def check_mirror(out=print, remote=True, pre_push=False):
         return RC_STALE
 
     # ── 양방향 드리프트 + 존재 드리프트 ──────────────────────────────────────
-    drifts, wip, dunmeasured = measure_drift(pre_push=pre_push)
+    drifts, wip, dunmeasured = measure_drift(pre_push=pre_push,
+                                             baseline=baseline)
     for d in drifts:
         render_drift(d, out=out, limit=10 if d["kind"] == "git-unpushed-commits" else 20)
     if wip:
@@ -431,10 +532,12 @@ def check_mirror(out=print, remote=True, pre_push=False):
     if dunmeasured or unmeasured:
         out("· 미러 드리프트는 못 찾았지만 **못 잰 항목이 있다** — 초록으로 읽지 말 것")
         return RC_STALE
+    where = f" · 기준선 {baseline['ref']}" if baseline else ""
     if pre_push:
-        out("✓ p4↔git 미러 일치(내용·존재 드리프트 없음 — push 직전이라 미푸시 커밋은 안 쟀다)")
+        out("✓ p4↔git 미러 일치(내용·존재 드리프트 없음 — push 직전이라 미푸시 커밋은 "
+            f"안 쟀다{where})")
     else:
-        out("✓ p4↔git 미러 일치(미푸시 커밋 없음, 내용·존재 드리프트 없음)")
+        out(f"✓ p4↔git 미러 일치(미푸시 커밋 없음, 내용·존재 드리프트 없음{where})")
     return 0
 
 

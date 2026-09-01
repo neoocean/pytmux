@@ -539,6 +539,11 @@ register({
         # 진단/기타
         "msg.mouse_log": "마우스 진단 로그: {path}",
         "msg.bad_tab_index": "탭 번호 범위 초과: {v}",
+        # 서버가 「아무도 이 화면을 안 집었다」를 말하는 자리(`servercmd` ·
+        # `plugins/__init__`). 서버발 알림이라 클라가 키로 번역한다 —
+        # 종전에는 카탈로그에 줄이 없어 `t()` 가 서버의 한국어 `text` 로 떨어졌고,
+        # 영어 사용자에게 그대로 한국어로 떴다(pytmux-34 전수 스윕).
+        "msg.plugin_screen_missing": "{name}: 이 플러그인은 화면 스펙을 제공하지 않습니다",
         "word.toggle": "토글",
     },
     "en": {
@@ -554,6 +559,8 @@ register({
         "msg.restart_dryrun": "pytmux: pre-restart dry-run check…",
         "msg.server_restart": "pytmux: restarting server…",
         "msg.config_warn_more": " +{n} more",
+        "msg.plugin_screen_missing":
+            "{name}: this plugin provides no screen spec",
         "msg.paste_in_progress": "Pasting clipboard… please wait (ESC to abort)",
         "msg.paste_image_path": "Clipboard image → pasted path: {path}",
         "msg.paste_image_remote": "Clipboard image → transferred to remote, pasted path: {path}",
