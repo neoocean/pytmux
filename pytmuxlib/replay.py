@@ -15,6 +15,7 @@ import os
 import sys
 
 from . import ipc                     # open_private(0600) — raw 캡처 파일 소유자 전용
+from .cellwidth import attaches as _attaches, char_advance as _char_advance
 from .clientutil import _char_cells   # 1-9: 로컬 비메모이즈 복사본 대신 정식 lru_cache 판
 from .model import Pane
 from .protocol import set_winsize
@@ -32,11 +33,21 @@ def render_pane_lines(pane: Pane) -> list[str]:
     for row in rows:
         cells = [" "] * W
         cx = 0
+        base = None      # 마지막으로 연 **밑글자** 칸 — 얹히는 글자가 갈 자리다
         for text, _style in row:
             for ch in text:
+                # ★ **얹히는 글자는 칸을 안 쓴다**(pytmux-407 ⓐ) — 폭 0 이거나 앞 칸의
+                #   문자소 군집에 이어지는 것. 낱개로 앉히면 `👨‍👩‍👧` 가 여섯 칸이 되어
+                #   서버 격자(같은 규칙으로 센다)와 어긋난다.
+                if base is not None and _attaches(cells[base], ch):
+                    cells[base] += ch
+                    continue
+                if _char_advance(ch) == 0:
+                    continue   # 얹을 데가 없는 폭 0 — 버린다(놓을 칸이 없다)
                 if cx >= W:
                     break
                 cells[cx] = ch
+                base = cx
                 if _char_cells(ch) == 2 and cx + 1 < W:
                     cells[cx + 1] = ""   # 연속 셀(렌더 시 제거)
                     cx += 2

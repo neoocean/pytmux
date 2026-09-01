@@ -36,7 +36,7 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     REMOTE_PINK, REMOTE_PINK_DIM,
     _BOX_BITS, _BOX_REV, _JAMO, _KEY_DIAG,
     _TB_ACTIVE_STYLE, _TB_BORDER_STYLE, _TB_INACTIVE_STYLE,
-    _char_advance, _char_cells, _client_relaunch_ok, _darken_style,
+    _attaches, _char_advance, _char_cells, _client_relaunch_ok, _darken_style,
     _dim_inactive_style,
     _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
     _signed_int, _with_reverse,
@@ -933,17 +933,23 @@ class _RenderMixin:
                         #   (`char_cells` 는 러스트와 값이 같아야 하는 계약이라 못 건드린다).
                         #   ⛔ 얹을 앞 칸이 없으면(줄 첫 글자) 버린다 — 놓을 자리가 없다.
                         wch = _char_advance(chh)
-                        if wch == 0:
-                            at = cx - 1
-                            if at >= 0 and 0 <= gy < H:
-                                # 넓은 글자의 **본체**에 얹는다(연속 칸이 아니라) —
-                                # 연속 칸에 얹으면 렌더가 그 칸을 건너뛰어 사라진다.
-                                if cells[gy][at][0] == "" and at > 0:
-                                    at -= 1
-                                if 0 <= at < W:
-                                    prev_ch, prev_st = cells[gy][at]
-                                    cells[gy][at] = (prev_ch + chh, prev_st)
+                        # ★ **얹히는 글자는 칸을 안 쓴다**(pytmux-407 ⓐ) — 폭 0 이거나
+                        #   앞 칸의 **문자소 군집에 이어지는** 것(둘째 이모지·둘째 지역
+                        #   지시자·피부톤 수정자). 판정은 `cellwidth.attaches` 한 벌이고
+                        #   서버 격자가 같은 규칙으로 셀을 짓는다 — 여기서 다르게 세면
+                        #   그 줄이 통째로 어긋난다.
+                        at = cx - 1
+                        # 넓은 글자의 **본체**에 얹는다(연속 칸이 아니라) — 연속 칸에
+                        # 얹으면 렌더가 그 칸을 건너뛰어 사라진다.
+                        if 0 <= gy < H and 0 <= at < W and \
+                                cells[gy][at][0] == "" and at > 0:
+                            at -= 1
+                        prev = cells[gy][at][0] if (0 <= gy < H and 0 <= at < W) else ""
+                        if prev and _attaches(prev, chh):
+                            cells[gy][at] = (prev + chh, cells[gy][at][1])
                             continue
+                        if wch == 0:
+                            continue   # 얹을 자리가 없는 폭 0 — 버린다(놓을 칸이 없다)
                         # §2.10: 비활성(딤) 패널의 **컬러 이모지**는 터미널이 셀
                         # 전경색을 무시하고 자체 색 글리프로 그려 안 어두워진다 →
                         # dim 패널에 한해 **폭 보존 중간점(·)**으로 치환해 함께 어둡게
@@ -1301,14 +1307,18 @@ class _RenderMixin:
                             # 폭 0 은 칸을 안 먹고 **앞 칸의 글자에 얹힌다**
                             # (pytmux-407 · 위 본문 루프와 같은 규칙 — 까닭도 거기 있다).
                             wch = _char_advance(chh)
+                            # 얹히는 글자는 칸을 안 쓴다(pytmux-407 ⓐ · 위 본문 루프와
+                            # 같은 규칙 — 까닭도 거기 있다).
+                            at = gx - 1
+                            if 0 <= gy < H and 0 <= at < W and \
+                                    cells[gy][at][0] == "" and at > 0:
+                                at -= 1
+                            prev = cells[gy][at][0] \
+                                if (0 <= gy < H and 0 <= at < W) else ""
+                            if prev and _attaches(prev, chh):
+                                cells[gy][at] = (prev + chh, cells[gy][at][1])
+                                continue
                             if wch == 0:
-                                at = gx - 1
-                                if at >= 0 and 0 <= gy < H:
-                                    if cells[gy][at][0] == "" and at > 0:
-                                        at -= 1
-                                    if 0 <= at < W:
-                                        prev_ch, prev_st = cells[gy][at]
-                                        cells[gy][at] = (prev_ch + chh, prev_st)
                                 continue
                             if 0 <= gx < W:
                                 cells[gy][gx] = (chh, s)

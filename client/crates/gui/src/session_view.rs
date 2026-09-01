@@ -9499,6 +9499,20 @@ impl SessionView {
         let mut ascii_cells = 0usize;
         for ch in text.chars() {
             let cells = proto::compose::char_advance(ch);
+            // ★ **군집의 다음 조각은 앞 조각에 붙는다**(pytmux-407 ⓐ). 둘째 이모지·
+            //   둘째 지역 지시자·피부톤 수정자는 제 폭이 있지만 **칸을 안 쓴다** —
+            //   격자(서버)가 그렇게 세기 때문이고, 여기서 떼면 `👨‍👩‍👧` 가 셰이퍼에
+            //   낱개로 들어가 **이모지 셋**으로 그려진다(그것이 이 이슈의 증상이었다).
+            //
+            //   ⚠ ASCII 를 모으는 중이면 볼 것이 없다 — 군집의 조각은 ASCII 가 아니고,
+            //     ASCII 뒤에 붙는 것(키캡의 `U+20E3` 등)은 폭 0 이라 아래 갈래가 받는다.
+            if ascii.is_empty()
+                && let Some(last) = out.last_mut()
+                && proto::compose::joins_previous(&last.0, ch)
+            {
+                last.0.push(ch);
+                continue;
+            }
             // ★ **폭 0 글자는 앞 조각에 얹는다**(pytmux-389). 변이 선택자·ZWJ·결합
             //   표시는 자기 칸이 없다 — 한 칸을 주면 그 줄이 한 칸씩 밀린다. 그리고
             //   **떼지 않고 붙여야** 셰이퍼가 `⚠`+`U+FE0F` 를 한 조각으로 받는다
@@ -9564,9 +9578,18 @@ impl SessionView {
             let mut before = String::new();
             let mut before_cells = 0usize;
             let mut chars = piece.chars().peekable();
+            // 이 조각에서 지금까지 본 글 — **군집 판정에 앞의 것이 필요하다**
+            // (`joins_previous` 는 앞 글의 꼬리를 본다).
+            let mut seen = String::new();
             while let Some(ch) = chars.next() {
-                let w = proto::compose::char_advance(ch);
-                // 폭 0 은 앞 글자에 얹힌다(pytmux-389) — 혼자 떼면 그 글자와 갈라진다.
+                // 얹히는 글자는 칸을 안 쓴다 — 폭 0 이거나 군집이 이어질 때(pytmux-407 ⓐ).
+                let w = if proto::compose::attaches(&seen, ch) {
+                    0
+                } else {
+                    proto::compose::char_advance(ch)
+                };
+                seen.push(ch);
+                // 혼자 떼면 그 글자와 갈라진다(pytmux-389) — 앞에 붙여 둔다.
                 if w == 0 {
                     before.push(ch);
                     continue;
@@ -9578,7 +9601,9 @@ impl SessionView {
                     // 뗄 글자에 얹힌 것(변이 선택자 등)은 **함께** 뗀다.
                     let mut pick = ch.to_string();
                     while let Some(&next) = chars.peek() {
-                        if proto::compose::char_advance(next) != 0 {
+                        // 얹힌 것(변이 선택자 · 군집의 다음 조각)은 **함께** 뗀다 —
+                        // 갈라 두면 커서 자리에서 군집이 쪼개진다.
+                        if !proto::compose::attaches(&pick, next) {
                             break;
                         }
                         pick.push(next);

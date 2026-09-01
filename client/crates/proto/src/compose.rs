@@ -11,6 +11,9 @@
 //! 1. 런의 글자를 왼쪽부터 순서대로 셀에 넣는다. `cols` 를 넘으면 버린다.
 //! 2. **넓은 글자(폭 2)는 다음 셀을 연속 셀로 표시**하고 두 칸 전진한다.
 //! 3. 줄을 문자열로 만들 때 연속 셀은 **빼고** 이어 붙인다.
+//! 4. **얹히는 글자는 칸을 안 쓴다** — 폭 0(변이 선택자·ZWJ·결합 표시)이거나 앞 칸의
+//!    문자소 군집에 이어지는 것(둘째 이모지·둘째 지역 지시자·피부톤 수정자)은 앞 칸의
+//!    글에 붙는다([`attaches`] · pytmux-407 ⓐ). 그래서 **칸 하나가 글자 하나가 아니다.**
 //!
 //! 2·3 이 함께 지켜져야 "줄의 시각적 폭 == cols" 가 성립한다. 한쪽만 하면 한글이 있는
 //! 줄에서 뒤쪽 글자가 한 칸씩 밀린다.
@@ -28,8 +31,6 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::message::Row;
 
-/// 넓은 글자가 차지한 자리를 표시하는 값. 줄을 만들 때 걸러낸다.
-const CONTINUATION: char = '\u{0}';
 
 /// 모호폭을 넓게 볼까(설정 `ambiguous-width`). **프로세스 전역**이다.
 ///
@@ -68,6 +69,16 @@ pub fn char_cells(ch: char) -> usize {
 /// 판정은 `unicode-width` 의 `width_cjk`(CJK 문맥 = 모호폭 2)와 `width` 의 차이로 얻는다
 /// — 표를 우리가 다시 적으면 유니코드 판이 오를 때마다 갈린다.
 pub fn char_cells_in(ch: char, ambiguous_wide: bool) -> usize {
+    // ★ **지역 지시자는 정본이 2 라 부른다**(pytmux-407 ⓐ 작업 중 픽스처가 잡았다).
+    //   `unicode-width` 는 UAX #11 대로 낱개를 1 로 준다 — 「깃발이 두 칸」은 **쌍**의
+    //   성질이라는 판단이고 그 자체로 틀리지 않다. 그런데 격자를 앉히는 것은 **서버**이고
+    //   서버는 파이썬 `wcwidth`(낱개 2)로 센다. 여기서 1 로 세면 국기가 든 줄이 클라에서만
+    //   두 칸씩 당겨져 **그 줄 전체가 어긋난다.**
+    //   ⛔ 그러므로 「어느 값이 옳은가」가 아니라 「정본과 같은가」가 기준이다
+    //      (이 모듈 머리말의 계약 · `tests/char_width_conformance.rs` 가 전수로 잰다).
+    if (0x1F1E6..=0x1F1FF).contains(&(ch as u32)) {
+        return 2;
+    }
     if ch.width() == Some(2) {
         return 2;
     }
@@ -105,6 +116,62 @@ pub fn char_advance(ch: char) -> usize {
     char_cells(ch)
 }
 
+/// ZWJ — 이 글자로 끝나는 셀은 **군집이 아직 안 끝났다**는 뜻이다.
+pub const ZWJ: char = '\u{200d}';
+
+/// 그림 글자인가 — **Extended_Pictographic 의 실용 근사**.
+///
+/// ⚠ 표준 속성이 아니다. 이 크레이트의 의존(`unicode-width`)도 파이썬 `unicodedata` 도
+/// 그 속성을 안 준다 — 표를 통째로 들이는 대신 **범위 넷**으로 근사하고, 두 언어가
+/// **같은 범위**를 적는다(파이썬 `cellwidth.is_pictographic`). 갈리는지는 픽스처가
+/// 잰다(`tests/cluster_conformance.rs`).
+fn is_pictographic(ch: char) -> bool {
+    let o = ch as u32;
+    matches!(o, 0xA9 | 0xAE | 0x203C | 0x2049 | 0x2122 | 0x2139 | 0x3030 | 0x303D)
+        || (0x1F000..=0x1FAFF).contains(&o)
+        || (0x2600..=0x27BF).contains(&o)
+        || (0x2B00..=0x2BFF).contains(&o)
+}
+
+fn is_regional(ch: char) -> bool {
+    (0x1F1E6..=0x1F1FF).contains(&(ch as u32))
+}
+
+/// `ch` 가 앞 셀의 **문자소 군집에 이어지나**(pytmux-407 ⓐ).
+///
+/// 규약은 **군집의 폭 = 밑글자의 폭**이다(사람이 고른 것 · 2026-09-01 · tmux 3.4 와 같다).
+/// 종전에는 폭 0 조각만 앞 칸에 얹혀서, 제 폭을 가진 조각(둘째 이모지·둘째 지역
+/// 지시자·피부톤 수정자)은 **새 칸을 열었다** — `👨‍👩‍👧` 가 여섯 칸이고 화면에는
+/// 이모지 셋이었다.
+///
+/// 세 갈래(UAX #29 GB11·GB9b·GB12/13 의 실용판) — 자세한 근거는 파이썬 정본
+/// `cellwidth.joins_previous` 머리말에 있다. **판정은 한 벌이라야** 하므로 값이
+/// 갈리는지는 픽스처가 전수로 잰다.
+pub fn joins_previous(prev: &str, ch: char) -> bool {
+    if prev.is_empty() {
+        return false;
+    }
+    if prev.ends_with(ZWJ) {
+        return is_pictographic(ch);
+    }
+    if (0x1F3FB..=0x1F3FF).contains(&(ch as u32)) {
+        return true;
+    }
+    if is_regional(ch) {
+        let tail = prev.chars().rev().take_while(|c| is_regional(*c)).count();
+        return tail % 2 == 1;
+    }
+    false
+}
+
+/// 이 글자가 앞 셀에 **얹히나** — 폭 0 이거나 군집이 이어질 때.
+///
+/// 격자에 글자를 앉히는 자리는 넷(`compose_row`·`Canvas::blit_pane`·`Canvas::put_text`·
+/// GUI 의 조각 나누기)이고, 넷이 각자 두 갈래를 적으면 한 곳만 고쳐지는 날이 온다.
+pub fn attaches(prev: &str, ch: char) -> bool {
+    char_advance(ch) == 0 || joins_previous(prev, ch)
+}
+
 /// 행 런들을 폭 `cols` 의 셀 격자로 합성한다.
 ///
 /// 반환값의 각 원소가 화면 한 줄이고, **시각적 폭이 정확히 `cols`** 다(문자 수가 아니라).
@@ -113,17 +180,33 @@ pub fn compose_rows(rows: &[Row], cols: usize) -> Vec<String> {
 }
 
 fn compose_row(row: &Row, cols: usize) -> String {
-    let mut cells = vec![' '; cols];
+    // ★ 칸 하나가 **글자 하나**가 아니다(pytmux-407 ⓐ) — 문자소 군집이 한 칸에 든다.
+    //   연속 칸은 빈 문자열이라 마지막에 그냥 이어 붙이면 종전과 같은 줄이 된다.
+    let mut cells: Vec<String> = vec![" ".to_owned(); cols];
     let mut cx = 0usize;
+    // 마지막으로 연 **밑글자** 칸 — 얹히는 글자가 갈 자리다.
+    let mut base: Option<usize> = None;
 
     for run in row {
         for ch in run.text.chars() {
+            if let Some(b) = base
+                && attaches(&cells[b], ch)
+            {
+                cells[b].push(ch);
+                continue;
+            }
+            // 얹힐 자리가 없는 폭 0 글자는 **버린다** — 제 칸을 주면 그 줄이 한 칸씩
+            // 밀리고, 화면에 없는 글자가 셀의 글에 남는다(`Canvas` 와 같은 규칙).
+            if char_advance(ch) == 0 {
+                continue;
+            }
             if cx >= cols {
                 break;
             }
-            cells[cx] = ch;
+            cells[cx] = ch.to_string();
+            base = Some(cx);
             if char_cells(ch) == 2 && cx + 1 < cols {
-                cells[cx + 1] = CONTINUATION;
+                cells[cx + 1] = String::new();
                 cx += 2;
             } else {
                 cx += 1;
@@ -131,12 +214,27 @@ fn compose_row(row: &Row, cols: usize) -> String {
         }
     }
 
-    cells.into_iter().filter(|c| *c != CONTINUATION).collect()
+    cells.concat()
 }
 
 /// 줄의 **시각적 폭**. 합성 결과가 계약(`== cols`)을 지키는지 확인할 때 쓴다.
+///
+/// ⚠ **글자 수가 아니라 군집 수를 센다**(pytmux-407 ⓐ). 얹힌 조각(변이 선택자·ZWJ·
+/// 둘째 이모지 …)은 칸을 안 쓰므로 여기서도 안 센다 — 낱개로 세면 이모지가 든 줄이
+/// 계약(`== cols`)을 깬 것처럼 보인다(실측: 조합 문자 둘이 든 120칸 줄이 122 로 읽혔다).
 pub fn display_width(line: &str) -> usize {
-    line.chars().map(char_cells).sum()
+    let mut width = 0usize;
+    let mut cluster = String::new();
+    for ch in line.chars() {
+        if attaches(&cluster, ch) {
+            cluster.push(ch);
+            continue;
+        }
+        width += char_cells(ch);
+        cluster.clear();
+        cluster.push(ch);
+    }
+    width
 }
 
 #[cfg(test)]

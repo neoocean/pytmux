@@ -182,8 +182,14 @@ pub struct Cell {
     /// 갈래를 나눈 이유(칸을 하나 더 쓰지 않는 이유): 폭 0 은 **칸을 안 먹는다**.
     /// 종전에는 이 글자가 제 칸을 차지해 뒤따르는 글자가 한 칸씩 밀렸다.
     ///
-    /// ⛔ 여기에 폭 0 이 아닌 글자를 넣지 않는다 — 그러면 그 글자가 화면에서 사라진다
-    /// (칸을 안 먹는데 그려지기는 하는 자리가 된다).
+    /// ★ **폭 0 만 드는 칸이 아니다**(pytmux-407 ⓐ · 2026-09-01). 군집의 다음 조각
+    /// (둘째 이모지 · 둘째 지역 지시자 · 피부톤 수정자)도 여기 든다 — 사람이 고른
+    /// 규약이 「군집의 폭 = 밑글자의 폭」이라, `👨‍👩‍👧` 는 **한 칸(폭 2)**이고 그 글은
+    /// 코드포인트 다섯이다. 그 조각들은 셰이퍼가 **한 글리프로** 합치므로 화면에서
+    /// 사라지지 않는다(갈라 넣으면 이모지 셋이 된다 — 그것이 이 이슈의 증상이었다).
+    ///
+    /// ⛔ 무엇이 얹히는지는 [`crate::compose::attaches`] 한 곳이 정한다. 여기서 따로
+    /// 판정하면 서버 격자와 갈리고, 갈리면 그 줄이 통째로 밀린다.
     pub marks: String,
     pub style: CellStyle,
     /// 넓은 글자가 차지한 뒤쪽 칸인가. 줄을 만들 때 건너뛴다.
@@ -292,28 +298,32 @@ impl Canvas {
             for run in row {
                 let style = CellStyle::from_map(&run.style);
                 for ch in run.text.chars() {
-                    // ★ **폭 0 은 칸을 안 먹고 앞 글자에 얹힌다**(pytmux-407 · 389).
-                    //   종전에는 제 칸을 차지해 ⑴ 뒤따르는 글자가 한 칸씩 밀리고
-                    //   ⑵ `⚠` 가 변이 선택자와 갈려 **흑백**으로 그려졌다.
-                    //   ⛔ 앞 칸이 없으면(줄 첫 글자) 버린다 — 얹을 자리가 없는 표시를
-                    //      제 칸에 그리면 그것이 화면에 없는 글자가 된다.
-                    if crate::compose::char_advance(ch) == 0 {
-                        if cx > 0 {
-                            let prev = x + cx - 1;
-                            // 넓은 글자의 **본체**에 얹는다(연속 칸이 아니라).
-                            let at = if self.cells[ty]
-                                .get(prev)
-                                .is_some_and(|c| c.continuation)
-                                && prev > 0
-                            {
-                                prev - 1
-                            } else {
-                                prev
-                            };
-                            if let Some(cell) = self.cells[ty].get_mut(at) {
-                                cell.marks.push(ch);
-                            }
+                    // ★ **얹히는 글자는 칸을 안 먹는다**(pytmux-407 · 389).
+                    //   두 갈래다 — 폭 0(변이 선택자·ZWJ·결합 표시)과 **군집의 다음
+                    //   조각**(둘째 이모지·둘째 지역 지시자·피부톤 수정자). 판정은
+                    //   `compose::attaches` 한 벌이고 서버 격자가 같은 규칙으로 셀을
+                    //   짓는다 — 여기서 다르게 세면 그 줄이 통째로 어긋난다.
+                    //   ⛔ 앞 칸이 없으면(줄 첫 글자) 폭 0 은 버린다 — 얹을 자리가 없는
+                    //      표시를 제 칸에 그리면 그것이 화면에 없는 글자가 된다.
+                    if cx > 0 {
+                        let prev = x + cx - 1;
+                        // 넓은 글자의 **본체**에 얹는다(연속 칸이 아니라).
+                        let at = if self.cells[ty].get(prev).is_some_and(|c| c.continuation)
+                            && prev > 0
+                        {
+                            prev - 1
+                        } else {
+                            prev
+                        };
+                        if self.cells[ty]
+                            .get(at)
+                            .is_some_and(|c| crate::compose::attaches(&c.text(), ch))
+                        {
+                            self.cells[ty][at].marks.push(ch);
+                            continue;
                         }
+                    }
+                    if crate::compose::char_advance(ch) == 0 {
                         continue;
                     }
                     if cx >= w {
@@ -429,13 +439,25 @@ impl Canvas {
             if cx >= self.cols {
                 break;
             }
-            // 여기도 폭 0 은 앞 글자에 얹는다(pytmux-407 · `put_row_runs` 와 같은 규칙).
-            if crate::compose::char_advance(ch) == 0 {
-                if cx > 0
-                    && let Some(cell) = self.cells[y].get_mut(cx - 1)
+            // 여기도 얹히는 글자는 앞 칸에 붙는다(pytmux-407 · 위 `blit_pane` 과 같은 규칙).
+            if cx > 0 {
+                // 넓은 글자의 **본체**를 찾는다 — 연속 칸에 얹으면 그리는 쪽이 그 칸을
+                // 건너뛰어 사라진다(저쪽과 같은 되짚기다).
+                let prev = cx - 1;
+                let at = if self.cells[y].get(prev).is_some_and(|c| c.continuation) && prev > 0 {
+                    prev - 1
+                } else {
+                    prev
+                };
+                if self.cells[y]
+                    .get(at)
+                    .is_some_and(|c| crate::compose::attaches(&c.text(), ch))
                 {
-                    cell.marks.push(ch);
+                    self.cells[y][at].marks.push(ch);
+                    continue;
                 }
+            }
+            if crate::compose::char_advance(ch) == 0 {
                 continue;
             }
             let wide = char_cells(ch) == 2;

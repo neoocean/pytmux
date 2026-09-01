@@ -15,7 +15,7 @@ from rich.terminal_theme import DEFAULT_TERMINAL_THEME, TerminalTheme
 
 from . import i18n, proc
 from .keymap import DRAG_COPY_VALUES
-from .cellwidth import char_advance, char_cells
+from .cellwidth import attaches, char_advance, char_cells
 
 def _shell_argv(cmd: str) -> list:
     """run-shell/if-shell/display-popup 의 셸 명령 argv. OS 별 셸로 분기.
@@ -216,6 +216,8 @@ def unwrap_copy_text(text: str, width: int, first_col: int = 0) -> str:
 _char_cells = char_cells
 # 칸을 **나눌 때** 쓰는 자(폭 0 글자는 0). 같은 이유로 여기 별칭을 둔다.
 _char_advance = char_advance
+# 「이 글자가 앞 칸에 얹히나」 — 폭 0 이거나 **군집이 이어질 때**(pytmux-407 ⓐ).
+_attaches = attaches
 
 
 # 이모지(컬러 픽토그래프) 코드포인트 대략 범위. 팝업이 떠 본문을 어둡게 칠할 때,

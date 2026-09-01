@@ -1183,6 +1183,57 @@ fn a_variation_selector_rides_along_instead_of_taking_a_cell() {
 }
 
 #[test]
+fn a_grapheme_cluster_is_one_segment_so_the_shaper_draws_one_glyph() {
+    // ★ pytmux-407 ⓐ — 사람이 고른 규약은 **군집의 폭 = 밑글자의 폭**이다(tmux 3.4 와
+    //   같다). 서버 격자가 그렇게 셀을 짓고(`nativescreen`), 여기서도 그렇게 조각을
+    //   나눠야 셰이퍼가 **한 글리프**를 그린다. 갈라 넘기면 `👨‍👩‍👧` 가 이모지 셋으로
+    //   그려진다 — 맥에서 화소로 확인된 그 증상이다(2026-08-31 코멘트).
+    //
+    // 재는 것 둘: ⑴ 한 조각인가 ⑵ 그 조각이 **밑글자만큼만** 칸을 쓰나.
+    let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}";
+    let segs = SessionView::grid_segments(&format!("|{family}|"));
+    assert!(
+        segs.iter().any(|(piece, cells)| piece == family && *cells == 2),
+        "가족 이모지가 한 조각(폭 2)이 아니다 — 낱개로 그려진다: {segs:?}"
+    );
+    assert_eq!(
+        segs.iter().map(|(_, c)| c).sum::<usize>(),
+        4,
+        "군집이 밑글자보다 많은 칸을 먹었다 — 그 줄이 밀린다: {segs:?}"
+    );
+    // 깃발(지역 지시자 둘)과 피부톤 수정자도 같은 규칙이다.
+    let flag = "\u{1f1f0}\u{1f1f7}";
+    assert!(
+        SessionView::grid_segments(flag).iter().any(|(p, c)| p == flag && *c == 2),
+        "국기가 두 조각으로 갈렸다: {:?}",
+        SessionView::grid_segments(flag)
+    );
+    let thumb = "\u{1f44d}\u{1f3ff}";
+    assert!(
+        SessionView::grid_segments(thumb).iter().any(|(p, c)| p == thumb && *c == 2),
+        "피부톤 수정자가 제 칸을 차지했다: {:?}",
+        SessionView::grid_segments(thumb)
+    );
+}
+
+#[test]
+fn two_unrelated_emoji_are_not_folded_into_one_cluster() {
+    // ⛔ 대조군 — 「이모지끼리는 붙인다」는 판이면 위 시험은 통과하고 **글자가 사라진다**
+    //    (한 칸에 둘을 넣으면 뒤엣것이 안 그려진다). 옆의 `쓸쓸` 오라클과 같은 이유로
+    //    둔다: 표시 결함을 고치다 **자료 결함**을 만드는 것이 이 부류의 유혹적인 오답이다.
+    let segs = SessionView::grid_segments("\u{1f44d}\u{1f44e}");
+    assert_eq!(
+        segs.len(),
+        2,
+        "이어질 이유가 없는 이모지 둘을 한 조각으로 접었다: {segs:?}"
+    );
+    assert_eq!(segs.iter().map(|(_, c)| c).sum::<usize>(), 4, "{segs:?}");
+    // 완성된 깃발 **뒤**에서는 새 깃발이 시작한다(홀짝을 안 세면 넷이 한 덩어리가 된다).
+    let two_flags = SessionView::grid_segments("\u{1f1f0}\u{1f1f7}\u{1f1ef}\u{1f1f5}");
+    assert_eq!(two_flags.len(), 2, "깃발 둘을 하나로 접었다: {two_flags:?}");
+}
+
+#[test]
 fn a_zero_width_char_at_the_head_of_a_line_is_dropped_not_given_a_cell() {
     // 얹힐 앞 글자가 없으면 놓을 칸도 없다. **버리되 칸은 안 준다** — 칸을 주면
     // 그 줄 전체가 밀리고, 그건 이 결함의 증상 그대로다.

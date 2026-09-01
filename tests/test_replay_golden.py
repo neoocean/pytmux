@@ -111,7 +111,10 @@ async def test_replay_lines_are_exactly_cols_wide():
                 lines = replay_mod.replay(data, cols, rows)
                 assert len(lines) == rows, (name, cols, rows, len(lines))
                 for i, ln in enumerate(lines):
-                    w = sum(cellwidth.char_cells(c) for c in ln)
+                    # ⚠ **글자 수가 아니라 군집 수**다(pytmux-407 ⓐ) — 얹힌 조각은
+                    #   칸을 안 쓴다. 낱개로 세면 이모지가 든 줄이 계약을 깬 것처럼
+                    #   보인다(실측: 조합 문자 둘이 든 80칸 줄이 82).
+                    w = cellwidth.line_cells(ln)
                     assert w == cols, (name, f"{cols}x{rows}", f"row{i}", w,
                                        repr(ln[:40]))
     finally:
