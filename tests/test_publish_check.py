@@ -6,6 +6,7 @@ p4/git 명령은 `run()` 을 갈아끼워 주입한다(실 depot 상태에 의�
 거짓 실패).
 """
 import importlib.util
+import io
 import os
 
 import harness
@@ -76,20 +77,167 @@ async def test_clean_tree_reports_in_sync():
 #    시험이 조용히 아무것도 안 재게 된다.
 
 
-async def test_stale_git_baseline_refuses_to_judge():
-    """로컬 HEAD 가 origin/main 보다 뒤 → **판정 자체를 안 낸다**(rc 2)."""
+async def test_a_clone_that_is_merely_behind_is_judged_on_origin_main():
+    """★ 뒤처지기만 했으면(로컬 커밋 없음) **멈추지 않는다**(pytmux-388).
+
+    ⛔ 그러면서도 위 문단의 규율은 그대로다 — **낡은 기준선의 목록은 안 낸다.** 달라지는
+    것은 기준선을 `origin/main` 으로 갈아끼우는 것뿐이라, 로컬 HEAD 기준의 `git status`·
+    `git ls-files` 가 만들어 내던 거짓 붉음(`titlebar.rs`)은 여전히 안 나와야 한다.
+
+    ☠ 멈추던 시절의 값: 야간 감시가 같은 「낡았다」를 엿새 · 7회 냈고, 그 붉은 줄 뒤에
+    진짜 빚(내용이 갈린 114 파일 · depot 보다 39 CL 뒤)이 서 있었다.
+    """
     rc, text = _gate({"git rev-list --count HEAD..origin/main": (0, "30\n"),
+                      "git rev-list --count origin/main..HEAD": (0, "0\n"),
                       **_CLEAN,
                       # 낡은 기준선이 만들어 내던 바로 그 거짓 붉음을 함께 심는다.
                       "git status --porcelain": (0, " M client/crates/gui/src/titlebar.rs\n"),
-                      "p4 files": (0, _files(("CLAUDE.md", "edit"))),
-                      "git ls-files": (0, "CLAUDE.md\nclient/crates/gui/src/titlebar.rs\n")})
-    assert rc == pc.RC_STALE, text
-    assert "기준선이 낡" in text and "30커밋 뒤" in text, text
+                      "p4 files": (0, _files(("CLAUDE.md", "edit"),
+                                             ("client/crates/gui/src/titlebar.rs", "edit"))),
+                      "git ls-files": (0, "CLAUDE.md\nclient/crates/gui/src/titlebar.rs\n"),
+                      # 기준선 위에서 다시 재면 깨끗하다(그 파일은 이미 origin 에 있다).
+                      "git ls-tree -r --name-only origin/main":
+                          (0, "CLAUDE.md\nclient/crates/gui/src/titlebar.rs\n"),
+                      "git diff-index --name-only origin/main": (0, "")})
+    assert rc == 0, text
+    assert "30커밋 뒤" in text and "reset --mixed" in text, (
+        "낡음 자체는 사람이 고칠 것이라 말해 줘야 한다: " + text)
     assert "titlebar.rs" not in text, (
         "낡은 기준선으로 잰 목록을 내면 안 된다 — 143줄 중 참이 1줄이면 그건 소음이다: " + text)
-    assert "미러 일치" not in text, text
-    assert "reset --mixed" in text, "고치는 길을 알려줘야 한다: " + text
+    assert "미러 일치" in text and "기준선 origin/main" in text, text
+
+
+async def test_a_behind_clone_still_reports_real_drift_measured_on_the_fresh_baseline():
+    """⛔ 판정한다는 말은 **초록을 준다**는 말이 아니다 — 진짜 빚은 그대로 나와야 한다.
+
+    이것이 pytmux-388 이 치른 값의 반대편이다: 멈추면 이 목록이 엿새 동안 안 보인다.
+    """
+    rc, text = _gate({"git rev-list --count HEAD..origin/main": (0, "30\n"),
+                      "git rev-list --count origin/main..HEAD": (0, "0\n"),
+                      **_CLEAN,
+                      "git status --porcelain": (0, ""),
+                      "p4 diff -se": (0, _files(("client/x.rs", ""))),
+                      "git ls-tree -r --name-only origin/main": (0, "client/x.rs\n"),
+                      "git diff-index --name-only origin/main": (0, "client/x.rs\n")})
+    assert rc == 1, text
+    assert "git 미푸시" in text and "client/x.rs" in text, text
+
+
+async def test_a_behind_clone_does_not_measure_git_state_from_the_stale_index():
+    """**호출부를 겨눈 오라클.** 기준선을 아래로 안 넘기면 `measure_drift` 가 다시
+    `git status`·`git ls-files`(둘 다 로컬 HEAD·인덱스) 로 떨어진다 — 그러면 남이 민
+    새 파일이 통째로 「git 에 없는 파일」이 된다. 그 회귀를 **명령 자취**로 잡는다."""
+    seen = []
+    old_run, old_ign = pc.run, pc.git_ignored
+    mapping = {"git rev-list --count HEAD..origin/main": (0, "30\n"),
+               "git rev-list --count origin/main..HEAD": (0, "0\n"),
+               **_CLEAN,
+               "git ls-tree -r --name-only origin/main": (0, "CLAUDE.md\n"),
+               "git diff-index --name-only origin/main": (0, ""),
+               "p4 files": (0, _files(("CLAUDE.md", "edit")))}
+    base = _fake_run(mapping)
+
+    def run(cmd, cwd=ROOT):
+        seen.append(" ".join(cmd))
+        return base(cmd, cwd)
+
+    pc.run, pc.git_ignored = run, (lambda paths: set())
+    try:
+        rc = pc.check_mirror(out=lambda *_: None)
+    finally:
+        pc.run, pc.git_ignored = old_run, old_ign
+    assert rc == 0, seen
+    assert any(c.startswith("git diff-index --name-only origin/main") for c in seen), (
+        "기준선 위에서 안 쟀다 — 낡은 인덱스로 떨어졌다: %r" % seen)
+    assert not any(c.startswith("git ls-files") for c in seen), (
+        "존재 대조가 낡은 인덱스(`git ls-files`)를 그대로 읽었다: %r" % seen)
+
+
+async def test_at_ref_really_measures_the_worktree_against_that_ref():
+    """★ **진짜 git 으로** 잰다 — 위 시험들은 `run()` 을 갈아끼우므로, `_at_ref` 가 실제
+    git 앞에서 무엇을 하는지는 한 줄도 안 잰다(그 자리에 이 기능의 전부가 있다).
+
+    특히 순진한 `git diff --name-only <ref>` 로는 **못 한다**: 인덱스가 로컬 HEAD 를 따르
+    므로, ref 에는 있는데 인덱스에 없는 파일은 디스크에 **똑같이 있어도** 「지워졌다」로
+    나온다(실측: 그 한 줄 때문에 멀쩡한 파일이 빚으로 올라왔다). 그래서 임시 인덱스에
+    그 트리를 읽고 재는 것이고, 이 시험이 그 갈림을 그대로 밟는다.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    from run import skip
+    if not shutil.which("git"):
+        skip("git 이 없다 — 기준선 재기를 실물로 못 잰다")
+
+    def g(cwd, *args, **kw):
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e", **kw)
+        return subprocess.run(["git"] + list(args), cwd=cwd, env=env,
+                              capture_output=True, text=True, check=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work = os.path.join(tmp, "work")
+        os.mkdir(work)
+        g(work, "init", "-q", "-b", "main")
+        io.open(os.path.join(work, "a.txt"), "w").write("base\n")
+        g(work, "add", "-A"); g(work, "commit", "-qm", "base")
+        old_head = g(work, "rev-parse", "HEAD").stdout.strip()
+        # 「앞선 ref」 — a 를 고치고 b 를 새로 넣는다.
+        io.open(os.path.join(work, "a.txt"), "w").write("ahead\n")
+        io.open(os.path.join(work, "b.txt"), "w").write("new\n")
+        g(work, "add", "-A"); g(work, "commit", "-qm", "ahead")
+        ahead = g(work, "rev-parse", "HEAD").stdout.strip()
+        # 로컬 HEAD·인덱스를 옛 커밋으로 되돌린다(= 뒤처진 클론). 작업 트리는 ref 와 같게 둔다.
+        g(work, "reset", "-q", "--mixed", old_head)
+        io.open(os.path.join(work, "a.txt"), "w").write("ahead\n")
+        io.open(os.path.join(work, "b.txt"), "w").write("new\n")
+
+        # ⚠ `run(cmd, cwd=ROOT)` 의 기본값은 **import 때** 굳는다 — `pc.ROOT` 만 갈아도
+        #   안 따라온다(그래서 여기서는 cwd 를 강제하는 run 으로 감싼다).
+        old_run, old_root = pc.run, pc.ROOT
+        pc.ROOT = work
+        pc.run = lambda cmd, cwd=None, _r=old_run: _r(cmd, cwd=work)
+        try:
+            # ⛔ ⓐ **진짜 인덱스를 안 만진다**(이 트리의 파일은 p4 가 소유한다). 임시 인덱스를
+            #    안 세우면 `read-tree` 가 그 자리에서 **사용자의 인덱스를 갈아엎는다** — 재기가
+            #    맞아떨어져도 그것은 게이트가 저지를 수 있는 최악이다. 그래서 바이트로 잰다.
+            index_path = os.path.join(work, ".git", "index")
+            before = io.open(index_path, "rb").read()
+            # ⑴ 워크트리가 ref 와 같다 → 아무것도 안 나와야 한다.
+            rc, txt = pc._at_ref(ahead, ["diff-index", "--name-only", ahead])
+            assert io.open(index_path, "rb").read() == before, (
+                "게이트가 진짜 인덱스를 갈아엎었다 — 임시 인덱스(GIT_INDEX_FILE)를 안 세웠다")
+            assert rc == 0 and not txt.strip(), (
+                "워크트리가 ref 와 같은데 다르다고 했다(인덱스가 낡은 탓): %r" % txt)
+            # ⑵ 대조군 — 순진한 방법은 여기서 진다(b.txt 가 인덱스에 없다).
+            _, naive = pc.run(["git", "diff", "--name-only", ahead])
+            assert "b.txt" in naive, (
+                "대조군이 안 물었다 — 이 시험이 재려던 갈림이 사라졌다: %r" % naive)
+            # ⑶ 진짜로 갈라 놓으면 그것만 나온다.
+            io.open(os.path.join(work, "a.txt"), "w").write("local\n")
+            rc, txt = pc._at_ref(ahead, ["diff-index", "--name-only", ahead])
+            assert rc == 0 and txt.split() == ["a.txt"], txt
+            # ⑷ 존재 목록도 인덱스가 아니라 ref 의 트리에서 나온다.
+            _, tree = pc.run(["git", "ls-tree", "-r", "--name-only", ahead])
+            _, index = pc.run(["git", "ls-files"])
+            assert sorted(tree.split()) == ["a.txt", "b.txt"], tree
+            assert index.split() == ["a.txt"], (
+                "인덱스가 낡지 않았다 — 이 시험의 전제가 깨졌다: %r" % index)
+        finally:
+            pc.run, pc.ROOT = old_run, old_root
+        assert "GIT_INDEX_FILE" not in os.environ, "임시 인덱스가 환경에 남았다"
+
+
+async def test_a_diverged_clone_still_refuses_to_judge():
+    """로컬 커밋이 **있으면서** 뒤처졌으면 어느 쪽도 기준선이 못 된다 → rc 2 그대로."""
+    rc, text = _gate({"git rev-list --count HEAD..origin/main": (0, "30\n"),
+                      "git rev-list --count origin/main..HEAD": (0, "2\n"),
+                      **_CLEAN,
+                      "git status --porcelain": (0, " M client/crates/gui/src/titlebar.rs\n")})
+    assert rc == pc.RC_STALE, text
+    assert "기준선이 낡" in text, text
+    assert "titlebar.rs" not in text and "미러 일치" not in text, text
 
 
 async def test_stale_git_baseline_with_local_commits_does_not_suggest_reset():
@@ -139,7 +287,7 @@ async def test_mirror_gate_actually_measures_freshness():
     반복해 물린 '공허 통과'). 그래서 신선도 판정은 **게이트가 쓰는 경로**로만 잰다."""
     calls = []
     old = pc.measure_freshness
-    pc.measure_freshness = lambda remote=True: (calls.append(remote) or ([], []))
+    pc.measure_freshness = lambda remote=True: (calls.append(remote) or ([], [], None))
     try:
         rc, text = _gate(dict(_CLEAN))
     finally:
