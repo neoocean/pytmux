@@ -5,5 +5,8 @@
 # 관례). 그러니 `build/` 는 여기 없다 — 지우지 말 것. 반대로 `target/` 을
 # 통째로 올리는 것도 하지 말 것: 이 줄이 막고 있는 게 그거다.
 target/
+# 일회용 러너는 같은 것을 **다른 이름**으로 만든다 — `CARGO_TARGET_DIR` 을 이 트리 안
+# `target-eph-<런id>/` 으로 잡는다(pytmux-431 · 실측 1.8GB). 위 한 줄은 그 이름을 안 덮는다.
+target-eph-*/
 **/*.rs.bk
 .DS_Store

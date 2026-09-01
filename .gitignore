@@ -82,6 +82,15 @@ crash-*
 #              rewrite 밖에 없다. 스냅샷 갱신 빈도를 낮게 유지할 것.
 #              (한도 참고: GitHub 파일 한도 100MB · `check_mirror.py` 는 50MB 부터 운다.)
 /client/target/
+# ★ 일회용 러너는 **다른 이름**으로 같은 것을 만든다(pytmux-431 · 실측 2026-09-01):
+#   `issue` 트래커의 eph 런이 제 트리에서 돌면서 `CARGO_TARGET_DIR` 을 **이 워크스페이스
+#   안**(`client/target-eph-<런id>/`)으로 잡는다. 위 한 줄은 그 이름을 안 덮으므로 1.8GB
+#   짜리 cargo 산출물이 «추적 안 된 파일»로 서고, `check_mirror.py` 가 그것을
+#   `git ls-files -co --exclude-standard` 로 집어 **커밋 게이트가 붉어진다**
+#   (실 홈 경로가 박힌 `.o`·`.rmeta` 수천 개 — 「미러로 가는 텍스트」 판정).
+#   ⛔ 지우는 것은 답이 아니다 — 그 순간 **남의 런이 그 안에 빌드하고 있을 수 있다**
+#     (실측: `cargo` 가 `.cargo-lock` 을 쥔 채 살아 있었다).
+/client/target-eph-*/
 
 # client/docs/ — **비어 있다.** 안에 있던 셋(USER_GUIDE.md · images/ 28장 ·
 # reports/ 401장)은 §10-17 로 `docs/internal/client/` 아래로 이사했다(사용자 지시
