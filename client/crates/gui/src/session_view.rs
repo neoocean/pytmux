@@ -10531,6 +10531,11 @@ impl TypedActionView for SessionView {
 #[path = "session_view_tests.rs"]
 mod tests;
 
+/// 글자 속성이 그리는 자리까지 닿나 — pytmux-33 축 ⑷ 의 자.
+#[cfg(test)]
+#[path = "attr_render_conformance.rs"]
+mod attr_render_conformance;
+
 /// 캔버스 한 조각의 **칸 폭을 못박되 글리프는 안 자르는** 상자(pytmux-270).
 ///
 /// # 무엇이 잘리고 있었나
