@@ -24,6 +24,7 @@ from datetime import date, datetime
 from pytmuxlib import i18n
 
 from . import usagelog
+from . import hour_suffix as _hour_suffix, weekday_names as _weekday_names
 
 
 def build(records, full_recs=None, hourly=None, opened=(), *, today=None):
@@ -47,8 +48,8 @@ def build(records, full_recs=None, hourly=None, opened=(), *, today=None):
         return default ^ (key in toggled)
 
     src = full_recs if full_recs is not None else records
-    weekdays = i18n.t("pscreen.weekdays").split(",")
-    hour_suffix = i18n.t("pscreen.hour_suffix")
+    weekdays = _weekday_names()
+    hour_suffix = _hour_suffix()
     day_idx = usagelog.agg_index(src, "day", weekdays=weekdays,
                                  hour_suffix=hour_suffix)
     hour_idx = (usagelog.hourly_index(hourly, hour_suffix)

@@ -21,6 +21,7 @@ from rich.style import Style
 from pytmuxlib import i18n
 from pytmuxlib.clientutil import REMOTE_PINK, theme_color
 from . import CTX_CHOICES, MODEL_CHOICES, SAVER_ROWS
+from . import hour_suffix as _hour_suffix, weekday_names as _weekday_names
 # 머리줄 산수 한 벌 — Textual 을 안 문다(서버도 같은 것을 부른다 · pytmux-419 ②).
 from . import usagehead
 
@@ -1109,8 +1110,7 @@ class TokenLogScreen(ModalScreen):
         short = d[5:] if len(d) >= 10 else d        # 'MM-DD'
         try:
             wd = datetime.strptime(d, "%Y-%m-%d").weekday()
-            names = i18n.t("pscreen.weekdays").split(",")
-            return f"{short} ({names[wd]})"
+            return f"{short} ({_weekday_names()[wd]})"
         except (ValueError, TypeError, IndexError):
             return short
 
@@ -1464,7 +1464,7 @@ class TokenLogScreen(ModalScreen):
         src = (self._records if self._bucket == "hour"
                else (self._full_recs if self._full_recs is not None
                      else self._records))
-        hour_suffix = i18n.t("pscreen.hour_suffix")
+        hour_suffix = _hour_suffix()
         if self._view == "session":
             # 세션 뷰(요청 2026-06-22): 토큰 많은 순+상위 N 접힘 대신 **시작 시각
             # 내림차순(최신 위) + 전 세션 표시**(top=None 으로 '기타' 접힘 해제 — 사용자
@@ -1497,7 +1497,7 @@ class TokenLogScreen(ModalScreen):
             return (rows, gmax, sum(v for _, v, _ in rows),
                     i18n.t("머신"), None, None)
         self._sess_times = None
-        weekdays = i18n.t("pscreen.weekdays").split(",")
+        weekdays = _weekday_names()
         v = usagelog.agg_view(src, self._bucket, None, "account",
                               "time", weekdays=weekdays,
                               hour_suffix=hour_suffix)

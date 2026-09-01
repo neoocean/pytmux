@@ -482,6 +482,37 @@ i18n.register({
     },
 })
 
+# 요일 일곱은 이 카탈로그에서 **유일하게 쪼개 쓰는 값**이고, 그래서 유일하게 «없으면
+# 죽는» 값이다 — 나머지는 비면 키 문자열이 그냥 보일 뿐이다(위 주석의 마지막 줄).
+#
+# ☠ 실측(pytmux-429 · office 맥): 정본 토큰 팝업이 `on_mount` 에서 통째로 넘어졌다.
+# `"pscreen.weekdays".split(",")` 가 원소 하나라 `weekdays[wd]` 가 월요일 말고는 전부
+# `IndexError` 이고, `usagelog._bucket_short` 의 `try` 는 `ValueError` 만 잡아 그것을
+# 통과시킨다. 카탈로그가 비는 길은 여럿이다(한 프로세스가 `p4 sync` 를 사이에 두고 두
+# 시대의 파일을 드는 것이 그 중 하나) — 그러나 **길이 무엇이든 번역 하나가 화면 하나를
+# 죽여서는 안 된다.**
+#
+# ⛔ 그래서 쪼개는 자리는 **여기 하나**이고, 이 함수가 **일곱을 보장한다**. 부르는 곳이
+# 넷이던 것을 이리로 모았다(`usagetree`·`screenspec`·`screens` ×2). 사본이 다시 생기면
+# `tests/test_i18n.py` 의 `test_the_weekday_names_are_split_in_exactly_one_place` 가 운다.
+_WEEKDAYS_FALLBACK = "월,화,수,목,금,토,일"
+
+
+def weekday_names():
+    """요일 라벨 **일곱** — `datetime.weekday()` 와 같은 차례(월=0 … 일=6).
+
+    카탈로그가 그 키를 모르면 `i18n.t` 는 키를 그대로 돌려주므로, 여기서 원소 수를
+    세어 못 미치면 내장 폴백으로 떨어진다. 부르는 쪽은 언제나 일곱을 받는다."""
+    names = [s.strip() for s in
+             i18n.t("pscreen.weekdays", _WEEKDAYS_FALLBACK).split(",")]
+    return names if len(names) >= 7 else _WEEKDAYS_FALLBACK.split(",")
+
+
+def hour_suffix():
+    """시각 라벨 접미사(ko `시` / en `h`). 이것은 쪼개 쓰지 않아 안 터지지만, 짝인
+    요일과 **같은 자리에서** 나와야 둘이 따로 낡지 않는다."""
+    return i18n.t("pscreen.hour_suffix", "시")
+
 
 def perm_modes(current, bypass_available=False):
     """이 패널에 보일 `(키, 라벨)` 목록 — 정본 팝업과 화면 스펙이 **같은 것**을 부른다.

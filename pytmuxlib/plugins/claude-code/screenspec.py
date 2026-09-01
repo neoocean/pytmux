@@ -951,11 +951,10 @@ def _agg_rows(server, bucket="day", dim="account", order="time"):
         return None, i18n.t("pscreen.spec_tklog_nodb")
     if not recs:
         return [], i18n.t("pscreen.spec_tklog_empty")
-    from . import usagelog
-    weekdays = i18n.t("pscreen.weekdays").split(",")
+    from . import usagelog, hour_suffix, weekday_names
     view = usagelog.agg_view(recs, bucket, None, dim, order,
-                             weekdays=weekdays,
-                             hour_suffix=i18n.t("pscreen.hour_suffix"))
+                             weekdays=weekday_names(),
+                             hour_suffix=hour_suffix())
     key = "groups" if dim == "session" else "buckets"
     return view.get(key) or [], ""
 

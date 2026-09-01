@@ -451,3 +451,102 @@ async def test_every_word_the_server_speaks_is_registered_where_the_server_reads
         f"{ {k: where[k] for k in missing} }. Textual 을 무는 파일의 "
         f"`i18n.register` 에만 적으면 서버는 못 읽는다 — 서버도 읽는 모듈"
         f"(플러그인 `__init__.py` · `pytmuxlib/i18n.py`)로 옮길 것(pytmux-34)")
+
+
+async def test_a_missing_weekday_catalog_does_not_kill_the_token_popup():
+    """☠ **번역 하나가 화면 하나를 죽이면 안 된다**(pytmux-429).
+
+    이 카탈로그에서 `pscreen.weekdays` 만 특별하다 — 유일하게 **쪼개 쓰는 값**이다.
+    없으면 `i18n.t` 가 키를 그대로 돌려주고, `"pscreen.weekdays".split(",")` 는 원소가
+    **하나**라 `weekdays[wd]` 가 월요일 말고는 전부 `IndexError` 다. 그리고
+    `usagelog._bucket_short` 의 `try` 는 `ValueError` 만 잡아 그것을 통과시킨다.
+
+    실측(office 맥 · 2026-09-01): 정본 토큰 팝업이 `on_mount` 에서 통째로 넘어졌다
+    — 트레이스백의 지역 변수가 `weekdays = ['pscreen.weekdays']` 였다. 카탈로그가
+    비는 길은 여럿이지만(한 프로세스가 `p4 sync` 를 사이에 두고 두 시대의 파일을 드는
+    것이 그 중 하나) **길이 무엇이든 이 결말은 결함이다.**
+
+    그래서 쪼개는 자리를 하나로 모으고 그 하나가 일곱을 보장한다. 여기서는 카탈로그를
+    실제로 비우고 **트리가 서는지**를 잰다(값을 만드는 함수만 재면 부르는 자리를 지워도
+    통과한다 — 그 공허 통과를 피하려 `usagetree.build` 까지 부른다).
+    """
+    import importlib
+
+    _reset()
+    from pytmuxlib import plugins
+    plugins.load()
+    pkg = importlib.import_module("pytmuxlib.plugins.claude-code")
+    usagetree = importlib.import_module("pytmuxlib.plugins.claude-code.usagetree")
+
+    saved = {loc: {k: i18n._CATALOG[loc].get(k)
+                   for k in ("pscreen.weekdays", "pscreen.hour_suffix")}
+             for loc in ("ko", "en")}
+    try:
+        # ⑴ 카탈로그가 온전할 때는 카탈로그가 이긴다(폴백이 번역을 덮으면 안 된다).
+        assert pkg.weekday_names()[2] == "수"
+        i18n.set_locale("en")
+        assert pkg.weekday_names()[2] == "We" and pkg.hour_suffix() == "h"
+        i18n.set_locale("ko")
+
+        # ⑵ 그 다섯이 없는 프로세스를 흉내낸다.
+        for loc in ("ko", "en"):
+            for k in ("pscreen.weekdays", "pscreen.hour_suffix"):
+                i18n._CATALOG[loc].pop(k, None)
+        names = pkg.weekday_names()
+        assert len(names) == 7 and names[0] and "pscreen" not in names[0], names
+        assert "pscreen" not in pkg.hour_suffix()
+
+        # ⑶ 그리고 팝업이 부르는 그 경로가 **실제로 선다** — 수요일(2026-06-03)이
+        #    들어 있어야 옛 결함의 `wd=2` 를 그대로 밟는다.
+        recs = [{"ts": 1780455600.0, "tab": None, "pane": 0, "session": None,
+                 "account": "unknown", "tokens": 100}]
+        nodes, total = usagetree.build(recs, recs, None, ())
+        assert total == 100 and nodes
+        day = usagelog_day_label(recs)
+        assert "(수)" in day, day
+    finally:
+        for loc, items in saved.items():
+            for k, v in items.items():
+                if v is not None:
+                    i18n._CATALOG[loc][k] = v
+
+
+def usagelog_day_label(recs):
+    """일 버킷 라벨 하나 — 요일이 실제로 붙는지 보려고 집계를 직접 부른다."""
+    import importlib
+    pkg = importlib.import_module("pytmuxlib.plugins.claude-code")
+    usagelog = importlib.import_module("pytmuxlib.plugins.claude-code.usagelog")
+    idx = usagelog.agg_index(recs, "day", weekdays=pkg.weekday_names(),
+                             hour_suffix=pkg.hour_suffix())
+    return next(iter(idx.values()))["label"]
+
+
+async def test_the_weekday_names_are_split_in_exactly_one_place():
+    """⛔ **사본이 다시 생기면 여기서 운다**(pytmux-429).
+
+    이 결함은 「부르는 자리가 넷」이라 살아남았다 — 넷 중 하나
+    (`screens._day_header`)만 혼자 `IndexError` 를 막고 있었고, 나머지 셋은 안 막았다.
+    한 자리만 고치면 다음 사람이 넷째를 다시 적는다. 그래서 **쪼개는 것은 저장소에
+    한 번뿐**이고, 그 한 번은 일곱을 보장하는 `weekday_names()` 안에 있다.
+    """
+    import io
+    import os
+    import re
+
+    hits = []
+    for dp, _dn, fns in os.walk("pytmuxlib"):
+        for fn in fns:
+            if not fn.endswith(".py"):
+                continue
+            fp = os.path.join(dp, fn)
+            src = io.open(fp, encoding="utf-8", errors="replace").read()
+            for m in re.finditer(
+                    r'i18n\.t\(\s*["\']pscreen\.weekdays["\'][^)]*\)\s*\.split',
+                    src):
+                hits.append((fp, src[:m.start()].count("\n") + 1))
+    assert len(hits) == 1, (
+        f"`pscreen.weekdays` 를 쪼개는 자리가 {len(hits)}곳이다: {hits}. "
+        f"쪼개는 것은 `plugins/claude-code/__init__.py` 의 `weekday_names()` "
+        f"하나뿐이어야 한다 — 그 함수만 일곱을 보장한다(pytmux-429)")
+    assert hits[0][0].replace("\\", "/").endswith(
+        "pytmuxlib/plugins/claude-code/__init__.py"), hits
