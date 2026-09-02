@@ -294,6 +294,14 @@ def _call_args(fn):
     return {"tmp_path": _pl.Path(_tf.mkdtemp(prefix="pytmux-test-"))}
 
 
+class SuiteTimeout(Exception):
+    """러너가 **자기 상한**에서 끊었다 — 시험이 스스로 낸 `TimeoutError` 와 다르다.
+
+    둘을 같은 것으로 세면 회계가 거짓말을 한다(pytmux-452): 지속시간이 틀리고,
+    실패가 **타임아웃 재시도** 경로로 새고, 진짜 원인의 트레이스백이 덮인다.
+    """
+
+
 async def _run_with_timeout(fn):
     """테스트 하나를 (타임아웃과 함께) 돌린다. **동기 함수도 받는다** — 그 경우
     코루틴이 아니라 그냥 부른다(스레드로 넘기지 않는 이유: 이 스위트의 동기 테스트는
@@ -304,7 +312,19 @@ async def _run_with_timeout(fn):
         fn(**kw)
         return
     if TEST_TIMEOUT > 0:
-        await asyncio.wait_for(fn(**kw), TEST_TIMEOUT)
+        # ⛔ `asyncio.wait_for` 만으로는 **누가 시간을 잰 것인지** 못 가른다 — 시험이
+        #    스스로 낸 `TimeoutError`(이 스위트의 `_read_until` 이 그런다)도 그대로
+        #    올라와 러너가 그것을 「자기 상한에 걸린 행」으로 읽었다. 그래서 4초짜리
+        #    단언 실패가 「90.0s 초과 — hang(데드락 의심)」으로 적히고 **트레이스백이
+        #    통째로 덮였다**(pytmux-452). 마감이 실제로 지났는지는 `expired()` 가 안다.
+        cm = asyncio.timeout(TEST_TIMEOUT)
+        try:
+            async with cm:
+                await fn(**kw)
+        except TimeoutError:
+            if cm.expired():
+                raise SuiteTimeout(f"{TEST_TIMEOUT}s 초과 — hang(데드락 의심)") from None
+            raise          # 시험이 스스로 낸 것 — 평범한 실패로 올린다(트레이스백 보존)
     else:
         await fn(**kw)
 
@@ -633,10 +653,13 @@ def main(argv):
                     print(f"  SKIP  {label}: {e}" if str(e)
                           else f"  SKIP  {label}")
                     break                  # 스킵은 재시도 안 함(finally 가 _disarm)
-                except asyncio.TimeoutError:
+                except SuiteTimeout as e:
+                    # ⛔ 여기 걸리는 것은 **러너의 상한**뿐이다 — 시험이 스스로 낸
+                    #    TimeoutError 는 아래 BaseException 으로 가서 트레이스백을
+                    #    지킨다(pytmux-452).
                     hung = True
                     n_hung += 1
-                    last_exc = TimeoutError(f"{TEST_TIMEOUT}s 초과 — hang(데드락 의심)")
+                    last_exc = e
                     last_tb = f"TIMEOUT after {TEST_TIMEOUT}s\n"
                 except BaseException as e:
                     # **BaseException** 이다(종전 Exception). SystemExit·KeyboardInterrupt
