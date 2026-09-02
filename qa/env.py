@@ -167,13 +167,20 @@ class HomeSlot:
         return out
 
     def reap(self) -> None:
-        """남은 것을 **pid 로만** 회수한다. 이름 매칭으로 넓히지 않는다."""
+        """남은 것을 **pid 로만** 회수한다. 이름 매칭으로 넓히지 않는다.
+
+        ⛔ **죽이고 나서 «거둔다»**(2026-09-02). `start()` 는 서버를 `Popen(...,
+        start_new_session=True)` 로 띄우므로 그것은 이 프로세스의 **직계 자식**이다 —
+        SIGKILL 만 하고 `waitpid` 를 안 하면 **좀비**로 남고, `os.kill(pid, 0)` 은 좀비를
+        「살아 있다」고 답한다(실측: `ps -o stat` = `Z` · waitpid 뒤에야 ProcessLookupError).
+        죽인 쪽이 거두지 않으면 그 흔적을 누구도 못 지운다."""
         from pytmuxlib import proc          # 지연 import — 정리 경로에서만 필요하다
         for pid in list(self.spawned) + self.ptyhost_pids():
             try:
                 proc.terminate(pid, force=True)
             except Exception:
                 pass                        # 이미 죽은 pid 는 정상이다
+            _reap_zombie(pid)
 
     def residue(self, timeout: float = 3.0, step: float = 0.1) -> list[str]:
         """정리 판정 — **내 홈의 상태 파일**로만 한다(규율 ⑶).
@@ -217,6 +224,20 @@ class HomeSlot:
         shutil.rmtree(self.home, ignore_errors=True)
 
 
+def _reap_zombie(pid: int) -> bool:
+    """그 pid 가 **우리 자식이고 이미 끝났으면** 거두고 True. 그 밖에는 False.
+
+    POSIX 전용 의미다(Windows 엔 좀비가 없다 — 죽으면 표에서 사라진다). 남의 자식이면
+    `ChildProcessError`, 아직 도는 우리 자식이면 `(0, 0)` 이라 둘 다 False 다."""
+    if IS_WINDOWS or pid <= 0:
+        return False
+    try:
+        done, _status = os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        return False                         # 우리 자식이 아니다 — 판정은 os.kill 이 한다
+    return done == pid
+
+
 def _alive(pid: int) -> bool:
     """그 pid 가 살아 있나.
 
@@ -230,6 +251,13 @@ def _alive(pid: int) -> bool:
             return proc.is_alive(pid)
         except Exception:
             return True                      # 못 물었으면 남았다고 보는 쪽이 안전하다
+    # ⛔ **좀비를 「살아 있다」로 세지 않는다.** 우리가 띄운 서버는 이 프로세스의 직계
+    #    자식이라, 죽여도 `waitpid` 전까지는 `os.kill(pid, 0)` 이 성공한다 — 그것을
+    #    잔여로 세면 매 런 위양성이 난다(2026-09-02 에 실제로 결함 4건을 헛으로 냈다).
+    #    이 저장소가 같은 교훈을 이미 적어 뒀다: 「alive 는 짐작이 아니라 waitpid 다」
+    #    (pytmux-425·426·427 · `tests/ptyshot.py`).
+    if _reap_zombie(pid):
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

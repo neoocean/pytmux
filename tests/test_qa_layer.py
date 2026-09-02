@@ -1156,3 +1156,37 @@ async def test_residue_counts_a_server_we_started_that_did_not_die():
             child.kill()
             child.wait()
         assert slot.residue(timeout=0.4, step=0.1) == [], "죽은 뒤에도 잔여로 셌다"
+
+
+async def test_residue_does_not_count_a_process_we_already_reaped():
+    """⛔ **좀비를 잔여로 세지 않는다** — 이 오라클이 처음 돌던 날 그것으로 결함 4건을
+    헛으로 냈다(2026-09-02 · pytmux-445..448 = 위양성).
+
+    슬롯이 띄우는 서버는 `Popen(..., start_new_session=True)` 라 **이 프로세스의 직계
+    자식**이다. SIGKILL 만 하고 `waitpid` 를 안 하면 좀비로 남고, `os.kill(pid, 0)` 은
+    좀비에도 성공한다(실측 `ps -o stat` = `Z`). 그러면 정리는 완벽했는데 판정이 「남았다」
+    가 된다 — 위양성은 QA 를 끈다(원칙 ⓓ). 이 저장소가 같은 교훈을 이미 적어 뒀다:
+    「alive 는 짐작이 아니라 waitpid 다」(pytmux-425·426·427).
+
+    ★ 재는 것은 **`reap()` 뒤에 조용한가**다 — 죽인 쪽이 거두기까지 해야 성립한다.
+    """
+    import subprocess
+    with _slot() as slot:
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        slot.spawned.append(child.pid)
+        try:
+            assert slot.residue(timeout=0.4, step=0.1), "살아 있는데 안 셌다(대조군)"
+            slot.reap()
+            left = slot.residue(timeout=0.4, step=0.1)
+            assert left == [], f"거둔 뒤에도 잔여로 셌다 — 좀비를 세고 있다: {left}"
+        finally:
+            try:
+                child.kill()
+            except OSError:
+                pass
+            try:
+                child.wait(timeout=5)
+            except Exception:
+                pass
