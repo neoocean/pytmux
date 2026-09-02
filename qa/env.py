@@ -188,6 +188,13 @@ class HomeSlot:
            `probe` 가 0.00s True → 0.25s False. 그래서 **수렴을 기다린 뒤** 판정한다.
            고친 이유를 지우지 않는 것은 다음 사람이 "왜 폴링인가"를 다시 묻지 않게 하려는
            것이다 — 저 지연은 제품의 의도이지 결함이 아니다.
+
+        ★ **그리고 「소켓이 대답하나」만으로는 눈이 먼다**(pytmux-435 ③ · 2026-09-02).
+           재기동은 소켓 이름을 **가져간다** — 앞 주인은 도달 불가가 된 소켓을 쥔 채
+           그대로 살 수 있고(그 거두기가 실패한 회차), 그때 `probe` 는 **새 주인**을 보고
+           「깨끗하다」고 답한다. 실측으로 시험 슬롯 하나(`/tmp/pxh-17368`)에 서버 **13개**
+           가 8월 2일부터 살아 있었고 각각 누적 CPU 155분을 태웠다 — 정리 코드는 있었고
+           **결과를 아무도 안 쟀다.** 그래서 `spawned`(우리가 띄운 pid)도 직접 묻는다.
         """
         end = time.time() + timeout
         while True:
@@ -195,6 +202,9 @@ class HomeSlot:
             sock = os.path.join(self.state_dir, "default.sock")
             if os.path.exists(sock) and ipc.probe(sock):
                 left.append(f"서버가 아직 응답한다: {sock}")
+            for pid in self.spawned:
+                if _alive(pid):
+                    left.append(f"우리가 띄운 서버가 아직 산다: pid {pid}")
             for pid in self.ptyhost_pids():
                 if _alive(pid):
                     left.append(f"pty-host 가 살아 있다: pid {pid}")
@@ -208,8 +218,18 @@ class HomeSlot:
 
 
 def _alive(pid: int) -> bool:
+    """그 pid 가 살아 있나.
+
+    ⛔ **Windows 에서 「모른다」를 「살아 있다」로 접지 않는다.** 종전에는 신호로 물을 수
+    없다는 이유로 늘 True 를 돌려서, 이 상자에서는 잔여 오라클이 무엇을 재도 「남았다」
+    였다 — 위양성은 QA 를 끈다(원칙 ⓓ). 제품이 이미 그 답을 갖고 있다
+    (`proc.is_alive` = ToolHelp/tasklist 로 PID 정확대조)."""
     if IS_WINDOWS:
-        return True                          # 신호로 물을 수 없다 — 살아 있다고 본다
+        from pytmuxlib import proc            # 지연 import — 정리 경로에서만 필요하다
+        try:
+            return proc.is_alive(pid)
+        except Exception:
+            return True                      # 못 물었으면 남았다고 보는 쪽이 안전하다
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

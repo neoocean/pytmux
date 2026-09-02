@@ -8,9 +8,11 @@ import contextlib
 import inspect
 import itertools
 import os
+import shutil
 import signal
 import sys
 import tempfile
+import time
 
 # 상위 디렉토리(pytmux 패키지/진입점)를 import 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -357,6 +359,64 @@ def assert_no_server_errors(sock, allow=False):
             % (len(bad), "\n".join(head[:14])))
 
 
+def _discard_temp(path, prefix):
+    r"""`server_only` 가 만든 임시물을 지운다 — **우리 접두사인 것만.**
+
+    종전엔 teardown 이 환경변수만 풀고 파일은 뒀다. 서버 하나당 임시 토큰 DB 하나와
+    캡처 디렉터리 하나가 상자의 `TMP` 에 **영구히** 쌓인다는 뜻이고, 스위트는 서버를
+    수백 곳에서 띄운다. 이 상자 실측(2026-09-02): `pytmux-db-*` **2393개** ·
+    `pytmux-cap-*` **2847개**. 아무도 그것을 세지 않았고 아무도 지우지 않았다
+    (pytmux-435 ④ 가 같은 부류를 playground 에서 1463개로 셌다).
+
+    ⛔ **접두사를 확인하고 지운다.** 테스트가 **자기 값을 세운** 회차(캡처 override
+    자체를 재는 시험 등)의 파일을 대신 지우면 그 시험을 망친다. SQLite WAL 사이드카
+    (`-wal`/`-shm`)도 함께 거둔다 — 안 그러면 이름만 다른 잔여가 남는다."""
+    if not path or prefix not in os.path.basename(path):
+        return
+    for p in (path, path + "-wal", path + "-shm"):
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            elif os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass                      # 지워지지 않는 잔여는 sweep_stale_temp 가 나중에 본다
+
+
+def sweep_stale_temp(hours: float = 24.0) -> int:
+    r"""**이전** 런들이 남긴 우리 접두사 임시물을 거둔다(스위트 시작 1회). 지운 수.
+
+    teardown 이 자기 것을 거두게 된 뒤에도 **이미 쌓인 것**은 그대로 남는다 — 그것이
+    이 함수다(pytmux-435 ④ 「임시 토큰 DB 에 수명을 준다」의 시험 쪽 몫).
+
+    ⛔ **나이로 가른다.** 병렬로 도는 다른 런이 지금 쥐고 있는 것을 지우면 그 런을
+    망친다 — `hours` 보다 오래된 것만 본다. 그리고 **우리가 지은 이름만** 본다
+    (`pytmux-db-`·`pytmux-cap-`) — 접두사 밖으로 넓히지 않는다(저장소 안전 규율의
+    「이름 매칭으로 넓히지 않는다」와 같은 결이다)."""
+    cutoff = time.time() - hours * 3600
+    tmp = tempfile.gettempdir()
+    gone = 0
+    try:
+        names = os.listdir(tmp)
+    except OSError:
+        return 0
+    for name in names:
+        if not (name.startswith("pytmux-db-") or name.startswith("pytmux-cap-")):
+            continue
+        p = os.path.join(tmp, name)
+        try:
+            if os.path.getmtime(p) > cutoff:
+                continue
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                os.remove(p)
+            gone += 1
+        except OSError:
+            continue                  # 남의 것·권한·경합은 그냥 넘긴다
+    return gone
+
+
 async def teardown(srv, task, sock, allow_errors=False):
     # 주의: 여기서 task 를 await 하지 않는다. Textual run_test 종료 직후엔 루프가
     # 정리 중이라 serve 태스크를 await 하면 "Event loop stopped" 가 난다.
@@ -366,8 +426,10 @@ async def teardown(srv, task, sock, allow_errors=False):
     # server_only 가 주입한 캡처 격리 override 를 해제 — 같은 프로세스의 다른
     # 테스트(capture_dir 의 비-override 동작을 검증하는 test_capture_dir_project_and_override
     # 등)에 새지 않게 한다.
-    os.environ.pop("PYTMUX_CAPTURE_DIR", None)
-    os.environ.pop("PYTMUX_TOKENS_DB", None)
+    # ⛔ 값을 버리지 말고 **그 자리에서 거둔다** — 종전엔 환경변수만 풀어서 파일이
+    #    상자에 영구히 쌓였다(`_discard_temp` 주석의 실측 5240건).
+    _discard_temp(os.environ.pop("PYTMUX_CAPTURE_DIR", None), "pytmux-cap-")
+    _discard_temp(os.environ.pop("PYTMUX_TOKENS_DB", None), "pytmux-db-")
     os.environ.pop("PYTMUX_PTY_HOST", None)
     # 정리 **뒤에** 검사한다 — 종료 경로에서 나는 예외까지 잡는다. 소켓 파일은 이미
     # 지워졌지만 error.log 는 남아 있다(경로가 다르다).

@@ -538,6 +538,17 @@ def main(argv):
     # 성공 실행을 90초 뒤 종료시키지 않게 명시적으로 끈다.
     if TEST_TIMEOUT > 0:
         faulthandler.cancel_dump_traceback_later()
+    # ★ **이전 런들이 남긴 임시물에 수명을 준다**(pytmux-435 ④). teardown 이 자기 것을
+    #   거두게 된 뒤에도 이미 쌓인 것은 그대로 남는다 — 이 상자 실측 2026-09-02 에
+    #   `pytmux-db-*` 2393개 · `pytmux-cap-*` 2847개였다. 나이(24시간)로 갈라서 병렬로
+    #   도는 런의 것을 안 건드린다. 실패는 조용히 넘긴다(스위트를 막을 일이 아니다).
+    try:
+        import harness as _h
+        _swept = _h.sweep_stale_temp()
+        if _swept:
+            print(f"묵은 임시물 {_swept}건을 거뒀다(24시간 지난 pytmux-db-*·pytmux-cap-*)")
+    except Exception:
+        pass
     # ★ `모듈.시험` 한 건만 고르는 길(pytmux-430). 재시도 재판정이 그 한 건만 깨끗한
     #   프로세스에서 다시 돌리려면 이 선택자가 있어야 한다. 사람이 쓰기에도 좋다:
     #   `python3 tests/run.py test_vtparse.test_csi_raw_param_buffer_bounded`

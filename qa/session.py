@@ -236,11 +236,17 @@ class Session:
         통과시키고(거짓 초록), 강하면 다 그린 회차까지 상한을 태운다.
         `tests/test_qa_layer.py` 의 AST 게이트가 「안 준 캡처」를 센다.
         """
-        if IS_WINDOWS:
-            raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
+        # ★ **오용 검사가 능력 검사보다 «먼저»다** — `clients()` 가 2026-08-25 에 같은
+        #   순서로 고쳐진 자리인데(그 주석 참조) 이 함수만 남아 있었다. `until` 을 안 준
+        #   것은 어느 OS 에서든 **호출부의 오류**지 「이 상자가 못 하는 일」이 아니고,
+        #   순서가 뒤집혀 있는 동안 Windows 에서는 그 규율을 **잴 수가 없었다**
+        #   (NotSupported 가 먼저 나가 test_capture_client_refuses_a_fixed_wait 이
+        #   붉었다 — pytmux-444). 커버리지를 SKIP 으로 덮는 대신 잴 수 있는 쪽으로 옮긴다.
         if until is None:
             raise Refused("capture_client 에 until 이 없다 — 고정 대기는 부하 때 "
                           "안 그린 화면을 결함으로 신고한다(pytmux-425·426·427)")
+        if IS_WINDOWS:
+            raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
         raw, alive = ptyshot.capture(
             self.client_argv(),
             cols=self.cols, rows=self.rows, seconds=seconds, feed=feed,

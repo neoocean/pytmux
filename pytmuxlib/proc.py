@@ -38,8 +38,8 @@ _CREATE_NO_WINDOW = 0x08000000
 
 __all__ = ["IS_WINDOWS", "spawn_detached", "terminate", "is_alive",
            "server_argv", "shell_argv", "no_window_kwargs",
-           "open_in_file_manager", "process_cwd", "foreground_command",
-           "tree_command_names"]
+           "open_in_file_manager", "process_cwd", "long_path",
+           "foreground_command", "tree_command_names"]
 
 
 def no_window_kwargs() -> dict:
@@ -203,6 +203,57 @@ def _win_is_alive(pid: int) -> bool:
         if len(row) >= 2 and row[1].strip() == target:
             return True
     return False
+
+
+# GetLongPathNameW 프로토타입 지연 캐시(미로드=None, 로드실패=False) — _libproc 과 동일 관례.
+_getlongpath = None
+
+
+def long_path(path: Optional[str]) -> Optional[str]:
+    r"""경로를 **온디스크 이름**으로 편다 — Windows 8.3 단축 표기(`WOOJIN~1`)를 긴
+    이름(`woojinkim`)으로. 그 밖의 OS 에선 항등(단축 이름이라는 개념이 없다).
+
+    왜 필요한가: Windows 는 프로세스의 cwd 를 PEB 에 **넣어 준 문자열 그대로** 들고
+    있다. 셸을 단축 경로로 띄웠거나(에이전트 셸의 `TMP=C:\Users\WOOJIN~1\...` 같은 환경)
+    사용자가 단축 이름으로 `cd` 했으면 그 표기가 그대로 나온다. 그런데 그 값을 쓰는
+    쪽(ncd 트리·mdir·default-path=current)은 그것을 `os.scandir` 의 **긴 이름**과
+    맞춰야 하고, `normcase` 는 대소문자만 흡수하므로 `WOOJIN~1` != `woojinkim` 에서
+    사슬이 끊긴다 — 증상은 ncd 가 현재 자리를 못 찾아 **드라이브 목록으로 떨어지는**
+    것이다(pytmux-237·-436..441).
+
+    ⛔ `os.path.realpath` 로 대신하지 말 것: 심링크·junction 을 따라가고 **매핑 드라이브를
+    UNC 로 바꾼다**(이 상자 실측 `R:\` -> `\mxfs\DATA_RX`). 그러면 ncd 의 드라이브 루트
+    매칭이 도리어 깨진다. `GetLongPathNameW` 는 단축 성분만 펴고 나머지는 안 건드린다
+    (실측: `R:\` -> `R:\` 그대로).
+
+    실패는 전부 **입력을 그대로** 돌린다 — 없는 경로·끊긴 네트워크 드라이브(실측 `Z:\`
+    는 rc 0)·API 오류. 이 함수는 표기를 다듬는 것이지 존재를 판정하는 것이 아니다."""
+    global _getlongpath
+    if not path or not IS_WINDOWS:
+        return path
+    if _getlongpath is None:
+        try:
+            import ctypes
+            from ctypes import wintypes
+            fn = ctypes.WinDLL("kernel32", use_last_error=True).GetLongPathNameW
+            fn.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+            fn.restype = wintypes.DWORD
+            _getlongpath = fn
+        except Exception:
+            _getlongpath = False
+    if not _getlongpath:
+        return path
+    try:
+        import ctypes
+        need = _getlongpath(path, None, 0)      # 필요한 버퍼 크기(NUL 포함)
+        if not need:
+            return path
+        buf = ctypes.create_unicode_buffer(need)
+        if not _getlongpath(path, buf, need):
+            return path
+        return buf.value or path
+    except Exception:
+        return path
 
 
 def process_cwd(pid: int) -> Optional[str]:
@@ -373,8 +424,10 @@ def _win_process_cwd(pid: int) -> Optional[str]:
             if not data:
                 return None
             path = data.decode("utf-16-le", "replace").rstrip("\x00")
-            # cmd.exe 는 끝에 `\` 가 붙는 경우가 있다(루트 제외하고 정규화).
-            return os.path.normpath(path) if path else None
+            # cmd.exe 는 끝에 `\` 가 붙는 경우가 있다(루트 제외하고 정규화). 그리고
+            # PEB 는 **넣어 준 표기 그대로**라 8.3 단축일 수 있어 온디스크 이름으로 편다
+            # (`long_path` 의 주석 — 안 펴면 ncd 사슬이 scandir 이름과 안 맞는다).
+            return long_path(os.path.normpath(path)) if path else None
         finally:
             CloseHandle(h)
     except Exception:

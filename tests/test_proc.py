@@ -12,6 +12,7 @@ import tempfile
 import harness  # noqa: F401 (sys.path 설정)
 from harness import wait_for
 from pytmuxlib import proc
+from run import skip
 
 
 def test_server_argv():
@@ -192,3 +193,103 @@ async def test_spawn_detached_captures_stderr_to_a_file():
             os.waitpid(pid, 0)
         except (ChildProcessError, OSError):
             pass
+
+
+# ---- long_path — cwd 표기를 온디스크 이름으로(pytmux-237·-436..441) ----------------
+
+def _short_name(path):
+    r"""`path` 의 8.3 단축 표기를 OS 에게 물어 돌려준다(Windows 전용, 없으면 None).
+
+    상자의 `TMP` 가 단축이든 아니든 **시험이 스스로 단축 경로를 만든다** — 그래야 이
+    오라클이 어느 Windows 상자에서나 같은 것을 잰다(이 결함을 처음 드러낸 상자는
+    에이전트 셸의 `TMP` 가 단축이었지만, 그건 재현 조건이지 요구사항이 아니다)."""
+    import ctypes
+    from ctypes import wintypes
+    fn = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+    fn.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    fn.restype = wintypes.DWORD
+    need = fn(path, None, 0)
+    if not need:
+        return None
+    buf = ctypes.create_unicode_buffer(need)
+    return buf.value if fn(path, buf, need) else None
+
+
+async def test_long_path_passes_through_what_it_cannot_or_need_not_change():
+    """표기를 다듬는 함수지 존재를 판정하는 함수가 아니다 — 못 펴면 **입력 그대로**.
+
+    빈 값·없는 경로는 그대로 나오고, 이미 온디스크 이름이면 한 번 더 펴도 안 바뀐다
+    (멱등). 이 단언들은 OS 를 안 가린다."""
+    assert proc.long_path(None) is None
+    assert proc.long_path("") == ""
+    with tempfile.TemporaryDirectory() as td:
+        once = proc.long_path(td)
+        assert proc.long_path(once) == once, (td, once)
+        ghost = os.path.join(once, "no-such~1", "deeper")
+        assert proc.long_path(ghost) == ghost
+
+
+async def test_long_path_opens_an_8_3_short_name():
+    """`WOOJIN~1` 같은 단축 성분이 온디스크 긴 이름으로 펴져야 한다.
+
+    이것이 안 되면 ncd 트리가 cwd 사슬을 `scandir` 의 긴 이름과 못 맞춰 **현재 자리를
+    잃고 드라이브 목록으로 떨어진다**(pytmux-237). `normcase` 는 대소문자만 흡수하므로
+    이 갈림을 못 덮는다."""
+    if not proc.IS_WINDOWS:
+        skip("8.3 단축 이름은 Windows 개념이다")
+    with tempfile.TemporaryDirectory() as td:
+        # 단축 성분이 생기도록 8자 넘는 이름을 만든다(짧은 이름엔 8.3 별칭이 없다).
+        deep = os.path.join(td, "a directory with spaces")
+        os.makedirs(deep)
+        short = _short_name(deep)
+        if not short:
+            skip("이 볼륨에 8.3 별칭이 없다(NtfsDisable8dot3NameCreation)")
+        assert "~" in short, short              # 진짜 단축 표기를 얻었다
+        assert proc.long_path(short) == proc.long_path(deep), (short, deep)
+
+
+async def test_long_path_never_turns_a_drive_root_into_something_else():
+    """드라이브 루트는 드라이브 루트로 남아야 한다 — ⛔ `realpath` 로 대신하면 깨진다.
+
+    실측(2026-09-02): `os.path.realpath("R:\\")` 는 매핑 네트워크 드라이브를
+    `\mxfs\DATA_RX` 로 바꿨다. ncd 는 드라이브 문자를 트리 최상위 노드로 쓰므로
+    그 치환이 곧 **드라이브 전환 기능의 파괴**다. 끊긴 드라이브(rc 0)도 입력 그대로."""
+    if not proc.IS_WINDOWS:
+        skip("드라이브 문자는 Windows 개념이다")
+    roots = sorted(os.listdrives()) if hasattr(os, "listdrives") else []
+    if not roots:
+        skip("이 상자에 드라이브 목록이 없다")
+    for d in roots:
+        got = proc.long_path(d)
+        assert got == d, (d, got)
+
+
+async def test_process_cwd_reports_the_on_disk_name_not_the_peb_spelling():
+    """PEB 는 **넣어 준 문자열 그대로**를 들고 있다 — cwd 를 파는 층이 그것을 편다.
+
+    단축 경로에서 셸을 띄우고 그 pid 의 cwd 를 물으면 온디스크 이름이 나와야 한다.
+    이 왕복이 이 결함의 실제 자리다(고침 전에는 단축 표기가 그대로 나와 ncd·mdir·
+    default-path=current 가 전부 그 표기를 물려받았다)."""
+    if not proc.IS_WINDOWS:
+        skip("PEB cwd 읽기는 Windows 경로다")
+    with tempfile.TemporaryDirectory() as td:
+        deep = os.path.join(td, "a directory with spaces")
+        os.makedirs(deep)
+        short = _short_name(deep)
+        if not short:
+            skip("이 볼륨에 8.3 별칭이 없다(NtfsDisable8dot3NameCreation)")
+        import subprocess
+        p = subprocess.Popen(["cmd.exe", "/k"], cwd=short,
+                             stdin=subprocess.PIPE,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL,
+                             **proc.no_window_kwargs())
+        try:
+            await wait_for(lambda: proc.process_cwd(p.pid) is not None)
+            got = proc.process_cwd(p.pid)
+            assert got is not None, "셸의 cwd 를 못 읽었다"
+            assert "~" not in os.path.basename(got), got
+            assert got == proc.long_path(deep), (got, deep)
+        finally:
+            p.kill()
+            p.wait()

@@ -39,6 +39,13 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      track_repeat)
 from pytmuxlib.model import Pane, Session, Tab
 
+#: 엔드포인트별 임시 토큰 DB(`claude-tokens-<id>.db`)의 수명(일). 이보다 오래되고
+#: **행이 하나도 없는** 것만 거둔다(`_sweep_stale_token_dbs` — pytmux-435 ④).
+#: 시험 상수라 모듈 전역에 둔다.
+_STALE_DB_DAYS = 7
+#: 한 번의 스윕이 볼 파일 수 상한 — 1463개가 쌓인 상자에서도 기동이 안 늘어지게.
+_STALE_DB_CAP = 200
+
 # 종료 토큰요약 배치의 OS 분기(_emit_auto_token_log): Windows(ConPTY)는 conhost
 # 화면버퍼가 권위라 Unix 식 스트림 주입이 프롬프트 재그리기에 덮인다 — 전용 경로
 # (_emit_auto_token_log_windows)로 분기. 테스트가 monkeypatch 할 수 있게 모듈 상수.
@@ -2750,6 +2757,86 @@ class ServerClaudeMixin:
                 except OSError:
                     pass
 
+    def _sweep_stale_token_dbs(self, mine: str) -> int:
+        """엔드포인트별 임시 토큰 DB(`claude-tokens-<id>.db`)에 **수명**을 준다. 지운 수.
+
+        기본 소켓이 아닌 엔드포인트는 저마다 제 DB 파일을 갖는다(`_tokens_db_filename`).
+        시험·드라이버·일회용 슬롯이 그런 엔드포인트로 서버를 띄우므로 그 파일이
+        **끝없이 쌓인다** — 이 저장소 트리 실측(2026-09-02) 22개 · playground 실측
+        (pytmux-435 ④) **1463개**. 아무도 지우지 않았다.
+
+        ⛔ **자료를 잃지 않는 규칙으로만 지운다.** 나이만 보면 몇 주 뒤에 돌아온
+        `-L work` 소켓의 이력을 지울 수 있다. 그래서 셋을 다 만족할 때만 지운다:
+
+          ⑴ 내 것도, 공유 기본(`claude-tokens.db`)도 아니다
+          ⑵ `mtime` 이 `_STALE_DB_DAYS` 보다 오래됐다
+          ⑶ **행이 하나도 없다** — 사용자 테이블 전부를 세어 0 일 때만.
+
+        ⑶ 이 이 함수의 값이다. 「비었을 것이다」가 아니라 **비었음을 확인하고** 지우므로
+        규칙이 틀려도 잃는 것이 없다. 테이블 목록은 `sqlite_master` 에서 읽는다 —
+        스키마가 자라도 손볼 데가 없다(하드코딩한 목록은 조용히 낡는다).
+
+        어떤 실패도 삼킨다 — 토큰 로깅 본 흐름을 이 청소가 막으면 안 된다."""
+        import glob
+        try:
+            base = os.path.dirname(mine)
+            cutoff = time.time() - _STALE_DB_DAYS * 86400
+            gone = 0
+            for path in sorted(glob.glob(os.path.join(base, "claude-tokens-*.db")))[:_STALE_DB_CAP]:
+                if os.path.abspath(path) == os.path.abspath(mine):
+                    continue                      # ⑴ 내 것
+                try:
+                    if os.path.getmtime(path) > cutoff:
+                        continue                  # ⑵ 아직 젊다
+                except OSError:
+                    continue
+                if not self._token_db_is_empty(path):
+                    continue                      # ⑶ 누군가의 이력이다 — 남긴다
+                for p in (path, path + "-wal", path + "-shm"):
+                    try:
+                        if os.path.exists(p):
+                            os.remove(p)
+                    except OSError:
+                        pass
+                gone += 1
+            if gone:
+                self._log_error("token_db_sweep",
+                                f"행 없는 묵은 임시 토큰 DB {gone}건을 거뒀다"
+                                f"(>{_STALE_DB_DAYS}일 · {base})")
+            return gone
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _token_db_is_empty(path: str) -> bool:
+        """그 DB 의 **사용자 테이블 전부**가 0행인가. 못 열거나 못 세면 False(= 남긴다).
+
+        판정을 못 한 것을 「비었다」로 접으면 그 순간 자료를 잃는다 — 모르면 남긴다."""
+        import sqlite3
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
+        except sqlite3.Error:
+            return False
+        try:
+            names = [r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%'").fetchall()]
+            if not names:
+                return False                      # 스키마조차 못 읽었다 — 모른다
+            for n in names:
+                row = conn.execute(
+                    f'SELECT 1 FROM "{n}" LIMIT 1').fetchone()
+                if row is not None:
+                    return False
+            return True
+        except sqlite3.Error:
+            return False
+        finally:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
     def _tokens_db_conn(self):
         """토큰 DB 연결(최초 1회 열고 보관). 먼저 이전 위치(루트 db/)의 DB 를 새 위치
         (플러그인 db/)로 1회 마이그레이션한다(S5 T5). 새(빈) DB 이고 기존 JSONL 이력이
@@ -2759,6 +2846,7 @@ class ServerClaudeMixin:
             return self._tokens_db
         path = self.tokens_db_path
         self._migrate_legacy_db(path)
+        self._sweep_stale_token_dbs(path)     # 형제 임시 DB 에 수명을 준다(pytmux-435 ④)
         try:
             conn = usagedb.connect(path)
         except Exception:

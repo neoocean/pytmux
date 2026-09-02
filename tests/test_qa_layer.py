@@ -1129,3 +1129,30 @@ def test_the_gui_harness_attaches_to_the_slot_and_never_starts_its_own_server():
     assert '"--socket", endpoint' in src, "GUI 를 엔드포인트로 지목해 붙이지 않는다"
     assert "self.slot.spawned.append(p.pid)" in src, \
         "우리가 띄운 GUI 의 pid 를 안 쥔다 — 정리가 이름 매칭으로 번진다"
+
+
+async def test_residue_counts_a_server_we_started_that_did_not_die():
+    """★ 잔여 판정이 **「소켓이 대답하나」만 보면 눈이 먼다**(pytmux-435 ③).
+
+    재기동은 소켓 이름을 가져간다 — 앞 주인은 도달 불가가 된 소켓을 쥔 채 그대로 살 수
+    있고(거두기가 실패한 회차), 그때 `probe` 는 **새 주인**을 보고 「깨끗하다」고 답한다.
+    그 눈먼 자리에서 시험 슬롯 하나에 서버 **13개**가 8월 2일부터 살아 있었다(playground
+    실측 2026-09-02 · 각 누적 CPU 155분). 정리 코드는 **있었고** 결과를 아무도 안 쟀다.
+
+    ⚠ **양쪽을 다 잰다** — 살아 있으면 세고, 죽은 뒤에는 조용해야 한다. 뒤엣것이 없으면
+    이 오라클은 매 런 잔여를 신고하는 늑대소년이 된다(원칙 ⓓ).
+    """
+    import subprocess
+    with _slot() as slot:
+        # 진짜 서버는 필요 없다 — 재는 것은 「등록된 pid 가 살아 있으면 세는가」다.
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        slot.spawned.append(child.pid)
+        try:
+            left = slot.residue(timeout=0.4, step=0.1)
+            assert any(str(child.pid) in line for line in left), (child.pid, left)
+        finally:
+            child.kill()
+            child.wait()
+        assert slot.residue(timeout=0.4, step=0.1) == [], "죽은 뒤에도 잔여로 셌다"
