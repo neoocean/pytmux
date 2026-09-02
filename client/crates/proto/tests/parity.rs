@@ -232,12 +232,17 @@ static PREFIX_KEYS: &[Item] = &[
 /// esc 모드 키(`clientutil.ESC_MODE_KEYS`).
 static ESC_KEYS: &[Item] = &[
     i("e_P", Done, "esc P — 탭 고정(핀) 토글"),
-    i("e_arrows", Done, "esc ←↑↓→ — 패널 이동(G1c)"),
+    i("e_arrows", Done, "esc ←↑↓→ — 패널 이동(G1c) · **모드를 유지한다**(정본과 같다 — 연속으로 옮긴다)"),
     i("e_bt", Done, "esc ` — 리터럴 백틱"),
     i("e_colon", Done, "esc : — 같은 팔레트"),
     i("e_down", Done, "↓ 최하단 → 하단 배지 포커스 · ←→ 순환 · Enter 실행"),
     i("e_e", Done, "esc e — 패널에 ESC"),
-    i("e_esc", Done, "명령 모드에서 두 번째 ESC 가 패널로 간다"),
+    // ⛔ **이 줄이 틀린 말을 적고 있었다**(정정 2026-09-02 · pytmux-33 ⓖ3): *"명령 모드에서
+    //   두 번째 ESC 가 패널로 간다"*. 그것은 우리가 하던 일이고 **정본은 반대**를 사용자
+    //   요청으로 못박아 두었다(`clientio._handle_esc_mode` · 56632 불변). 손으로 적는 칸은
+    //   이렇게 낡는다 — 그래서 그 축을 재는 자를 따로 세웠다
+    //   (`mode_transition_conformance.rs` 가 정본 소스에서 직접 뽑는다).
+    i("e_esc", Done, "명령 모드에서 두 번째 ESC 는 **모드만 푼다**(패널로 안 보낸다 — 정본과 같다)"),
     // esc f — 열린 **모든 탭·패널**의 스크롤백을 한 번에 훑어 결과 목록을 띄우고 그
     // 자리로 점프한다(pytmux-27). `SearchResultsScreen` 줄과 짝이다.
     i("e_f", Done, "esc f — 전역 검색 물음(`search_all`)을 연다 · 메뉴 search_all 과 같은 자리"),
@@ -256,7 +261,7 @@ static ESC_KEYS: &[Item] = &[
     i("e_n", Done, "esc n — 새 탭(G1c)"),
     i("e_num", Done, "esc 1~9 — 번호로 탭 전환"),
     i("e_p", Done, "esc p — 상하 분할(G1c)"),
-    i("e_sesc", Done, "Shift+ESC — 모드에 안 들어가고 패널에 ESC"),
+    i("e_sesc", Done, "Shift+ESC — 모드에 안 들어가고 패널에 ESC · **esc 모드 안에서도** 같다(정본과 같다)"),
     i("e_tab", Done, "esc Tab — 탭 스위처(Tab/↑↓ 고르기 · Enter 전환 · Esc 취소)"),
     i("e_tb", Done, "←→ · Enter · +/a · x/d · Shift+←→ 이동 · ↓/Esc 복귀"),
     i("e_up", Done, "↑ 최상단 → 탭바 포커스([+]·[x] 포함)"),

@@ -104,10 +104,21 @@ fn escape_enters_command_mode_and_is_swallowed() {
 }
 
 #[test]
-fn second_escape_sends_escape_to_the_pane() {
-    // 자식(vim·Claude)도 ESC 가 필요하다. 터미널엔 키 뗌 이벤트가 없으므로
-    // "모드 진입"과 "ESC 보내기"를 두 번 누르기로 가른다.
-    assert_eq!(to_pane(InputMode::Command, Key::Escape, Mods::NONE), &[0x1b]);
+fn a_second_escape_only_leaves_the_mode_and_sends_nothing() {
+    // ★ **뒤집힌 단언이다**(pytmux-33 ⓖ3 · 2026-09-02). 종전에는 여기서 둘째 ESC 가
+    //   패널로 간다고 못박았는데, **정본은 정확히 그 반대**를 사용자 요청으로 못박아
+    //   두었다: *"모드 진입/종료에 쓴 ESC 가 앱으로 새지 않게 한다"*
+    //   (`clientio._handle_esc_mode` · 56632 불변).
+    //
+    //   자식(vim·Claude)이 ESC 를 받는 길은 그래서 **명시적인 셋**이다 — `Shift+ESC` ·
+    //   `esc e` · `send-escape`. 재는 자는 `proto` 의 `mode_transition_conformance.rs`
+    //   이고, 그것이 정본 소스에서 이 규칙을 직접 뽑아 온다.
+    assert_eq!(
+        interpret(InputMode::Command, Key::Escape, Mods::NONE),
+        KeyOutcome::ModeChanged(InputMode::Normal)
+    );
+    // 그 대신 `Shift+ESC` 는 **모드 안에서도** 패널에 ESC 를 준다(정본 `e_sesc` 와 같다).
+    assert_eq!(to_pane(InputMode::Command, Key::ShiftEscape, Mods::NONE), &[0x1b]);
 }
 
 #[test]
@@ -468,16 +479,20 @@ fn every_scroll_binding_is_reachable() {
 // 느껴지고, 화면의 단서는 배지 하나뿐이다.
 
 #[test]
-fn escape_enters_command_mode_and_a_second_one_reaches_the_pane() {
+fn escape_enters_command_mode_and_a_second_one_only_leaves_it() {
     let mut m = ModeState::default();
     assert_eq!(m.mode(), InputMode::Normal);
 
     m.press(Key::Escape, Mods::NONE);
     assert_eq!(m.mode(), InputMode::Command, "첫 ESC 는 모드 진입이다");
 
-    // 두 번째 ESC 는 자식에게 간다 — vim·Claude 가 ESC 를 받을 길이 이것뿐이다.
-    assert_eq!(m.press(Key::Escape, Mods::NONE), KeyOutcome::ToPane(vec![0x1b]));
-    assert_eq!(m.mode(), InputMode::Normal, "보내고 나면 평소 모드로 돌아온다");
+    // 두 번째 ESC 는 **모드만 푼다**(정본과 같다 — 위
+    // `a_second_escape_only_leaves_the_mode_and_sends_nothing` 이 근거를 든다).
+    assert_eq!(
+        m.press(Key::Escape, Mods::NONE),
+        KeyOutcome::ModeChanged(InputMode::Normal)
+    );
+    assert_eq!(m.mode(), InputMode::Normal, "풀고 나면 평소 모드다");
 }
 
 #[test]
@@ -491,12 +506,20 @@ fn one_command_releases_the_mode() {
 }
 
 #[test]
-fn an_unknown_key_in_command_mode_keeps_the_mode() {
-    // 뜻 없는 키로 모드가 풀리면 사용자는 자기가 무엇을 눌렀는지 모른 채 모드를 잃는다.
+fn an_unknown_key_in_command_mode_leaves_the_mode() {
+    // ★ **뒤집힌 단언이다**(pytmux-33 ⓖ3 · 2026-09-02). 종전 이유는 *"뜻 없는 키로
+    //   모드가 풀리면 사용자는 자기가 무엇을 눌렀는지 모른 채 모드를 잃는다"* 였는데,
+    //   정본은 반대를 고른다(`_handle_esc_mode` 의 마지막 `else: self._exit_esc()` —
+    //   주석이 *"enter/i/그 외 → 명령 모드 종료"* 라고 적는다).
+    //
+    //   ⛔ 그리고 우리 쪽 `prefix` 분기가 **같은 자리에서 반대 이유를 적고 있었다**:
+    //   *"안 풀면 잘못 누른 뒤의 타이핑이 통째로 표에 부딪혀 사라지고, 사용자에게는
+    //   '키가 안 먹는다'로만 보인다."* 두 모드가 같은 물음에 다른 답을 들고 있던 것이고,
+    //   정본이 권위다([[pytmux-185]]).
     let mut m = ModeState::default();
     m.press(Key::Escape, Mods::NONE);
     assert_eq!(m.press(Key::Function(9), Mods::NONE), KeyOutcome::Ignored);
-    assert_eq!(m.mode(), InputMode::Command);
+    assert_eq!(m.mode(), InputMode::Normal);
 }
 
 #[test]

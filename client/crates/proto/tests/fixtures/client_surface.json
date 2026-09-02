@@ -454,5 +454,530 @@
     "SettingsScreen",
     "TabSwitcherScreen",
     "_SettingInputScreen"
-  ]
+  ],
+  "client_cmds": [
+    "?",
+    "about",
+    "automatic-rename",
+    "bind",
+    "bind-key",
+    "bindkey",
+    "break-pane",
+    "breakp",
+    "capture-pane",
+    "capturep",
+    "choose-buffer",
+    "choose-tab",
+    "choose-tree",
+    "choose-window",
+    "clear-history",
+    "clearhist",
+    "coalesce",
+    "coalesce-repaints",
+    "commands",
+    "config",
+    "detach",
+    "detach-client",
+    "dim-inactive",
+    "dim-inactive-ratio",
+    "display",
+    "display-message",
+    "display-popup",
+    "displaym",
+    "exit-empty",
+    "full-restart",
+    "help",
+    "if",
+    "if-shell",
+    "inactive-dim",
+    "inactive-dim-ratio",
+    "join-pane",
+    "joinp",
+    "kill-pane",
+    "kill-server",
+    "kill-tab",
+    "kill-window",
+    "killp",
+    "killt",
+    "killw",
+    "lang",
+    "language",
+    "last",
+    "last-tab",
+    "last-window",
+    "layout-list",
+    "layout-load",
+    "layout-load-new",
+    "layout-save",
+    "list-binds",
+    "list-buffers",
+    "list-commands",
+    "list-keys",
+    "list-layouts",
+    "load-tab-layout",
+    "lsb",
+    "lsk",
+    "merge-remote",
+    "merge-remote-tab",
+    "merge_remote_tab",
+    "monitor-activity",
+    "monitor-bell",
+    "mouse",
+    "mouse-help",
+    "move-tab",
+    "move-tab-first",
+    "move-tab-last",
+    "move-tab-left",
+    "move-tab-right",
+    "move-window",
+    "movet",
+    "movew",
+    "nest-auto-attach",
+    "new-claude-tab",
+    "new-claude-window",
+    "new-tab",
+    "new-window",
+    "newt",
+    "neww",
+    "next",
+    "next-layout",
+    "next-tab",
+    "next-window",
+    "nextl",
+    "overview",
+    "pane-border",
+    "pane-border-status",
+    "paste-buffer",
+    "paste-clipboard",
+    "paste-image",
+    "pasteb",
+    "pasteb-clip",
+    "pin",
+    "pin-tab",
+    "pin-toggle",
+    "pipe-pane",
+    "pipep",
+    "plugin-manager",
+    "plugins",
+    "popup",
+    "popup-close",
+    "preferences",
+    "prefs",
+    "prev",
+    "prev-tab",
+    "previous-tab",
+    "previous-window",
+    "reconnect",
+    "redraw",
+    "refresh",
+    "refresh-client",
+    "remote-attach",
+    "remote-detach",
+    "remote-new-tab",
+    "remote-new-window",
+    "remote_attach",
+    "remote_detach",
+    "remote_new_tab",
+    "rename-pane",
+    "rename-tab",
+    "rename-window",
+    "renamet",
+    "renamew",
+    "resize-pane",
+    "resizep",
+    "respawn-pane",
+    "respawnp",
+    "restart",
+    "restart-all",
+    "restart-all-check",
+    "restart-check",
+    "restart-client-server",
+    "restart-dry-run",
+    "restart-server",
+    "restore-layout",
+    "resync",
+    "rotate-window",
+    "rotatew",
+    "run",
+    "run-shell",
+    "save-layout",
+    "save-tab-layout",
+    "select-layout",
+    "select-pane",
+    "select-tab",
+    "select-window",
+    "selectl",
+    "selectp",
+    "selectt",
+    "selectw",
+    "send",
+    "send-esc",
+    "send-escape",
+    "send-keys",
+    "set",
+    "set-hook",
+    "set-option",
+    "settings",
+    "setw",
+    "show",
+    "show-hooks",
+    "show-options",
+    "single-border",
+    "source",
+    "source-file",
+    "split-window",
+    "splitw",
+    "strip-box-drawing",
+    "swap-pane",
+    "swap-tab",
+    "swap-window",
+    "swapp",
+    "swapt",
+    "swapw",
+    "synchronize-panes",
+    "syncp",
+    "tree",
+    "unbind",
+    "unbind-key",
+    "unbindkey",
+    "unpin",
+    "unpin-tab",
+    "version",
+    "vt-parser",
+    "win-mouse-motion",
+    "window-size",
+    "winsize",
+    "zoom",
+    "옵션"
+  ],
+  "scroll_keys": [
+    "/",
+    "G",
+    "N",
+    "alt+v",
+    "ctrl+d",
+    "ctrl+down",
+    "ctrl+n",
+    "ctrl+p",
+    "ctrl+u",
+    "ctrl+up",
+    "ctrl+v",
+    "down",
+    "end",
+    "enter",
+    "escape",
+    "g",
+    "j",
+    "k",
+    "n",
+    "pagedown",
+    "pageup",
+    "q",
+    "slash",
+    "up"
+  ],
+  "esc_key_modes": {
+    "\u0000": {
+      "mode": "stay",
+      "sends": null
+    },
+    "*": {
+      "mode": "exit",
+      "sends": null
+    },
+    ":": {
+      "mode": "exit",
+      "sends": null
+    },
+    "?": {
+      "mode": "exit",
+      "sends": null
+    },
+    "P": {
+      "mode": "exit",
+      "sends": null
+    },
+    "`": {
+      "mode": "exit",
+      "sends": "60"
+    },
+    "c": {
+      "mode": "exit",
+      "sends": null
+    },
+    "colon": {
+      "mode": "exit",
+      "sends": null
+    },
+    "ctrl+down": {
+      "mode": "scroll",
+      "sends": null
+    },
+    "ctrl+up": {
+      "mode": "scroll",
+      "sends": null
+    },
+    "down": {
+      "mode": "stay",
+      "sends": null
+    },
+    "e": {
+      "mode": "exit",
+      "sends": "1b"
+    },
+    "escape": {
+      "mode": "exit",
+      "sends": null
+    },
+    "f": {
+      "mode": "exit",
+      "sends": null
+    },
+    "grave_accent": {
+      "mode": "exit",
+      "sends": "60"
+    },
+    "insert": {
+      "mode": "exit",
+      "sends": null
+    },
+    "left": {
+      "mode": "stay",
+      "sends": null
+    },
+    "n": {
+      "mode": "exit",
+      "sends": null
+    },
+    "p": {
+      "mode": "exit",
+      "sends": null
+    },
+    "right": {
+      "mode": "stay",
+      "sends": null
+    },
+    "shift+delete": {
+      "mode": "exit",
+      "sends": null
+    },
+    "shift+escape": {
+      "mode": "exit",
+      "sends": "1b"
+    },
+    "tab": {
+      "mode": "exit",
+      "sends": null
+    },
+    "up": {
+      "mode": "stay",
+      "sends": null
+    }
+  },
+  "prefix_key_modes": {
+    "!": {
+      "mode": "exit",
+      "sends": null
+    },
+    "\"": {
+      "mode": "exit",
+      "sends": null
+    },
+    "%": {
+      "mode": "exit",
+      "sends": null
+    },
+    "&": {
+      "mode": "exit",
+      "sends": null
+    },
+    "*": {
+      "mode": "exit",
+      "sends": null
+    },
+    ",": {
+      "mode": "exit",
+      "sends": null
+    },
+    ".": {
+      "mode": "exit",
+      "sends": null
+    },
+    ":": {
+      "mode": "exit",
+      "sends": null
+    },
+    ";": {
+      "mode": "exit",
+      "sends": null
+    },
+    "=": {
+      "mode": "exit",
+      "sends": null
+    },
+    "H": {
+      "mode": "exit",
+      "sends": null
+    },
+    "J": {
+      "mode": "exit",
+      "sends": null
+    },
+    "K": {
+      "mode": "exit",
+      "sends": null
+    },
+    "L": {
+      "mode": "exit",
+      "sends": null
+    },
+    "P": {
+      "mode": "exit",
+      "sends": null
+    },
+    "R": {
+      "mode": "exit",
+      "sends": null
+    },
+    "T": {
+      "mode": "exit",
+      "sends": null
+    },
+    "[": {
+      "mode": "scroll",
+      "sends": null
+    },
+    "]": {
+      "mode": "exit",
+      "sends": null
+    },
+    "ampersand": {
+      "mode": "exit",
+      "sends": null
+    },
+    "c": {
+      "mode": "exit",
+      "sends": null
+    },
+    "colon": {
+      "mode": "exit",
+      "sends": null
+    },
+    "comma": {
+      "mode": "exit",
+      "sends": null
+    },
+    "ctrl+o": {
+      "mode": "exit",
+      "sends": null
+    },
+    "d": {
+      "mode": "exit",
+      "sends": null
+    },
+    "down": {
+      "mode": "exit",
+      "sends": null
+    },
+    "enter": {
+      "mode": "exit",
+      "sends": null
+    },
+    "equals_sign": {
+      "mode": "exit",
+      "sends": null
+    },
+    "f12": {
+      "mode": "exit",
+      "sends": null
+    },
+    "l": {
+      "mode": "exit",
+      "sends": null
+    },
+    "left": {
+      "mode": "exit",
+      "sends": null
+    },
+    "left_square_bracket": {
+      "mode": "scroll",
+      "sends": null
+    },
+    "n": {
+      "mode": "exit",
+      "sends": null
+    },
+    "o": {
+      "mode": "exit",
+      "sends": null
+    },
+    "p": {
+      "mode": "exit",
+      "sends": null
+    },
+    "percent_sign": {
+      "mode": "exit",
+      "sends": null
+    },
+    "period": {
+      "mode": "exit",
+      "sends": null
+    },
+    "q": {
+      "mode": "exit",
+      "sends": null
+    },
+    "quotation_mark": {
+      "mode": "exit",
+      "sends": null
+    },
+    "r": {
+      "mode": "exit",
+      "sends": null
+    },
+    "right": {
+      "mode": "exit",
+      "sends": null
+    },
+    "right_square_bracket": {
+      "mode": "exit",
+      "sends": null
+    },
+    "semicolon": {
+      "mode": "exit",
+      "sends": null
+    },
+    "space": {
+      "mode": "exit",
+      "sends": null
+    },
+    "t": {
+      "mode": "exit",
+      "sends": null
+    },
+    "up": {
+      "mode": "exit",
+      "sends": null
+    },
+    "w": {
+      "mode": "exit",
+      "sends": null
+    },
+    "x": {
+      "mode": "exit",
+      "sends": null
+    },
+    "z": {
+      "mode": "exit",
+      "sends": null
+    },
+    "{": {
+      "mode": "exit",
+      "sends": null
+    },
+    "}": {
+      "mode": "exit",
+      "sends": null
+    }
+  }
 }

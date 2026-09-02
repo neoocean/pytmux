@@ -323,8 +323,24 @@ pub fn interpret_full(
             }
         }
         InputMode::Command => {
+            // ★ **둘째 ESC 는 모드만 푼다 — 패널로 ESC 를 안 보낸다**(pytmux-33 ⓖ3 ·
+            //   2026-09-02). 정본이 그 규칙을 사용자 요청으로 못박아 두었다
+            //   (`clientio._handle_esc_mode`: *"모드 진입/종료에 쓴 ESC 가 앱으로 새지
+            //   않게 한다"* · 56632 불변). 앱에 ESC 가 필요하면 통로는 셋이고 전부
+            //   **명시적**이다 — `Shift+ESC`(바로 아래) · `esc e` · `send-escape`.
+            //
+            // ⛔ 종전에는 여기서 `ToPane(0x1b)` 를 냈다. 패리티 표의 `e_esc` 줄은 그것을
+            //   *"명령 모드에서 두 번째 ESC 가 패널로 간다"* 고 **Done 으로 적고 있었다** —
+            //   손으로 적은 줄은 우리가 하는 일을 적지 정본이 하는 일을 적지 않는다.
+            //   재는 자는 `proto` 의 `mode_transition_conformance.rs` 다.
             if key == Key::Escape {
-                // 두 번째 ESC = 자식에게 ESC 를 보낸다(+ 모드 복귀는 호출부가 한다).
+                return KeyOutcome::ModeChanged(InputMode::Normal);
+            }
+            // `Shift+ESC` 는 **어느 모드에서든** 패널에 ESC 를 준다(정본 `e_sesc` 가
+            // esc 모드 안에서도 같다 — 그쪽 주석: *"#22 — 예전엔 esc 모드에서
+            // shift+escape 가 모드만 종료하고 ESC 를 안 보냈다"*). 여기 없으면 이 클라가
+            // 바로 그 옛 결함을 다시 갖는다.
+            if key == Key::ShiftEscape {
                 return KeyOutcome::ToPane(vec![0x1b]);
             }
             // 번호 키는 표가 아니라 규칙이다(prefix 와 같다) — 열 줄을 적는 대신 여기서
@@ -578,6 +594,12 @@ impl ModeState {
             KeyOutcome::Action(
                 crate::Action::SearchScrollback | crate::Action::SearchAgain { .. },
             ) => self.mode = InputMode::Scroll,
+            // ★ **패널 이동만은 esc 모드를 안 푼다**(pytmux-33 ⓖ3 · 2026-09-02).
+            //   정본이 그 자리에 *"모드 유지(연속 이동)"* 라고 적어 두었다 — 패널 넷을
+            //   건너가려면 `ESC ← ESC ← ESC ←` 가 아니라 `ESC ← ← ←` 여야 한다.
+            //   prefix 모드는 반대다(tmux 관습대로 한 키마다 푼다) — 그래서 모드를 본다.
+            KeyOutcome::Action(crate::Action::SelectPane(_))
+                if self.mode == InputMode::Command => {}
             KeyOutcome::Action(_) => self.mode = InputMode::Normal,
             KeyOutcome::Scroll { leave, .. } => {
                 if *leave {
@@ -587,11 +609,17 @@ impl ModeState {
             // 블록 조작은 **모드를 안 푼다**(`KeyOutcome::Block` 문서). 나가는 것은
             // `q`·`Esc`·`Enter` 뿐이고 그건 이미 `ModeChanged` 로 온다.
             KeyOutcome::Block(_) => {}
-            // prefix 모드에서 모르는 키는 **모드를 푼다**(tmux 와 같다). 안 풀면 잘못
-            // 누른 prefix 뒤의 타이핑이 통째로 표에 부딪혀 사라지고, 사용자에게는
+            // prefix·esc 모드에서 모르는 키는 **모드를 푼다**(tmux · 정본과 같다). 안
+            // 풀면 잘못 누른 뒤의 타이핑이 통째로 표에 부딪혀 사라지고, 사용자에게는
             // "키가 안 먹는다"로만 보인다.
+            //
+            // ★ **esc 가 뒤늦게 들어왔다**(pytmux-33 ⓖ3 · 2026-09-02): 이 줄은 prefix
+            //   하나만 풀고 있었는데, 정본은 esc 모드에도 같은 규칙을 둔다
+            //   (`_handle_esc_mode` 의 마지막 `else: self._exit_esc()` — 주석이
+            //   *"enter/i/그 외 → 명령 모드 종료"* 라고 적는다). 위 경고가 바로 그
+            //   자리에서 실현돼 있었다.
             KeyOutcome::Ignored => {
-                if self.mode == InputMode::Prefix {
+                if matches!(self.mode, InputMode::Prefix | InputMode::Command) {
                     self.mode = InputMode::Normal;
                 }
             }

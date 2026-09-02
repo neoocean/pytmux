@@ -13,6 +13,9 @@
 //! 밟았다). 그래서 여기서는 반대로 센다 — 우리 줄 하나하나가 정본의 **어느 분류인지**를
 //! 맞히고, 못 맞히는 이름은 허용 목록에 **이름으로** 적혀 있어야 한다.
 
+#[path = "common/divergence.rs"]
+mod divergence;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use base::config::{SETTINGS, SETTINGS_CATS};
@@ -107,43 +110,16 @@ fn surface(fx: &Fixture) -> base::PluginSurface {
 /// `PALETTE` 의 주석이 하나씩 이유를 든다). 다만 **조용히 늘어나면 안 된다**: 새 이름이
 /// 여기 없으면 테스트가 운다. `command_conformance.rs` 의 `full` 예외 목록과 같은 규칙으로
 /// **정확·정렬**이라야 한다.
-static PALETTE_OURS: &[(&str, &str)] = &[
-    // ★ **GUI 만의 판**(`pytmux/pytmux-375`) — 커서 다섯을 한 자리에 모으고 견본을
-    //   함께 그린다. 정본의 커서는 **호스트 단말의 하드웨어 커서**라 저쪽에 이 판도
-    //   이 이름도 있을 수 없다(아래 `SETTINGS_OURS` 의 커서 줄과 같은 근거).
-    //   ⛔ 키를 안 준다 — 팔레트가 유일한 입구다(`Action::ShowCursor`).
-    ("cursor", "설정/기타"),
-    // 정본 `SETTINGS` 에는 있고 `COMMANDS` 에는 없다(저쪽 입구는 설정 화면뿐).
-    ("display-panes", "패널"),
-    // ★ **GUI 만의 것**(§10-21ⓐ) — 정본의 글자 크기는 호스트 단말이 정하므로 저쪽에
-    //   같은 이름이 있을 수 없다. 키(`Ctrl+=`/`Ctrl+-`/`Ctrl+0`)가 주 입구이고 팔레트는
-    //   그 키를 모르는 사람의 입구다. **이 목록이 곧 그 선언이다** — 패리티 표에는
-    //   실을 줄이 없다(그 표의 줄은 정본 픽스처가 정한다).
-    ("font-scale-down", "설정/기타"),
-    ("font-scale-reset", "설정/기타"),
-    ("font-scale-up", "설정/기타"),
-    // ★ **GUI 만의 것**(§10-21ⓘ3) — 정본(Textual TUI)의 풀스크린은 호스트 단말의 일이라
-    //   저쪽에 같은 이름이 있을 수 없다(허용되는 갈림 ⓒ OS 창 통합). 키(`Alt`+`Enter`)가
-    //   주 입구이고 팔레트는 그 키를 모르는 사람의 입구다.
-    ("fullscreen", "설정/기타"),
-    ("menu", "설정/기타"),
-    ("notice-history", "설정/기타"),
-    ("pane-border-status", "패널"),
-    // 정본이 설명에서 "별칭"으로만 드는 이름들 — 팔레트는 이름을 쳐서 좁히는 화면이라
-    // 별칭이 있으면 손버릇이 갈리지 않는다.
-    ("plugin-manager", "설정/기타"),
-    ("popup-close", "설정/기타"),
-    ("resync", "설정/기타"),
-    // ★ **GUI 만의 모드**(pytmux-18) — 캔버스 위에서 블록(명령 + 그 출력) 하나를 골라
-    //   `↑`/`↓` 로 옮기고 `Ctrl+C` 로 복사한다. 정본에는 블록을 **보는 자리 자체가
-    //   없어서**(파이썬 클라는 `blocks` 메시지를 안 그린다) 같은 이름이 있을 수 없다.
-    //   키(`esc b`)가 주 입구이고 팔레트는 그 키를 모르는 사람의 입구다.
-    ("select-blocks", "복사/버퍼"),
-    ("status", "설정/기타"),
-    // GUI 만의 판(§10-21ⓓ) — 정본에는 이 구역 자체가 없다(블록·Claude 요약은 우리가
-    // 화면 아래에 갖고 있던 것이고, 제보로 판이 됐다).
-    ("summary", "설정/기타"),
-];
+/// 대장(`common/divergence.rs`)의 **팔레트 축**을 이 파일이 쓰던 모양으로.
+///
+/// ⛔ 줄을 여기 다시 적지 않는다(2026-09-02 · pytmux-33 ⓖ3). 종전에는 이 파일이 그
+/// 목록을 손으로 들고 있었는데, 그러면 GUI 전용 표면의 대장이 **축마다 흩어진다** —
+/// 화면·키에는 그런 목록이 아예 없어서 넷이 게이트 밖에 서 있었다. 이제 한 곳이고,
+/// `divergence_ledger.rs` 가 그 한 곳이 전수인지를 센다.
+fn palette_ours() -> Vec<(&'static str, &'static str)> {
+    divergence::palette_ours()
+}
+
 
 /// `PALETTE` 의 모든 줄이 정본과 같은 카테고리인가.
 #[test]
@@ -151,7 +127,7 @@ fn every_palette_entry_carries_the_canon_category() {
     let fx = fixture();
     assert!(!fx.command_cats.is_empty(), "픽스처가 비었다");
 
-    let ours: BTreeMap<&str, &str> = PALETTE_OURS.iter().copied().collect();
+    let ours: BTreeMap<&str, &str> = palette_ours().into_iter().collect();
     let mut wrong = Vec::new();
     let mut unlisted = Vec::new();
     for entry in PALETTE {
@@ -176,8 +152,8 @@ fn every_palette_entry_carries_the_canon_category() {
     );
     assert!(
         unlisted.is_empty(),
-        "정본이 모르는 팔레트 이름인데 PALETTE_OURS 에 없다: {unlisted:?}\n\
-         우리 전용 이름이라면 이 파일의 허용 목록에 **이유와 함께** 한 줄 더할 것."
+        "정본이 모르는 팔레트 이름인데 갈림 대장에 없다: {unlisted:?}\n\
+         우리 전용 이름이라면 common/divergence.rs 의 대장에 **분류와 이유를 달아** 한 줄 더할 것."
     );
 }
 
@@ -186,10 +162,11 @@ fn every_palette_entry_carries_the_canon_category() {
 #[test]
 fn the_ours_only_allowlist_is_exact_and_sorted() {
     let fx = fixture();
-    let names: Vec<&str> = PALETTE_OURS.iter().map(|(n, _)| *n).collect();
+    let ours = palette_ours();
+    let names: Vec<&str> = ours.iter().map(|(n, _)| *n).collect();
     let mut sorted = names.clone();
     sorted.sort_unstable();
-    assert_eq!(names, sorted, "PALETTE_OURS 는 이름순이라야 한다");
+    assert_eq!(names, sorted, "대장의 팔레트 축은 이름순이라야 한다");
 
     let in_palette: BTreeSet<&str> =
         PALETTE.iter().map(|e| e.name.split(' ').next().unwrap_or(e.name)).collect();
@@ -234,47 +211,16 @@ fn palette_tabs_follow_the_canon_order() {
 /// 아니다 — 정본은 이 값을 **읽지도 쓰지도 않는다**(터미널 앱의 글자 크기는 호스트
 /// 단말의 것이라 저쪽에 그 줄이 있을 수가 없다). 어긋날 값이 없으니 근거가 안 닿는다.
 ///
-/// 그래도 목록으로 **박아 두는** 이유는 `PALETTE_OURS` 와 같다: 조용히 늘면 안 된다.
-/// 새 줄을 여기 적을 때는 "정본이 안 가진 것"이 아니라 **"정본이 가질 수 없는 것"**임을
-/// 보여야 한다 — 전자는 그냥 우리가 아직 안 단 줄이고, 그건 예외가 아니라 할 일이다.
-static SETTINGS_OURS: &[(&str, &str)] = &[
-    (
-        "font-family",
-        "정본의 고정폭 글꼴도 호스트 단말이 정한다 — 우리만 캔버스를 직접 그린다(pytmux-408)",
-    ),
-    (
-        "font-scale",
-        "정본의 글자 크기는 호스트 단말이 정한다 — 저쪽에 짝이 있을 수 없다(§10-21ⓐ)",
-    ),
-    // ── 커서 넷(`pytmux/pytmux-161`) ────────────────────────────────────────
-    // `font-scale` 과 **같은 근거**다. 정본 클라는 커서를 스스로 안 그린다 — 호스트
-    // 단말의 하드웨어 커서를 `app.cursor_position` 으로 옮길 뿐이라, 모양·색·깜빡임의
-    // 주인은 iTerm2·Windows Terminal 같은 **바깥 단말**이다. 저쪽에 그 줄이 있으면
-    // 오히려 거짓말이 된다(설정해도 단말이 안 듣는다). 우리는 캔버스를 직접 그리므로
-    // 우리만 이 값을 가질 수 있다. 어긋날 값이 없으니 두 클라가 갈라지지도 않는다.
-    (
-        "cursor-style",
-        "정본은 호스트 단말의 하드웨어 커서를 쓴다 — 모양을 정하는 자리가 저쪽에 없다",
-    ),
-    (
-        "cursor-color",
-        "같은 이유 — 커서 색은 호스트 단말의 설정이다",
-    ),
-    (
-        "cursor-blink",
-        "같은 이유 — 깜빡임 여부는 호스트 단말의 설정이다",
-    ),
-    (
-        "cursor-blink-interval",
-        "같은 이유 — 깜빡임 주기는 호스트 단말의 설정이다",
-    ),
-    // 다섯째(`pytmux/pytmux-375`) — 같은 이유의 연장이다. 정본은 커서를 **스스로 안
-    // 그리므로** 선의 굵기를 정할 자리도 없다(우리는 캔버스에 직접 사각형을 얹는다).
-    (
-        "cursor-thickness",
-        "같은 이유 — 정본은 커서를 스스로 안 그려서 선 굵기를 정할 자리가 없다",
-    ),
-];
+/// 그래도 대장에 **박아 두는** 이유는 팔레트 축과 같다: 조용히 늘면 안 된다.
+/// 새 줄을 대장에 적을 때는 "정본이 안 가진 것"이 아니라 **"정본이 가질 수 없는 것"**임을
+/// 보여야 한다 — 전자는 그냥 우리가 아직 안 단 줄이고, 그건 예외가 아니라 할 일이다
+/// (대장의 `Class::Todo` 가 그 자리다).
+///
+/// 줄은 `common/divergence.rs` 한 곳이다(위 `palette_ours` 와 같은 이유).
+fn settings_ours() -> Vec<&'static str> {
+    divergence::settings_ours()
+}
+
 
 /// 설정 한 줄 한 줄이 정본과 같은 카테고리인가.
 #[test]
@@ -287,7 +233,7 @@ fn every_setting_carries_the_canon_category() {
             Some(canon) => {
                 wrong.push(format!("{}: 우리 {} · 정본 {canon}", setting.key, setting.cat))
             }
-            None if SETTINGS_OURS.iter().any(|(k, _)| *k == setting.key) => {}
+            None if settings_ours().contains(&setting.key) => {}
             None => wrong.push(format!("{}: 정본에 없는 설정", setting.key)),
         }
     }
@@ -295,7 +241,7 @@ fn every_setting_carries_the_canon_category() {
     // 목록이 낡지 않게 — 지운 줄의 예외가 남아 있으면 그것도 자국이다.
     let keys: BTreeSet<&str> = SETTINGS.iter().map(|s| s.key).collect();
     let stale: Vec<&str> =
-        SETTINGS_OURS.iter().map(|(k, _)| *k).filter(|k| !keys.contains(k)).collect();
+        settings_ours().into_iter().filter(|k| !keys.contains(k)).collect();
     assert!(stale.is_empty(), "설정 표에 없는 줄의 예외가 남아 있다: {stale:?}");
 }
 
@@ -712,8 +658,8 @@ fn plugin_settings_and_their_category_show_up() {
     // 줄의 차례도 정본 `settings_order` 그대로다(코어 뒤에 플러그인).
     let ours: Vec<&str> = (0..plugins.settings_len())
         .filter_map(|row| plugins.setting_at(row).map(|r| r.key().to_owned()))
-        // 정본이 가질 수 없는 줄은 저쪽 차례에 자리가 없다 — 뺀다(`SETTINGS_OURS`).
-        .filter(|k| !SETTINGS_OURS.iter().any(|(ours, _)| ours == k))
+        // 정본이 가질 수 없는 줄은 저쪽 차례에 자리가 없다 — 뺀다(갈림 대장의 설정 축).
+        .filter(|k| !settings_ours().contains(&k.as_str()))
         .map(|k| {
             fx.settings_order
                 .iter()
@@ -744,12 +690,12 @@ fn the_settings_table_keeps_the_canon_order() {
     // 우리가 아직 안 다는 줄은 빼도 된다 — 다만 **차례를 바꿀 수는 없다**.
     let want: Vec<&str> =
         fx.settings_order.iter().map(String::as_str).filter(|k| have.contains(k)).collect();
-    // 정본이 **가질 수 없는** 줄은 정본 차례에 자리가 없다(`SETTINGS_OURS`). 그 줄만
+    // 정본이 **가질 수 없는** 줄은 정본 차례에 자리가 없다(갈림 대장의 설정 축). 그 줄만
     // 빼고 견준다 — 나머지의 차례는 여전히 정본 그대로라야 한다.
     let ours: Vec<&str> = SETTINGS
         .iter()
         .map(|s| s.key)
-        .filter(|k| !SETTINGS_OURS.iter().any(|(ours, _)| ours == k))
+        .filter(|k| !settings_ours().contains(k))
         .collect();
     assert_eq!(ours, want, "설정 줄의 차례가 정본과 다르다");
 
