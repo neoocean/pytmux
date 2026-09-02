@@ -1172,8 +1172,19 @@ async def test_residue_does_not_count_a_process_we_already_reaped():
     """
     import subprocess
     with _slot() as slot:
+        # ☠ **`start_new_session=True` 를 빼면 이 시험이 스위트를 통째로 끈다**
+        #   (pytmux-451 · 2026-09-03). `slot.reap()` 은 `proc.terminate(pid, force=True)`
+        #   이고 그것은 POSIX 에서 `os.killpg(os.getpgid(pid), SIGKILL)` 이다 — 대역이
+        #   러너와 **같은 프로세스 그룹**에 있으면 그 한 줄이 **러너와 부모 셸을** 죽인다
+        #   (실측: 출력도 트레이스백도 없이 사라진다). 이 저장소가 이미 한 번 밟은
+        #   부류다(`pty_backend._UnixPty._signal_group` · p4 67413 · lessons_2026-07-26).
+        #
+        #   ★ 그리고 이것이 **재려는 상황에 맞는** 모양이기도 하다: 위 독스트링이 적듯
+        #   슬롯이 띄우는 서버가 `Popen(..., start_new_session=True)` 다. 세션을 갈라도
+        #   **직계 자식인 것은 그대로**라 좀비·`waitpid` 를 재려던 뜻은 안 상한다.
         child = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(30)"],
+            start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         slot.spawned.append(child.pid)
         try:
