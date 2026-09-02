@@ -415,6 +415,46 @@ async def test_wide_char_render():
         await teardown(srv, task, sock)
 
 
+async def test_shrink_wrap_guard_spares_a_pane_that_never_wrote():
+    """폭 축소 가드는 **자식이 아직 아무것도 안 보낸 패널**에는 걸리지 않는다(pytmux-418).
+
+    형제 편(아래 test_shrink_wrap_guard_truncates_not_cascades)이 지키는 것은
+    「옛 폭으로 그려진 것을 앱이 **다시 그린다**」는 전제 위의 truncate 다. 그런데
+    `split_pane` 은 셸을 띄우자마자 그 패널을 80→39 로 좁히고(실측 트레이스), 그
+    0.4초 안에 도착한 **cmd.exe 첫 배너**가 같은 가드에 걸렸다 — 43자 배너가
+    `…10.0.26200.]` 로 남고 `9168]` 이 사라진다(이슈가 보고한 격자와 바이트 동일).
+    셸은 리페인트를 안 하므로 그 글자는 **영영 안 돌아온다** = 영구 손실이다.
+
+    ⇒ 가드는 「다시 그릴 것이 있는 화면」에만 건다. 판정은 **자식이 한 바이트라도
+    보냈나**(`Pane._child_wrote`) 하나다.
+    """
+    from pytmuxlib.model import Pane
+    from pytmuxlib.replay import render_pane_lines
+
+    banner = b"Microsoft Windows [Version 10.0.26200.9168]\r\n"
+
+    # ⑴ split_pane 이 만드는 자리: 셸이 아직 한 바이트도 안 보낸 채로 축소된다.
+    fresh = Pane(-1, -1, 80, 10)
+    fresh.resize(39, 10)
+    fresh.feed(banner)
+    lines = render_pane_lines(fresh)
+    assert lines[0].rstrip() == "Microsoft Windows [Version 10.0.26200.9", repr(lines[0])
+    assert lines[1].startswith("168]"), repr(lines[1])
+    assert "9168]" in (lines[0] + lines[1]).replace(" ", ""), (
+        "배너 꼬리가 사라졌다 — 가드가 갓 뜬 셸의 첫 출력을 버렸다")
+
+    # ⑵ 대조군: 자식이 이미 뭔가 보낸 뒤의 축소는 **여전히** 가드가 걸린다.
+    #    (이것이 없으면 위 단언은 「가드를 통째로 없앴다」로도 통과한다.)
+    used = Pane(-1, -1, 80, 10)
+    used.feed(b"\x1b[2J\x1b[H")
+    used.resize(39, 10)
+    used.feed(banner)
+    ulines = render_pane_lines(used)
+    assert ulines[0].rstrip().endswith("10.0.26200.]"), repr(ulines[0])
+    assert not ulines[1].strip(), (
+        "가드가 안 걸렸다 — /compact cascade 회귀를 다시 연 것이다: " + repr(ulines[1]))
+
+
 async def test_shrink_wrap_guard_truncates_not_cascades():
     """폭 축소 직후 전환 윈도우: ConPTY/Claude 가 아직 옛(넓은) 폭으로 그리는 바이트가
     좁아진 pyte 에 들어와도, 전폭 줄(예: /compact 의 ─ 구분선)이 다음 줄로

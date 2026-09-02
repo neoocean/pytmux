@@ -273,6 +273,11 @@ def cleanup(srv, endpoint):
                                 pass
                 except Exception:
                     pass
+    # 서버가 게시한 자기 pid(pytmux-435). 전송 종류와 무관하게 남으므로 여기서
+    # 함께 치운다 — 안 치우면 한 러너가 띄우는 수백 대의 pid 파일이 상태 디렉터리에
+    # 그대로 쌓인다(아래 포트파일·토큰과 같은 사유).
+    with contextlib.suppress(OSError, ValueError):
+        os.unlink(ipc.server_pidfile(endpoint))
     if not ipc.is_tcp(endpoint):
         try:
             if os.path.exists(endpoint):

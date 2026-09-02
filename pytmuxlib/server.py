@@ -181,7 +181,24 @@ class Server(*_SERVER_BASES):
         # 지속성 버그). 클릭/드래그(1000/1002)는 누출 증거 없음. 그래서 Windows 에서는
         # advertised mouse 를 drag(2)로 캡해 any-motion 만 안 흘린다(_layout_msg). 이
         # 옵션을 켜면 종전대로 모션도 광고한다(ConPTY 개선/진단용). opts.json 영속.
-        self.win_mouse_motion = bool(_opts.get("win_mouse_motion", False))
+        #
+        # ★★ **기본이 2026-09-02 에 ON 으로 뒤집혔다**(pytmux-423 · 아래 실측).
+        # 껐던 근거는 위 누출이었고, 그 뒤 마우스 SGR 누출은 **셋이 각각 다른 원인으로**
+        # 규명·수정됐다(결합 DECSET 미파싱 · ConPTY 주입 미소비 · restart-all 경로).
+        # 그래서 「지금도 새는가」를 Windows 실기에서 다시 쟀다 — 1003 을 «원하는» 앱을
+        # 패널에 띄우고(`client/scripts/mouse_echo.py --any-motion`) 창의 메시지 큐에
+        # 이동 메시지를 넣어(`postmsg_mouse_on_window.ps1` — 커서·전경이 필요 없다) 원시
+        # 화면을 찍었다:
+        #
+        # | 옵션 | 앱이 받은 이동 리포트 | 화면에 샌 SGR |
+        # | --- | ---: | --- |
+        # | off (종전 기본) | **0건** | 없다 |
+        # | on | **12건** | **없다** |
+        #
+        # ⇒ 누출은 없고, 끈 값으로는 hover 계열이 **하나도** 안 산다(fullscreen claude 의
+        # 「클릭해서 점프」 바 강조 · 에디터 hover). 그래서 기본을 정본(Unix)과 같게 켠다.
+        # 되돌릴 자리는 그대로다 — `set win-mouse-motion off`.
+        self.win_mouse_motion = bool(_opts.get("win_mouse_motion", True))
         # alt-screen 풀스크린 리페인트 코얼레싱(#§10 대응 ②). 켜면 Claude busy 스피너
         # 등 매 프레임 화면을 통째로 다시 그리는 대량 출력이 feed 보다 빠르게 쌓일 때
         # 무효화된 중간 프레임을 버려 feed 부하/지연을 줄인다(안전 조건은
@@ -440,9 +457,11 @@ class Server(*_SERVER_BASES):
 
     def set_win_mouse_motion(self, value=None):
         """Windows 마우스 모션(any-motion) 패스스루 허용 토글(HANDOFF §10-H). value
-        미지정 시 반전. 끄면(기본) Windows ConPTY 패널에 any-motion 을 광고하지 않아
-        주입 SGR 모션이 프롬프트에 누출되지 않는다. opts.json 영속. 즉시 발효(다음
-        레이아웃 브로드캐스트부터)."""
+        미지정 시 반전. **끄면** Windows ConPTY 패널에 any-motion 을 광고하지 않는다 —
+        종전에는 그것이 기본이었고(주입 SGR 모션의 프롬프트 누출 방지), 그 누출이 셋 다
+        규명된 뒤 실측으로 재확인해 **기본을 켜는 쪽으로 뒤집었다**(pytmux-423 · 근거
+        표는 `Server.__init__` 의 그 자리). opts.json 영속. 즉시 발효(다음 레이아웃
+        브로드캐스트부터)."""
         self.win_mouse_motion = (not self.win_mouse_motion) if value is None \
             else bool(value)
         self._save_opts()
@@ -1015,6 +1034,12 @@ def run_server(sock_path: str, resume_path: str | None = None):
     # 보고 listen 직후 기본 세션을 미리 만든다). 테스트는 serve() 를 직접 불러 빈 세션
     # 상태를 기대하므로 끄여 둔다(_handle_signals 와 동일한 프로덕션-전용 패턴).
     srv._prewarm_session = True
+    # 프로덕션 데몬에서만 「이 엔드포인트의 앞 주인을 거둔다」를 켠다(pytmux-435 ·
+    # serve() 가 bind 앞에서 이 플래그를 본다). ⛔ 테스트에서 켜면 안 된다 —
+    # harness 는 한 프로세스에서 serve() 를 여러 번 띄우고 상태 디렉터리를 공유할 수
+    # 있어, 앞 회차가 게시한 pid(= **러너 자신**)를 앞 주인으로 지목한다.
+    # `_handle_signals`·`_prewarm_session` 과 같은 프로덕션-전용 패턴이다.
+    srv._evict_stale_owner = True
     # 프로덕션 데몬에서만 ConPTY 워밍 풀을 켠다(§6A) — 새 탭 spawn 비용의 절반(의사
     # 콘솔 호스트 생성 ~90ms)을 백그라운드로 선지불해 사용자의 첫 새 탭부터 빨라진다.
     # owned-ConPTY 가 안 쓰이는 환경(비-Win/미지원/pywinpty 강제)에선 enable_pool 이

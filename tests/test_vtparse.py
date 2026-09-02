@@ -267,29 +267,96 @@ async def test_csi_excess_params_not_quadratic():
     assert t2 < 2.0, f"128KB CSI feed 가 {t2:.2f}s — F1 회귀 의심"
 
 
+# ── 미종결 CSI 의 «기울기»를 재는 자 (pytmux-433) ─────────────────────────────
+# ⛔ 절대 시간 문턱(옛 `dt < 2.0`)은 쓰지 않는다. 이 편은 수 MB 를 먹이므로 **회귀가
+# 없어도** 부하가 있는 상자에서 그 문턱을 넘는다(2026-09-01 실측 · macOS 부하 ~13 에서
+# 격리 실행 3.20s · 그 트리의 파이썬 코드는 depot HEAD 와 바이트가 같았다). 그때 크기를
+# 바꿔 가며 재 보니 배가마다 대략 2배 — **선형이고 절대 시간이 넘었을 뿐**이었다.
+# 그래서 「느린 상자」와 「O(n²) 회귀」를 가르는 축(= 기울기)으로 잰다: 선형이면 ×2,
+# 이차면 ×4. 형제 편 test_csi_partial_no_quadratic 이 이미 쓰는 축이다.
+# ⚠ 기울기 가드는 느린 상자를 통과시키는 것이 목적이라 **통과만 봐서는 「아무것도 안
+# 재는 상태」와 구별이 안 된다** — 그래서 양성 대조군을 아래에 함께 둔다.
+_CSI_GROWTH_MAX = 3.0
+_CSI_GROWTH_N = 1_000_000
+
+
+def _feed_unterminated_csi(sink, n):
+    """종결자 **없는** `ESC[` + `1`×n 을 64KB 청크로 먹인다."""
+    big = b"[" + b"1" * n
+    for i in range(0, len(big), 65536):
+        sink.feed(big[i:i + 65536])
+
+
+def _csi_growth(make_sink, n=_CSI_GROWTH_N, attempts=2):
+    """t(2n)/t(n) 과 **2n 회차의 sink** 를 돌려준다.
+
+    부하 스파이크가 두 표본 중 한 쪽만 때리면 비가 흔들린다. 그래서 문턱을 넘은
+    회차만 한 번 더 재고 **작은 비**를 쓴다 — 부하는 시간을 늘리기만 하므로 여러
+    표본의 최솟값이 곧 「가장 덜 방해받은 표본」이다. 통과하는 회차는 한 번만 재므로
+    값이 안 비싸다(실측 이 상자 1M+2M = 0.75s).
+    """
+    _feed_unterminated_csi(make_sink(), 100_000)     # 예열 — 첫 표본은 늘 부풀어 있다
+    best, sink = None, None
+    for _ in range(attempts):
+        s1 = make_sink()
+        t0 = time.perf_counter()
+        _feed_unterminated_csi(s1, n)
+        t1 = time.perf_counter() - t0
+        s2 = make_sink()
+        t0 = time.perf_counter()
+        _feed_unterminated_csi(s2, 2 * n)
+        t2 = time.perf_counter() - t0
+        ratio = t2 / max(t1, 1e-6)
+        if best is None or ratio < best:
+            best, sink = ratio, s2
+        if best < _CSI_GROWTH_MAX:
+            break
+    return best, sink
+
+
 async def test_csi_raw_param_buffer_bounded():
     """[보안 F2 회귀, 2026-07-17] 미종결 CSI 파라미터 본문(`_raw`)은 _RAW_MAX 로 캡된다.
 
     N1(OSC)의 **살아남은 형제**: `_OSC_MAX` 만 있고 `_raw` 엔 상한이 없어, 종결자 없는
     `ESC[` + 숫자 스트림이 ① `self._raw += ch` 의 O(n²) 로 CPU 를 태우고(400k자=1.15s,
     10MB=120초+) ② **종결자가 없어도 되므로** feed 를 넘어 본문이 영구 잔류해 메모리
-    DoS 가 됐다. 캡은 자원 상한과 O(n) 을 동시에 준다."""
+    DoS 가 됐다. 캡은 자원 상한과 O(n) 을 동시에 준다.
+
+    ⇒ 그래서 여기서 재는 것도 둘이다: **기울기**(O(n) 인가 — 위 _csi_growth 주석)와
+    **캡**(`_raw` 가 상한 안인가). 앞엣것만 있으면 자원 누수를 놓치고, 뒤엣것만 있으면
+    O(n²) 를 놓친다.
+    """
     cols, rows = 20, 3
-    big = b"\x1b[" + b"1" * 3_000_000                # 미종결 — 종결자 일부러 없음
-    chunks = [big[i:i + 65536] for i in range(0, len(big), 65536)]
-    scr = NativeScreen(cols, rows)
-    tok = VTTokenizer(scr)
-    t0 = time.perf_counter()
-    for c in chunks:
-        tok.feed(c)
-    dt = time.perf_counter() - t0
-    assert dt < 2.0, f"미종결 CSI 3MB 가 {dt:.2f}s — O(n²) 회귀(F2)"
+    ratio, tok = _csi_growth(lambda: VTTokenizer(NativeScreen(cols, rows)))
+    assert ratio < _CSI_GROWTH_MAX, (
+        f"미종결 CSI 입력 2배에 시간 {ratio:.1f}배 — O(n²) 회귀(F2)")
     assert len(tok._raw) <= VTTokenizer._RAW_MAX, f"_raw 미캡 {len(tok._raw)}"
     # 캡 뒤에도 파서는 정상 복귀한다: 종결자를 만나면 시퀀스를 닫고 이후 글자는 출력.
     # (캡된 파라미터가 거대 행번호로 해석돼 커서는 마지막 행에 클램프되므로 행을
     # 특정하지 않고 화면 어딘가에 찍혔는지만 본다 — 요지는 "파서가 안 죽었다"이다.)
     tok.feed(b"Htail")
-    assert any("tail" in row for row in scr.display), repr(scr.display)
+    assert any("tail" in row for row in tok.screen.display), repr(tok.screen.display)
+
+
+async def test_csi_growth_guard_bites_on_quadratic():
+    """양성 대조군 — 위 기울기 가드가 **진짜 O(n²) 에 실제로 문다**(pytmux-433).
+
+    옛 F2 결함의 모양을 그대로 세운다: 상한 없는 `self._raw += ch`. 속성이 참조를
+    쥐고 있어 CPython 의 「refcount 1 이면 제자리에서 잇는다」 최적화가 **안 걸리므로**
+    이것은 실제로 이차다(이 상자 실측 50k=0.026s · 100k=0.098s · 200k=0.532s).
+    같은 자(_csi_growth)로 재서 문턱을 넘는지 본다.
+    """
+    class _QuadraticSink:
+        def __init__(self):
+            self._raw = ""
+
+        def feed(self, data):
+            for b in data:
+                self._raw += chr(b)
+
+    # ⚠ 이차라 크기를 키우면 초가 아니라 분이 된다 — 100k/200k 로 잰다(합 0.6s 대).
+    ratio, _ = _csi_growth(_QuadraticSink, n=100_000, attempts=1)
+    assert ratio >= _CSI_GROWTH_MAX, f"O(n²) 를 {ratio:.1f}배로 재 — 가드가 안 문다"
 
 
 async def test_osc_split_across_feeds_matches_pyte():

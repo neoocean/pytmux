@@ -177,7 +177,7 @@
     "unpin-tab": "탭 고정 해제",
     "version": "클라/서버 버전(p4 CL)·업타임 팝업(별칭 about)",
     "vt-parser": "VT 파서 백엔드 선택 pyte|native (재시작 시 발효 · vt-parser pyte|native)",
-    "win-mouse-motion": "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 off(ConPTY 누출 방지) (win-mouse-motion on|off|toggle)",
+    "win-mouse-motion": "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 on(끄면 hover 계열이 안 산다 · pytmux-423) (win-mouse-motion on|off|toggle)",
     "window-size": "다중 클라 미러링 시 공유 크기 규칙 smallest|latest|largest — latest=마지막 조작 창 크기(window-size smallest|latest|largest)"
   },
   "command_help_en": {
@@ -267,7 +267,7 @@
     "unpin-tab": "Unpin tab",
     "version": "Client/server version (p4 CL)·uptime popup (alias about)",
     "vt-parser": "Select VT parser backend pyte|native (takes effect on restart · vt-parser pyte|native)",
-    "win-mouse-motion": "Windows mouse motion (any-motion) passthrough on/off — default off (avoids ConPTY leak) (win-mouse-motion on|off|toggle)",
+    "win-mouse-motion": "Windows mouse motion (any-motion) passthrough on/off — default on (off kills hover-driven UI · pytmux-423) (win-mouse-motion on|off|toggle)",
     "window-size": "Shared grid sizing rule for multi-client mirroring smallest|latest|largest — latest=size of last-operated client (window-size smallest|latest|largest)"
   },
   "prefix_keys": {

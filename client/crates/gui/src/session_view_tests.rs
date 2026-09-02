@@ -949,8 +949,18 @@ fn a_chrome_click_leaves_a_trace_before_any_gate_can_swallow_it() {
     );
     // ⛔ 알림(`note_notice`)은 **안 띄운다** — 크롬 클릭은 잦고, 정본 TUI 는 마우스가
     //    꺼졌을 때 아무 말도 안 한다(단말이 이벤트를 아예 안 보낸다).
+    //
+    // ⚠ 자르는 자리를 **글자 경계로 물린다**. 종전에는 바이트 인덱스를 그대로 썼는데,
+    //   이 원문은 한국어라 그 자리가 글자 가운데에 떨어지는 순간 시험이 **패닉으로**
+    //   죽는다 — 실측(2026-09-02 · Windows): `byte index 1389 is not a char boundary;
+    //   it is inside '데'`. 재려던 것(«말풍선을 띄우나»)과 무관한 죽음이고, 원문이
+    //   한 글자만 길어져도 되살아난다.
+    let mut cut = (gate + 200.min(swallowed.len())).min(body.len());
+    while cut > 0 && !body.is_char_boundary(cut) {
+        cut -= 1;
+    }
     assert!(
-        !body[..gate + 200.min(swallowed.len())].contains("note_notice"),
+        !body[..cut].contains("note_notice"),
         "마우스가 꺼졌다고 말풍선을 띄운다 — 정본에 없는 갈림이다: {body}"
     );
 }

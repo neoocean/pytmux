@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import os
+import time
 
 from . import ipc, proc, pty_backend, version
 from .model import Pane, Session, Split, Tab, Window
@@ -195,6 +196,136 @@ class ServerPersistMixin:
                 except OSError:
                     pass
 
+    # ---- 엔드포인트 주인 한 명 지키기(pytmux/pytmux-435) --------------------
+    #
+    # 한 엔드포인트에는 서버가 **하나**다. 그런데 종전에는 그 불변식을 **아무도 지키지
+    # 않았다**: 새 서버는 소켓 이름을 `os.replace` 로(TCP 면 포트파일을 덮어써서)
+    # 가져가고, 앞 주인에게는 알리지 않았다. 앞엣것은 도달 불가가 된 소켓을 쥔 채
+    # liveness·프레임·그림자 `/usage` 프로브 루프를 **계속 돌았다**.
+    #
+    # 그 값은 실측으로 나왔다(2026-09-02 · 이슈 본문): 한 엔드포인트에 서버 넷
+    # (36일·17일·5.8일·13분), RSS 172MB/누적 CPU 622분짜리 하나, 토큰 DB 에 오프셋이
+    # 다른 600초 프로브 계열이 겹쳐 찍힘, 그리고 옛 코드를 쥔 프로세스라 그 사이에 나간
+    # 고침(pytmux-414)이 **한 번도 적용되지 않음**.
+    #
+    # ⛔ 이름으로 죽이지 않는다(루트 CLAUDE.md 의 그 규율). 겨냥은 **이 엔드포인트의
+    #    pid 파일이 지목한 pid 하나**뿐이고, 그마저도 먼저 «말로» 부탁한다.
+
+    def _publish_server_pid(self) -> None:
+        """listen 이 선 뒤 내 pid 를 엔드포인트에 게시한다(다음 주인이 나를 찾는 주소).
+
+        ⚠ **bind 뒤에** 부른다 — 앞서 쓰면 bind 가 실패한 프로세스의 pid 가 남아,
+        다음 주인이 «엉뚱한 살아 있는 프로세스»를 앞 주인으로 지목한다.
+        """
+        try:
+            with ipc.private_atomic(ipc.server_pidfile(self.sock_path)) as f:
+                f.write(f"{os.getpid()}\n")
+        except OSError:
+            self._log_error("publish_server_pid")
+
+    # 거두기는 **두 걸음**이고, 그 사이에 bind 가 들어간다. 왜 가르나 —
+    #
+    # ⑴ **부탁은 bind 앞이어야** 한다. `kill-server` 제어 요청은 «지금 그 엔드포인트에
+    #    답하는 자»에게 간다. 내가 먼저 bind 하면 그 요청은 **나 자신**에게 가고 앞
+    #    주인은 도달 불가인 채 영생한다(이 이슈의 그 상태다).
+    # ⑵ **기다리기는 bind 뒤여야** 한다. 실측(2026-09-02 · 이 Windows 상자 3회)으로
+    #    질서 있는 종료는 **2.33s · 3.72s · 2.86s** 가 걸린다(pty-host·ConPTY 정리).
+    #    그런데 attach 쪽 기동 예산은 `launcher.wait_server_authed` 의
+    #    `polls=200 · interval=0.02` = **4.0초**다. bind 앞에서 그만큼 기다리면 첫
+    #    attach 가 「서버 기동 실패」로 오판된다 — 이 저장소가 이미 그 부류로 한 번
+    #    물렸다(부팅 8s vs 예산 4s). ⇒ 앞걸음은 **부탁만**(왕복 실측 0.00~0.02s)
+    #    하고, 죽는 것을 지켜보는 일은 listen 이 선 뒤 백그라운드로 넘긴다.
+
+    def _evict_previous_owner(self) -> str:
+        """[bind **앞**] 앞 주인에게 물러나라고 **부탁만** 한다(≈20ms).
+
+        돌려주는 값은 진단용 낱말이다 — `"none"`(아무도 없었다) · `"self"`(execv
+        재시작이라 그 pid 가 나다) · `"stale"`(pid 파일만 남았다) · `"asked"`(살아
+        있는 앞 주인에게 부탁했다). 마지막 경우에만 `self._evict_pid` 가 선다 —
+        [`_finish_eviction`] 이 그것을 받아 끝을 본다.
+
+        ⛔ **먼저 «말로»** 한다. 그 길만이 앞 주인이 질서 있게 내려가는 길이다(패널
+        셸에 SIGHUP · pty-host 회수 · 캡처 파일 닫기 — `shutdown()` 이 하는 것들).
+        pid 로 먼저 쏘면 그 정리가 통째로 안 돌아 고아 셸과 고아 host 가 남는다 —
+        이 이슈가 잰 서버 셋이 7~8월의 고아 `/bin/zsh` 를 물고 있던 그 모양이다.
+        """
+        self._evict_pid = None
+        pid = ipc.read_server_pid(self.sock_path)
+        if pid is None:
+            return "none"
+        if pid == os.getpid():
+            # execv 재시작(§5.6)은 pid 를 유지한다 — 앞 주인이 곧 나다.
+            return "self"
+        if not proc.is_alive(pid):
+            return "stale"
+        # ⚠ `launcher` 는 **함수 안에서** 문다 — 모듈 머리에서 물면 서버 쪽 모듈이
+        # CLI 진입 모듈을 거쳐 가는 고리가 생긴다(그 모듈은 반대로 서버를 지연
+        # import 하는 쪽이다).
+        asked = False
+        with contextlib.suppress(Exception):
+            from .launcher import control_request
+            asked = bool(control_request(
+                self.sock_path, {"t": "kill-server"}))
+        self._evict_pid = pid
+        self._log_error(
+            "evict_previous_owner",
+            f"앞 서버 pid={pid} 에게 물러나라고 부탁했다(응답={asked}) — "
+            f"listen 뒤에 실제로 죽는지 지켜본다")
+        return "asked"
+
+    async def _finish_eviction(self, *, grace: float = 8.0) -> str:
+        """[listen **뒤**] 부탁받은 앞 주인이 정말 죽었나 보고, 안 죽으면 pid 로 쏜다.
+
+        `"gone"`(물러났다) · `"killed"`(확인 사살했다) · `"alive"`(그래도 살아 있다 —
+        권한 없음 등) · `"nobody"`(부탁한 상대가 없었다)를 돌려준다.
+
+        예산 8초는 위 실측(2.33~3.72s)의 두 배쯤이다. ⑶ 이 필요한 이유는 이 이슈가
+        잡은 서버가 **응답을 안 하는** 부류였다는 것이다 — RSS 172MB·누적 CPU 622분
+        으로 도는 중이었고, 그런 상대에게는 부탁이 닿아도 소화되지 않는다.
+
+        ⛔ `proc.terminate` 를 **안 쓴다**: 그것은 POSIX 에서 `killpg(getpgid(pid))`,
+          곧 **프로세스 그룹**을 쏜다. pid 파일이 낡아 pid 가 재사용됐거나 데몬화되지
+          않은 서버(테스트·전경 실행)를 가리키면 그 그룹에 **부르는 쪽이 들어 있을 수
+          있다** — 2026-07-26 에 그 부류로 러너와 부모 셸까지 죽인 사고가 있었다
+          (`pty_backend._signal_group`). 여기서는 언제나 **pid 하나**만 겨냥한다.
+        """
+        pid = getattr(self, "_evict_pid", None)
+        if not pid:
+            return "nobody"
+        self._evict_pid = None
+        deadline = time.monotonic() + max(0.0, grace)
+        while time.monotonic() < deadline:
+            if not proc.is_alive(pid):
+                self._log_error("evict_previous_owner",
+                                f"앞 서버 pid={pid} 가 질서 있게 물러났다")
+                return "gone"
+            # ⚠ `time.sleep` 이 아니다 — 이 자리는 **이벤트 루프 안**이고, 서버는
+            #   단일 스레드다. 동기 대기를 걸면 그 8초 동안 클라 프레임이 멎는다.
+            await asyncio.sleep(0.1)
+        self._kill_pid_only(pid)
+        gone = not proc.is_alive(pid)
+        self._log_error(
+            "evict_previous_owner",
+            f"앞 서버 pid={pid} 가 부탁에 안 물러나 pid 로 내렸다(죽었나={gone})")
+        return "killed" if gone else "alive"
+
+    @staticmethod
+    def _kill_pid_only(pid: int) -> None:
+        """그 **pid 하나**를 강제 종료한다(그룹·자식 트리 금지 — 위 ⛔ 참조)."""
+        if pid <= 0:
+            return
+        if pty_backend.IS_WINDOWS:
+            # `/T`(자식 트리)를 안 붙인다 — 위 ⑶ 의 사유.
+            with contextlib.suppress(Exception):
+                import subprocess
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               capture_output=True, timeout=10.0,
+                               **proc.no_window_kwargs())
+            return
+        import signal as _signal
+        with contextlib.suppress(OSError, ProcessLookupError):
+            os.kill(pid, _signal.SIGKILL)
+
     def _cleanup_endpoint_files(self, *, owned_only: bool = False):
         """listen 엔드포인트의 영속 파일(unix 소켓·포트파일·토큰)을 정리한다.
 
@@ -239,6 +370,12 @@ class ServerPersistMixin:
                     owned = True           # 쓰레기 내용 = 어차피 유해한 stale
                 if owned:
                     paths.append(pf)
+        # 내 pid 파일(pytmux-435). owned_only 면 **내 pid 일 때만** 지운다 — 좀비의
+        # 지연 shutdown 이 새 주인이 방금 게시한 pid 를 지우면, 그 다음 주인은 앞
+        # 주인을 못 찾아 이 이슈가 통째로 되돌아온다.
+        pidf = ipc.server_pidfile(self.sock_path)
+        if not owned_only or ipc.read_server_pid(self.sock_path) == os.getpid():
+            paths.append(pidf)
         tp = ipc.token_path(self.sock_path)
         if not owned_only:
             paths.append(tp)

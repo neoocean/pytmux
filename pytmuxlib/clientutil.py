@@ -1068,7 +1068,7 @@ COMMANDS = [
     ("coalesce-repaints", "대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "설정/기타"),
     ("nest-auto-attach", "원격에서 pytmux 실행 시 거부 대신 자동 remote-attach 승격 on/off (nest-auto-attach on|off|toggle)", "설정/기타"),
     ("exit-empty", "세션이 0개여도 서버 종료 on/off — tmux exit-empty 동형, off=원격 federation 링크 보존용 상주(exit-empty on|off|toggle)", "설정/기타"),
-    ("win-mouse-motion", "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 off(ConPTY 누출 방지) (win-mouse-motion on|off|toggle)", "설정/기타"),
+    ("win-mouse-motion", "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 on(끄면 hover 계열이 안 산다 · pytmux-423) (win-mouse-motion on|off|toggle)", "설정/기타"),
     ("vt-parser", "VT 파서 백엔드 선택 pyte|native (재시작 시 발효 · vt-parser pyte|native)", "설정/기타"),
     ("window-size", "다중 클라 미러링 시 공유 크기 규칙 smallest|latest|largest — latest=마지막 조작 창 크기(window-size smallest|latest|largest)", "설정/기타"),
     # Claude Code 명령(auto-resume·token-log·
@@ -1597,7 +1597,7 @@ i18n.register({
         "cmd.coalesce-repaints": "Coalesce alt-screen full repaints on heavy output on/off — ssh responsiveness (coalesce-repaints on|off|toggle)",
         "cmd.nest-auto-attach": "Auto-promote remote pytmux run to remote-attach instead of rejecting on/off (nest-auto-attach on|off|toggle)",
         "cmd.exit-empty": "Exit server when session count hits 0 on/off — tmux exit-empty equivalent, off=stay resident for remote federation links (exit-empty on|off|toggle)",
-        "cmd.win-mouse-motion": "Windows mouse motion (any-motion) passthrough on/off — default off (avoids ConPTY leak) (win-mouse-motion on|off|toggle)",
+        "cmd.win-mouse-motion": "Windows mouse motion (any-motion) passthrough on/off — default on (off kills hover-driven UI · pytmux-423) (win-mouse-motion on|off|toggle)",
         "cmd.vt-parser": "Select VT parser backend pyte|native (takes effect on restart · vt-parser pyte|native)",
         "cmd.window-size": "Shared grid sizing rule for multi-client mirroring smallest|latest|largest — latest=size of last-operated client (window-size smallest|latest|largest)",
         "cmd.version": "Client/server version (p4 CL)·uptime popup (alias about)",

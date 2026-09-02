@@ -11,7 +11,9 @@ import importlib
 import inspect
 import json
 import os
+import re
 import signal
+import subprocess
 import sys
 import time
 import traceback
@@ -51,9 +53,11 @@ os.environ.setdefault("PYTMUX_KEEP_CODEPAGE", "1")
 TEST_TIMEOUT = float(os.environ.get("PYTMUX_TEST_TIMEOUT", "90"))
 
 # 간헐 실패(주로 느린 CI 러너에서 Textual run_test 클라 테스트의 타이밍 — fixed
-# pilot.pause 가 짧아 렌더가 아직 안 됨) 재시도. 일시적 플레이크는 재시도로 통과하고,
-# 진짜 실패는 모든 시도에서 실패해 그대로 잡힌다. 재시도로 통과한 건 FLAKY 로 표시해
+# pilot.pause 가 짧아 렌더가 아직 안 됨) 재시도. 재시도로 통과한 건 FLAKY 로 표시해
 # 가시성 유지. 0=재시도 끔.
+# ⛔ 여기엔 오래 *"진짜 실패는 모든 시도에서 실패해 그대로 잡힌다"* 고 적혀 있었는데
+#    **그것이 참이 아니다**(pytmux-430) — 시도들이 한 프로세스를 공유해 서로 독립이
+#    아니다. 그래서 아래 «재시도 재판정» 이 붙었다.
 TEST_RETRIES = int(os.environ.get("PYTMUX_TEST_RETRIES", "2"))
 
 # 타임아웃(행)도 **1회는** 재시도한다(2026-07-10, 로드맵 test-infra). 종전엔 "행을 또
@@ -62,6 +66,52 @@ TEST_RETRIES = int(os.environ.get("PYTMUX_TEST_RETRIES", "2"))
 # 부하 스톨은 대개 transient 라 1회 재시도로 복구되고, 진짜 데드락은 재시도에서도 다시
 # hang 해 +1회(유한 90s) 비용 뒤 실패로 확정된다(무한 재시도 아님). 0=타임아웃 재시도 끔.
 TEST_TIMEOUT_RETRIES = int(os.environ.get("PYTMUX_TEST_TIMEOUT_RETRIES", "1"))
+
+# ── 재시도 재판정(pytmux-430) ────────────────────────────────────────────────
+# 위 재시도의 주석은 오래 "진짜 실패는 모든 시도에서 실패해 그대로 잡힌다"고 적었는데
+# **그것이 참이 아니다.** 이 스위트는 전 모듈이 한 프로세스에서 돌므로(§전체=적색인데
+# 격리=녹색이 같은 뿌리다) 시도들이 서로 **독립이 아니다** — 앞 시도가 프로세스 전역
+# (캐시·레지스트리·모듈 전역)을 데우면 뒤 시도의 조건이 달라져 **결정론적 실패가 초록으로
+# 덮인다**. 실측(2026-09-01): 상한의 26배로 두 번 넘어진 시험이 `0 failed` 로 회계됐다 —
+# textual `Strip.blank` 의 클래스 수준 `lru_cache` 가 시도 1·2 에서 포화해, 시도 3 은
+# 「늘 것」을 못 찾았다(같은 코드·같은 시험·다른 답).
+# ⇒ 그래서 재시도로 통과한 건(FLAKY)은 **깨끗한 새 프로세스에서 한 번 더** 재서 판정한다.
+#   거기서도 실패하면 그것은 플레이크가 아니라 실패다. 비용은 flaky 경로에만 든다.
+# ⚠ 재판정은 그 시험 **하나만** 돌린다. 형제 시험이 깔아 준 상태에 기대는 시험이라면
+#   여기서 실패할 수 있는데 — 그것도 이 저장소가 「모듈 간 오염」이라 부르는 결함이다.
+#   그 판정을 못 믿을 자리에서만 PYTMUX_TEST_ADJUDICATE=off.
+_ADJUDICATE = os.environ.get("PYTMUX_TEST_ADJUDICATE", "on") != "off"
+_ADJUDICATING = os.environ.get("PYTMUX_TEST_ADJUDICATING") == "1"
+
+
+def _adjudicate(label):
+    """FLAKY 한 건을 깨끗한 프로세스에서 다시 판정한다.
+
+    True=거기서도 통과(진짜 일시적 플레이크) · False=거기서는 실패(재시도가 덮은
+    결정론적 실패) · None=판정 못 함. **None 을 통과로 접지 않는다** — 화면에 남긴다.
+    """
+    env = dict(os.environ)
+    env["PYTMUX_TEST_ADJUDICATING"] = "1"    # 재귀 금지
+    env["PYTMUX_TEST_RETRIES"] = "0"         # 또 데우면 재판정의 뜻이 없다
+    env["PYTMUX_TEST_REPORT"] = "off"        # 부모 리포트를 덮지 않는다
+    try:
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), label],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=env,
+                           timeout=(TEST_TIMEOUT or 90) * 2 + 60)
+    except Exception as e:                   # spawn 실패·타임아웃 = 판정 못 함
+        return None, f"재판정을 못 돌렸다: {e}"
+    out = (r.stdout or "") + (r.stderr or "")
+    m = re.search(r"(\d+) passed, (\d+) failed", out)
+    if not m:
+        return None, "재판정 출력에 요약줄이 없다(절단)"
+    n_pass, n_fail = int(m.group(1)), int(m.group(2))
+    if n_fail:
+        return False, out
+    if n_pass:
+        return True, out
+    return None, "재판정이 그 이름으로 아무것도 안 돌렸다(0 passed, 0 failed)"
+
 
 # SIGALRM 하드 백스톱(POSIX). asyncio.wait_for 는 await 지점에서만 취소할 수 있어,
 # 테스트가 **동기 블로킹 콜**(PTY os.read·서브프로세스 wait·소켓 recv)에서 매달리면
@@ -488,7 +538,18 @@ def main(argv):
     # 성공 실행을 90초 뒤 종료시키지 않게 명시적으로 끈다.
     if TEST_TIMEOUT > 0:
         faulthandler.cancel_dump_traceback_later()
-    names = [a[:-3] if a.endswith(".py") else a for a in argv]
+    # ★ `모듈.시험` 한 건만 고르는 길(pytmux-430). 재시도 재판정이 그 한 건만 깨끗한
+    #   프로세스에서 다시 돌리려면 이 선택자가 있어야 한다. 사람이 쓰기에도 좋다:
+    #   `python3 tests/run.py test_vtparse.test_csi_raw_param_buffer_bounded`
+    names, only = [], {}
+    for a in argv:
+        a = a[:-3] if a.endswith(".py") else a
+        mod, _dot, test = a.partition(".")
+        names.append(mod)
+        if not test:
+            only[mod] = None                       # 모듈 전체 — 부분 선택을 덮는다
+        elif only.get(mod, ()) is not None:
+            only.setdefault(mod, set()).add(test)
     passed = failed = flaky = skipped = 0
     failures = []
     skips = []
@@ -531,6 +592,9 @@ def main(argv):
         tests = [(n, f) for n, f in vars(mod).items()
                  if n.startswith("test_") and (asyncio.iscoroutinefunction(f)
                                                or inspect.isfunction(f))]
+        sel = only.get(modname)
+        if sel:
+            tests = [(n, f) for n, f in tests if n in sel]
         for name, fn in sorted(tests):
             label = f"{modname}.{name}"
             # 진행중 표식: 리포트에 **시작**도 남긴다. 종전엔 완료된 result 만 남아,
@@ -578,8 +642,13 @@ def main(argv):
                 if ok:
                     if attempt == 0:
                         print(f"  PASS  {label}")
+                    elif _ADJUDICATE and not _ADJUDICATING:
+                        # 아직 «통과»라 부르지 않는다 — 아래에서 깨끗한 프로세스가
+                        # 판정한다(pytmux-430). 여기서 PASS 를 찍어 버리면 화면에
+                        # 남는 마지막 말이 초록이라, 뒤집힌 판정을 사람이 놓친다.
+                        print(f"  ....  {label} "
+                              f"({attempt}회 재시도 후 통과 — 재판정한다)")
                     else:
-                        flaky += 1
                         print(f"  PASS  {label} (FLAKY — {attempt}회 재시도 후 통과)")
                     break
                 # 재시도 판정: 일반 실패는 TEST_RETRIES 까지, 타임아웃(행)은 부하 스톨
@@ -593,8 +662,34 @@ def main(argv):
                 rep.emit("result", label=label, status="skip", secs=secs,
                          reason="" if was_skipped is True else was_skipped)
                 continue                   # passed/failed 어디에도 안 셈
+            # ★ 재시도로 통과한 건은 «깨끗한 프로세스»에서 다시 판정한다(pytmux-430).
+            #   시도들은 한 프로세스를 공유해 서로 독립이 아니므로, 여기서만 통과한
+            #   것은 「통과」의 증거가 못 된다.
+            if ok and attempts > 1 and _ADJUDICATE and not _ADJUDICATING:
+                verdict, detail = _adjudicate(label)
+                rep.emit("adjudicate", label=label,
+                         result={True: "pass", False: "fail"}.get(verdict, "unknown"))
+                if verdict is False:
+                    ok = False
+                    last_exc = RuntimeError(
+                        "재시도가 덮은 결정론적 실패 — 깨끗한 프로세스에서 다시 재니 "
+                        "실패했다(시도들은 한 프로세스를 공유해 서로 독립이 아니다). "
+                        "재판정을 끄려면 PYTMUX_TEST_ADJUDICATE=off")
+                    last_tb = ""
+                    hung = False
+                    print(f"        ↳ 재판정: 새 프로세스에서 **실패** — "
+                          f"FLAKY 가 아니라 실패다")
+                elif verdict is True:
+                    print(f"  PASS  {label} "
+                          f"(FLAKY — 재판정: 새 프로세스에서도 통과)")
+                else:
+                    # 판정 못 함. 통과로 접되 **화면에 남긴다** — 조용히 초록이
+                    # 되는 것이 이 이슈가 잡으려는 그것이다.
+                    print(f"  PASS  {label} (FLAKY — ⚠ 재판정 못 함: {detail!s:.120})")
             if ok:
                 passed += 1
+                if attempts > 1:
+                    flaky += 1
                 rep.emit("result", label=label,
                          status="flaky" if attempts > 1 else "pass",
                          secs=secs, attempts=attempts)

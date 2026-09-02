@@ -300,6 +300,11 @@ class Pane:
         self._alt = None
         self.alt_active = False
         self.screen = self._main      # 현재 활성 화면(렌더 대상)
+        # 이 패널의 **자식이 한 바이트라도 보냈나**(pytmux-418). 폭 축소 autowrap
+        # 가드(§resize)를 걸지 말지를 가르는 값이다 — 아직 아무것도 안 보낸 화면에는
+        # 「옛 폭으로 그려진 것」이 없으므로 가드가 지킬 것도 없고, 그 자리에서 버린
+        # 오버플로는 다시 그려 줄 앱이 없어 **영구 손실**이 된다.
+        self._child_wrote = False
         # 자작 증분 토크나이저(vtparse.VTTokenizer)를 패널에 상주시켜 native 화면에 직접
         # 디스패치한다(콜론SGR·XTMODKEYS·kitty·alt·partial-CSI 를 1급 처리 — feed 전
         # 정규식 우회 불필요). alt 전환은 _on_alt_transition 콜백으로 라우팅한다.
@@ -436,6 +441,7 @@ class Pane:
         self._alt = None
         self.alt_active = False
         self.screen = self._main
+        self._child_wrote = False     # 새 셸 = 새로 빈 화면(pytmux-418)
         # 새 셸용으로 토크나이저 재생성(증분 상태/디코더 초기화).
         self._tok = self._make_tokenizer()
         # NESTED_ATTACH: 새 셸이므로 NEST carry/ssh 목적지 기록도 무효(이전 셸의
@@ -865,6 +871,8 @@ class Pane:
         정규식 우회 불필요). 스크롤백 뷰포트 고정(R6)은 feed 전체 단위로 적용한다 —
         alt 전환이 끼면 _enter/_leave_alt 가 scroll 을 0 으로 리셋하므로 메인 잔류
         시에만 보정하면 등가다."""
+        if data:
+            self._child_wrote = True          # pytmux-418 (가드 판정용)
         main = self._main
         track = self.screen is main and self.scroll > 0
         before = len(main.history.top) if track else 0
@@ -931,9 +939,15 @@ class Pane:
         self.cols, self.rows = cols, rows
         if shrink_w:
             self._notify_winsize(cols, rows)
-        self._main.resize(rows, cols)
+        # ★ 자식이 아직 한 바이트도 안 보냈으면 가드를 걸지 않는다(pytmux-418).
+        #   split_pane 이 만드는 것이 정확히 그 자리다 — 셸을 띄우자마자 80→39 로
+        #   좁히면, 0.4초 안에 도착한 **첫 배너**가 가드에 걸려 마지막 칸에 겹쳐
+        #   쓰였다(실측: 43자 배너가 `…10.0.26200.]` 로 남고 `9168]` 이 사라진다).
+        #   셸은 리페인트를 안 하므로 그 글자는 영영 안 돌아온다.
+        guard = self._child_wrote
+        self._main.resize(rows, cols, wrap_guard=guard)
         if self._alt is not None:
-            self._alt.resize(rows, cols)
+            self._alt.resize(rows, cols, wrap_guard=guard)
         if not shrink_w:
             self._notify_winsize(cols, rows)
         self.dirty = True

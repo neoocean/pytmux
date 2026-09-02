@@ -178,7 +178,12 @@ pub static EN: &[(&str, &str)] = &[
     ("OS 클립보드 붙여넣기", "Paste from OS clipboard"),
     ("UI 언어 전환 (lang ko|en) — 한국어/영어", "Switch UI language (lang ko|en) — Korean/English"),
     ("VT 파서 백엔드 선택 pyte|native (재시작 시 발효 · vt-parser pyte|native)", "Select VT parser backend pyte|native (takes effect on restart · vt-parser pyte|native)"),
-    ("Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 off(ConPTY 누출 방지) (win-mouse-motion on|off|toggle)", "Windows mouse motion (any-motion) passthrough on/off — default off (avoids ConPTY leak) (win-mouse-motion on|off|toggle)"),
+    // 기본이 2026-09-02 에 ON 으로 뒤집혔다(pytmux-423 — Windows 실기 실측으로 누출이
+    // 없고, 끈 값으로는 hover 계열이 하나도 안 살았다).
+    (
+        "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 on(끄면 hover 계열이 안 산다 · pytmux-423) (win-mouse-motion on|off|toggle)",
+        "Windows mouse motion (any-motion) passthrough on/off — default on (off kills hover-driven UI · pytmux-423) (win-mouse-motion on|off|toggle)",
+    ),
     ("prefix 후 키에 명령 바인딩 (bind-key <key> <command> · -n 은 prefix 없이 root)", "Bind command to key after prefix (bind-key <key> <command> · -n = root, no prefix)"),
     ("같은 원격 서버의 다른 원격 탭을 현재 탭에 pane 으로 머지 (피커, 별칭 merge-remote) — §1.7 페더레이션", "Merge another remote tab from the same server into the current tab as a pane (picker, alias merge-remote) — federation"),
     ("다른 탭의 패널을 현재로 합치기 (-h)", "Join a pane from another tab (-h)"),

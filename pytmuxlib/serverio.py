@@ -1830,8 +1830,24 @@ class ServerIOMixin:
         # 막는다. **재시작은 이 경로가 아니라 _host_restart_exit 를 거치므로** host 가
         # 보존된다 — 여기서만 host 를 죽인다.
         if self._pty_host is not None:
+            # ★ **바닥 소켓에 직접** 보내는 것이 먼저다(pytmux-435). 아래 비동기
+            #   경로는 `writer.write()` 로 버퍼에 넣을 뿐이고 실제 전송은 루프가
+            #   하는데, 이 함수는 몇 줄 뒤에 `loop.stop()` 을 부른다 — 실측으로 그
+            #   프레임은 **한 번도 안 나갔고**, 그래서 서버가 살아 있는 채
+            #   `kill-server` 를 하면 host 가 매번 새어 나갔다(대조군: 서버를 먼저
+            #   죽인 뒤 같은 명령을 치면 동기 폴백 갈래가 host 를 내린다).
+            #   사유·실측표는 `ptyhostclient.shutdown_host_now` 머리말.
+            #   ⛔ 이 연결의 «바닥 소켓»에 직접 쓰는 길은 **막혀 있다** — asyncio 가
+            #   주는 것은 `asyncio.trsock.TransportSocket` 이고 그 껍데기에는
+            #   `sendall`·`send` 가 **없다**(3.11+ · `setblocking`·`shutdown` 은 있다).
+            #   그래서 새 블로킹 소켓으로 붙는 `shutdown_host_sync` 를 쓴다 — 그 길이
+            #   실측으로 host 를 실제로 내린 유일한 길이다.
+            sent_now = False
             with contextlib.suppress(Exception):
-                self._pty_host.shutdown_host()
+                sent_now = ptyhostmgr.shutdown_host_sync(self.sock_path)
+            with contextlib.suppress(Exception):
+                if not sent_now:
+                    self._pty_host.shutdown_host()
                 # ★ 보낸 **뒤 쓰기단만 닫는다**(pytmux-134). 통째로 닫으면 host 가
                 #   응답을 쓰다 RST 를 받아 **아직 안 읽은 shutdown 프레임을 버리고**,
                 #   그걸 «연결만 끊김 = 재시작»으로 읽어 영원히 산다(고아 워치독도
@@ -1841,7 +1857,11 @@ class ServerIOMixin:
                 #   경로는 이미 루프를 멈추는 중이라 await 할 자리가 아니다. 반쪽으로
                 #   닫아 두면 서버 프로세스가 실제로 끝나 소켓이 닫힐 때까지 host 의
                 #   읽기단이 살아 있어 프레임이 안 버려진다.
-                self._pty_host.half_close()
+                #   ⚠ `shutdown_host_now` 가 성공했으면 그것이 이미 `SHUT_WR` 까지
+                #   했으므로 다시 걸지 않는다(두 번 걸어도 무해하지만, 이 줄이
+                #   「반쪽 닫기는 저기서 한다」를 말한다).
+                if not sent_now:
+                    self._pty_host.half_close()
         elif ptyhostmgr.host_enabled():
             # 폴백 모드로 돌던 서버의 종료(PTYHOST_ORPHAN_2026-07-24 P3/R2): host 연결이
             # 6초 예산 안에 안 붙어 인프로세스 백엔드로 돌아섰는데, 그 사이 뒤늦게 뜬
@@ -1931,6 +1951,16 @@ class ServerIOMixin:
             # 파일을 읽어 hello/control 에 실어 보내고, handle_client 가 검증한다. listen
             # 후에 쓰면 재시작 직후 클라가 빈/구토큰을 읽을 창이 생기므로 먼저 쓴다.
             self.auth_token = secrets.token_hex(32)
+            # 한 엔드포인트에는 서버가 **하나**다(pytmux-435). 이 자리에서 앞 주인을
+            # 거둔다 — bind 는 어차피 성공하므로(unix=임시 경로 후 `os.replace` ·
+            # TCP=에페메럴 포트) 그 뒤에 부르면 앞엣것은 **도달 불가인 채 영생**한다.
+            # ⛔ 내 토큰을 쓰기 **전**이다: 앞 주인은 물러나며 `owned_only` 정리로
+            # 「내용이 내 토큰인 파일」을 지운다. 여기서 먼저 거두면 그가 지우는 것은
+            # **자기 토큰**이고, 그 뒤 내가 쓴 것은 안 건드린다. 순서를 뒤집어도
+            # 내용 대조 덕에 안전하지만, 이 순서가 「죽는 자의 파일은 죽는 자가
+            # 치운다」로 읽혀 다음 사람이 덜 헷갈린다.
+            if getattr(self, "_evict_stale_owner", False):
+                self._evicted_owner = self._evict_previous_owner()
             try:
                 ipc.write_token(self.sock_path, self.auth_token)
             except OSError:
@@ -1939,6 +1969,13 @@ class ServerIOMixin:
             # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
             server, self.resolved_endpoint = await ipc.start_server(
                 self.sock_path, self.handle_client)
+            # bind 가 선 뒤에 pid 를 게시한다(다음 주인이 나를 찾는 주소).
+            self._publish_server_pid()
+            # 그리고 부탁받은 앞 주인이 정말 죽는지는 **여기서부터** 지켜본다 —
+            # bind 앞에서 기다리면 attach 의 4.0초 예산을 넘긴다(그 사유는
+            # `_finish_eviction` 머리말). 백그라운드라 첫 프레임을 안 막는다.
+            if getattr(self, "_evict_pid", None):
+                self._spawn(self._finish_eviction(), "finish_eviction")
             if not ipc.is_tcp(self.sock_path):
                 # 종료 시 "이 소켓 파일이 아직 내 것인가" 판정용 inode(위 주석 참조).
                 with contextlib.suppress(OSError):

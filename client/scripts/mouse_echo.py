@@ -129,11 +129,20 @@ def read_events_windows():
 
 
 def main():
+    # `--any-motion` 은 1002 대신 **1003**(버튼을 안 눌러도 모든 이동)을 켠다.
+    # 그 레벨은 Windows 에서 기본으로 drag(2) 로 캡되어 있고(`serverio.
+    # _advertised_mouse_track` · 옵션 `win-mouse-motion`), 껐던 근거가
+    # 「주입된 any-motion SGR 이 ConPTY 를 못 지나 프롬프트로 새어 나온다」였다.
+    # ⇒ 그 근거가 **지금도 참인지**를 재려면 1003 을 «원하는» 앱이 필요하다
+    # (pytmux-423 의 관문). 1002 만 있으면 그 레벨은 영영 못 재고, 실제로 못 쟀다.
+    any_motion = "--any-motion" in sys.argv[1:]
+    level = "1003" if any_motion else "1002"
     old = enable_mouse_input()
-    # ?1002 = 버튼을 누른 채 움직이는 동안의 이동까지 보고 · ?1006 = SGR 확장 좌표
-    # (255칸 넘는 화면에서도 좌표가 안 접힌다).
-    sys.stdout.write("\x1b[?1002h\x1b[?1006h")
-    sys.stdout.write("마우스 대기 중 — Shift+드래그를 해 보고, q 로 끝낸다.\r\n")
+    # ?1002 = 버튼을 누른 채 움직이는 동안의 이동까지 보고 · ?1003 = 버튼과 무관한
+    # 모든 이동 · ?1006 = SGR 확장 좌표(255칸 넘는 화면에서도 좌표가 안 접힌다).
+    sys.stdout.write(f"\x1b[?{level}h\x1b[?1006h")
+    sys.stdout.write(
+        f"마우스 대기 중(추적 {level}) — 움직여 보고, q 로 끝낸다.\r\n")
     sys.stdout.flush()
     try:
         for kind, data in read_events_windows():
@@ -146,7 +155,7 @@ def main():
             sys.stdout.write(f"받음: ({x},{y}) 버튼={buttons} {what}\r\n")
             sys.stdout.flush()
     finally:
-        sys.stdout.write("\x1b[?1006l\x1b[?1002l")
+        sys.stdout.write(f"\x1b[?1006l\x1b[?{level}l")
         sys.stdout.write("\r\n끝.\r\n")
         sys.stdout.flush()
         restore_input(old)
