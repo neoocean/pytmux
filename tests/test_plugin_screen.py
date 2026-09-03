@@ -1811,3 +1811,37 @@ async def test_the_remote_control_toggle_types_rc_into_the_pane_that_was_clicked
         assert closed["id"] == "claude-remote-control", closed
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_a_panel_hint_does_not_promise_a_move_the_panel_cannot_make():
+    """⛔ **화면이 자기가 하는 일을 틀리게 말하면 안 된다**(pytmux-478 ⑴).
+
+    `claude-usage-panel` 은 `kind:"table"` — ↑↓ 가 **커서를 옮긴다**(`press_list`).
+    그런데 힌트는 오래 `↑↓ 스크롤` 이라고 말했다: 그 판이 **글 판이던 시절**의 낱말이
+    판이 표로 바뀐 뒤(pytmux-184 ⑴ — 네이티브 막대)에도 그대로 남은 것이다.
+
+    ★ 재는 것은 **낱말 하나**가 아니라 **짝**이다: 스펙의 `kind` 와 힌트가 광고하는
+    조작이 어긋나면 운다. 그래야 다음에 판의 종류가 바뀔 때 힌트도 함께 움직인다.
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    scroll_words = ("스크롤", "scroll")
+    move_words = ("이동", "move")
+    for name in ("limits", "claude-token-period", "claude-warn-history"):
+        spec = ss.open_spec(srv, None, name)
+        if spec is None:
+            continue
+        hint = str(spec.get("hint") or "")
+        if "↑↓" not in hint:
+            continue
+        if spec["kind"] in ("table", "list"):
+            assert not any(w in hint for w in scroll_words), (
+                f"{spec['id']} 은 `{spec['kind']}` 인데 힌트가 «스크롤» 이라 말한다 — "
+                f"↑↓ 는 커서를 옮긴다: {hint!r}")
+            assert any(w in hint for w in move_words), (
+                f"{spec['id']} 의 힌트가 ↑↓ 가 무엇을 하는지 안 말한다: {hint!r}")
+        elif spec["kind"] == "text":
+            # 글 판은 반대다 — 거기서 ↑↓ 는 정말 스크롤이다.
+            assert any(w in hint for w in scroll_words), (
+                f"{spec['id']} 은 글 판인데 힌트가 «스크롤» 이라 안 한다: {hint!r}")

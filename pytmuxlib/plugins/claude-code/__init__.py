@@ -236,7 +236,12 @@ i18n.register({
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
         "ccmsg.usage_title": "Claude 사용 한도 (/usage)",
         # Tier C 한도 판(pytmux-20) — 읽는 판이라 키가 스크롤·닫기뿐이다.
-        "cusage.hint": "↑↓ 스크롤 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        # ⛔ **「스크롤」이 아니라 「이동」이다**(pytmux-478 ⑴). 이 판은 `kind:"table"` —
+        # ↑↓ 는 **커서를 옮긴다**(`press_list`). 글 판이던 시절의 낱말이 판이 표로 바뀐
+        # 뒤(pytmux-184 ⑴ · 네이티브 막대)에도 그대로 남아, 화면이 자기가 하는 일을
+        # 사용자에게 틀리게 말하고 있었다. 정본이 같은 부류의 판에 쓰는 낱말과 맞춘다
+        # (`pscreen.tklog_hint` = `↑↓ 이동`).
+        "cusage.hint": "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "ccmsg.no_warn": "표시할 Claude 경고가 없습니다(이미 해소됨).",
         "ccmsg.rc_title": "원격 제어(Remote Control)",
         "ccmsg.rc_body":
@@ -276,7 +281,7 @@ i18n.register({
         "ccmsg.usage_no_data":
             "No /usage limit data — run /usage in a Claude panel first",
         "ccmsg.usage_title": "Claude usage limit (/usage)",
-        "cusage.hint": "↑↓ scroll · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "cusage.hint": "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "ccmsg.no_warn": "No Claude warning to show (already cleared).",
         "ccmsg.rc_title": "Remote Control",
         "ccmsg.rc_body":
