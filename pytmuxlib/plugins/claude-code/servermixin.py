@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import time
@@ -2708,19 +2709,63 @@ class ServerClaudeMixin:
 
     @staticmethod
     def _copy_db_tree(old: str, new_path: str) -> bool:
-        """old DB(+WAL 사이드카 -wal/-shm)를 new_path 로 **복사**(원본 보존). 성공 True."""
+        """old DB(+WAL 사이드카 -wal/-shm)를 new_path 로 **복사**(원본 보존). 성공 True.
+
+        ⛔ **최종 이름으로 곧장 쓰지 않는다**(pytmux-474). 실측(2026-09-03 · macOS):
+        72MB DB 를 복사하는 동안 다른 스레드가 같은 경로를 열면 SQLite 가 **반쯤 쓰인
+        파일**을 읽어 `database disk image is malformed` 로 죽는다. 실제로 토큰 동기화
+        워커의 executor 연결이 그 창에 끼어 서버 error.log 에 트레이스백을 남겼고,
+        QA T3 의 여섯 스텝이 그 한 건을 S1 로 신고했다(재현률: 복사 시작 직후 수십 ms).
+
+        그래서 **같은 디렉터리의 임시 이름**으로 다 쓴 뒤 `os.replace` 로 제자리에
+        놓는다 — 관찰자는 «아직 없음» 아니면 «완전한 것» 둘 중 하나만 본다. 임시 이름이
+        같은 디렉터리라야 rename 이 원자적이다(다른 파일시스템이면 rename 이 복사로
+        떨어져 원자성이 사라진다).
+
+        ★ 사이드카를 **먼저** 제자리에 놓고 메인 DB 를 **맨 마지막**에 놓는다: 메인이
+        없으면 아무도 그 DB 를 못 열므로, 그 순간의 사이드카는 아무 의미가 없다. 순서를
+        뒤집으면 «메인은 새 것인데 WAL 은 아직 없는» 창이 생겨 최근 커밋이 잠깐 사라져
+        보인다.
+        """
         import shutil
+
+        def _stage(src, dst):
+            """`dst` 옆의 임시 이름으로 복사하고 그 경로를 준다(실패면 None)."""
+            tmp = "%s.part-%d" % (dst, os.getpid())
+            try:
+                shutil.copy2(src, tmp)
+                return tmp
+            except OSError:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+                return None
+
         try:
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
-            shutil.copy2(old, new_path)
         except OSError:
             return False
+        main_tmp = _stage(old, new_path)
+        if main_tmp is None:
+            return False                # 메인 DB 는 필수 — 종전과 같이 False
+        # 사이드카는 **있을 때만·덮어쓰지 않고·실패해도 넘어간다**(종전 그대로 —
+        # WAL 이 없어도 DB 는 유효하다). 다만 자리에 놓는 순서는 아래가 정한다.
+        side = []
         for suffix in ("-wal", "-shm"):
-            if os.path.exists(old + suffix) and not os.path.exists(new_path + suffix):
-                try:
-                    shutil.copy2(old + suffix, new_path + suffix)
-                except OSError:
-                    pass
+            s_path, d_path = old + suffix, new_path + suffix
+            if not os.path.exists(s_path) or os.path.exists(d_path):
+                continue
+            tmp = _stage(s_path, d_path)
+            if tmp is not None:
+                side.append((tmp, d_path))
+        for tmp, d_path in side:        # 사이드카 먼저
+            with contextlib.suppress(OSError):
+                os.replace(tmp, d_path)
+        try:
+            os.replace(main_tmp, new_path)      # 메인은 맨 마지막(이 한 걸음이 원자성)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.unlink(main_tmp)
+            return False
         return True
 
     def _migrate_legacy_db(self, new_path: str):

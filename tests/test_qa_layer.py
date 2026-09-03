@@ -92,6 +92,79 @@ def test_no_traceback_fingerprint_ignores_paths_and_line_numbers():
     assert a.fp == b.fp, f"같은 예외인데 지문이 갈렸다: {a.fp} != {b.fp}"
 
 
+def test_fingerprint_survives_a_traceback_longer_than_the_display_cap():
+    """긴 트레이스백에서도 지문의 재료는 **예외 타입 줄**이어야 한다(pytmux-474).
+
+    ⛔ 이것이 실제로 무너진 적이 있다: 블록을 길이(1200자)로 자르던 시절, 프레임이
+       여섯을 넘으면 컷이 예외 줄 **앞**에 떨어져 3.13 의 앵커 줄
+       (`~~~~~~~~~~~~~~^^^^^^`)이 그대로 지문이자 이슈 제목이 됐다. 예외 타입이
+       어디에도 안 남아, 그 이슈를 여는 사람은 **무슨 예외였는지를 알 수 없었다** —
+       "경로·줄번호를 지문에서 뺀다"는 이 오라클의 설계 의도가 컷 하나로 무너진 것이다.
+    """
+    from qa import session as qa_session
+
+    frames = "".join(
+        '  File "/Users/x/p4/playground/scripts/pytmux/pytmuxlib/plugins/'
+        'claude-code/tokensync.py", line %d, in some_function_name\n'
+        '    up = client.push_limits()\n'
+        '         ~~~~~~~~~~~~~~^^^^^^\n' % (800 + i) for i in range(12))
+    rest = ":\n" + frames + "sqlite3.DatabaseError: database disk image is malformed\n"
+    assert len(rest) > 1200, "시험 전제: 표시 상한을 넘는 트레이스백이어야 한다"
+
+    block = "Traceback (most recent call last)" + qa_session._one_traceback(rest)
+    found = oracles.no_traceback(_FakeCtx(_slot(), _FakeSession([block])))[0]
+    assert "database disk image is malformed" in found.title, \
+        "긴 트레이스백에서 예외 타입이 제목에서 사라졌다: %r" % found.title
+    assert "^^^" not in found.title, "앵커 줄이 지문이 됐다: %r" % found.title
+
+
+def test_a_traceback_block_stops_at_the_next_log_header():
+    """블록은 **경계**로 자른다 — 다음 `==== ` 머리 뒤의 것을 삼키면 안 된다.
+
+    error.log 는 append 라 트레이스백 뒤에 다음 항목의 머리와 진단 본문이 붙는다.
+    그것까지 한 블록으로 보면 '마지막 줄'이 예외가 아니라 **남의 로그 본문**이 된다.
+    """
+    from qa import session as qa_session
+
+    rest = (':\n  File "x.py", line 1, in x\n'
+            'RuntimeError: 진짜 예외\n'
+            '\n==== 2026-09-03 17:51:00 [claude_format_unrecognized] ====\n'
+            '이건 예외가 아니라 진단 로그 본문이다\n')
+    block = qa_session._one_traceback(rest)
+    assert "진단 로그 본문" not in block, "다음 블록을 삼켰다: %r" % block
+    assert block.strip().endswith("RuntimeError: 진짜 예외"), block
+
+
+def test_the_slot_points_config_at_an_empty_file_inside_itself():
+    """슬롯은 `PYTMUX_CONFIG` 를 **자기 안의 빈 파일**로 세운다(pytmux-474 덤).
+
+    안 세우면 탐색 차례(`$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` →
+    `$XDG_CONFIG_HOME/pytmux/config`)의 두 번째 자리가 비어 **이 상자의 진짜 설정
+    파일**로 떨어진다 — QA 판정이 사람의 설정을 타고(실측 선례: `set status-position
+    top` 한 줄이 GUI 배지 자리 오라클을 떨궜다), 제품이 설정을 쓰면 그 파일에 쓴다.
+    """
+    saved = os.environ.get("PYTMUX_CONFIG")
+    slot = _slot()
+    try:
+        with slot:
+            cfg = os.environ.get("PYTMUX_CONFIG", "")
+            assert cfg, "슬롯이 PYTMUX_CONFIG 를 안 세웠다 — 사람 설정으로 떨어진다"
+            assert os.path.isfile(cfg), "가리키는 파일이 없다: %r" % cfg
+            assert os.path.abspath(cfg).startswith(os.path.abspath(slot.home)), \
+                "설정 파일이 슬롯 밖에 있다(정리도 격리도 안 된다): %r" % cfg
+            body = open(cfg, encoding="utf-8").read()
+            assert not [ln for ln in body.splitlines()
+                        if ln.strip() and not ln.startswith("#")], \
+                "빈 설정이어야 한다(값이 있으면 그것이 판정을 탄다): %r" % body
+        assert os.environ.get("PYTMUX_CONFIG") == saved, "슬롯을 나가며 안 되돌렸다"
+    finally:
+        slot.cleanup() if hasattr(slot, "cleanup") else None
+        if saved is None:
+            os.environ.pop("PYTMUX_CONFIG", None)
+        else:
+            os.environ["PYTMUX_CONFIG"] = saved
+
+
 def test_screen_judgement_bites_on_a_dead_or_empty_client():
     """실 클라 화면 판정이 **정말로 무는지**.
 

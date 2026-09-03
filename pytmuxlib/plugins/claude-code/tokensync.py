@@ -65,6 +65,16 @@ class NotEnrolled(SyncError):
     """이 머신이 아직 서버에 등록되지 않았다(`:claude-token-sync enroll <코드>`)."""
 
 
+class SyncUnreachable(SyncError):
+    """서버에 **닿지 못했다** — DNS·연결 거부·타임아웃·TLS 검증(전부 OSError 계열).
+
+    `SyncError` 와 나누는 이유는 **로그 정책이 다르기 때문**이다: 닿지 못한 것은 이
+    상자 밖의 일시 상태라 재시도로 풀리고, 사유는 `_net_why` 한 줄이면 충분하다.
+    닿았는데 실패한 것(HTTP 상태·응답 형식)은 반대로 트레이스백이 필요하다
+    (`run_worker` 의 갈림 참조). 메시지는 이미 `_net_why` 가 조치까지 담아 만든다.
+    """
+
+
 # ── 전송 ───────────────────────────────────────────────────────────────────
 
 def http_transport(base_url: str, timeout: float = 15.0):
@@ -100,7 +110,9 @@ def http_transport(base_url: str, timeout: float = 15.0):
         except urllib.error.HTTPError as e:
             return e.code, dict(e.headers or {}), e.read()
         except OSError as e:
-            raise SyncError(_net_why(e)) from e
+            # ⛔ 부류를 **타입으로** 말한다(pytmux-474) — 문구로 갈랐다가는 워커가
+            # "닿지 못함"과 "닿았는데 틀림"을 구분할 길이 없다.
+            raise SyncUnreachable(_net_why(e)) from e
 
     return send
 
@@ -804,6 +816,19 @@ async def run_worker(server, make_client=None, sleep=None):
             raise
         except NotEnrolled:
             pass                # 등록 전에는 조용히 대기(사용자 행동 필요)
+        except SyncUnreachable as e:
+            # 서버에 **닿지 못한 것**은 이 상자 밖의 상태다(pytmux-474 ⓐ). `_net_why` 가
+            # 이미 한 줄로 진단해 뒀고 그 줄은 last_err 로 패널에 뜬다 — 트레이스백은
+            # 더 알려주는 것이 없으면서 ①매 주기 같은 것이 쌓여 로그가 부풀고 ②서버
+            # 예외 가드가 그것을 "조용한 서버 크래시"로 읽어 **무관한 테스트를 떨군다**.
+            # SyncCryptoUnavailable·읽기전용 DB 가 같은 이유로 먼저 옮겨간 자리다.
+            # ⛔ **닿았는데 실패한 것**(HTTP 4xx/5xx·응답 형식 = 그냥 `SyncError`)은
+            #   여기 안 걸린다 — 그건 서버나 우리 쪽 결함일 수 있어 로그가 필요하다.
+            #   ★ 기본 주소가 실 서버라(`default_sync_url`) **등록하지 않은 상자도**
+            #   매 주기 이 길을 지난다. 그래서 이 갈림이 없으면 네트워크가 잠깐 흔들린
+            #   것만으로 아무 상자에서나 S1 이 태어난다(실측이 그랬다).
+            fails += 1
+            _note_state(server, e)
         except syncrypto.SyncCryptoUnavailable as e:
             # 선택 의존성(cryptography) 미설치는 **크래시가 아니라 설정 상태**다 —
             # NotEnrolled 와 같은 부류(사용자 행동 필요)로 다룬다. 사유는 남기되
@@ -859,6 +884,24 @@ def _client_for(server):
     # 로 죽는다(실기동에서 등록이 이 줄에서 실패했다. servermixin 은 같은 주의를
     # 주석으로 달아 두고 있었는데 이 경로만 놓쳤다).
     path = server.tokens_db_path
+    # ⛔ **마이그레이션을 여기서 확정시킨다**(pytmux-474). 이 함수는 워커 코루틴이
+    # 일을 executor 로 밀기 **전에**, 곧 서버의 단일 스레드 루프 위에서 불린다 —
+    # 그 자리에서 이전을 끝내 두면 워커 스레드가 여는 제 연결은 **완성된 파일**만
+    # 본다. 안 하면 두 경쟁이 남는다(둘 다 실측):
+    #   ⑴ 이전이 <home>/db 로 72MB 를 복사하는 도중 워커가 그 경로를 열어
+    #      `database disk image is malformed` — error.log 트레이스백(이 이슈의 원인).
+    #      복사 자체도 원자적으로 고쳤지만(`_copy_db_tree`) 순서를 정하는 쪽이 원본이다.
+    #   ⑵ **역경쟁** — 워커가 먼저 이기면 그 자리에 **빈 DB** 가 생기고, 이전은 멱등
+    #      가드(`if os.path.exists(new_path): return`)에 걸려 영영 안 돈다. 그러면
+    #      "PYTMUX_HOME 을 켜면 기존 토큰 이력이 따라온다"(2026-06-17)는 약속이 조용히
+    #      깨진다 — 격리 홈의 토큰 DB 가 4KB 빈 파일로 남은 것을 실측했다.
+    # ⚠ **연결까지 열지는 않는다**(`_tokens_db_conn` 을 부르지 않는다). 그러면 토큰
+    #   DB 의 **최초 사용 시점**이 서버 기동으로 당겨져 레거시 JSONL 일회 임포트와
+    #   연결 실패 진단이 기동 때 일어난다 — 그 시점을 단언하는 시험 둘이 실제로
+    #   붉어졌다. 이 자리에 필요한 것은 «순서»뿐이지 «연결»이 아니다.
+    migrate = getattr(server, "_migrate_legacy_db", None)
+    if callable(migrate):
+        migrate(path)
     # 연결은 넘기지 않는다 — 워커는 executor 스레드에서 도는데 sqlite 연결은 만든
     # 스레드에서만 쓸 수 있다(실기동 오류: "SQLite objects created in a thread…").
     # SyncClient.conn 이 쓰는 스레드마다 자기 연결을 연다. 지연 오픈이라 Claude 활동이

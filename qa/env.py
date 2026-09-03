@@ -108,11 +108,25 @@ class HomeSlot:
     def __enter__(self) -> "HomeSlot":
         _guard_scratch(self.home)
         os.makedirs(self.home, exist_ok=True)
+        # ⛔ **설정만은 거두는 것이 아니라 세운다**(pytmux-474 가 덤으로 드러낸 자리).
+        # 탐색 차례는 `$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` →
+        # `$XDG_CONFIG_HOME/pytmux/config` → `~/.pytmux.conf` 다(`pytmuxlib/keymap.py`).
+        # 슬롯은 `PYTMUX_HOME` 을 세우지만 그 아래에 `config` 파일을 **안 만들었으므로**
+        # 두 번째 자리가 비어 세 번째 = **이 상자의 진짜 설정 파일**로 떨어졌다. 그러면
+        # QA 판정이 사람의 설정을 탄다 — 실측 선례로 `set status-position top` 한 줄이
+        # GUI 배지 자리 오라클을 떨궜다(pytmux-202). 파이썬 스위트(`tests/hermetic.py`)와
+        # 합본 게이트(`scripts/check_all.py` child_env)는 이미 같은 처방을 쓰고 있었고,
+        # QA 층에만 그 한 줄이 없었다. 빈 파일이면 읽기는 기본값으로 돌아오고 쓰기도
+        # 그 파일로 간다(제품이 `:settings` 로 설정을 쓰더라도 슬롯 안에 갇힌다).
+        cfg = os.path.join(self.home, "config")
+        with open(cfg, "w", encoding="utf-8") as f:
+            f.write("# pytmux QA 슬롯이 만든 빈 설정 파일(qa/env.py).\n"
+                    "# 런이 사용자의 ~/.config/pytmux/config 를 읽지도 쓰지도 않게 한다.\n")
         # NO_COLOR 는 에이전트 셸이 심는다 — 그대로 두면 Textual 이 Monochrome 필터를
         # 물려 실 클라 캡처가 통째로 무너진다(루트 CLAUDE.md 의 실측 110건과 같은 자리).
         # 제품 결함이 아닌 것을 결함으로 신고하지 않으려면 여기서 지운다.
-        for k, v in (("PYTMUX_HOME", self.home), ("NO_COLOR", None),
-                     ("PYTMUX", None), ("LC_PYTMUX", None)):
+        for k, v in (("PYTMUX_HOME", self.home), ("PYTMUX_CONFIG", cfg),
+                     ("NO_COLOR", None), ("PYTMUX", None), ("LC_PYTMUX", None)):
             self._saved[k] = os.environ.get(k)
             if v is None:
                 os.environ.pop(k, None)
