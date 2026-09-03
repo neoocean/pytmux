@@ -70,6 +70,14 @@ DRAW_TIMEOUT = 25.0
 #: 또 걸렸을 때 처음부터 다시 재야 한다 — pytmux-382 가 값을 치르고 배운 것이다).
 CLI_TIMEOUT = float(os.environ.get("PYTMUX_QA_CLI_TIMEOUT") or 90.0)
 
+#: 격리 슬롯 위에서 **데몬이 뜰 때까지** 주는 시한(초).
+#:
+#: ⛔ **12초도 같은 부하에서 깨졌다**(pytmux-479 · 같은 회차 `qa-20260904-040013`).
+#: 위 `CLI_TIMEOUT` 을 올린 회차가 **이 자리를 빠뜨렸다** — 같은 뿌리(부하)의 네 번째
+#: 그림자였는데 예산 하나만 고쳤다. 재는 것은 여기서도 **「안 뜨나」**이지 「빠른가」가
+#: 아니다: 안 뜨면 그 회차는 한 걸음도 못 가므로 넉넉히 기다리는 쪽이 언제나 싸다.
+START_TIMEOUT = float(os.environ.get("PYTMUX_QA_START_TIMEOUT") or 60.0)
+
 #: 트레이스백 한 벌의 표시 상한(자)과, 넘칠 때 **반드시 남기는 꼬리**의 길이.
 #: 꼬리가 곧 예외 타입 줄이고 그것이 지문의 재료다(`_one_traceback` 머리말).
 _BLOCK_MAX = 1200
@@ -188,18 +196,27 @@ class Session:
         #: 걸렸을 때 「부하였나 진짜였나」를 처음부터 다시 재지 않아도 된다.
         self.slowest_cli = 0.0
         self.slowest_args = ""
+        #: 데몬이 뜨는 데 걸린 초(pytmux-479). 예산과 함께 값도 남긴다.
+        self.start_secs = 0.0
 
     # ── 수명 ─────────────────────────────────────────────────────────────────
-    def start(self, timeout: float = 12.0) -> None:
+    def start(self, timeout: float | None = None) -> None:
         """데몬을 띄운다. **pid 를 우리가 받는다** — 그래야 정리가 이름 매칭으로 안 번진다."""
+        timeout = START_TIMEOUT if timeout is None else timeout
         self.endpoint = self.slot.endpoint
+        t0 = time.time()
         pid = proc.spawn_detached(proc.server_argv(self.endpoint, python=self.python))
         self.slot.spawned.append(pid)
         end = time.time() + timeout
         while time.time() < end and not ipc.probe(self.endpoint):
             time.sleep(0.05)
+        # ★ 예산을 올리면 **얼마나 걸렸는지**를 함께 남긴다(`slowest_cli` 와 같은 규율) —
+        #   다음에 또 걸렸을 때 「부하였나 진짜였나」를 처음부터 다시 재지 않아도 된다.
+        self.start_secs = time.time() - t0
         if not ipc.probe(self.endpoint):
-            raise EnvBroken(f"데몬이 {timeout:.0f}초 안에 안 떴다: {self.endpoint}")
+            raise EnvBroken(
+                f"데몬이 {timeout:.0f}초 안에 안 떴다: {self.endpoint} "
+                "(이 상자가 무거우면 PYTMUX_QA_START_TIMEOUT 으로 올린다)")
 
     def stop(self) -> None:
         """정상 경로(`kill-server`)로 내리고, 남은 것만 pid 로 회수한다."""

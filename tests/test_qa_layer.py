@@ -1312,6 +1312,32 @@ def test_the_ledger_is_not_reported_for_a_scenario_that_died_halfway():
         "중단 갈래 둘(환경 실패·시나리오 예외) 중 하나만 세고 있다")
 
 
+def test_every_qa_budget_is_load_tolerant_and_overridable():
+    """⛔ **예산을 하나만 고치면 그 뿌리의 다음 그림자가 그대로 온다**(pytmux-479).
+
+    2026-09-03 회차는 부하 하나로 넷을 냈다(480·481 = 제어 라인 시한 · 482 = 그 크래시가
+    남긴 거짓 커버리지 구멍 · 479 = **데몬 기동 시한**). 앞 CL 이 제어 라인만 올리고 이
+    자리를 빠뜨렸다 — 같은 실수가 다음에 또 나지 않게 **예산 전수**를 여기서 센다.
+
+    재는 것 셋: ⓐ 부하를 견딜 만큼 크다 ⓑ 무거운 상자에서 **올릴 길**이 있다
+    ⓒ 그 값을 **재서 남긴다**(예산만 올리고 계측을 안 달면 다음 회차가 처음부터 다시 잰다)."""
+    import importlib
+    sess = importlib.import_module("qa.session")
+    budgets = (
+        ("CLI_TIMEOUT", 60.0, "PYTMUX_QA_CLI_TIMEOUT", "slowest_cli"),
+        ("START_TIMEOUT", 30.0, "PYTMUX_QA_START_TIMEOUT", "start_secs"),
+    )
+    src = open(sess.__file__, encoding="utf-8").read()
+    for name, floor, env, measured in budgets:
+        value = getattr(sess, name, None)
+        assert isinstance(value, float), f"{name} 이 없다 — 예산이 코드에 박혀 있다"
+        assert value >= floor, (
+            f"{name} 이 부하를 못 견딘다: {value}초 (2026-09-03 에 실제로 깨진 값들: "
+            "제어 라인 20초 · 데몬 기동 12초)")
+        assert env in src, f"{name} 을 무거운 상자에서 올릴 길이 없다"
+        assert measured in src, f"{name} 을 올리면서 «얼마나 걸렸나»를 안 남긴다"
+
+
 def test_a_slow_control_line_is_named_not_just_timed_out():
     """예산을 올리면서 **계측을 함께 단다**(pytmux-480·481 · pytmux-382 가 간 길).
 
