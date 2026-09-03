@@ -17,6 +17,7 @@
     "choose-tree": "탭",
     "claude-auto-mode": "Claude",
     "claude-auto-redraw": "Claude",
+    "claude-auto-yes": "Claude",
     "claude-resume": "Claude",
     "claude-resume-verify": "Claude",
     "claude-rules": "Claude",
@@ -468,6 +469,11 @@
     {
       "name": "claude-auto-mode",
       "desc": "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off (claude-auto-mode on|off|toggle)",
+      "cat": "Claude"
+    },
+    {
+      "name": "claude-auto-yes",
+      "desc": "auto mode 인 패널이 yes/no 를 물으면 «맨 Yes» 를 자동 확정 on/off — 이미 선택돼 있는 것만 Enter 로 확정한다 (claude-auto-yes on|off|toggle, 기본 off)",
       "cat": "Claude"
     },
     {

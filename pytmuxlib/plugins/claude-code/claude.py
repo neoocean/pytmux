@@ -783,6 +783,78 @@ def claude_managed_settings_yes(text: str) -> bool:
     return False
 
 
+# auto mode 인 패널의 권한 확인(yes/no)을 자동으로 «예» 확정하기 위한 판정
+# (pytmux-475 · 요청 2026-09-03). Claude Code 는 **auto mode on 이어도** 분류기가
+# 위험하다고 본 동작은 사람에게 묻고, 그 상자에서 패널이 선다 — 자리를 비운 사이
+# 진행이 통째로 멎는 것이 제보의 내용이다.
+#
+# 규율은 claude_managed_settings_yes(SEC-1)의 것을 **그대로** 잇는다:
+#   화면에 **이미 선택돼 있는** 긍정을 Enter 로 확정할 뿐, 선택을 옮기는 키(↑↓·숫자)
+#   는 보내지 않는다. 기본선택이 긍정이 아닌 화면은 그대로 사람에게 남는다.
+#
+# ★ 모양은 **실측**이다 — 캡처 3건(2026-06-04·06-15·06-16)에서 뽑은 프레임:
+#
+#     Compound command contains cd with output redirection - manual approval …
+#
+#     Do you want to proceed?                              ← ① 머리글(물음)
+#     ❯ 1. Yes                                             ← ③ 셀렉터가 놓인 «맨» 긍정
+#       2. No                                              ← ② 미해결 신호
+#
+#     Esc to cancel · Tab to amend · ctrl+e to explain      ← ② 미해결 신호(상자 footer)
+#
+#   (다른 두 건은 `Do you want to make this edit to proc.py?` 와
+#    `2. Yes, allow all edits during this session (shift+tab)` / `3. No` 였다.)
+#
+# ⛔ **그 화면에는 권한모드 footer 가 없다** — 상자가 입력칸 자리를 대신 그리고 그 아래는
+# `Esc to cancel …` 한 줄뿐이다. 실측으로 그 프레임은 `claude_state()==None`,
+# `claude_perm_mode(anchored=True)==None` 이다. 그래서 「지금 auto 인가」는 이 텍스트로
+# 못 재고 **부르는 쪽이 앵커드로 관측해 둔 값**을 댄다(servermixin `p._perm_seen`) —
+# 판정의 출처가 언제나 footer tail 이라는 F3 벡터 2 방어는 그대로 선다.
+_AUTO_YES_ASK_RE = re.compile(r"Do you want to [^\n]*\?")
+_AUTO_YES_PENDING = "esc to cancel"        # 상자 자기 footer = 아직 응답을 기다린다
+_AUTO_YES_NO_RE = re.compile(r"^\d+[.)]\s*No\b", re.I)
+# 자동 확정하는 긍정은 **맨 `Yes` 한 줄**뿐이다. `Yes, and don't ask again for: …` ·
+# `Yes, allow all edits during this session` 처럼 **권한 범위를 넓히는** 긍정은 사람에게
+# 남긴다 — SEC-1 이 막는 「미지의 선택 확정」과 같은 종류의 위험(그쪽은 다음 빌드가
+# 옵션을 바꾸는 것, 이쪽은 한 번의 Enter 가 세션 내내 되묻지 않게 만드는 것)이고,
+# 실측 3건의 기본 셀렉터는 전부 `❯ 1. Yes` 라 실사용에서 잃는 것이 없다.
+_AUTO_YES_PICK_RE = re.compile(r"^[❯>]\s*\d+[.)]\s*Yes\s*$")
+
+
+def _auto_yes_line(ln: str) -> str:
+    """상자 테두리와 앞뒤 공백을 뗀 줄. 셀렉터 글리프는 **남긴다** — 그것이 판정 대상이다."""
+    return ln.strip().lstrip("│|┃╎").strip()
+
+
+def claude_auto_yes_ready(text: str) -> bool:
+    """권한 확인 상자가 **지금 응답을 기다리며** 떠 있고 셀렉터가 **맨 `Yes`** 에 놓여
+    있으면 True(= Enter 자동 확정 대상).
+
+    판정 구간은 **마지막** `Do you want to …?` 이후다(①) — 앞서 답한 상자의 잔상은
+    보지 않는다(claude_managed_settings_yes 의 같은 좁히기). 그 구간에 미해결 신호가
+    **둘 다** 보여야 한다(②): 상자 자기 footer `Esc to cancel` 과 번호 붙은 거절지
+    (`2. No`). 그리고 셀렉터가 맨 `Yes` 줄에 있어야 한다(③).
+
+    셀렉터가 `No` 로 옮겨갔거나, 범위를 넓히는 긍정(`Yes, and don't ask again …`)에
+    놓여 있거나, 문구가 바뀌면 False — 아무 키도 안 보내고 화면을 사람에게 남긴다.
+
+    ⚠ 좁은 폭에서 `Esc to cancel` 이 줄바꿈으로 쪼개지면 못 알아본다. 그때도 하는 일은
+    **아무것도 안 하는 것**이라 안전한 쪽으로 진다."""
+    t = text or ""
+    m = None
+    for m in _AUTO_YES_ASK_RE.finditer(t):   # ① 마지막 인스턴스
+        pass
+    if m is None:
+        return False
+    live = t[m.start():]
+    if _AUTO_YES_PENDING not in live.lower():          # ② 상자 footer(응답 대기)
+        return False
+    lines = [_auto_yes_line(ln) for ln in live.splitlines()]
+    if not any(_AUTO_YES_NO_RE.match(ln.lstrip("❯>").strip()) for ln in lines):
+        return False                                   # ② 거절지가 함께 보인다
+    return any(_AUTO_YES_PICK_RE.match(ln) for ln in lines)   # ③ 셀렉터 = 맨 Yes
+
+
 def _alias_email(local: str, domain: str) -> str:
     """이메일을 `로컬앞2글자…@도메인` 별칭으로(원문 미노출). 로컬이 2글자 이하면 그대로."""
     alias = (local[:2] + "…") if len(local) > 2 else local

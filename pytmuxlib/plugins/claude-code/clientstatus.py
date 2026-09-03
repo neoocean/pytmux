@@ -75,6 +75,8 @@ def init_defaults(status):
     # 실어 보내고, 설정/선택지 팝업이 이 값에 커서를 올린다.
     status.claude_resume_verify = "off"
     status.claude_auto_mode = False
+    # pytmux-475: auto mode 패널의 yes/no 확인 자동 «예» 확정(서버 기본 OFF).
+    status.claude_auto_yes = False
     # 선택지 팝업(`: auto-retry` 등)이 현재값에 커서를 올리는 데 쓰는 정적 토글들
     # (서버 full status 에서만 도착 → 키 부재 시 직전값 유지). 서버 기본값과 같은 기본.
     status.claude_auto_retry = True    # 전송 에러 시 자동 '계속'(서버 기본 ON)
@@ -142,6 +144,7 @@ def absorb(status, msg):
     status.claude_resume_verify = msg.get("claude_resume_verify",
                                           status.claude_resume_verify)
     status.claude_auto_mode = msg.get("claude_auto_mode", status.claude_auto_mode)
+    status.claude_auto_yes = msg.get("claude_auto_yes", status.claude_auto_yes)
     status.claude_long_turn_sec = msg.get(
         "claude_long_turn_sec", status.claude_long_turn_sec)
     status.claude_repeat_alert = msg.get(

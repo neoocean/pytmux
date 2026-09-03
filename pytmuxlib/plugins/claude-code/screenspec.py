@@ -281,6 +281,8 @@ def _saver_value(server, sess, key):
         return on if getattr(server, "auto_token_on_exit", False) else off
     if key == "claude_auto_mode":
         return on if getattr(server, "claude_auto_mode", False) else off
+    if key == "claude_auto_yes":
+        return on if getattr(server, "claude_auto_yes", False) else off
     if key == "claude_auto_redraw":
         mode = norm_redraw_mode(getattr(server, "claude_auto_redraw", "off"))
         return i18n.t(REDRAW_WORDS.get(mode, REDRAW_WORDS["off"]))
@@ -320,6 +322,8 @@ def _settings_toggle(server, sess, key):
         server.set_auto_token_on_exit(None)
     elif key == "claude_auto_mode":
         server.set_claude_auto_mode(None)
+    elif key == "claude_auto_yes":
+        server.set_claude_auto_yes(None)
     elif key == "claude_auto_redraw":
         server.set_claude_auto_redraw(_cycle_next(
             "claude_auto_redraw",

@@ -1480,6 +1480,137 @@ async def test_auto_confirm_managed_settings_screen():
         await teardown(srv, task, sock)
 
 
+# pytmux-475 픽스처. ① auto mode footer 가 보이는 idle 프레임(여기서 _perm_seen 이
+# 앵커드로 무장된다) ② 권한 확인 상자 프레임 — **실측대로 footer 가 없다**(claude_state
+# 는 None 이 되고, 그래서 그 자리에서는 「지금 auto 인가」를 못 잰다).
+_AY_IDLE = (b"\x1b[2J\x1b[H\xe2\x8f\xb5\xe2\x8f\xb5 auto mode on "
+            b"(shift+tab to cycle)\r\n")
+_AY_BOX = (b"\x1b[2J\x1b[H Bash command\r\n"
+           b"\r\n"
+           b"   rm -rf /tmp/x\r\n"
+           b"\r\n"
+           b" Do you want to proceed?\r\n"
+           b" \xe2\x9d\xaf 1. Yes\r\n"
+           b"   2. No\r\n"
+           b"\r\n"
+           b" Esc to cancel \xc2\xb7 Tab to amend\r\n")
+_AY_BOX_ON_NO = _AY_BOX.replace(b"\xe2\x9d\xaf 1. Yes\r\n   2. No",
+                                b"  1. Yes\r\n \xe2\x9d\xaf 2. No")
+
+
+async def _auto_yes_pane(srv, on=True, arm=_AY_IDLE):
+    """auto mode 를 관측시킨 패널 하나 + 그 패널의 pty write 기록 리스트."""
+    sess = srv.ensure_default_session(80, 24)
+    win = sess.active_window
+    p = win.active_pane
+    srv.set_claude_auto_yes(on)
+    writes = []
+    p.pty.write = lambda b: writes.append(b)
+    if arm is not None:
+        p.feed(arm)                      # footer 가 보이는 프레임 = 앵커드 무장
+        srv._scan_claude(sess, win)
+    writes.clear()                       # 무장 단계의 주입(있다면)은 세지 않는다
+    return sess, win, p, writes
+
+
+async def test_auto_yes_confirms_the_plain_yes_once_per_box():
+    """pytmux-475(요청 2026-09-03): auto mode 인 패널이 yes/no 를 물으면 **이미 선택돼
+    있는 맨 `Yes`** 를 Enter 로 확정한다. 상자 인스턴스당 딱 1회(재주입 = 확정 뒤
+    컴포저에 빈 프롬프트 제출)."""
+    import importlib
+    _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    assert _sc._AUTO_YES_ACCEPT_KEY == b"\r"
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p, writes = await _auto_yes_pane(srv)
+        assert p._perm_seen == "auto", "footer 가 보이던 프레임에서 앵커드로 무장한다"
+        p.feed(_AY_BOX)
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r"], (writes, "첫 감지 → 맨 Yes 확정 Enter 1회")
+        assert p._auto_yes_active is True
+        for _ in range(10):
+            p.feed(_AY_BOX)
+            srv._scan_claude(sess, win)
+        assert writes == [b"\r"], (writes, "상자당 Enter 는 딱 한 번")
+        # 상자가 사라지면 재무장 — 다음 상자에 다시 1회.
+        p.feed(_AY_IDLE)
+        srv._scan_claude(sess, win)
+        assert p._auto_yes_active is False, "사라지면 재무장"
+        p.feed(_AY_BOX)
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r", b"\r"], (writes, "다음 상자에 다시 1회")
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_yes_sends_nothing_unless_all_four_gates_hold():
+    """대조군 — 관문 넷 중 하나만 빠져도 **아무 키도 안 나간다**(화면은 사람에게 남는다).
+
+    ① 설정이 꺼져 있다 ② 권한모드가 auto 로 관측된 적이 없다(default·accept·plan·
+    bypass, 또는 아예 못 봄) ③ 셀렉터가 거절지에 있다. ④(잔상)는 판정 단위 테스트
+    (test_claude)가 전수로 잰다."""
+    srv, task, sock = await server_only()
+    try:
+        # ① 설정 OFF — 기본값이 그것이고, 켜지 않은 사람에게는 발효하지 않는다.
+        assert srv.claude_auto_yes is False, "기본 끔"
+        sess, win, p, writes = await _auto_yes_pane(srv, on=False)
+        p.feed(_AY_BOX)
+        srv._scan_claude(sess, win)
+        assert writes == [], (writes, "설정이 꺼져 있으면 아무 키도 안 나간다")
+        # 설정이 꺼져 있으면 앵커드 관측조차 안 한다(안 켠 사람에게 비용 0).
+        assert p._perm_seen is None
+    finally:
+        await teardown(srv, task, sock)
+    for footer, why in ((b"\x1b[2J\x1b[H? for shortcuts\r\n", "default"),
+                        (b"\x1b[2J\x1b[H\xe2\x8f\xb5\xe2\x8f\xb5 accept edits on"
+                         b" (shift+tab to cycle)\r\n", "accept"),
+                        (b"\x1b[2J\x1b[H\xe2\x8f\xb8 plan mode on\r\n", "plan"),
+                        (b"\x1b[2J\x1b[H bypass permissions on\r\n", "bypass"),
+                        (None, "footer 를 한 번도 못 봄")):
+        srv, task, sock = await server_only()
+        try:
+            # ② auto 가 아닌(또는 관측 못 한) 패널.
+            sess, win, p, writes = await _auto_yes_pane(srv, arm=footer)
+            assert p._perm_seen != "auto", why
+            p.feed(_AY_BOX)
+            srv._scan_claude(sess, win)
+            assert writes == [], (writes, f"권한모드가 auto 가 아니다({why})")
+        finally:
+            await teardown(srv, task, sock)
+    srv, task, sock = await server_only()
+    try:
+        # ③ 셀렉터가 `No` 에 있으면 — 선택을 **옮기지 않는다**(SEC-1).
+        sess, win, p, writes = await _auto_yes_pane(srv)
+        p.feed(_AY_BOX_ON_NO)
+        srv._scan_claude(sess, win)
+        assert writes == [], (writes, "셀렉터가 거절지면 사람에게 남긴다")
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_auto_yes_setting_persists_and_arms_only_the_next_box():
+    """설정은 opts.json 에 살아남고(재시작 뒤에도 산다), **켜는 순간 눈앞의 상자를
+    확정하지 않는다** — 무장된 채로 다음 상자를 맞는다."""
+    import json as _json
+    srv, task, sock = await server_only()
+    try:
+        sess, win, p, writes = await _auto_yes_pane(srv)
+        # 상자가 이미 떠 있는 상태에서 껐다 켠다.
+        p.feed(_AY_BOX)
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r"]
+        srv.set_claude_auto_yes(False)
+        assert p._perm_seen is None, "끄면 앵커드 관측도 비운다"
+        assert srv.set_claude_auto_yes(True) is True     # 인자 없이 반전도 같은 길
+        assert _json.load(open(srv.opts_path))["plugin_opts"]["claude_auto_yes"] \
+            is True, "opts.json 영속"
+        p.feed(_AY_BOX)
+        srv._scan_claude(sess, win)
+        assert writes == [b"\r"], (writes, "켜는 순간 눈앞의 상자는 확정하지 않는다")
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_auto_confirm_managed_settings_second_instance_without_clear():
     """pytmux-151(제보 2026-08-06): 같은 패널에서 claude 를 **두 번째로** 띄워도 승인
     화면이 자동 통과돼야 한다.

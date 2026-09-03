@@ -12,6 +12,7 @@
   "set_claude_auto_mode",
   "set_claude_auto_redraw",
   "set_claude_auto_retry",
+  "set_claude_auto_yes",
   "set_claude_perm_mode",
   "set_claude_resume_verify",
   "set_claude_rules",

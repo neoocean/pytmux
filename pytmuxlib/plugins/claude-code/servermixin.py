@@ -30,6 +30,7 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_feedback_prompt, fmt_long_turn_badge,
                      fmt_unknown_update,
                      claude_input_box,
+                     claude_auto_yes_ready,
                      claude_managed_settings_yes,
                      claude_model_badge,
                      claude_prompt, claude_prompt_marks, claude_perm_mode,
@@ -172,6 +173,11 @@ _FEEDBACK_DISMISS_KEY = b"\x1b"
 # 딱 한 번만 쏜다 — 두 번째 Enter 는 승인 뒤 뜬 Claude 컴포저에 빈 프롬프트를
 # 제출하는 꼴이라(재주입 금지) /rc 메뉴 Esc 와 같은 디바운스 규율을 따른다.
 _MANAGED_SETTINGS_ACCEPT_KEY = b"\r"
+# auto mode 패널의 권한 확인(yes/no) 자동 «예» 확정 키(pytmux-475). 위 관리설정
+# 승인과 **같은 규율·같은 키**다 — 화면에 이미 선택돼 있는 맨 `Yes` 를 Enter 로
+# 확정할 뿐, 선택을 옮기는 키는 안 보낸다. _auto_yes_active 로 상자 인스턴스당 딱
+# 한 번(재주입은 확정 뒤 컴포저에 빈 프롬프트를 제출한다).
+_AUTO_YES_ACCEPT_KEY = b"\r"
 # M17(T7) 경고 임계는 opt(server.py: claude_long_turn_sec 기본 600 / claude_repeat_alert
 # 기본 3, 0=끔). 스캔의 warn 블록이 self.* 를 읽는다.
 
@@ -1173,6 +1179,27 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.claude_auto_mode
 
+    def set_claude_auto_yes(self, value=None):
+        """auto mode 패널의 권한 확인(yes/no)을 자동으로 «예» 확정하는 모드 토글
+        (pytmux-475). value 미지정 시 반전. opts.json 영속(기본 OFF).
+
+        끄면 모든 패널의 상자 래치와 앵커드 관측을 비운다 — 다시 켤 때 «지금 떠 있는
+        상자»가 아니라 **다음 상자**부터 발효한다(켜는 순간 눈앞의 선택이 확정되는
+        놀라움을 안 만든다). 켤 때는 정적 화면으로 스캔이 게이팅된 패널을 한 번
+        재스캔시켜, 그다음 상자를 놓치지 않게 한다(set_claude_auto_mode 선례)."""
+        self.claude_auto_yes = (not self.claude_auto_yes) if value is None \
+            else bool(value)
+        for p in self._all_panes():
+            if self.claude_auto_yes:
+                # 지금 떠 있는 상자에는 안 쏜다 — 무장된 채로 다음 프레임을 맞는다.
+                p._auto_yes_active = True
+                p._scan_seq = -1
+            else:
+                p._auto_yes_active = False
+                p._perm_seen = None
+        self._save_opts()
+        return self.claude_auto_yes
+
     def set_claude_auto_launch(self, value=None):
         """새 Claude 세션 시작 시 /rc(원격 제어 켜기)+권한모드 auto 를 1회 자동 적용
         하는 모드 토글. value 미지정 시 반전. opts.json 영속. 끌 때 진행 중인 1회
@@ -1580,6 +1607,50 @@ class ServerClaudeMixin:
                         pass
         else:
             p._managed_ok_active = False
+
+    def _scan_auto_yes(self, p, txt) -> None:
+        """auto mode 패널의 권한 확인(yes/no) 자동 «예» 확정 phase(pytmux-475).
+
+        Claude Code 는 auto mode on 이어도 분류기가 위험하다고 본 동작은 사람에게
+        묻는다 — 그 상자에서 패널이 서고, 자리를 비운 사이 진행이 통째로 멎는다.
+        `claude_auto_yes` 가 켜져 있고 **넷이 모두 참일 때만** Enter 를 보낸다:
+          ① 설정이 켜져 있다(기본 끔 — 이 기능은 auto mode 를 더 공격적으로 만든다).
+          ② 이 패널이 Claude 다(`_hdr_claude` 디바운스) **그리고** 마지막으로 앵커드
+             관측한 권한모드가 auto 다(`p._perm_seen`).
+          ③ 지금 응답을 기다리는 상자가 있다(잔상이 아니다 — claude_auto_yes_ready).
+          ④ 셀렉터가 «맨 Yes» 에 이미 놓여 있다(같은 판정 안 ③).
+
+        ⛔ **②를 `claude_perm_mode(txt, anchored=True)` 로 그 자리에서 못 잰다** —
+        실측(캡처 3건)으로 권한 확인 상자가 뜬 프레임에는 권한모드 footer 가 아예
+        없다(`claude_state`도 None 이다). 그래서 그 값은 **footer 가 보이던 프레임에
+        앵커드로 재 둔 것**을 쓴다. 값의 출처가 언제나 footer tail 이므로 본문에 위조
+        footer 를 그려 판정을 흔드는 길(F3 벡터 2)은 여전히 막혀 있다. `_perm_mode`
+        (팝업 표시용)를 안 쓰는 이유도 실측이다: 그 값은 `p._claude is None` 인 프레임
+        에서 비워지는데, 상자가 뜬 프레임이 바로 그 프레임이다.
+
+        ⛔ 설정이 꺼져 있으면 **아무것도 안 잰다** — 앵커드 관측조차 안 한다(안 켠
+        사람에게 비용 0).
+        """
+        if not getattr(self, "claude_auto_yes", False):
+            p._auto_yes_active = False
+            return
+        pm = claude_perm_mode(txt, anchored=True)
+        if pm is not None:
+            # 앵커드 관측만이 이 값을 세운다(F3 벡터 2). 확정 세션 종료·새 셸에서 비운다.
+            p._perm_seen = pm
+        if not (p._hdr_claude and p._perm_seen == "auto"):
+            p._auto_yes_active = False
+            return
+        if claude_auto_yes_ready(txt):
+            if not p._auto_yes_active:
+                p._auto_yes_active = True
+                if p.pty is not None:
+                    try:
+                        p.pty.write(_AUTO_YES_ACCEPT_KEY)
+                    except OSError:
+                        pass
+        else:
+            p._auto_yes_active = False
 
     def _scan_usage_capture(self, txt) -> bool:
         """패널에 뜬 실측 /usage 한도를 권위값(self._usage)으로 캡처하는 phase.
@@ -2139,6 +2210,10 @@ class ServerClaudeMixin:
                 # 조직 관리 설정 승인 화면(부팅 차단) 자동 통과 phase — Claude 로
                 # 인식되기 **전**(footer 없음) 화면이라 new_cl 게이트 밖에 둔다.
                 self._scan_managed_settings(p, txt)
+                # auto mode 패널의 권한 확인 자동 «예» 확정 phase(pytmux-475) —
+                # 그 상자가 뜬 프레임은 footer 가 없어 claude_state 가 None 이다.
+                # new_cl 게이트 안에 두면 영영 안 돈다.
+                self._scan_auto_yes(p, txt)
                 # `/rc` 화면 신호 phase(메뉴 dismiss·정책 차단·active sticky) —
                 # 로드맵 #1 God-분할로 _scan_rc_signals 추출(동작 불변).
                 self._scan_rc_signals(p, txt)
@@ -2175,6 +2250,9 @@ class ServerClaudeMixin:
                         # 기동엔 정상 재무장. 재시작 transient 한 프레임은 miss 임계(30)에
                         # 못 미쳐 여기 안 오므로 _rc_done 이 살아남는다.
                         p._rc_done = False
+                        # pytmux-475: 다음 claude 는 다른 권한모드로 뜰 수 있다 —
+                        # 앵커드 관측을 비워 새 세션이 제 footer 로 다시 무장하게 한다.
+                        p._perm_seen = None
                         # §10-F: 세션 종료 확정 → 토큰 사용량(/usage 한도) 자동 표시(요청
                         # 2026-06-18, 기본 ON). 이 _hdr_claude True→False 전이는 30프레임
                         # 디바운스로 깜빡임(ssh/ConPTY 조각 도착)을 흡수한 **진짜** 종료

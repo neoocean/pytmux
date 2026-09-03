@@ -99,6 +99,14 @@ def init_pane(pane) -> None:
     # 화면이 떠 있는 동안 True 로 두어 **인스턴스당 Enter 를 딱 한 번**만 쏜다(재주입은
     # 승인 뒤 컴포저에 빈 프롬프트를 제출한다 — servermixin._scan_managed_settings).
     pane._managed_ok_active = False
+    # pytmux-475 auto mode 권한 확인 자동 «예»: 상자가 떠 있는 동안 True 로 두어
+    # **상자 인스턴스당 Enter 를 딱 한 번**만 쏜다(위 승인 화면과 같은 규율).
+    pane._auto_yes_active = False
+    # 같은 기능의 게이트 — **앵커드로 관측한** 마지막 권한모드. 권한 확인 상자가 뜬
+    # 프레임에는 footer 가 없어 그 자리에서 못 재기 때문이다(servermixin._scan_auto_yes).
+    # 표시용 _perm_mode 와 달리 `_claude is None` 프레임에서 안 비워진다 — 비우는 곳은
+    # 확정 세션 종료와 새 셸 둘뿐이다.
+    pane._perm_seen = None
     # 수동 /clear 감지 디바운스(환영 배너가 머무는 동안 토큰세션 재리셋 방지).
     pane._welcome_seen = False
     pane._rules_pending = False     # 시작 규칙 주입 예약(다음 idle 1회, #27)
@@ -161,6 +169,7 @@ def reset_pane(pane) -> None:
     pane._cam_last = None
     pane._cam_seen = set()           # 이번 드라이브에서 본 모드 집합 리셋
     pane._perm_mode = None           # 새 셸 — 권한모드 관측/목표 리셋(§10 item 2)
+    pane._perm_seen = None           # pytmux-475: 새 셸 — 앵커드 관측도 리셋
     pane._perm_target = None
     pane._was_busy = False           # done 플리커 디바운스 리셋(§10 #18)
     pane._idle_frames = 0

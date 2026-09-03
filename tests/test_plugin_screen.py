@@ -240,8 +240,10 @@ async def test_every_token_panel_reaches_the_scenario_settings_and_that_panel_st
     panel = ss.open_spec(srv, None, "claude-settings")
     stray = [r["key"] for r in panel["rows"] if str(r["key"]).startswith("goto:")]
     assert stray == [], ("⑥ 이 정본에 없는 이동을 갖게 됐다", stray)
-    # 그리고 여덟 줄이 그대로다 — 잇는 줄을 더하다 토글 줄을 밀어내지 않았다.
-    assert len(panel["rows"]) == len(ss._saver_rows()) == 8, panel["rows"]
+    # 그리고 아홉 줄이 그대로다 — 잇는 줄을 더하다 토글 줄을 밀어내지 않았다.
+    # (여덟 → 아홉: pytmux-475 `claude_auto_yes`. 이 수는 **손으로 적는 것이 요점**이다 —
+    #  `len(_saver_rows())` 하고만 견주면 줄이 사라져도 양쪽이 함께 줄어 조용히 통과한다.)
+    assert len(panel["rows"]) == len(ss._saver_rows()) == 9, panel["rows"]
 
 
 async def test_the_token_panels_answer_the_same_letter_keys_the_canonical_popup_does():
