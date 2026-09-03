@@ -17,9 +17,29 @@
 //! 3. **`Done` 은 사용자가 실제로 부를 수 있을 때만**이다. 서버 명령이 배선돼 있어도
 //!    부를 키·화면이 없으면 `Partial` 이다 — 그 구분이 없으면 진행률이 거짓말을 한다.
 //!
+//! # 모집단은 **픽스처 전수**다 (pytmux-455 · 2026-09-03)
+//!
+//! 종전에 이 래칫이 세던 다섯 칸은 2026-07-28 로드맵 G0 이 **손으로 고른 목록**이었다.
+//! 줄은 이미 픽스처가 정했지만(`check_set`), **어느 칸을 세느냐**는 그때 굳은 채였고,
+//! 정본이 그 뒤 늘린 표면은 픽스처 쪽 게이트가 잡아도 이 수에는 안 들었다 — 즉 「195/196」
+//! 은 *«정본 전체 대 GUI»* 가 아니라 *«G0 목록 대 GUI»* 였다(비교표 1판 §4 가 «슬쩍 하면
+//! 그 숫자의 뜻이 바뀐 것을 아무도 안 본다»며 별개 이슈로 남긴 그 일이다).
+//!
+//! 이제 [`POPULATION`] 과 [`NOT_SCORED`] 가 픽스처의 **모든 칸**을 나눠 갖고,
+//! `the_ratchet_population_is_the_whole_fixture` 가 그 둘의 합이 픽스처와 같음을
+//! 강제한다 — 정본이 칸을 하나 늘리면 「세나 안 세나」를 정할 때까지 게이트가 운다.
+//!
+//! 새 축 둘은 **재서 채운다**(사람이 `Cover` 를 안 적는다): 물음이 「그 이름을 받나」·
+//! 「그 키가 무언가 하나」로 좁아 코드에 직접 물을 수 있어서다. 195 줄에 사유를 손으로
+//! 적게 하면 그 사유는 다음 날 낡는다. 점수는 종전과 같은 양방향 래칫이다
+//! ([`MEASURED_SCORE`]).
+//!
 //! 진행률: `cargo test -p proto --test parity -- --nocapture`
 
 use std::collections::{BTreeMap, BTreeSet};
+
+#[path = "common/divergence.rs"]
+mod divergence;
 
 use serde::Deserialize;
 
@@ -32,6 +52,10 @@ struct Fixture {
     settings: BTreeMap<String, String>,
     set_options: Vec<String>,
     screens: Vec<String>,
+    /// 정본이 **실제로 받는** 명령 이름(별칭·축약 포함 — 팔레트 목록보다 많다).
+    client_cmds: Vec<String>,
+    /// 정본 스크롤 모드가 **실제로 받는** 키.
+    scroll_keys: Vec<String>,
 }
 
 fn fixture() -> Fixture {
@@ -425,6 +449,111 @@ static SCORE: &[(&str, usize, usize)] = &[
     ("screens", 18, 0),
 ];
 
+// ══ 재서 채우는 축 둘 — 모집단이 **픽스처 전수**다(pytmux-455) ═════════════════
+//
+// # 왜 이 둘이 새로 들어왔나
+//
+// 위 다섯 표(`COMMANDS`·`PREFIX_KEYS`·`ESC_KEYS`·`SETTINGS`·`SCREENS`)의 **줄**은 이미
+// 픽스처가 정한다(`check_set` 이 집합 동일을 강제한다). 그런데 **어느 칸을 세느냐**는
+// 2026-07-28 로드맵 G0 이 손으로 고른 다섯이었고, 정본이 그 뒤 늘린 표면은 픽스처 쪽
+// 게이트가 잡아도 **래칫의 수에는 안 들었다**. 그래서 「195/196」은 «정본 전체 대 GUI»가
+// 아니라 «G0 목록 대 GUI»의 수였다(비교표 1판 §4 가 별개 이슈로 남긴 그 일이다).
+//
+// # 왜 이 둘만 «잰» 축인가
+//
+// 위 다섯은 사람이 `Cover` 를 적는다 — 「그 표면이 쓸 만하게 있나」는 눌러 봐야 아는
+// 판단이라서다. 이 둘은 다르다: 물음이 **「그 이름을 받나」·「그 키가 무언가 하나」**로
+// 좁아서 코드에 직접 물을 수 있고, 그래서 사람이 적을 것이 없다. 195 줄에 사유를 손으로
+// 적게 하면 그 사유는 다음 날 낡는다.
+//
+// ⛔ 재는 축이라고 **판정이 약해지지 않는다** — 아래 `the_ratchet_population_is_the_whole_fixture`
+// 가 「픽스처의 표면 칸은 전부 세거나 사유와 함께 빠진다」를 강제하고, 점수는 종전과
+// 같은 양방향 래칫이다.
+
+/// 정본이 받는 명령 이름 하나를 **우리도 받나**.
+///
+/// 정본 팔레트가 `split-window -h` 처럼 플래그를 품으므로 기본형으로 견준다
+/// (`divergence_ledger` 가 정본 분류를 찾는 방식과 같아야 둘이 안 갈린다).
+fn we_take_the_command(name: &str) -> bool {
+    base::PALETTE
+        .iter()
+        .any(|e| e.name == name || e.name.split(' ').next() == Some(name))
+}
+
+/// 정본 스크롤 모드의 키 하나를 **우리도 받나**(누르면 무언가 하나).
+///
+/// ⚠ **`mode-keys` 를 셋 다 물어본다.** 정본의 `j`/`k`·`ctrl+u`·`ctrl+v` 류는 그 설정에
+/// 딸린 키이지 무조건 걸리는 키가 아니고(`SCROLL_BINDINGS` 머리말이 그 사정을 적는다),
+/// 기본값만 물으면 **설정을 켠 사람에게는 되는 것**을 「없다」로 세게 된다 — 첫 회차에
+/// 실제로 여덟을 그렇게 잘못 셌다.
+fn we_take_the_scroll_key(name: &str) -> bool {
+    let Some((key, mods)) = divergence::key_of(name) else {
+        return false;
+    };
+    ["", "vi", "emacs"].iter().any(|mode_keys| {
+        let mut state = base::keys::ModeState::default();
+        state.enter_scroll();
+        !matches!(
+            state.press_in(mode_keys, key, mods),
+            base::keys::KeyOutcome::Ignored
+        )
+    })
+}
+
+/// 재서 채운 한 축 — `(이름, 덮었나)`.
+fn measured(names: &[String], take: impl Fn(&str) -> bool) -> Vec<(String, bool)> {
+    names.iter().map(|n| (n.clone(), take(n))).collect()
+}
+
+/// 픽스처의 칸 중 **표면을 세는 것**과, 그것을 어느 축이 맡나.
+///
+/// ⛔ 여기 없는 칸이 픽스처에 생기면 아래 시험이 운다 — 그때 「세나 안 세나」를 정하게
+/// 된다. 그것이 이 이슈가 요구한 «모집단 = 픽스처 전수»의 실체다: 새 표면이 조용히
+/// 모집단 밖에 남는 길을 없앤다.
+static POPULATION: &[(&str, &str)] = &[
+    ("commands", "COMMANDS 표"),
+    ("prefix_keys", "PREFIX_KEYS 표"),
+    ("esc_keys", "ESC_KEYS 표"),
+    ("settings", "SETTINGS 표"),
+    ("screens", "SCREENS 표"),
+    ("client_cmds", "재서 채운다(그 이름을 받나)"),
+    ("scroll_keys", "재서 채운다(그 키가 무언가 하나)"),
+];
+
+/// 표면을 세지 **않는** 칸과 그 사유.
+///
+/// ⛔ 사유 없는 제외는 그냥 빠뜨린 것이다.
+static NOT_SCORED: &[(&str, &str)] = &[
+    (
+        "menu_items",
+        "명령의 **다른 입구**다 — 같은 일을 두 번 세면 진행률이 부풀고, F10 메뉴가          덮는지는 `MENU_ITEMS` 를 그대로 쓰는 `keymap::menu_rows` 가 이미 강제한다",
+    ),
+    (
+        "set_options",
+        "`set` 명령의 **인자**다(표면이 아니라 그 표면이 받는 값). 인자 표는          `base::config::SETTINGS` 와 `options.rs` 가 따로 지킨다",
+    ),
+    (
+        "mouse_gestures",
+        "`list-keys` 가 보여 주는 **도움말 문구**다 — 같은 제스처를 우리는 다르게 묶어          적기도 해서(클릭을 휠 줄에) 글자 대조가 거짓 실패를 낳는다. 제스처 자체는          `mouse_conformance`·`mouse_gesture_conformance` 가 잰다",
+    ),
+    (
+        "command_help",
+        "명령의 **설명문**이다(있나 없나가 아니라 무엇이라 적혔나) — `help_i18n` 이 잰다",
+    ),
+    (
+        "command_help_en",
+        "위의 영어 짝 — 같은 이유",
+    ),
+    (
+        "esc_key_modes",
+        "「그 키를 누르면 **모드가 어떻게 되나**」다 — 있나 없나는 `esc_keys` 가 이미          세고, 이쪽은 `mode_transition_conformance` 가 눌러서 잰다",
+    ),
+    (
+        "prefix_key_modes",
+        "위의 prefix 짝 — 같은 이유",
+    ),
+];
+
 /// 픽스처의 명령 전부가 팔레트에 실려 있는가 — `commands`/`list-commands` 의 Done 을
 /// 지키는 게이트다(파이썬이 명령을 늘리면 팔레트가 따라잡을 때까지 여기가 운다).
 ///
@@ -439,9 +568,11 @@ static SCORE: &[(&str, usize, usize)] = &[
 ///   ⑶ 사유문이 말하던 **이미지**는 CL 71667 에 지워진 뒤 트리에 없었다.
 ///   ⇒ 예외 목록에 이름을 넣는 것은 **재는 것을 멈추는 일**이다. 사유가 「뷰별 능력」이
 ///   아니면 넣지 않는다.
-#[test]
-fn every_python_command_is_in_the_palette() {
-    const NOT_IN_PALETTE: &[&str] = &[
+/// 정본 목록에 있으나 **우리 팔레트에 안 싣는** 이름과 그 사유.
+///
+/// ⛔ 이름을 여기 넣는 것은 **재는 것을 멈추는 일**이다. 사유가 「뷰별 능력」이나
+/// 「사용자가 입구를 닫았다」가 아니면 넣지 않는다(아래 ★ 가 그 조건을 못박는다).
+const NOT_IN_PALETTE: &[&str] = &[
         "monitor-bell",
         // ★ `debug-stats` 는 **2026-09-03 에 이 목록에서 나갔다**(pytmux-457).
         //   여기 적혀 있던 사유는 *"이 명령이 내는 표는 파이썬 클라 프로세스의 것이라
@@ -450,7 +581,10 @@ fn every_python_command_is_in_the_palette() {
         //   재는 같은 화면을 갖게 되면 그때 이 줄을 지우고 COMMANDS 를 Done 으로."*
         //   그 화면이 `Screen::DebugStats` 다(그린 프레임·프레임 간격·그린 칸·큐 깊이·
         //   RTT·상주 메모리). ⇒ 사유가 사라졌으므로 면제도 사라진다.
-    ];
+];
+
+#[test]
+fn every_python_command_is_in_the_palette() {
     let have: BTreeSet<&str> = base::PALETTE
         .iter()
         .flat_map(|e| [e.name, e.name.split(' ').next().unwrap_or(e.name)])
@@ -548,6 +682,142 @@ fn the_fixture_keeps_the_surfaces_we_do_not_score_yet() {
 }
 
 #[test]
+fn the_ratchet_population_is_the_whole_fixture() {
+    // ⛔ **이 이슈의 관문이다**(pytmux-455). 픽스처가 세는 표면 칸은 전부 축이 맡거나
+    //    **사유와 함께** 빠져야 한다 — 그래야 정본이 표면 갈래를 하나 늘렸을 때
+    //    래칫이 저절로 그 사실을 만난다.
+    let raw: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/client_surface.json"
+    ))
+    .expect("픽스처를 못 읽는다");
+    let keys: Vec<&String> = raw
+        .as_object()
+        .expect("픽스처가 객체가 아니다")
+        .keys()
+        .filter(|k| !k.starts_with('_'))
+        .collect();
+    let mut unclaimed: Vec<&str> = Vec::new();
+    for key in &keys {
+        let scored = POPULATION.iter().any(|(n, _)| *n == key.as_str());
+        let excused = NOT_SCORED.iter().any(|(n, _)| *n == key.as_str());
+        if !scored && !excused {
+            unclaimed.push(key.as_str());
+        }
+    }
+    assert!(
+        unclaimed.is_empty(),
+        "픽스처에 새 칸이 생겼는데 세지도 않고 사유도 없다: {unclaimed:?}\n\
+         ⛔ 「세나 안 세나」를 정할 것 — 정하지 않으면 그 표면은 조용히 모집단 밖에 남고,\n\
+         그때 진행률은 «정본 전체 대 GUI» 가 아니라 «옛 목록 대 GUI» 가 된다."
+    );
+    // 죽은 줄도 잡는다 — 정본이 칸을 지웠는데 우리 표에 남아 있으면 그 축은 아무것도
+    // 안 세면서 이름만 있다.
+    for (name, why) in POPULATION.iter().chain(NOT_SCORED) {
+        assert!(!why.is_empty(), "{name}: 사유 없는 줄이다");
+        assert!(
+            keys.iter().any(|k| k.as_str() == *name),
+            "정본 픽스처에 없는 칸이 목록에 남아 있다: {name}"
+        );
+    }
+}
+
+#[test]
+fn the_measured_axes_cover_every_name_canon_shows_in_its_palette() {
+    // 재는 축의 **알맹이**다. 별칭·축약은 못 받아도(아래 점수가 그것을 센다) 정본이
+    // **팔레트에 보여 주는** 이름은 하나도 빠지면 안 된다 — 사용자가 저쪽 화면에서 읽고
+    // 이쪽에서 치는 이름이 그것이다.
+    let fx = fixture();
+    let shown: BTreeSet<&str> = fx.commands.keys().map(String::as_str).collect();
+    let missing: Vec<&String> = fx
+        .client_cmds
+        .iter()
+        .filter(|n| {
+            shown.contains(n.as_str())
+                && !NOT_IN_PALETTE.contains(&n.as_str())
+                && !we_take_the_command(n)
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "정본 팔레트에 뜨는 이름을 우리가 안 받는다: {missing:?}"
+    );
+}
+
+#[test]
+fn every_name_we_do_not_take_is_one_canon_never_shows() {
+    // 못 받는 것이 **별칭·축약뿐**인가. 이 단언이 없으면 「106 개 못 받는다」가
+    // 어느 부류인지 다음 사람이 다시 세어야 한다.
+    let fx = fixture();
+    let shown: BTreeSet<&str> = fx.commands.keys().map(String::as_str).collect();
+    for (name, ok) in measured(&fx.client_cmds, |n| we_take_the_command(n)) {
+        if !ok {
+            assert!(
+                !shown.contains(name.as_str()) || NOT_IN_PALETTE.contains(&name.as_str()),
+                "{name:?} 는 정본 팔레트에 뜨는데 우리가 안 받는다 — 별칭도 아니고 \
+                 `NOT_IN_PALETTE` 의 사유도 없다"
+            );
+        }
+    }
+}
+
+/// 재서 채운 축의 지금 점수 — **양방향 래칫**이다(위 다섯 표와 같은 규칙).
+///
+/// `(축, 덮음, 전체)`. 정본이 이름을 늘리면 전체가 늘고, 우리가 하나를 받기 시작하면
+/// 덮음이 는다 — **둘 다 이 수를 같은 CL 에서 옮기게** 해서 「언제 무엇이 움직였나」가
+/// 이력에 남는다.
+static MEASURED_SCORE: &[(&str, usize, usize)] = &[
+    // 남음 103 은 전부 **정본 별칭·축약**이다(`killp`·`neww`·`selectp` …). 팔레트에
+    // 뜨는 89 는 하나도 안 빠진다 — 위 두 시험이 그 갈래를 강제한다.
+    // 그 103 을 든 이슈는 [[pytmux-470]] 이다(이 축이 넓어지며 처음 세어진 줄).
+    ("client_cmds", 92, 195),
+    // ★ **첫 회차에 여덟이 공백으로 보였는데 오라클이 틀린 것이었다**(pytmux-455).
+    //   `j`/`k`·`ctrl+u`·`ctrl+v` 류는 정본에서도 `mode-keys`(vi·emacs) 에 딸린 키인데
+    //   기본값만 물었다 — 셋 다 물으니 전수다. 「없다」로 적었으면 있는 것을 다시
+    //   만들 뻔했다.
+    ("scroll_keys", 24, 24),
+];
+
+#[test]
+fn the_measured_score_moves_only_on_purpose() {
+    let fx = fixture();
+    for (label, want_done, want_total) in MEASURED_SCORE {
+        let (names, took): (&Vec<String>, Vec<(String, bool)>) = match *label {
+            "client_cmds" => (
+                &fx.client_cmds,
+                measured(&fx.client_cmds, |n| we_take_the_command(n)),
+            ),
+            "scroll_keys" => (
+                &fx.scroll_keys,
+                measured(&fx.scroll_keys, |n| we_take_the_scroll_key(n)),
+            ),
+            other => panic!("{other} 축이 없다"),
+        };
+        let done = took.iter().filter(|(_, ok)| *ok).count();
+        assert_eq!(
+            (done, names.len()),
+            (*want_done, *want_total),
+            "{label} 의 점수가 달라졌다 — 늘었으면 **같은 CL 에서** MEASURED_SCORE 를 \
+             고치고, 줄었으면 무엇이 사라졌는지 확인할 것"
+        );
+    }
+}
+
+#[test]
+fn print_the_missing_scroll_keys() {
+    // 게이트가 아니라 **자**다. 별칭이 아닌 진짜 공백이라 이름이 곧 다음 할 일이다.
+    let fx = fixture();
+    let missing: Vec<String> = measured(&fx.scroll_keys, |n| we_take_the_scroll_key(n))
+        .into_iter()
+        .filter(|(_, ok)| !ok)
+        .map(|(n, _)| n)
+        .collect();
+    println!(
+        "\n정본 스크롤 모드가 받는데 우리가 안 받는 키 {}: {missing:?}\n",
+        missing.len()
+    );
+}
+
+#[test]
 fn print_the_score() {
     // `--nocapture` 로 보는 진행률. 실패하지 않는다 — 이건 게이트가 아니라 **자**다.
     //
@@ -566,8 +836,37 @@ fn print_the_score() {
         );
     }
     println!(
-        "  {:<12} 덮음 {all_done:>3} · 절반 {all_partial:>3} · 남음 {:>3} (전체 {total})\n",
+        "  {:<12} 덮음 {all_done:>3} · 절반 {all_partial:>3} · 남음 {:>3} (전체 {total})",
         "합계",
         total - all_done - all_partial
     );
+    // ── 재서 채운 축(pytmux-455) — 모집단이 픽스처 전수다 ────────────────────
+    let fx = fixture();
+    println!("\n재서 채운 축(사람이 적는 것이 없다 · 모집단 = 픽스처 전수):");
+    for (label, names, took) in [
+        (
+            "client_cmds",
+            &fx.client_cmds,
+            measured(&fx.client_cmds, |n| we_take_the_command(n)),
+        ),
+        (
+            "scroll_keys",
+            &fx.scroll_keys,
+            measured(&fx.scroll_keys, |n| we_take_the_scroll_key(n)),
+        ),
+    ] {
+        let done = took.iter().filter(|(_, ok)| *ok).count();
+        println!(
+            "  {label:<12} 덮음 {done:>3} · 남음 {:>3} (전체 {})",
+            names.len() - done,
+            names.len()
+        );
+    }
+    println!(
+        "\n  ⚠ `client_cmds` 의 남음은 **정본 별칭·축약**이다(팔레트에 뜨는 이름은 \n\
+           하나도 안 빠진다 — `the_measured_axes_cover_every_name_canon_shows_in_its_palette`).\n\
+           세는 단위가 「보여 주는 목록」에서 「받는 이름」으로 넓어진 것이 이 축의 뜻이다.\n"
+    );
+    println!("  모집단: 픽스처 칸 {} 중 축이 맡은 것 {} · 사유와 함께 뺀 것 {}\n",
+        POPULATION.len() + NOT_SCORED.len(), POPULATION.len(), NOT_SCORED.len());
 }
