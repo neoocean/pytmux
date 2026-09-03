@@ -1390,6 +1390,13 @@ pub struct SessionState {
     ///
     /// **다음 키 하나로 사라진다**(파이썬도 모드라 그렇다) — 그 판정은 뷰가 한다.
     pane_numbers: bool,
+    /// 패널 번호를 **뷰가 직접** 그리나(pytmux-461).
+    ///
+    /// 켜면 합성기는 번호 칸을 안 찍는다 — 그 자리에 뷰가 벡터 숫자 배지를 얹기
+    /// 때문이고, 둘 다 그리면 같은 번호가 두 벌 뜬다. ⛔ 기본이 `false` 인 것이 계약이다:
+    /// 이 값은 **뷰가 자기 능력을 알린 것**이지 상태의 성질이 아니다(서버의
+    /// `native_overlay` 광고와 같은 결).
+    native_pane_numbers: bool,
     /// 상태줄에 걸리는 세션 전역 표식들(패리티 G6). 서버가 `status` 에 매번 실어 준다 —
     /// 종전에는 **탭 목록만 꺼내 쓰고 나머지를 버리고 있었다**.
     flags: StatusFlags,
@@ -1805,6 +1812,11 @@ impl SessionState {
     /// 지금 번호가 떠 있나.
     pub fn pane_numbers(&self) -> bool {
         self.pane_numbers
+    }
+
+    /// 「번호는 내가 그린다」 — 합성기가 그 칸을 안 찍게 한다(pytmux-461).
+    pub fn draw_pane_numbers_natively(&mut self) {
+        self.native_pane_numbers = true;
     }
 
     /// 번호를 지운다. 지웠으면 `true` — 뷰가 "이 키로 사라졌다"를 알 수 있다.
@@ -2687,7 +2699,9 @@ impl SessionState {
         }
         // 패널 번호(`prefix q`)는 **가장 위**다 — 시계·달력 위에서도 번호가 보여야
         // 그 패널로 갈 수 있다.
-        if self.pane_numbers {
+        // ⛔ 뷰가 직접 그린다고 알렸으면 여기서는 **안 찍는다** — 둘 다 그리면 같은
+        //    번호가 두 벌 뜬다(위 `native_pane_numbers` 머리말).
+        if self.pane_numbers && !self.native_pane_numbers {
             for (n, pane) in layout.panes.iter().enumerate() {
                 let text = n.to_string();
                 // 활성은 초록, 나머지는 노랑 바탕에 검은 글자(파이썬과 같다).

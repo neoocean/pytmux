@@ -1933,6 +1933,143 @@ fn cursor_row_of(key: &str) -> usize {
         .unwrap_or_else(|| panic!("커서 판에 {key} 줄이 없다"))
 }
 
+// ── N12 크롬 마감(pytmux-461) — 글자로 말하던 것을 그림으로 ─────────────────
+//
+// ⛔ 재는 것은 **그림이 실제로 늘었나**다. 색만 재면 「색은 맞는데 아무것도 안 그렸다」를
+//    못 잡는다(이 절 머리말의 그 함정).
+
+/// 탭 하나짜리 status — `claude` 집계를 실어 보낸다.
+fn tabs_with_claude(state: Option<&str>, done: bool) -> ServerMessage {
+    let mut tab = serde_json::json!({
+        "index": 0, "name": "sh", "active": false, "claude_done": done
+    });
+    if let Some(s) = state {
+        tab["claude"] = serde_json::json!(s);
+    }
+    serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [tab, {"index": 1, "name": "other", "active": true}],
+    }))
+    .unwrap()
+}
+
+/// 이 프레임에 그려진 **면**의 수(획·점·알약).
+fn shape_count(messages: Vec<ServerMessage>) -> usize {
+    painted_scene(messages, &[], |scene| {
+        scene.layers().flat_map(|l| l.rects.iter()).count()
+    })
+}
+
+#[test]
+fn the_claude_state_becomes_an_icon_not_a_glyph() {
+    // 정본은 `○`·`◐`·`⊘` 를 **글자**로 찍는다. 우리는 같은 뜻을 그림으로 그린다 —
+    // 그래서 상태가 오면 면이 늘고, 셋이 **서로 다른 그림**이라야 한다.
+    let none = shape_count(vec![layout_one_pane(), tabs_with_claude(None, false)]);
+    let idle = shape_count(vec![layout_one_pane(), tabs_with_claude(Some("idle"), false)]);
+    let limit = shape_count(vec![layout_one_pane(), tabs_with_claude(Some("limit"), false)]);
+    assert!(idle > none, "상태가 왔는데 아이콘이 안 늘었다({none} → {idle})");
+    assert!(
+        limit > idle,
+        "`limit` 이 `idle` 과 같은 그림이다({idle} vs {limit}) — 「막혔다」의 막대가 없다"
+    );
+    // ⛔ 글리프를 **글자로** 찍지 않는다(정본의 글자를 흉내내면 그것은 TUI 재현이다).
+    let painted = painted_after(
+        vec![layout_one_pane(), tabs_with_claude(Some("busy"), false)],
+        &[],
+    );
+    for glyph in ["○", "◐", "⊘"] {
+        assert!(
+            !painted.iter().any(|t| t.contains(glyph)),
+            "정본 글리프를 글자로 찍고 있다: {glyph}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_claude_state_draws_nothing_instead_of_guessing() {
+    // 서버가 모르는 값을 보내면 **지어내지 않는다**.
+    let none = shape_count(vec![layout_one_pane(), tabs_with_claude(None, false)]);
+    let junk = shape_count(vec![layout_one_pane(), tabs_with_claude(Some("???"), false)]);
+    assert_eq!(none, junk, "모르는 상태에 그림을 지어냈다");
+}
+
+#[test]
+fn a_finished_tab_gets_a_dot_not_only_a_colour() {
+    // ⛔ 색만으로 말하는 자리는 색각이 다른 사람에게 아무 말도 안 한다 —
+    //    모양이 하나 더 있어야 한다(pytmux-461).
+    let plain = shape_count(vec![layout_one_pane(), tabs_with_claude(None, false)]);
+    let done = shape_count(vec![layout_one_pane(), tabs_with_claude(None, true)]);
+    assert!(done > plain, "작업이 끝났는데 점이 안 붙었다({plain} → {done})");
+}
+
+#[test]
+fn a_percentage_badge_grows_a_bar_and_keeps_its_number() {
+    // 「얼마나 찼나」는 눈이 **길이**로 먼저 읽는다. 그래도 글자는 남긴다 —
+    // 막대만 두면 정확한 값을 잃고 정본과 문구가 갈린다.
+    let badge = |text: &str| -> ServerMessage {
+        serde_json::from_value(serde_json::json!({
+            "t": "status",
+            "plugin_badges": [{"name": "claude-code", "text": text, "style": {}, "theme": {}}],
+        }))
+        .unwrap()
+    };
+    let flat = shape_count(vec![layout_one_pane(), badge(" sonnet ")]);
+    let meter = shape_count(vec![layout_one_pane(), badge(" 40% ")]);
+    assert!(meter > flat, "퍼센트인데 막대가 안 생겼다({flat} → {meter})");
+    let painted = painted_after(vec![layout_one_pane(), badge(" 40% ")], &[]);
+    assert!(
+        painted.iter().any(|t| t == "40%"),
+        "막대를 넣으면서 숫자를 잃었다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_number_that_is_not_a_percentage_gets_no_bar() {
+    // ⛔ 「숫자가 있으면 퍼센트」로 접지 않는다 — 모델 이름·카운트다운도 숫자를 든다.
+    assert_eq!(SessionView::percent_in("40%"), Some(0.4));
+    assert_eq!(SessionView::percent_in("ctx 7%"), Some(0.07));
+    assert_eq!(SessionView::percent_in("100%"), Some(1.0));
+    assert_eq!(SessionView::percent_in("sonnet-4"), None);
+    assert_eq!(SessionView::percent_in("3분"), None);
+    assert_eq!(SessionView::percent_in("%"), None);
+    // 상한을 넘겨 와도 막대가 칩 밖으로 안 자란다.
+    assert_eq!(SessionView::percent_in("140%"), Some(1.0));
+}
+
+#[test]
+fn the_pane_numbers_are_drawn_by_us_not_by_the_compositor() {
+    // ⛔ 둘 다 그리면 같은 번호가 **두 벌** 뜬다. 뷰가 그린다고 알렸으므로 합성기는
+    //    그 칸을 안 찍어야 하고, 대신 우리 배지가 막대를 낸다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    assert!(view.pane_number_badges().is_empty(), "안 켰는데 번호가 있다");
+    assert!(view.state.toggle_pane_numbers(), "토글이 안 켰다");
+    let badges = view.pane_number_badges();
+    assert_eq!(badges.len(), 1, "패널 하나에 배지 하나가 아니다");
+    // 합성기는 그 칸을 **안 찍는다**(캔버스에 번호 글자가 없다).
+    let canvas = view.state.composite().expect("캔버스가 없다");
+    let text: String = (0..canvas.size().1)
+        .map(|y| {
+            canvas
+                .row_runs(y)
+                .into_iter()
+                .map(|(text, _)| text)
+                .collect::<String>()
+        })
+        .collect();
+    assert!(
+        !text.contains('0'),
+        "합성기가 번호를 아직 칸으로 찍는다 — 같은 번호가 두 벌 뜬다"
+    );
+    // 그리고 우리 배지가 실제로 막대를 낸다.
+    let drawn = crate::splitter::SplitterOverlay::for_clock_test(Vec::new())
+        .with_numbers(badges)
+        .number_rects(vec2f(0., 0.), 9., 18.)
+        .len();
+    assert!(drawn > 1, "배지가 알약도 숫자도 안 그린다({drawn})");
+}
+
 // ── 네이티브 시계(pytmux-458 장치 · 459 그림) ────────────────────────────────
 //
 // ⛔ 여기서 재는 것은 **그림이 실제로 서나**다. 「상태를 받았다」로 초록을 만들면 그리기

@@ -803,6 +803,9 @@ impl SessionView {
         let config = base::Config::load();
         let mut state = SessionState::new();
         state.set_inactive_dim(config.inactive_dim, config.inactive_dim_ratio);
+        // 「패널 번호는 내가 그린다」 — 합성기가 그 칸을 안 찍게 한다(pytmux-461).
+        // ⛔ 이 한 줄이 없으면 같은 번호가 **두 벌** 뜬다(합성기 글자 + 우리 배지).
+        state.draw_pane_numbers_natively();
         // 폭 판정은 프로세스 전역이다(compose::set_ambiguous_wide 문서 참조).
         proto::compose::set_ambiguous_wide(config.ambiguous_width == "wide");
         let arghist = proto::arghist::ArgHist::for_socket(link.socket());
@@ -3977,6 +3980,72 @@ impl SessionView {
 
     /// 칩 — pill 배경 위 한 낱말(모드 배지·세션 표식). 띠(SURFACE) 위에 앉으므로
     /// 배경은 한 단 밝은 HOVER 다.
+    /// 이 표식이 말하는 **퍼센트**(0.0~1.0). 퍼센트가 아니면 `None`.
+    ///
+    /// ⛔ 「숫자가 있으면 퍼센트」로 접지 않는다 — 모델 이름(`sonnet-4`)·카운트다운
+    /// (`3분`)도 숫자를 든다. `%` 로 끝나는 정수 하나만 읽는다.
+    fn percent_in(text: &str) -> Option<f32> {
+        let body = text.strip_suffix('%')?;
+        let digits: String = body
+            .chars()
+            .rev()
+            .take_while(char::is_ascii_digit)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if digits.is_empty() {
+            return None;
+        }
+        let value: f32 = digits.parse().ok()?;
+        Some((value / 100.).clamp(0., 1.))
+    }
+
+    /// 글자 + **차오른 만큼의 막대**(pytmux-461). 막대는 글자 아래 한 줄이다.
+    fn meter_chip(&self, s: &str, fraction: f32, fg: ColorU) -> Box<dyn Element> {
+        const W: f32 = 34.;
+        let filled = (W * fraction).max(1.);
+        let bar = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_child(
+                ConstrainedBox::new(
+                    Container::new(Empty::new().finish())
+                        .with_background_color(fg)
+                        .with_corner_radius(theme::PILL_RADIUS)
+                        .finish(),
+                )
+                .with_width(filled)
+                .with_height(3.)
+                .finish(),
+            )
+            .with_child(
+                ConstrainedBox::new(
+                    Container::new(Empty::new().finish())
+                        .with_background_color(theme::BORDER)
+                        .with_corner_radius(theme::PILL_RADIUS)
+                        .finish(),
+                )
+                .with_width((W - filled).max(0.))
+                .with_height(3.)
+                .finish(),
+            )
+            .finish();
+        Container::new(
+            Flex::column()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(2.)
+                .with_child(self.ui_text(s.to_owned(), 11., fg))
+                .with_child(bar)
+                .finish(),
+        )
+        .with_horizontal_padding(8.)
+        .with_vertical_padding(2.)
+        .with_background_color(theme::HOVER)
+        .with_corner_radius(theme::PILL_RADIUS)
+        .finish()
+    }
+
     fn chip(&self, s: impl Into<String>, fg: ColorU) -> Box<dyn Element> {
         Container::new(self.ui_text(s, 11., fg))
             .with_horizontal_padding(8.)
@@ -4779,6 +4848,67 @@ impl SessionView {
 
     /// 크롬 한 자리를 클릭 대상으로 감싼다 — 자리는 레이아웃(Hoverable)이 재고,
     /// 그 자리가 무슨 일이 되는지는 core 가 정한다(`chrome::click` · TUI 와 한 벌).
+    /// 탭의 Claude 상태 아이콘 — 정본 글리프 셋의 **뜻**을 그림으로.
+    ///
+    /// | 뜻 | 정본 글자 | 우리 그림 |
+    /// |---|---|---|
+    /// | `idle`(대기) | `○` | 빈 고리 |
+    /// | `busy`(처리중) | `◐` | 채운 점 |
+    /// | `limit`(리밋 멈춤) | `⊘` | 채운 점 위에 가로 막대(「막혔다」) |
+    ///
+    /// ⛔ 색만으로 셋을 가르지 않는다 — **모양이 먼저 갈린다**(고리/점/막힌 점).
+    /// 색은 그 위에 얹는 둘째 신호다.
+    fn claude_icon(tab: &proto::Tab) -> Option<Box<dyn Element>> {
+        const D: f32 = 9.;
+        let dot = |color: ColorU| {
+            Container::new(Empty::new().finish())
+                .with_background_color(color)
+                .with_corner_radius(theme::PILL_RADIUS)
+                .finish()
+        };
+        let sized = |child: Box<dyn Element>| {
+            ConstrainedBox::new(child).with_width(D).with_height(D).finish()
+        };
+        Some(match tab.claude.as_deref()? {
+            // 빈 고리 — 테두리만 있고 안이 비었다.
+            "idle" => sized(
+                Container::new(Empty::new().finish())
+                    .with_corner_radius(theme::PILL_RADIUS)
+                    .with_border(Border::all(1.5).with_border_color(palette::DIM))
+                    .finish(),
+            ),
+            "busy" => sized(dot(theme::WARN)),
+            "limit" => Stack::new()
+                .with_child(sized(dot(theme::ERROR)))
+                .with_child(
+                    // 「막혔다」의 가로 막대 — `⊘` 의 빗금 자리다.
+                    Align::new(
+                        ConstrainedBox::new(dot(palette::BLACK))
+                            .with_width(D)
+                            .with_height(1.5)
+                            .finish(),
+                    )
+                    .finish(),
+                )
+                .finish(),
+            // 서버가 모르는 값을 보내면 **아무것도 안 그린다** — 지어내지 않는다.
+            _ => return None,
+        })
+    }
+
+    /// 작업이 끝난 비활성 탭의 **점**. 색(호박)의 짝이 되는 모양 신호다.
+    fn done_dot() -> Box<dyn Element> {
+        ConstrainedBox::new(
+            Container::new(Empty::new().finish())
+                .with_background_color(theme::WARN)
+                .with_corner_radius(theme::PILL_RADIUS)
+                .finish(),
+        )
+        .with_width(5.)
+        .with_height(5.)
+        .finish()
+    }
+
     fn clickable_chrome(
         &self,
         i: usize,
@@ -4868,7 +4998,20 @@ impl SessionView {
             let mut inner = Flex::row()
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_spacing(6.)
+                .with_spacing(6.);
+            // ★ **글리프가 아니라 아이콘**(pytmux-461 · 허용 갈림 ⓑ). 정본은 격자 안에
+            //   살아 상태를 `○`·`◐`·`⊘` 글자로 찍는다 — 우리는 같은 **뜻**을 그림으로
+            //   그린다. 뜻은 서버가 정한다(`Tab::claude`).
+            if let Some(icon) = Self::claude_icon(tab) {
+                inner = inner.with_child(icon);
+            }
+            // 작업이 끝난 비활성 탭에는 **점 하나**를 더 단다(pytmux-461).
+            // 종전에는 색(호박)만으로 말했는데, 색만으로 말하는 자리는 색각이 다른
+            // 사람에게 아무 말도 안 한다 — 모양이 하나 더 있어야 한다.
+            if bold {
+                inner = inner.with_child(Self::done_dot());
+            }
+            inner = inner
                 .with_child(self.ui_text_weighted(labels[i].clone(), 13., fg, bold));
             // 닫기 × 는 **활성 탭 안**에 산다 — 뜻은 종전의 `[x]`(활성 탭 닫기, 확인
             // 화면을 지난다)와 같고 자리만 탭 안으로 들어왔다. 자리 색인도 종전
@@ -5394,7 +5537,15 @@ impl SessionView {
                 .and_then(proto::session::theme::color)
                 .map(|c| to_gui_color(&c))
                 .unwrap_or(palette::FG);
-            let chip = self.chip(badge.say().trim(), color);
+            // ★ **퍼센트는 막대도 함께 그린다**(pytmux-461). 정본은 격자 안에 살아
+            //   `28%` 라는 **글자**밖에 못 쓰지만, 「얼마나 찼나」는 눈이 길이로 먼저
+            //   읽는 값이다 — 허용 갈림 ⓑ. 글자는 **그대로 둔다**(막대만 남기면 정확한
+            //   값을 잃는다 · 정본과 문구가 갈린다).
+            let text = badge.say();
+            let chip = match Self::percent_in(text.trim()) {
+                Some(pct) => self.meter_chip(text.trim(), pct, color),
+                None => self.chip(text.trim(), color),
+            };
             left = left.with_child(match badge.opens() {
                 // 눌리는 자리는 hover 로 그 사실을 보인다(N4 — 다른 클릭존과 같은 규율).
                 // 색인은 위 배지 자리들 **뒤**에서 이어진다 — 한 프레임의 렌더 순서가
@@ -10196,6 +10347,40 @@ impl SessionView {
         })
     }
 
+    /// **패널 번호 배지들**(`prefix q` · pytmux-461).
+    ///
+    /// 정본은 격자 안에 살아 번호를 한 칸 글자로 찍는다 — 우리는 같은 뜻을 벡터 숫자
+    /// 배지로 크게 그린다(허용 갈림 ⓑ). 색의 뜻은 정본 그대로다: **활성은 초록,
+    /// 나머지는 노랑, 글자는 검정**(합성기가 그리던 그 배정).
+    ///
+    /// ⛔ 켜고 끄기·무엇을 누르면 어디로 가나는 그대로다 — 그림만 우리 것이다.
+    fn pane_number_badges(&self) -> Vec<crate::splitter::PaneNumber> {
+        if !self.state.pane_numbers() || self.screens.top().is_some() {
+            return Vec::new();
+        }
+        let Some(layout) = self.state.layout() else {
+            return Vec::new();
+        };
+        layout
+            .panes
+            .iter()
+            .enumerate()
+            .map(|(n, pane)| crate::splitter::PaneNumber {
+                x: pane.x,
+                y: pane.y,
+                w: pane.w,
+                h: pane.h,
+                n: n as u32,
+                bg: if pane.id == layout.active {
+                    theme::OK
+                } else {
+                    theme::WARN
+                },
+                fg: palette::BLACK,
+            })
+            .collect()
+    }
+
     fn ime_overlay(&self, canvas: &proto::canvas::Canvas) -> Option<crate::splitter::ImeBadge> {
         if self.screens.top().is_some() {
             return None;
@@ -10533,6 +10718,7 @@ impl View for SessionView {
                         )
                         .with_ime(self.ime_overlay(&canvas))
                         .with_clocks(self.clock_faces())
+                        .with_numbers(self.pane_number_badges())
                         .with_matte(self.letterbox(&canvas))
                         .finish(),
                     )

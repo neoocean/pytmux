@@ -47,6 +47,16 @@ pub struct Tab {
     /// Claude 작업이 끝났다는 표식.
     #[serde(default)]
     pub claude_done: bool,
+    /// 이 탭의 Claude **상태 집계** — `idle` · `busy` · `limit`(없으면 Claude 가 없다).
+    ///
+    /// 서버가 이미 보내던 칸이다(`plugins/claude-code` 의 `wd["claude"] = _tab_claude(t)`)
+    /// — 정본은 그것을 글리프 `○`·`◐`·`⊘` 로 탭 앞에 찍는다(`client_tab_glyph`).
+    /// 우리는 그 **뜻**만 받아 아이콘으로 그린다(pytmux-461).
+    ///
+    /// ⛔ 이름에서 글리프를 파싱하지 않는다 — [`Tab::display`] 머리말이 `⇄` 에 대해
+    /// 적어 둔 것과 같은 규율이다. 뜻은 칸으로 오고, 그림은 그 뜻에서 나온다.
+    #[serde(default)]
+    pub claude: Option<String>,
     #[serde(default)]
     pub pinned: bool,
 }

@@ -226,6 +226,25 @@ const SEVEN_SEG: [[bool; 7]; 10] = [
     [true, true, true, true, false, true, true],     // 9
 ];
 
+/// **패널 번호 배지 하나**(`display-panes`/`prefix q` · pytmux-461) — 캔버스 셀 좌표.
+///
+/// 정본은 격자 안에 살아 번호를 **한 칸 글자**로 찍는다. GUI 는 캔버스 위에 그릴 수
+/// 있으니 시계와 **같은 벡터 숫자**로 크게 그린다 — 허용 갈림 ⓑ 다. 뜻(무엇을 누르면
+/// 어디로 가나)과 켜고 끄기는 그대로다.
+pub struct PaneNumber {
+    /// 그 패널의 내용 영역(캔버스 셀 좌표).
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+    /// 몇 번인가.
+    pub n: u32,
+    /// 배지 바탕(활성/비활성이 갈린다 — 정본의 초록/노랑과 같은 뜻).
+    pub bg: ColorU,
+    /// 숫자 색.
+    pub fg: ColorU,
+}
+
 /// 블록 선택 모드에서 **고른 블록**의 칸 범위(pytmux-18) — 캔버스 셀 좌표.
 ///
 /// 뷰가 이미 뷰포트에 맞춰 잘라서 준다([`SessionView::block_mark`](crate::session_view)) —
@@ -503,6 +522,8 @@ pub struct SplitterOverlay {
     ime: Option<ImeBadge>,
     /// 네이티브로 그리는 시계들(pytmux-459). 비면 아무것도 안 그린다.
     clocks: Vec<ClockFace>,
+    /// 패널 번호 배지들(pytmux-461). 비면 아무것도 안 그린다.
+    numbers: Vec<PaneNumber>,
     /// 레터박스 띠(없으면 안 그린다 — 내 창이 공유 격자와 같거나 작다).
     matte: Option<Matte>,
     /// 이번 레이아웃에서 **받은** 크기. ⛔ 자식 것을 그대로 돌려주면 안 된다 — 부모
@@ -539,6 +560,7 @@ impl SplitterOverlay {
             rows,
             ime: None,
             clocks: Vec::new(),
+            numbers: Vec::new(),
             matte: None,
             slack: 0.,
             size: None,
@@ -626,6 +648,12 @@ impl SplitterOverlay {
                 .with_background(Fill::Solid(color))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(radius)));
         }
+    }
+
+    /// 패널 번호 배지를 얹는다(pytmux-461).
+    pub fn with_numbers(mut self, numbers: Vec<PaneNumber>) -> Self {
+        self.numbers = numbers;
+        self
     }
 
     /// 시계만 든 오버레이 — **오라클 전용**(그리기 함수를 창 없이 부르는 자리).
@@ -720,6 +748,67 @@ impl SplitterOverlay {
                     }
                     x += dw * (COLON + GAP);
                 }
+            }
+        }
+        out
+    }
+
+    /// 패널 번호 배지들 — 알약 하나와 그 안의 벡터 숫자.
+    fn paint_numbers(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        for (rect, color, radius) in self.number_rects(origin, cw, ch) {
+            ctx.scene
+                .draw_rect_without_hit_recording(rect)
+                .with_background(Fill::Solid(color))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(radius)));
+        }
+    }
+
+    /// 그 배지들이 그릴 **막대들** — 시계와 같은 이유로 그리기와 갈라 뒀다
+    /// (헤드리스에서는 칸 크기를 못 얻어 그리기 자체가 건너뛰어진다).
+    pub fn number_rects(
+        &self,
+        origin: Vector2F,
+        cw: f32,
+        ch: f32,
+    ) -> Vec<(RectF, ColorU, f32)> {
+        let mut out = Vec::new();
+        for badge in &self.numbers {
+            let px = origin.x() + badge.x as f32 * cw;
+            let py = origin.y() + badge.y as f32 * ch;
+            let (pw, ph) = (badge.w as f32 * cw, badge.h as f32 * ch);
+            let text = badge.n.to_string();
+            let digits = text.chars().count() as f32;
+            if pw <= 0. || ph <= 0. {
+                continue;
+            }
+            // 숫자 높이는 패널 높이의 1/3 을 넘지 않고, 폭도 1/3 안에 든다.
+            const ASPECT: f32 = 0.5;
+            const GAP: f32 = 0.35;
+            let by_h = (ph / 3.).max(8.);
+            let by_w = (pw / 3.) / (digits * (1.0 + GAP));
+            let dh = by_h.min(by_w / ASPECT);
+            if dh < 8. {
+                continue; // 이만큼도 안 되면 안 그린다 — 뭉갠 숫자는 없는 것만 못하다
+            }
+            let dw = dh * ASPECT;
+            let inner = digits * dw * (1.0 + GAP) - dw * GAP;
+            let pad = dh * 0.35;
+            let bw = inner + pad * 2.;
+            let bh = dh + pad * 2.;
+            let bx = px + (pw - bw) / 2.;
+            let by = py + (ph - bh) / 2.;
+            out.push((
+                RectF::new(vec2f(bx, by), vec2f(bw, bh)),
+                badge.bg,
+                bh / 4.,
+            ));
+            let thick = (dh * 0.13).max(1.);
+            let mut x = bx + pad;
+            for c in text.chars() {
+                if let Some(d) = c.to_digit(10) {
+                    Self::digit_rects(d as usize, x, by + pad, dw, dh, thick, badge.fg, &mut out);
+                }
+                x += dw * (1.0 + GAP);
             }
         }
         out
@@ -1015,6 +1104,7 @@ impl Element for SplitterOverlay {
             && self.pick.is_none()
             && self.ime.is_none()
             && self.clocks.is_empty()
+            && self.numbers.is_empty()
             && self.matte.is_none()
         {
             return;
@@ -1030,6 +1120,9 @@ impl Element for SplitterOverlay {
         self.paint_matte(origin, cw, ch, ctx);
         // 블록이 맨 먼저 — 패널 **안**의 그림이라 크롬(테두리·바)이 그 위를 덮는 것이 맞다.
         self.paint_blocks(origin, cw, ch, ctx);
+        // ★ 패널 번호는 **가장 위**다(합성기에서 그랬던 자리 그대로) — 시계·달력 위에서도
+        //   번호가 보여야 그 패널로 갈 수 있다. 그래서 이 호출은 아래 시계보다 **뒤**에
+        //   있어야 하는데, 그리기 차례가 곧 층이라 여기 두면 안 된다 — 맨 끝으로 간다.
         // 시계는 **패널을 덮는** 그림이라 배지·테두리보다 **먼저** 간다 — 딤 위에
         // 얹히고, 그 위를 크롬이 덮는다(격자 글자 시계가 서던 자리와 같은 층이다).
         self.paint_clock(origin, cw, ch, ctx);
@@ -1106,6 +1199,9 @@ impl Element for SplitterOverlay {
         self.paint_pick(origin, cw, ch, ctx);
         // 커서는 **맨 위**다 — 경계·바에 가리면 그 칸에 커서가 있는지 알 수 없다.
         self.paint_cursor(origin, cw, ch, ctx);
+        // ★ 패널 번호는 **그 커서보다도 위**다(합성기에서 그랬던 자리 그대로 · pytmux-461):
+        //   시계·달력 위에서도 번호가 보여야 그 패널로 갈 수 있다.
+        self.paint_numbers(origin, cw, ch, ctx);
     }
 
     fn dispatch_event(
