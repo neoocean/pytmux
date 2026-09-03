@@ -73,6 +73,22 @@ fn the_middle_frame_is_the_median_not_the_mean() {
 }
 
 #[test]
+fn no_line_is_too_long_for_the_panel_that_never_wraps() {
+    // ⛔ 이 판은 읽는 판이라 **줄을 안 접는다** — 긴 한 줄은 판 밖에서 잘리고, 잘린
+    //    문장은 없느니만 못하다(실기 컷 2026-09-03 에서 꼬리말 두 줄이 실제로 잘렸다).
+    //    판 폭은 그리는 쪽이 정하지만 그 값은 **80 칸 언저리**이고, 여기서 재는 것은
+    //    「그 폭을 넘길 만한 줄을 짓지 않았나」다.
+    const WIDTH: usize = 76;
+    for line in some().lines() {
+        let cells: usize = line.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum();
+        assert!(
+            cells <= WIDTH,
+            "판 폭({WIDTH})을 넘는 줄이 있다({cells}칸): {line:?}"
+        );
+    }
+}
+
+#[test]
 fn the_frame_window_is_small_enough_to_stay_recent() {
     // 창이 지나치게 길면 「방금 무거워졌다」를 못 본다(이 상수의 존재 이유).
     assert!((10..=240).contains(&FRAME_WINDOW), "창 {FRAME_WINDOW} 는 값이 없다");

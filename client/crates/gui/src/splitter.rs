@@ -781,12 +781,17 @@ impl SplitterOverlay {
             if pw <= 0. || ph <= 0. {
                 continue;
             }
-            // 숫자 높이는 패널 높이의 1/3 을 넘지 않고, 폭도 1/3 안에 든다.
+            // 숫자 크기 — **칸 세 줄 높이**가 기준이다(정본의 한 칸보다 또렷하되
+            // 패널을 덮지 않는다). ⛔ 「패널 높이의 몇 분의 몇」으로 재면 큰 패널에서
+            // 배지가 화면 절반을 먹는다(실기 컷 2026-09-03 에서 실제로 그랬다) —
+            // 이 표식은 **어느 패널인가**를 말할 뿐이고 그 이상 자랄 이유가 없다.
             const ASPECT: f32 = 0.5;
             const GAP: f32 = 0.35;
-            let by_h = (ph / 3.).max(8.);
-            let by_w = (pw / 3.) / (digits * (1.0 + GAP));
-            let dh = by_h.min(by_w / ASPECT);
+            const ROWS: f32 = 3.0;
+            // 그래도 작은 패널에서는 삐져나오면 안 되니 패널 안에도 든다.
+            let by_pane_h = ph * 0.5;
+            let by_pane_w = (pw * 0.6) / (digits * (1.0 + GAP)) / ASPECT;
+            let dh = (ch * ROWS).min(by_pane_h).min(by_pane_w);
             if dh < 8. {
                 continue; // 이만큼도 안 되면 안 그린다 — 뭉갠 숫자는 없는 것만 못하다
             }

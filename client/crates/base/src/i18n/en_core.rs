@@ -612,12 +612,23 @@ pub static EN: &[(&str, &str)] = &[
     ("탭", "Tabs"),
     ("패널", "Panes"),
     ("판 깊이", "Screen depth"),
+    // ⛔ 이 판은 줄을 안 접는다(읽는 판) — **짧게** 옮긴다. 긴 한 줄은 판 밖에서 잘리고
+    //    잘린 문장은 없느니만 못하다(실기 컷 2026-09-03).
+    ("이 표는 **이 프로세스**를 잰다.", "This table measures **this process**."),
     (
-        "이 표는 **이 프로세스**를 잰다 — 정본의 같은 이름은 파이썬 클라의 힙을 재고, 항목이 1:1 이 아닌 것은 그래서다(런타임이 다르다).",
-        "This table measures **this process**. The canon command of the same name measures the Python client's heap, which is why the entries are not 1:1 (different runtimes).",
+        "정본의 같은 이름은 파이썬 클라의 힙을 잰다 — 항목이 1:1 이 아닌",
+        "The canon command of the same name measures the Python client's",
     ),
     (
-        "값이 «자라다 눕는» 모양이면 상시 세금이지 누적이 아니다. 계속 자라면 그것이 새 결함이다.",
-        "Values that grow and then flatten are a standing cost, not a leak. Values that keep growing are a new defect.",
+        "것은 그래서다(런타임이 다르다).",
+        "heap — that is why the entries are not 1:1 (different runtimes).",
+    ),
+    (
+        "값이 «자라다 눕는» 모양이면 상시 세금이지 누적이 아니다.",
+        "Values that grow and then flatten are a standing cost, not a leak.",
+    ),
+    (
+        "계속 자라면 그것이 새 결함이다.",
+        "Values that keep growing are a new defect.",
     ),
 ];
