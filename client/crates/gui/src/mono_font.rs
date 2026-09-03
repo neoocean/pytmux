@@ -212,8 +212,11 @@ mod tests {
     fn every_core_binding_parses_in_the_gui_keymap_grammar() {
         use warpui::keymap::Keystroke;
 
+        // 표 셋을 **전부** 본다(pytmux-466 으로 esc/데모가 갈렸다) — 한 표만 보면 다른
+        // 표에 새 글자가 들어올 때 그 패닉을 다시 놓친다.
         let keys = base::BINDINGS
             .iter()
+            .chain(base::BLOCK_BINDINGS)
             .map(|b| b.key)
             .chain(base::keys::SCROLL_BINDINGS.iter().map(|b| b.key));
         for key in keys {

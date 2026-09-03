@@ -259,9 +259,14 @@ pub static LEDGER: &[Row] = &[
     ),
     // ── esc 키 ────────────────────────────────────────────────────────────────
     //
-    // ⚠ 뿌리가 하나다: `base::BINDINGS` 는 **블록 목록 데모 판**(서버 링크가 없을 때 뜨는
-    //   창)의 키 표이면서 동시에 **세션 뷰 esc 모드**의 표다. 그래서 데모 판의 키가 esc
-    //   모드로 함께 샌다. 그 결과가 아래 일곱이고, `q` 만 결과가 다르다.
+    // ★ **뿌리가 갈렸다**(pytmux-466 · 449 ⑶ · 사람 결정 «표를 가른다»). 종전에는
+    //   `base::BINDINGS` 한 표가 **블록 목록 데모 판**의 키 표이면서 동시에 **세션 뷰 esc
+    //   모드**의 표라 데모 판의 키(`q`·`j`·`k`·`g`·`shift-G`·`enter`·`space`)가 esc
+    //   모드로 함께 샜다 — 그 일곱 줄이 여기 있었고 `q` 만 결과가 있었다(정본은 모드만
+    //   푸는데 우리는 창을 닫았다). 지금은 `base::BLOCK_BINDINGS` 가 그 표이고, 그 일곱이
+    //   esc 모드에서 **정본의 모르는 키와 같이 구는지**를
+    //   `mode_transition_conformance::the_demo_pane_keys_do_not_leak_into_the_session_esc_mode`
+    //   가 실제로 눌러 잰다. ⇒ 남은 줄은 셋(`[`·`b`·`ctrl-,`·`v`)뿐이다.
     r(
         Axis::EscKey,
         "[",
@@ -281,51 +286,6 @@ pub static LEDGER: &[Row] = &[
         Class::SameFeature("commands:settings"),
         "설정 화면. 기능은 정본에도 있고(팔레트 `settings`) OS 관례(Cmd/Ctrl+,)를 좇은 \
          단축키만 우리 것이다(pytmux-178)",
-    ),
-    r(
-        Axis::EscKey,
-        "enter",
-        Class::SameFeature("esc_key_modes:*"),
-        "데모 판의 「펼치기」다 — 세션 뷰에는 펼칠 목록이 없어 **아무 일도 안 하고 모드만 \
-         푼다**. 그것이 정본의 모르는 키(`*`)와 **같은 반응**이라 사용자에게 갈림이 없다",
-    ),
-    r(
-        Axis::EscKey,
-        "g",
-        Class::SameFeature("esc_keys:e_num"),
-        "첫 탭으로. 기능(번호로 탭 전환)은 정본에도 있고 글자만 하나 더 있다 — 정본은 그 \
-         자리에서 모드만 푼다(부딪히지 않는다)",
-    ),
-    r(
-        Axis::EscKey,
-        "j",
-        Class::SameFeature("esc_keys:e_num"),
-        "다음 탭으로 — `g` 와 같은 줄이다",
-    ),
-    r(
-        Axis::EscKey,
-        "k",
-        Class::SameFeature("esc_keys:e_num"),
-        "이전 탭으로 — `g` 와 같은 줄이다",
-    ),
-    r(
-        Axis::EscKey,
-        "q",
-        Class::Todo(DECIDE),
-        "**창을 닫는다**(데모 판의 나가는 키). 정본의 `esc q` 는 모드만 푼다 — 이 갈림만 \
-         결과가 있다(서버·패널은 살아 detach 와 같지만, 손버릇이 갈리면 창이 닫힌다)",
-    ),
-    r(
-        Axis::EscKey,
-        "shift-G",
-        Class::SameFeature("esc_keys:e_num"),
-        "마지막 탭으로 — `g` 와 같은 줄이다",
-    ),
-    r(
-        Axis::EscKey,
-        "space",
-        Class::SameFeature("esc_key_modes:*"),
-        "`enter` 와 같은 줄이다 — 데모 판의 「펼치기」이고 세션 뷰에서는 모드만 푼다",
     ),
     r(
         Axis::EscKey,

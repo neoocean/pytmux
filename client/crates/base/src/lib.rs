@@ -49,7 +49,7 @@ pub use options::{COMMAND_OPTIONS, CommandOptions, Choice, OptionPick, OptionSpe
 pub use plugins::{PluginCommand, PluginMenuItem, PluginSetting, PluginSurface, SettingRef,
     SettingsRow};
 pub use keymap::{
-    Action, BINDINGS, Binding, Dir, MENU, MENU_GROUPS, MENU_GROUP_LABELS,
+    Action, BINDINGS, BLOCK_BINDINGS, Binding, Dir, MENU, MENU_GROUPS, MENU_GROUP_LABELS,
     MENU_TOGGLES,
     MOUSE_GESTURES, MenuToggles, menu_toggle_mark,
     MENU_TOPLEVEL, MenuEntry, MenuRow, MenuTop, PALETTE, PALETTE_CATS, PREFIX_BINDINGS,

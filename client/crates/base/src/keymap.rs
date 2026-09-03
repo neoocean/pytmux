@@ -622,12 +622,25 @@ const fn b(key: &'static str, action: Action, show_in_help: bool) -> Binding {
     }
 }
 
-/// 전체 바인딩 표. 순서가 곧 도움말 줄의 순서다.
-pub static BINDINGS: &[Binding] = &[
-    // ── 블록 목록(이 클라의 것) ────────────────────────────────────────────
-    //
-    // `j`/`k` 만 남았다. 화살표는 **파이썬이 패널 이동에 쓴다**(아래) — 같은 키가 두
-    // 클라에서 다른 일을 하면 손버릇이 갈리고, 그건 이 트랙이 없애려는 바로 그것이다.
+/// **블록 목록 데모 판**의 키 표 — 서버 링크가 없을 때 뜨는 창([`crate::block`] ·
+/// `gui::root_view`)이 등록하는 것이고, **세션 뷰의 esc 모드는 이 표를 안 본다**.
+///
+/// # 왜 갈랐나 (pytmux-466 · 449 ⑶)
+///
+/// 종전에는 이 여덟이 아래 [`BINDINGS`] 에 섞여 있어 **데모 판의 키가 세션 esc 모드로
+/// 샜다.** 그 결과가 갈림 대장의 esc 줄 일곱이었고, 그중 `q` 만 결과가 있었다 —
+/// 정본의 `esc q` 는 모드만 푸는데 우리는 **창을 닫았다**(서버·패널은 살아 detach 와
+/// 같지만, 손버릇이 갈리면 창이 닫힌다). 사람 결정(2026-09-03)이 «표를 가른다» 였다.
+///
+/// ⛔ 두 표는 **겹치지 않는다**(`the_two_tables_do_not_overlap` 이 지킨다) — 겹치면
+/// 「어느 표를 보나」가 화면마다 달라져 갈랐던 이유가 도로 사라진다.
+///
+/// `escape` 가 여기 있고 저기 없는 이유: esc 모드에서는 [`crate::keys::interpret`] 이
+/// 표보다 **먼저** 가로채 모드만 푼다(둘째 ESC 를 패널로 안 보낸다 · 56632 불변).
+/// 그래서 저 표의 `escape` 줄은 도달 불가였다.
+pub static BLOCK_BINDINGS: &[Binding] = &[
+    // `j`/`k` 만 남았다. 화살표는 **파이썬이 패널 이동에 쓴다**(아래 esc 표) — 같은 키가
+    // 두 클라에서 다른 일을 하면 손버릇이 갈리고, 그건 이 트랙이 없애려는 바로 그것이다.
     b("j", Action::SelectNext, true),
     b("k", Action::SelectPrev, true),
     b("g", Action::SelectFirst, true),
@@ -638,6 +651,13 @@ pub static BINDINGS: &[Binding] = &[
     b("shift-G", Action::SelectLast, true),
     b("enter", Action::ToggleExpand, true),
     b("space", Action::ToggleExpand, false),
+    b("q", Action::Quit, true),
+    b("escape", Action::Quit, false),
+];
+
+/// **세션 뷰 esc(명령) 모드**의 키 표([`crate::keys::command_action`] 이 정본으로 본다).
+/// 순서가 곧 [`key_help_lines`] 의 esc 절 순서다.
+pub static BINDINGS: &[Binding] = &[
     // Claude 플랜/거부 전문. 파이썬에는 없는 화면이라 파이썬이 안 쓰는 글자로 옮겼다
     // (`p` 는 파이썬에서 **상하 분할**이다 — G1c 이전에는 우리 `p` 가 이 화면이었다).
     b("v", Action::ToggleClaudeDetail, true),
@@ -668,8 +688,6 @@ pub static BINDINGS: &[Binding] = &[
     // 열일곱에 `b` 는 없다(`client_surface.json` 의 `esc_keys`). 정본이 나중에 같은
     // 글자를 쓰게 되면 그때는 정본을 따른다(손버릇이 갈리는 쪽이 더 나쁘다).
     b("b", Action::SelectBlocks, false),
-    b("q", Action::Quit, true),
-    b("escape", Action::Quit, false),
     // 파이썬 클라의 `esc ?`(e_help)와 같은 글자다. 도움말은 **키를 외우지 않아도 되게**
     // 하는 것이라, 그 입구가 클라마다 다르면 목적을 반쯤 잃는다.
     //
@@ -1631,12 +1649,9 @@ pub fn key_help_lines(binds: &[crate::config::Bind]) -> Vec<(String, String)> {
     //
     // 전에는 여기서도 거른 뒤 빠진 것을 손으로 덧붙였는데(`Tab`·`:`·`?`), 그 목록은
     // 조용히 낡는다 — G1c 에서 esc 글자 아홉 개를 더했을 때 도움말에 하나도 안 나왔다.
+    // `escape` 를 걸러 내던 줄은 사라졌다(pytmux-466) — 그 키는 이제 **데모 판 표**에만
+    // 있고 이 표에 없다. 그때의 사정(모드 전용 규칙이 표보다 먼저다)은 그대로다.
     for b in BINDINGS {
-        // `escape` 는 표에 있지만 **모드 전용 규칙**이 먼저다(`interpret` 이 가로채
-        // 패널로 ESC 를 보낸다). 표의 라벨("종료")을 그대로 적으면 화면이 거짓말을 한다.
-        if b.key == "escape" {
-            continue;
-        }
         out.push((b.key.to_owned(), b.action.label().to_owned()));
     }
     out.push(("Shift+ESC".to_owned(), t("패널에 ESC (모드 없이)").to_owned()));
@@ -1697,8 +1712,11 @@ pub static MOUSE_GESTURES: &[(&str, &str)] = &[
 ];
 
 /// 도움말 줄. 두 뷰가 같은 문자열을 쓴다.
+///
+/// **데모 판의 것**이다(pytmux-466) — 그 창의 바닥 한 줄이고, 세션 뷰의 esc 키는
+/// 여기 안 온다(그쪽은 줄 수 제한이 없는 [`key_help_lines`] 가 전부 싣는다).
 pub fn help_line() -> String {
-    BINDINGS
+    BLOCK_BINDINGS
         .iter()
         .filter(|b| b.show_in_help)
         .map(|b| format!("{} {}", b.key, b.action.label()))
@@ -2074,6 +2092,7 @@ mod tests {
             }
             let by_key = BINDINGS
                 .iter()
+                .chain(BLOCK_BINDINGS)
                 .chain(PREFIX_BINDINGS)
                 .any(|b| same(b.action));
             let by_palette = PALETTE.iter().any(|e| same(e.action));
@@ -2138,8 +2157,10 @@ mod tests {
         //
         // 철자는 **표의 것**이다(`tab`, 대문자 `Tab` 아님) — 손으로 덧붙이던 줄을 없애고
         // 표를 그대로 싣게 바꾼 뒤로, 여기 적힌 철자가 곧 표의 철자다.
+        // ⚠ `j` 는 뺐다(pytmux-466): 그 키는 **데모 판 표**로 갔고 이 화면은 세션 뷰의
+        //    것이라, 여기 있으면 화면이 없는 키를 광고하게 된다.
         let lines = key_help_lines(&[]);
-        for key in ["%", "c", "j", "[", "tab", "?", "left", "n", "p", "e"] {
+        for key in ["%", "c", "v", "[", "tab", "?", "left", "n", "p", "e"] {
             assert!(lines.iter().any(|(k, _)| k == key), "도움말에 {key} 가 없다");
         }
     }
@@ -2198,25 +2219,44 @@ mod tests {
     #[test]
     fn no_key_is_bound_twice() {
         // 같은 키가 두 액션에 걸리면 어느 쪽이 이길지는 뷰마다 다를 수 있다.
-        let mut keys: Vec<_> = BINDINGS.iter().map(|b| b.key).collect();
-        keys.sort_unstable();
-        let before = keys.len();
-        keys.dedup();
-        assert_eq!(before, keys.len(), "중복된 키 바인딩이 있다");
+        for (label, table) in [("esc", BINDINGS), ("block", BLOCK_BINDINGS)] {
+            let mut keys: Vec<_> = table.iter().map(|b| b.key).collect();
+            keys.sort_unstable();
+            let before = keys.len();
+            keys.dedup();
+            assert_eq!(before, keys.len(), "{label} 표에 중복된 키 바인딩이 있다");
+        }
+    }
+
+    #[test]
+    fn the_two_tables_do_not_overlap() {
+        // ⛔ 갈랐던 이유가 여기 걸린다(pytmux-466): 한 키가 두 표에 있으면 「어느 표를
+        //    보나」가 화면마다 달라지고, 그러면 데모 판의 키가 다시 esc 모드로 샌다.
+        let shared: Vec<&str> = BLOCK_BINDINGS
+            .iter()
+            .map(|b| b.key)
+            .filter(|key| BINDINGS.iter().any(|b| b.key == *key))
+            .collect();
+        assert!(
+            shared.is_empty(),
+            "데모 판과 esc 모드가 같은 키를 든다: {shared:?} — 한쪽에서 지울 것"
+        );
     }
 
     #[test]
     fn each_action_shows_at_most_one_help_key() {
-        for binding in BINDINGS {
-            let shown = BINDINGS
-                .iter()
-                .filter(|b| b.action == binding.action && b.show_in_help)
-                .count();
-            assert!(
-                shown <= 1,
-                "{:?} 가 도움말에 {shown}번 나온다",
-                binding.action
-            );
+        for table in [BINDINGS, BLOCK_BINDINGS] {
+            for binding in table {
+                let shown = table
+                    .iter()
+                    .filter(|b| b.action == binding.action && b.show_in_help)
+                    .count();
+                assert!(
+                    shown <= 1,
+                    "{:?} 가 도움말에 {shown}번 나온다",
+                    binding.action
+                );
+            }
         }
     }
 

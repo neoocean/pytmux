@@ -164,6 +164,42 @@ fn the_prefix_mode_reacts_exactly_like_canon() {
     check("prefix", InputMode::Prefix, &fixture().prefix_key_modes);
 }
 
+/// 데모 판 표(`base::BLOCK_BINDINGS`)로 옮긴 키들. 정본 esc 모드에는 없는 글자라
+/// **모르는 키와 똑같이 굴어야** 한다(pytmux-466 · 449 ⑶).
+const MOVED_TO_BLOCK_TABLE: &[&str] =
+    &["q", "j", "k", "g", "G", "enter", "space"];
+
+#[test]
+fn the_demo_pane_keys_do_not_leak_into_the_session_esc_mode() {
+    // ⛔ 이 자가 없으면 그 갈림은 **아무도 안 잰다**: 아래 `check` 는 정본 픽스처에 있는
+    //    이름만 돌고(이 일곱은 정본 esc 표에 없다), 갈림 대장은 「표에 있나」만 센다.
+    //    실제로 종전에는 `esc q` 가 **창을 닫았고** 그것이 대장의 유일한 «결과 있는» 갈림
+    //    이었다. 사람 결정은 «표를 가른다» 였고, 가른 뒤에도 그 일곱이 정본의 catch-all
+    //    (`*` = 모드만 푼다)과 같이 구는지는 **눌러 봐야** 안다.
+    let fx = fixture();
+    let want = fx.esc_key_modes.get("*").expect("픽스처에 catch-all(`*`)이 없다");
+    for name in MOVED_TO_BLOCK_TABLE {
+        assert!(
+            !fx.esc_key_modes.contains_key(*name),
+            "정본 esc 모드에 `{name}` 이 생겼다 — 그러면 이 시험의 전제가 무너진다\n\
+             (그때는 위 `check` 가 재는 키다: 이 목록에서 빼고 표에 되돌릴지 정할 것)"
+        );
+        let (key, mods) = key_of(name).expect("우리 키로 못 읽는 이름");
+        let (got, outcome) = press_in_mode(InputMode::Command, key, mods);
+        assert_eq!(
+            got,
+            want_mode(InputMode::Command, &want.mode),
+            "esc `{name}`: 정본의 모르는 키와 모드가 다르다"
+        );
+        assert_eq!(sent(&outcome), None, "esc `{name}`: 패널로 바이트를 보냈다");
+        assert_eq!(
+            outcome,
+            KeyOutcome::Ignored,
+            "esc `{name}`: 아직 esc 표에 남아 액션을 낸다 — `BLOCK_BINDINGS` 로 옮길 것"
+        );
+    }
+}
+
 #[test]
 fn an_unknown_key_follows_the_canon_catch_all() {
     // ⛔ 이 한 줄이 위 표의 둘째를 잡은 자리다. 「표에 있는 키」만 재면 **표 밖**이

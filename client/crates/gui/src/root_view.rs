@@ -4,7 +4,7 @@
 //! 다른 것은 엘리먼트 타입과 색 지정뿐이고, 상태·액션·키는 전부 core 에서 온다.
 
 use base::i18n::t;
-use base::{Action, BINDINGS, Block, BlockList, BlockState, keymap};
+use base::{Action, BLOCK_BINDINGS, Block, BlockList, BlockState, keymap};
 
 use crate::{mono_font, titlebar};
 use warpui::color::ColorU;
@@ -33,12 +33,16 @@ mod palette {
 
 /// core 의 키 바인딩 표를 GUI 키맵에 등록한다.
 ///
-/// 여기서 `BINDINGS` 를 순회하는 것이 요점이다 — 키 목록을 GUI 용으로 다시 적지 않는다.
+/// 여기서 표를 순회하는 것이 요점이다 — 키 목록을 GUI 용으로 다시 적지 않는다.
+///
+/// **`BLOCK_BINDINGS` 다**(pytmux-466 · 449 ⑶): 이 창은 블록 목록 데모 판이고, 세션 뷰의
+/// esc 모드 표(`BINDINGS`)는 여기 안 온다. 종전에는 한 표라 데모 판의 키가 세션 esc
+/// 모드로 샜고 그 반대도 참이었다.
 pub fn init(ctx: &mut AppContext) {
     use warpui::keymap::macros::*;
 
     ctx.register_fixed_bindings(
-        BINDINGS
+        BLOCK_BINDINGS
             .iter()
             .map(|binding| FixedBinding::new(binding.key, DemoAction::Key(binding.action), id!("RootView"))),
     );

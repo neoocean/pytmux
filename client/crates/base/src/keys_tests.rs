@@ -124,16 +124,19 @@ fn a_second_escape_only_leaves_the_mode_and_sends_nothing() {
 #[test]
 fn command_mode_maps_keys_through_the_shared_binding_table() {
     // 표를 여기서 다시 적지 않는다 — BINDINGS 가 정본이고 그 표를 따라간다.
-    assert_eq!(
-        interpret(InputMode::Command, Key::Char('j'), Mods::NONE),
-        KeyOutcome::Action(Action::SelectNext)
-    );
-    assert_eq!(
-        interpret(InputMode::Command, Key::Char('q'), Mods::NONE),
-        KeyOutcome::Action(Action::Quit)
-    );
-    // ★ G1c 이후 화살표는 **패널 이동**이다(파이썬 esc 모드와 같다). 블록 목록은
-    // `j`/`k` 만 남았다 — 같은 키가 두 클라에서 다른 일을 하면 손버릇이 갈린다.
+    //
+    // ★ **뒤집힌 단언 둘**(pytmux-466 · 449 ⑶): `j`(SelectNext)·`q`(Quit)는 **데모 판의
+    //   키**라 `BLOCK_BINDINGS` 로 갔다. 세션 esc 모드에서 그 둘은 이제 모르는 키이고,
+    //   모르는 키는 정본과 같이 **모드만 푼다**(그 대조는
+    //   `proto/tests/mode_transition_conformance.rs` 가 정본 픽스처와 견준다).
+    for key in [Key::Char('j'), Key::Char('q')] {
+        assert_eq!(
+            interpret(InputMode::Command, key, Mods::NONE),
+            KeyOutcome::Ignored,
+            "{key:?} 가 아직 esc 표에 있다 — 데모 판 키가 세션 모드로 샌다"
+        );
+    }
+    // ★ G1c 이후 화살표는 **패널 이동**이다(파이썬 esc 모드와 같다).
     assert_eq!(
         interpret(InputMode::Command, Key::Down, Mods::NONE),
         KeyOutcome::Action(Action::SelectPane(crate::Dir::Down))
@@ -501,7 +504,9 @@ fn one_command_releases_the_mode() {
     // 명령으로 먹혀 "키가 안 먹는다"가 된다.
     let mut m = ModeState::default();
     m.press(Key::Escape, Mods::NONE);
-    assert!(matches!(m.press(Key::Char('j'), Mods::NONE), KeyOutcome::Action(_)));
+    // `n`(새 탭)을 쓰는 이유: 이 시험이 재는 것은 **액션을 낸 뒤 모드가 풀리나**이므로
+    // esc 표에 실제로 있는 키라야 한다(`j` 는 pytmux-466 으로 데모 판 표로 갔다).
+    assert!(matches!(m.press(Key::Char('n'), Mods::NONE), KeyOutcome::Action(_)));
     assert_eq!(m.mode(), InputMode::Normal);
 }
 
