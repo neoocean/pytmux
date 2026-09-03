@@ -1754,10 +1754,15 @@ impl Screens {
                 self.close_top();
                 ScreenKey::Chosen(picked)
             }
-            _ => {
+            Key::Escape => {
                 self.close_top();
                 ScreenKey::Closed
             }
+            // ★ **모르는 키는 삼킨다**(pytmux-454 · 정본 `CommandOptionsScreen.on_key` 를
+            //   AST 로 읽어 잡았다). 정본은 `escape`·`enter`·`←→` 넷만 `event.stop()` 하고
+            //   그 밖의 키는 `ListView` 로 흘러가 **판을 안 닫는다** — 우리는 여기서
+            //   닫고 있었다. pytmux-181·273 이 목록·설정 판에서 없앤 그 팔이다.
+            _ => ScreenKey::Consumed,
         }
     }
 }
@@ -2220,10 +2225,14 @@ impl Screens {
                 // `→` 가 항목 위에서 눌렸거나 표가 비었다 — 아무 일도 안 한다.
                 _ => ScreenKey::Consumed,
             },
-            _ => {
+            Key::Escape => {
                 self.close_top();
                 ScreenKey::Closed
             }
+            // ★ **모르는 키는 삼킨다**(pytmux-454). 정본 `MenuScreen.on_key` 는
+            //   `escape`·`f10` 둘만 먹고 그 밖은 흘려보낸다 — 메뉴는 층을 오르내리는
+            //   판이라, 잘못 누른 글자 하나에 사라지면 들어온 자리를 다시 찾아야 한다.
+            _ => ScreenKey::Consumed,
         }
     }
 
@@ -2597,15 +2606,31 @@ impl Screens {
                 self.selected = self.selected.saturating_sub(1);
                 ScreenKey::Consumed
             }
+            // 항해 키 둘 — 정본 `CommandListScreen.on_key` 의 `home`·`end` 팔이다
+            // (커서를 첫/마지막 줄로 옮기고 **판은 그대로 둔다**). 종전에는 아래 `_` 로
+            // 떨어져 **팔레트가 닫혔다**(pytmux-454 가 정본을 AST 로 읽어 잡았다).
+            // 끝이 몇 번째인지는 뷰가 안다 — `press_list` 와 같은 규약으로 `usize::MAX`.
+            Key::Home => {
+                self.selected = 0;
+                ScreenKey::Consumed
+            }
+            Key::End => {
+                self.selected = usize::MAX;
+                ScreenKey::Consumed
+            }
             Key::Enter => {
                 let picked = self.selected;
                 self.close_top();
                 ScreenKey::Chosen(picked)
             }
-            _ => {
+            Key::Escape => {
                 self.close_top();
                 ScreenKey::Closed
             }
+            // ★ **모르는 키는 삼킨다**(pytmux-454). 정본은 글자·`backspace`·방향키·
+            //   `home`/`end`/`enter`/`escape` 밖의 키에 아무 일도 안 한다 — 친 필터를
+            //   잃지 않는 것이 이 판의 요점이다.
+            _ => ScreenKey::Consumed,
         }
     }
 

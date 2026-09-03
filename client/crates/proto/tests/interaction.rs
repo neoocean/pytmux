@@ -16,10 +16,21 @@
 //! 그 둘의 근본 원인은 각각 [`base::Screens`] 의 `press_prompt`·`press_list` 에 있는
 //! `_ => close_top()` 한 팔이다.
 //!
-//! ⚠ **이 축은 "정본과 같다"를 증명하지 않는다.** 재는 것은 ⑴ 우리 코드가 실제로 무엇을
-//! 하나(측정)와 ⑵ 그것이 정본과 같은지에 대한 **선언**이다. 선언은 근거를 요구받지만
-//! (`Verdict::Same` 은 무엇이 그것을 쟀는지 적어야 한다) 선언이 곧 측정은 아니다 —
-//! 정본 쪽을 **기계로** 읽는 자는 아직 없고, 그 자를 만드는 것이 pytmux-33 의 일이다.
+//! ★ **2026-09-03(pytmux-454): `canon` 칸이 선언에서 측정으로 섰다.** 정본 쪽을 기계로
+//! 읽는 자가 생겼다 — [`screen_key_conformance`] 가 `clientscreens.py` 의 화면 클래스
+//! `on_key`·`BINDINGS`·`_NAV_KEYS` 를 AST 로 걸어(`scripts/gen_screen_keys.py`) 그 키를
+//! [`base::Screens`] 에 **실제로 눌러** 대조한다. 그래서 이 표의 `Same` 은 이제 대부분
+//! 「그 시험이 쟀다」를 가리키고, **못 잰 줄은 0 이다**(`UNMEASURED_CEILING` 도 0).
+//!
+//! 그 자를 세우자 **다섯이 갈려 있었고 같은 CL 에서 고쳤다** — 팔레트·인자 폼·메뉴가
+//! 제 것 아닌 키에 판을 닫았고(정본은 흘려보낸다), 팔레트의 `Home`·`End` 도 닫았다
+//! (정본은 커서를 옮긴다). pytmux-181·273 이 목록·설정 판에서 없앤 `_ => close_top()`
+//! 이 세 판에 남아 있던 것이다.
+//!
+//! ⚠ **그래도 이 축이 남는다.** 저쪽은 「정본이 이름을 적은 키」와 「표 밖의 키 하나」를
+//! 재고, 이쪽은 **화면 전수**에 대해 그 결과를 사람이 읽을 표로 세우고 갈림의 근거를
+//! 요구한다. 정본에 짝이 없는 판 넷(`ClaudeDetail`·`PluginView`·`Summary`·`Cursor`)은
+//! 저쪽이 잴 것이 없어 여기서만 판정된다.
 //!
 //! ☠ **이 표를 처음 채우면서 정본 소스를 손으로 읽어 대조했더니, 「같다」로 적으려던 여덟
 //! 줄 중 일곱이 거짓이었다**(2026-08-17 · 그 결과가 pytmux-273 이다). 갈린 자리 셋:
@@ -41,8 +52,13 @@
 //! 4. ⛔ **못 잰 줄 수는 올리지 않는다.** 지금 있는 것을 다 못 쟀다는 사실이 **새 화면을
 //!    안 재도 된다는 뜻은 아니다** — 그것이 pytmux-185 가 요청한 계약의 알맹이다.
 
+#[path = "common/open_screen.rs"]
+mod open_screen;
+
+use open_screen::opened;
+
 use base::keys::{Key, Mods};
-use base::screens::{Prompt, Screen, ScreenKey, Screens};
+use base::screens::{Screen, ScreenKey, Screens};
 
 /// 화면이 **자기 것이 아닌 키**를 만나면 무엇을 하나. 이 칸은 **측정값**이다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,23 +150,28 @@ static CONTRACTS: &[Contract] = &[
     c(
         Screen::Tabs,
         Stays,
-        Unmeasured,
-        "탭 스위처. 정본 `TabSwitcherScreen` 이 «제 것 아닌 키» 를 어떻게 하는지 안 쟀다 — \
-         `press_list` 를 지나므로 pytmux-181 수정으로 **F5 는 이제 삼킨다**(종전 Closes)",
+        Same("screen_key_conformance — 정본 `TabSwitcherScreen.on_key` 를 AST 로 읽어 \
+         (`scripts/gen_screen_keys.py`) 눌러 봤다: `escape` 만 닫고 그 밖은 흘려보낸다 \
+         (pytmux-454)"),
+        "탭 스위처. `press_list` 를 지나 **제 것 아닌 키를 삼킨다** — 정본과 같다 \
+         (종전엔 안 쟀다)",
     ),
     c(
         Screen::Tree,
         Stays,
-        Unmeasured,
-        "세션·탭·패널 개요. 정본 `ChooseTreeScreen` 쪽을 안 쟀다(같은 `press_list`, \
-         pytmux-181 수정으로 F5 는 이제 삼킨다)",
+        Same("screen_key_conformance — 정본 `ChooseTreeScreen.on_key` 를 AST 로 읽어 \
+         눌러 봤다: `escape` 만 닫고 그 밖은 흘려보낸다. `d`/`x`(그 줄 닫기)는 정본이 \
+         **조건부로** 닫아(`close_maybe`) 대조에서 뺐고, 그 사실은 그 시험의 \
+         `the_unmeasured_branches_are_named_not_hidden` 가 이름으로 드러낸다 \
+         (pytmux-454)"),
+        "세션·탭·패널 개요. 제 것 아닌 키를 삼키는 것이 정본과 같다",
     ),
     c(
         Screen::Buffers,
         Stays,
-        Unmeasured,
-        "페이스트 버퍼 목록. 정본 `ChooseBufferScreen` 쪽을 안 쟀다(같은 `press_list`, \
-         pytmux-181 수정으로 F5 는 이제 삼킨다)",
+        Same("screen_key_conformance — 정본 `ChooseBufferScreen.on_key` 를 AST 로 읽어 \
+         눌러 봤다: `escape` 만 닫고 그 밖은 흘려보낸다(pytmux-454)"),
+        "페이스트 버퍼 목록. 제 것 아닌 키를 삼키는 것이 정본과 같다",
     ),
     c(
         Screen::Prompt,
@@ -172,11 +193,16 @@ static CONTRACTS: &[Contract] = &[
     ),
     c(
         Screen::Commands,
-        Closes,
-        Defect("pytmux-175"),
-        "명령 팔레트. 닫기 자체(F5 등 진짜 제 것 아닌 키)는 이 축 밖이라 안 쟀다 — \
-         **글자를 받는 방식**은 고쳤다: 맨 앞 `:` 를 이제 버리고(pytmux-175) 한글 자모를 \
-         QWERTY 로 되돌린다(pytmux-176, 둘 다 `screens_tests.rs` 오라클 참조)",
+        Stays,
+        Same("screen_key_conformance — 정본 `CommandListScreen.on_key` 를 AST 로 읽어 \
+         눌러 봤다. **그 자를 세우자 셋이 갈려 있었고 같은 CL 에서 고쳤다**(pytmux-454): \
+         제 것 아닌 키가 판을 닫았고(정본은 흘려보낸다) `home`·`end` 도 닫았다(정본은 \
+         커서를 첫/마지막 줄로 옮긴다). `Enter` 는 정본이 도우미 안에서 조건부로 닫아 \
+         (`close_maybe`) 대조에서 뺐다"),
+        "명령 팔레트. **제 것 아닌 키가 이제 판을 안 닫고**(종전 Closes) `Home`·`End` 가 \
+         커서를 옮긴다. 글자를 받는 방식도 정본과 같다 — 맨 앞 `:` 를 버리고 \
+         (pytmux-175) 한글 자모를 QWERTY 로 되돌린다(pytmux-176, \
+         `screens_tests.rs` 오라클)",
     ),
     c(
         Screen::Version,
@@ -202,16 +228,17 @@ static CONTRACTS: &[Contract] = &[
     c(
         Screen::MergeRemote,
         Stays,
-        Unmeasured,
-        "원격 탭 합치기. `h`/`v` 는 우리 것이 맞는데(정본과 같다) 나머지 키는 안 쟀다 — \
-         `h`/`v` 밖은 `press_list` 를 지나 F5 는 이제 삼킨다(pytmux-181)",
+        Same("screen_key_conformance — 정본 `MergeRemoteTabScreen.on_key` 를 AST 로 \
+         읽어 눌러 봤다: `escape` 가 닫고 `h`/`v` 는 분할 방향만 바꾸며(판 유지) \
+         그 밖은 흘려보낸다 — 셋 다 우리와 같다(pytmux-454)"),
+        "원격 탭 합치기. `h`/`v` 도 제 것 아닌 키도 정본과 같다",
     ),
     c(
         Screen::Layouts,
         Stays,
-        Unmeasured,
-        "레이아웃 프리셋. 정본 `ChooseLayoutScreen` 쪽을 안 쟀다(같은 `press_list`, \
-         pytmux-181 수정으로 F5 는 이제 삼킨다)",
+        Same("screen_key_conformance — 정본 `ChooseLayoutScreen.on_key` 를 AST 로 읽어 \
+         눌러 봤다: `escape` 만 닫고 그 밖은 흘려보낸다(pytmux-454)"),
+        "레이아웃 프리셋. 제 것 아닌 키를 삼키는 것이 정본과 같다",
     ),
     c(
         Screen::Notices,
@@ -225,9 +252,14 @@ static CONTRACTS: &[Contract] = &[
     ),
     c(
         Screen::Menu,
-        Closes,
-        Unmeasured,
-        "F10 메뉴. `←` 로 그룹을 빠져나오는 것까지는 정본과 맞췄는데, 그 밖의 키는 안 쟀다",
+        Stays,
+        Same("screen_key_conformance — 정본 `MenuScreen.on_key` 를 AST 로 읽어 눌러 \
+         봤다: `escape`·`f10` 둘만 먹고 그 밖은 흘려보낸다. **그 자를 세우자 갈려 \
+         있었고 같은 CL 에서 고쳤다** — 우리는 제 것 아닌 키에 메뉴를 닫고 있었다 \
+         (pytmux-454)"),
+        "F10 메뉴. **제 것 아닌 키가 이제 메뉴를 안 닫는다**(종전 Closes) — 층을 \
+         오르내리는 판이라 잘못 누른 글자 하나에 들어온 자리를 잃던 자리다. `←` 로 \
+         그룹을 빠져나오는 것도 정본과 같다",
     ),
     c(
         Screen::Plugins,
@@ -253,9 +285,13 @@ static CONTRACTS: &[Contract] = &[
     ),
     c(
         Screen::Options,
-        Closes,
-        Unmeasured,
-        "인자 폼. ↑↓ 줄 · ←→ 값까지는 정본 `CommandOptionsScreen` 과 맞췄고 나머지는 안 쟀다",
+        Stays,
+        Same("screen_key_conformance — 정본 `CommandOptionsScreen.on_key` 를 AST 로 \
+         읽어 눌러 봤다: `escape`·`enter` 가 닫고 `←→` 는 값을 돌리며(판 유지) 그 밖은 \
+         흘려보낸다. **그 자를 세우자 갈려 있었고 같은 CL 에서 고쳤다** — 우리는 제 것 \
+         아닌 키에 폼을 닫고 있었다(pytmux-454)"),
+        "인자 폼. ↑↓ 줄 · ←→ 값에 더해 **제 것 아닌 키가 이제 폼을 안 닫는다** \
+         (종전 Closes)",
     ),
     c(
         Screen::Hooks,
@@ -267,7 +303,12 @@ static CONTRACTS: &[Contract] = &[
     c(
         Screen::InfoTabs,
         Closes,
-        Unmeasured,
+        Same("screen_key_conformance — 정본 `InfoTabsScreen.on_key` 를 AST 로 읽어 \
+         눌러 봤다: `escape` 가 닫고 ←→·Tab·↑↓·PgUp/PgDn·Home/End 는 판을 안 닫으며 \
+         **제 것 아닌 키는 닫는다**(꼬리의 `self.dismiss(None)`) — 전부 우리와 같다. \
+         `enter`·`space` 는 정본이 「고른 줄이 동작 단추면 돌리고 아니면 닫는다」라 \
+         조건부(`close_maybe`)여서 대조에서 뺐고, 그 판정의 자리는 우리도 뷰다 \
+         (`ScreenKey::Applied`) — pytmux-454"),
         "탭 있는 읽기 판 + 고를 수 있는 동작 줄. ←→ 는 **탭과 닫기 `[x]` 를 한 바퀴** 돌고 \
          (정본 `_sel` 의 `% (n+1)`) ↑↓ 는 **항목 커서**이며 `Enter` 는 동작 줄이면 그것을 \
          돌리고(판 유지) 아니면 닫는다 — 셋 다 정본 `InfoTabsScreen.on_key` 를 열어 맞췄다 \
@@ -339,81 +380,23 @@ static CONTRACTS: &[Contract] = &[
 /// 지금 점수. **양방향 래칫**이다 — 늘어도 줄어도 여기를 고쳐야 한다(`parity.rs` 규칙 2).
 ///
 /// `(같다, 허용된 갈림, 결함, 못 쟀다)`.
-static SCORE: (usize, usize, usize, usize) = (14, 3, 1, 8);
+static SCORE: (usize, usize, usize, usize) = (23, 3, 0, 0);
 
-/// ⛔ **이 수는 올리지 않는다**(규칙 4).
+/// ⛔ **이 수는 올리지 않는다**(규칙 4). **지금은 0 이다**(pytmux-454).
 ///
-/// 못 잰 줄이 열인 것은 이 축을 세우기 전의 빚이다. 그 빚이 **새 화면의 면허가 되면**
-/// 이 표는 아무 일도 안 한다 — 화면을 더하는 사람은 `Unmeasured` 로 적고 지나가면 되고,
-/// 그러면 pytmux-185 가 막으려던 바로 그 재생산이 표 안에서 일어난다.
+/// 못 잰 줄이 여덟이던 것은 이 축을 세우기 전의 빚이었다. 그 빚이 **새 화면의 면허가
+/// 되면** 이 표는 아무 일도 안 한다 — 화면을 더하는 사람은 `Unmeasured` 로 적고
+/// 지나가면 되고, 그러면 pytmux-185 가 막으려던 바로 그 재생산이 표 안에서 일어난다.
 ///
-/// 줄일 때는 이 수도 함께 내린다(그래야 "언제 무엇을 쟀나"가 이력에 남는다).
-const UNMEASURED_CEILING: usize = 8;
+/// 0 이 됐다는 것은 **새 화면에 「못 쟀다」로 지나가는 길이 아예 없다**는 뜻이다 —
+/// 정본에 짝이 있으면 `screen_key_conformance` 가 재고, 없으면 `Allowed(NativeOnly)`
+/// 여야 하며 그것은 `base` 의 `canon_class` 가 동의해야 한다.
+const UNMEASURED_CEILING: usize = 0;
 
 /// 재는 데 쓰는 **제 것 아닌 키**. F5 를 고른 이유는 어느 판도 F 키를 자기 것이라고
 /// 적지 않았기 때문이다(스펙이 F 키를 쓰는 플러그인 판은 뷰가 먼저 가로챈다 — 이 축은
 /// core 의 라우팅을 잰다).
 const STRAY: Key = Key::Function(5);
-
-/// 화면 하나를 **제대로** 연다.
-///
-/// `open()` 한 줄로 열리지 않는 판이 여럿이다(작성창은 버퍼가, 인자 폼은 명령이, 플러그인
-/// 판은 목록인지 글인지가 함께 서야 한다). 반쯤 선 판에 키를 먹이면 이 축이 재는 것은
-/// 제품이 아니라 **테스트가 만든 이상한 상태**가 된다.
-///
-/// ⛔ 와일드카드가 없다 — 화면이 늘면 여기가 안 컴파일된다(그때 여는 길을 적게 된다).
-fn opened(screen: Screen) -> Screens {
-    let mut screens = Screens::new();
-    match screen {
-        Screen::Tabs => {
-            // 탭 둘(둘 다 탭 줄) — 하나뿐이면 스위처가 아예 안 열린다.
-            assert!(
-                screens.open_tab_switcher(&[(true, false), (true, false)]),
-                "탭 스위처가 안 열렸다"
-            );
-        }
-        Screen::Prompt => screens.ask(Prompt::RenameTab, ""),
-        Screen::Confirm => screens.confirm(Prompt::KillPane),
-        Screen::Commands => screens.open_palette(),
-        Screen::Options => {
-            // 인자 폼이 있는 명령 하나. 표에 없는 이름이면 열리지 않으므로 확인한다.
-            assert!(
-                screens.open_options("split-window"),
-                "인자 폼이 안 열렸다 — `split-window` 가 options 표에서 빠졌나"
-            );
-        }
-        Screen::InfoTabs => screens.open_info_tabs(),
-        Screen::Compose => screens.open_compose(""),
-        // 목록형(`form`·`list`)으로 연다 — pytmux-181 이 신고한 그 판이다.
-        Screen::PluginView => screens.open_plugin_view(true),
-        Screen::Keys
-        | Screen::ClaudeDetail
-        | Screen::Tree
-        | Screen::Buffers
-        | Screen::Version
-        | Screen::ShellOutput
-        | Screen::RestartCheck
-        | Screen::Autoresume
-        | Screen::MergeRemote
-        | Screen::Layouts
-        | Screen::Notices
-        | Screen::Menu
-        | Screen::Plugins
-        | Screen::Hooks
-        | Screen::Settings
-        | Screen::Summary
-        | Screen::SearchResults
-        // 커서 판은 `open()` 한 줄이면 선다 — 줄 다섯이 정적이고(설정 표에서 온다)
-        // 견본은 그림이라 core 가 들 상태가 없다(pytmux-375).
-        | Screen::Cursor => screens.open(screen),
-    }
-    assert_eq!(
-        screens.top(),
-        Some(screen),
-        "{screen:?} 를 열었는데 맨 위가 그것이 아니다"
-    );
-    screens
-}
 
 #[test]
 fn every_screen_declares_its_interaction_contract() {

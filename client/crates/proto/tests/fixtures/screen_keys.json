@@ -1,0 +1,442 @@
+{
+  "_comment": "python3 scripts/gen_screen_keys.py 로 생성. 출처 = pytmuxlib/clientscreens.py 의 화면 클래스 on_key/BINDINGS/_NAV_KEYS. crates/proto/tests/screen_key_conformance.rs 가 이 표의 키를 base::Screens 에 실제로 눌러 대조한다(pytmux-454). 플러그인이 준 판(Tier C)은 여기 없다 — 그쪽은 스펙이 키를 정하고 plugin_screen_conformance.rs 가 잰다.",
+  "screens": {
+    "ChooseBufferScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "ChooseLayoutScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "ChooseTreeScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "d": {
+          "outcome": "close_maybe"
+        },
+        "x": {
+          "outcome": "close_maybe"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "CommandListScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "enter": {
+          "outcome": "close_maybe"
+        },
+        "left": {
+          "outcome": "consume",
+          "guard": "len(self._all_cats) > 1"
+        },
+        "right": {
+          "outcome": "consume",
+          "guard": "len(self._all_cats) > 1"
+        },
+        "home": {
+          "outcome": "consume"
+        },
+        "end": {
+          "outcome": "consume"
+        },
+        "backspace": {
+          "outcome": "consume"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [
+        "event.character and len(event.character) == 1 and event.character.isprintable()"
+      ],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "CommandOptionsScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "enter": {
+          "outcome": "close"
+        },
+        "left": {
+          "outcome": "consume",
+          "guard": "self.opts"
+        },
+        "right": {
+          "outcome": "consume",
+          "guard": "self.opts"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "ComposePromptScreen": {
+      "keys": {},
+      "nav": [],
+      "bindings": [
+        "ctrl+s"
+      ],
+      "unreadable": [],
+      "on_key": false,
+      "catch_all": null
+    },
+    "ConfirmScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "y": {
+          "outcome": "close"
+        },
+        "Y": {
+          "outcome": "close"
+        },
+        "n": {
+          "outcome": "close"
+        },
+        "N": {
+          "outcome": "close"
+        },
+        "enter": {
+          "outcome": "close"
+        },
+        "left": {
+          "outcome": "consume"
+        },
+        "right": {
+          "outcome": "consume"
+        },
+        "tab": {
+          "outcome": "consume"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "InfoScreen": {
+      "keys": {
+        "up": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "down": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "pageup": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "pagedown": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "home": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "end": {
+          "outcome": "consume",
+          "nav": true
+        }
+      },
+      "nav": [
+        "down",
+        "end",
+        "home",
+        "pagedown",
+        "pageup",
+        "up"
+      ],
+      "bindings": [],
+      "unreadable": [
+        "self._hide_key and event.key == self._hide_key and self._hide_cb"
+      ],
+      "on_key": true,
+      "head_stops": true,
+      "catch_all": "close"
+    },
+    "InfoTabsScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "left": {
+          "outcome": "consume",
+          "guard": "self._tabs"
+        },
+        "right": {
+          "outcome": "consume",
+          "guard": "self._tabs"
+        },
+        "tab": {
+          "outcome": "consume",
+          "guard": "self._tabs"
+        },
+        "shift+tab": {
+          "outcome": "consume",
+          "guard": "self._tabs"
+        },
+        "enter": {
+          "outcome": "close_maybe"
+        },
+        "space": {
+          "outcome": "close_maybe"
+        },
+        "up": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "down": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "pageup": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "pagedown": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "home": {
+          "outcome": "consume",
+          "nav": true
+        },
+        "end": {
+          "outcome": "consume",
+          "nav": true
+        }
+      },
+      "nav": [
+        "down",
+        "end",
+        "home",
+        "pagedown",
+        "pageup",
+        "up"
+      ],
+      "bindings": [],
+      "unreadable": [
+        "any((event.key == a[0] for a in self._actions.get(self._ti, [])))"
+      ],
+      "on_key": true,
+      "head_stops": true,
+      "catch_all": "close"
+    },
+    "MenuScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "f10": {
+          "outcome": "close"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "MergeRemoteTabScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "h": {
+          "outcome": "consume"
+        },
+        "v": {
+          "outcome": "consume"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "NoticeHistoryScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "c": {
+          "outcome": "consume"
+        }
+      },
+      "nav": [],
+      "bindings": [
+        "end",
+        "home",
+        "pagedown",
+        "pageup"
+      ],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "PluginManagerScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "space": {
+          "outcome": "consume"
+        },
+        "backspace": {
+          "outcome": "consume"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [
+        "event.character and len(event.character) == 1 and event.character.isprintable()"
+      ],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "PromptScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [
+        "self._purpose != 'command' and event.key == 'tab' and (self._suggester is not None)",
+        "self._purpose == 'command' and self._cand_shown and self._cand",
+        "self._purpose == 'command' and self._choices"
+      ],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "SearchResultsScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        }
+      },
+      "nav": [],
+      "bindings": [
+        "end",
+        "home",
+        "pagedown",
+        "pageup"
+      ],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "SettingsScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        },
+        "enter": {
+          "outcome": "close_maybe"
+        },
+        "left": {
+          "outcome": "consume"
+        },
+        "right": {
+          "outcome": "consume"
+        },
+        "tab": {
+          "outcome": "consume",
+          "guard": "self._cats"
+        },
+        "shift+tab": {
+          "outcome": "consume",
+          "guard": "self._cats"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "TabSwitcherScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        }
+      },
+      "nav": [],
+      "bindings": [
+        "end",
+        "home",
+        "pagedown",
+        "pageup",
+        "shift+tab",
+        "tab"
+      ],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    },
+    "_SettingInputScreen": {
+      "keys": {
+        "escape": {
+          "outcome": "close"
+        }
+      },
+      "nav": [],
+      "bindings": [],
+      "unreadable": [],
+      "on_key": true,
+      "head_stops": false,
+      "catch_all": "ignore"
+    }
+  }
+}
