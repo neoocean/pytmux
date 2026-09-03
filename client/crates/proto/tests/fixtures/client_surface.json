@@ -655,6 +655,640 @@
     "zoom",
     "옵션"
   ],
+  "client_cmd_groups": [
+    {
+      "names": [
+        "?",
+        "commands",
+        "help",
+        "list-commands"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "about",
+        "version"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "automatic-rename",
+        "setw"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "bind",
+        "bind-key",
+        "bindkey"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "break-pane",
+        "breakp"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "capture-pane",
+        "capturep"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "choose-buffer",
+        "list-buffers",
+        "lsb"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "choose-tab",
+        "choose-tree",
+        "choose-window",
+        "overview",
+        "tree"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "clear-history",
+        "clearhist"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "coalesce",
+        "coalesce-repaints"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "config",
+        "preferences",
+        "prefs",
+        "settings",
+        "옵션"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "debug-stat",
+        "debug-stats"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "detach",
+        "detach-client"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "dim-inactive",
+        "inactive-dim"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "dim-inactive-ratio",
+        "inactive-dim-ratio"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "display",
+        "display-message",
+        "displaym"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "display-popup",
+        "popup"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "exit-empty"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "full-restart",
+        "restart-all",
+        "restart-client-server"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "if",
+        "if-shell"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "join-pane",
+        "joinp"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "kill-pane",
+        "killp"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "kill-server"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "kill-tab",
+        "kill-window",
+        "killt",
+        "killw"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "lang",
+        "language"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "last",
+        "last-tab",
+        "last-window"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "layout-list",
+        "list-layouts"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "layout-load",
+        "load-tab-layout"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "layout-load-new"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "layout-save",
+        "save-tab-layout"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "list-binds",
+        "list-keys",
+        "lsk",
+        "mouse",
+        "mouse-help"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "merge-remote",
+        "merge-remote-tab",
+        "merge_remote_tab"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "monitor-activity",
+        "monitor-bell",
+        "setw"
+      ],
+      "dispatches_on_name": true
+    },
+    {
+      "names": [
+        "move-tab",
+        "move-window",
+        "movet",
+        "movew"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "move-tab-first",
+        "move-tab-last",
+        "move-tab-left",
+        "move-tab-right"
+      ],
+      "dispatches_on_name": true
+    },
+    {
+      "names": [
+        "nest-auto-attach"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "new-claude-tab",
+        "new-claude-window"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "new-tab",
+        "new-window",
+        "newt",
+        "neww"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "next",
+        "next-tab",
+        "next-window"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "next-layout",
+        "nextl"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "pane-border",
+        "single-border"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "pane-border-status",
+        "setw"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "paste-buffer",
+        "pasteb"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "paste-clipboard",
+        "paste-image",
+        "pasteb-clip"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "pin",
+        "pin-tab"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "pin",
+        "pin-tab",
+        "pin-toggle",
+        "unpin",
+        "unpin-tab"
+      ],
+      "dispatches_on_name": true
+    },
+    {
+      "names": [
+        "pipe-pane",
+        "pipep"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "plugin-manager",
+        "plugins"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "popup-close"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "prev",
+        "prev-tab",
+        "previous-tab",
+        "previous-window"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "reconnect",
+        "resync"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "redraw",
+        "refresh",
+        "refresh-client"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "remote-attach",
+        "remote_attach"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "remote-detach",
+        "remote_detach"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "remote-new-tab",
+        "remote-new-window",
+        "remote_new_tab"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "rename-pane"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "rename-tab",
+        "rename-window",
+        "renamet",
+        "renamew"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "resize-pane",
+        "resizep"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "respawn-pane",
+        "respawnp"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "restart",
+        "restart-server"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "restart-all-check",
+        "restart-check",
+        "restart-dry-run"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "restore-layout"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "rotate-window",
+        "rotatew"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "run",
+        "run-shell"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "save-layout"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "select-layout",
+        "selectl"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "select-pane",
+        "selectp"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "select-tab",
+        "select-window",
+        "selectt",
+        "selectw"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "send",
+        "send-keys"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "send-esc",
+        "send-escape"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "set",
+        "set-option"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "set-hook"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "setw",
+        "synchronize-panes",
+        "syncp"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "show",
+        "show-options"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "show-hooks"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "source",
+        "source-file"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "split-window",
+        "splitw"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "strip-box-drawing"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "swap-pane",
+        "swapp"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "swap-tab",
+        "swap-window",
+        "swapt",
+        "swapw"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "unbind",
+        "unbind-key",
+        "unbindkey"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "unpin",
+        "unpin-tab"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "vt-parser"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "win-mouse-motion"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "window-size",
+        "winsize"
+      ],
+      "dispatches_on_name": false
+    },
+    {
+      "names": [
+        "zoom"
+      ],
+      "dispatches_on_name": false
+    }
+  ],
   "scroll_keys": [
     "/",
     "G",

@@ -7768,6 +7768,7 @@ impl SessionView {
                     return (true, None);
                 };
                 if let Some(name) = picked {
+                    let name = base::resolve_command_name(&name).to_owned();
                     match base::PALETTE.iter().find(|e| e.name == name) {
                         Some(entry) => return (true, Some(entry.action)),
                         None => self

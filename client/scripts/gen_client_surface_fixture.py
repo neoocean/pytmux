@@ -24,6 +24,7 @@ HANDOFF §10 머리말이 경고하는 바로 그 패턴이고, 이 저장소도
 | `set_options` | `clientutil._SET_OPTION_NAMES` | `set` 명령이 받는 옵션 |
 | `screens` | `clientscreens` 의 `*Screen` 클래스 | 팝업·모달 화면 |
 | `client_cmds` | `clientcmd._run_command` 의 분기 | 정본이 **실제로 받는** 명령 이름(별칭 포함) |
+| `client_cmd_groups` | 같은 분기를 **묶음째** | 어느 이름들이 한 갈래인가 + 그 갈래가 이름으로 다시 가르나 |
 | `scroll_keys` | `clientio._handle_scroll_key` 의 분기 | 정본 스크롤 모드가 **실제로 받는** 키 |
 | `esc_key_modes` | `clientio._handle_esc_mode` 의 분기 | esc 모드에서 그 키를 누르면 **모드가 어떻게 되나** |
 | `prefix_key_modes` | `clientio._handle_prefix` 의 분기 | prefix 모드의 같은 것 |
@@ -114,6 +115,67 @@ def _branch_names(root, relpath, func, names):
         sys.exit(f"{path} 의 {func} 에서 분기 이름을 하나도 못 찾았다 — 뽑는 방법이 틀렸다")
     return sorted(found)
 
+
+
+def _branch_groups(root, relpath, func, names):
+    """같은 분기에 묶인 이름들을 **묶음째** 뽑는다 — 별칭 표의 재료(pytmux-470).
+
+    # ⛔ 묶음은 별칭 관계가 **아니다**
+
+    이슈가 처음 적은 처방은 *"그 묶음을 그대로 뽑으면 된다"* 였는데 실측이 그것을
+    뒤집었다. 정본에는 이런 갈래가 있다:
+
+        c in ("pin-tab", "pin", "unpin-tab", "unpin", "pin-toggle")
+
+    그대로 접으면 **`unpin` 이 pin 을 한다.** 몸통이 `c` 를 다시 보고 이름마다 다른 일을
+    하기 때문이다. 그래서 묶음마다 **`dispatches_on_name`** 을 함께 적는다:
+
+        그 `if` 의 몸통이 `c` 를 다시 안 보면 → 이름들은 진짜 동의어(접어도 된다)
+        다시 보면                            → 이름으로 가르는 갈래(접으면 안 된다)
+
+    실측(2026-09-04 · 90갈래 · 이름 195): 진짜 별칭 69갈래(176이름) · 가르는 갈래 3(12이름).
+
+    ⚠ **누가 어느 이름의 별칭인가는 여기서 안 정한다.** 「팔레트 이름」을 아는 것은
+    소비자(Rust `base::PALETTE`)이고, 이 생성기는 정본만 읽는다 — 그 경계를 넘으면
+    픽스처가 우리 쪽 표를 알게 된다.
+    """
+    path = os.path.join(root, *relpath)
+    with open(path, encoding="utf-8") as fp:
+        tree = ast.parse(fp.read(), filename=path)
+    fns = [n for n in ast.walk(tree)
+           if isinstance(n, ast.FunctionDef) and n.name == func]
+    if not fns:
+        sys.exit(f"{path} 에 {func} 가 없다")
+    out = []
+    for node in ast.walk(fns[0]):
+        if not isinstance(node, ast.If):
+            continue
+        found = []
+        for sub in ast.walk(node.test):
+            if not (isinstance(sub, ast.Compare)
+                    and isinstance(sub.left, ast.Name) and sub.left.id in names):
+                continue
+            for op, comp in zip(sub.ops, sub.comparators):
+                if isinstance(op, ast.Eq) and isinstance(comp, ast.Constant):
+                    if isinstance(comp.value, str):
+                        found.append(comp.value)
+                elif isinstance(op, ast.In) and isinstance(
+                    comp, (ast.Tuple, ast.List, ast.Set)
+                ):
+                    for elt in comp.elts:
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                            found.append(elt.value)
+        if not found:
+            continue
+        dispatches = any(
+            isinstance(sub, ast.Name) and sub.id in names
+            for st in node.body for sub in ast.walk(st)
+        )
+        out.append({"names": sorted(set(found)),
+                    "dispatches_on_name": bool(dispatches)})
+    if not out:
+        sys.exit(f"{path} 의 {func} 에서 갈래를 하나도 못 찾았다 — 뽑는 방법이 틀렸다")
+    return sorted(out, key=lambda g: g["names"])
 
 
 def _mode_effects(root, relpath, func, names, exits):
@@ -301,6 +363,11 @@ def main():
         "client_cmds": _branch_names(
             root, ("pytmuxlib", "clientcmd.py"), "_run_command", {"c"}
         ),
+        # 위와 **같은 분기**를 묶음째. 별칭 표(`base::command_alias`)가 이것으로 선다 —
+        # 그리고 `dispatches_on_name` 갈래는 **접으면 뜻이 바뀐다**(머리말 참조).
+        "client_cmd_groups": _branch_groups(
+            root, ("pytmuxlib", "clientcmd.py"), "_run_command", {"c"}
+        ),
         # 스크롤 모드도 같은 모양이다 — 정본은 키 표를 안 들고 `if/elif` 로 가른다.
         "scroll_keys": _branch_names(
             root, ("pytmuxlib", "clientio.py"), "_handle_scroll_key", {"k", "ch"}
@@ -321,7 +388,7 @@ def main():
 
     for key in ("commands", "command_help_en", "prefix_keys", "esc_keys",
                 "menu_items", "mouse_gestures", "settings", "set_options",
-                "screens", "client_cmds", "scroll_keys",
+                "screens", "client_cmds", "client_cmd_groups", "scroll_keys",
                 "esc_key_modes", "prefix_key_modes"):
         if not payload[key]:
             sys.exit(f"'{key}' 가 비었다 — 카탈로그 이름이 바뀌었을 것이다")

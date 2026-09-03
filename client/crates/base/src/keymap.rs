@@ -622,6 +622,141 @@ const fn b(key: &'static str, action: Action, show_in_help: bool) -> Binding {
     }
 }
 
+/// 정본이 **같은 뜻으로 받는 다른 이름** → 팔레트 이름(pytmux-470).
+///
+/// # 왜 필요한가
+///
+/// 정본은 명령을 표로 안 들고 `if/elif` 로 가르므로 이름을 여럿 받는 것이 공짜였다 —
+/// `kill-pane` 도 `killp` 도, `new-window` 도 `neww` 도 같은 갈래다(tmux 손버릇). 우리는
+/// [`PALETTE`] 의 **이름 그대로**만 해석해, 정본이 받는 195 중 92 만 받았다.
+///
+/// ⛔ **팔레트 «표시» 목록은 안 늘어난다.** 별칭이 목록에 뜨면 두 클라의 목록이 갈린다 —
+/// 여기 있는 것은 「쳤을 때 알아듣는 이름」이지 「보여 주는 이름」이 아니다.
+///
+/// # 이 표는 손으로 적되 **조용히 낡을 수 없다**
+///
+/// 정본 분기를 묶음째 뽑은 픽스처(`client_cmd_groups`)에서 기대값을 만들어
+/// `proto/tests/command_alias_conformance.rs` 가 **전수 대조**한다. 정본이 이름을 하나
+/// 늘리면 그 시험이 울고 **무엇을 더할지 글자 그대로 찍는다.**
+///
+/// ☠ **갈래를 그대로 접으면 안 된다.** 정본에는 이런 줄이 있다:
+///
+/// ```text
+/// c in ("pin-tab", "pin", "unpin-tab", "unpin", "pin-toggle")
+/// ```
+///
+/// 몸통이 이름을 **다시 보고** 서로 다른 일을 한다 — 접으면 `unpin` 이 pin 을 한다.
+/// 그래서 픽스처가 갈래마다 `dispatches_on_name` 을 함께 싣고, 그런 갈래는 **여기 없다**.
+pub static COMMAND_ALIASES: &[(&str, &str)] = &[
+    ("?", "commands"),
+    ("about", "version"),
+    ("bind", "bind-key"),
+    ("bindkey", "bind-key"),
+    ("breakp", "break-pane"),
+    ("capturep", "capture-pane"),
+    ("choose-tab", "choose-tree"),
+    ("choose-window", "choose-tree"),
+    ("clearhist", "clear-history"),
+    ("coalesce", "coalesce-repaints"),
+    ("config", "settings"),
+    ("debug-stat", "debug-stats"),
+    ("detach", "detach-client"),
+    ("dim-inactive", "inactive-dim"),
+    ("dim-inactive-ratio", "inactive-dim-ratio"),
+    ("display", "display-message"),
+    ("displaym", "display-message"),
+    ("full-restart", "restart-all"),
+    ("if", "if-shell"),
+    ("joinp", "join-pane"),
+    ("kill-window", "kill-tab"),
+    ("killp", "kill-pane"),
+    ("killt", "kill-tab"),
+    ("killw", "kill-tab"),
+    ("language", "lang"),
+    ("last", "last-tab"),
+    ("last-window", "last-tab"),
+    ("list-binds", "list-keys"),
+    ("list-buffers", "choose-buffer"),
+    ("load-tab-layout", "layout-load"),
+    ("lsb", "choose-buffer"),
+    ("lsk", "list-keys"),
+    ("merge-remote", "merge-remote-tab"),
+    ("merge_remote_tab", "merge-remote-tab"),
+    ("mouse", "list-keys"),
+    ("move-window", "move-tab"),
+    ("movet", "move-tab"),
+    ("movew", "move-tab"),
+    ("new-claude-window", "new-claude-tab"),
+    ("new-window", "new-tab"),
+    ("newt", "new-tab"),
+    ("neww", "new-tab"),
+    ("next", "next-tab"),
+    ("next-window", "next-tab"),
+    ("nextl", "next-layout"),
+    ("overview", "choose-tree"),
+    ("pane-border", "single-border"),
+    ("paste-image", "paste-clipboard"),
+    ("pasteb", "paste-buffer"),
+    ("pasteb-clip", "paste-clipboard"),
+    ("pipep", "pipe-pane"),
+    ("popup", "display-popup"),
+    ("preferences", "settings"),
+    ("prefs", "settings"),
+    ("prev", "previous-tab"),
+    ("prev-tab", "previous-tab"),
+    ("previous-window", "previous-tab"),
+    ("refresh", "redraw"),
+    ("refresh-client", "redraw"),
+    ("remote-new-window", "remote-new-tab"),
+    ("remote_attach", "remote-attach"),
+    ("remote_detach", "remote-detach"),
+    ("remote_new_tab", "remote-new-tab"),
+    ("rename-window", "rename-tab"),
+    ("renamet", "rename-tab"),
+    ("renamew", "rename-tab"),
+    ("resizep", "resize-pane"),
+    ("respawnp", "respawn-pane"),
+    ("restart", "restart-server"),
+    ("restart-all-check", "restart-check"),
+    ("restart-client-server", "restart-all"),
+    ("restart-dry-run", "restart-check"),
+    ("rotatew", "rotate-window"),
+    ("run", "run-shell"),
+    ("save-tab-layout", "layout-save"),
+    ("select-window", "select-tab"),
+    ("selectl", "select-layout"),
+    ("selectp", "select-pane"),
+    ("selectt", "select-tab"),
+    ("selectw", "select-tab"),
+    ("send", "send-keys"),
+    ("send-esc", "send-escape"),
+    ("set-option", "set"),
+    ("show", "show-options"),
+    ("source", "source-file"),
+    ("splitw", "split-window"),
+    ("swap-window", "swap-tab"),
+    ("swapp", "swap-pane"),
+    ("swapt", "swap-tab"),
+    ("swapw", "swap-tab"),
+    ("syncp", "synchronize-panes"),
+    ("tree", "choose-tree"),
+    ("unbind", "unbind-key"),
+    ("unbindkey", "unbind-key"),
+    ("winsize", "window-size"),
+    ("옵션", "settings"),
+];
+
+/// 사용자가 친 이름을 [`PALETTE`] 의 이름으로 옮긴다 — 별칭이 아니면 그대로.
+///
+/// 이름 해석이 지나는 자리는 **여기 하나**다. 뷰가 각자 표를 보면 클라마다 받는 이름이
+/// 갈리고, 그것이 이 표가 없애려는 바로 그 갈림이다.
+pub fn resolve_command_name(name: &str) -> &str {
+    COMMAND_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map_or(name, |(_, canonical)| *canonical)
+}
+
 /// **블록 목록 데모 판**의 키 표 — 서버 링크가 없을 때 뜨는 창([`crate::block`] ·
 /// `gui::root_view`)이 등록하는 것이고, **세션 뷰의 esc 모드는 이 표를 안 본다**.
 ///
@@ -1487,6 +1622,11 @@ pub fn palette_matches_with<'a>(
     desc: impl Fn(&'a str) -> Option<&'a str>,
 ) -> Vec<usize> {
     let raw = filter.trim().to_lowercase();
+    // ★ 친 것이 **정본의 별칭**이면 그 팔레트 이름을 친 것으로 본다(pytmux-470).
+    //   `killp`·`neww` 처럼 tmux 손버릇이 굳은 이름을 쳤을 때 목록이 비면, 그 사람에게
+    //   이 팔레트는 「그 명령이 없는 것」이다. ⛔ **목록 자체는 안 늘어난다** — 별칭은
+    //   찾는 길이지 보여 주는 이름이 아니다(정본 목록과 갈리면 안 된다).
+    let raw = resolve_command_name(&raw).to_lowercase();
     let needle = norm_sep(&raw);
     let mut hits: Vec<(u8, usize)> = PALETTE
         .iter()

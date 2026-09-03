@@ -49,7 +49,8 @@ pub use options::{COMMAND_OPTIONS, CommandOptions, Choice, OptionPick, OptionSpe
 pub use plugins::{PluginCommand, PluginMenuItem, PluginSetting, PluginSurface, SettingRef,
     SettingsRow};
 pub use keymap::{
-    Action, BINDINGS, BLOCK_BINDINGS, Binding, Dir, MENU, MENU_GROUPS, MENU_GROUP_LABELS,
+    Action, BINDINGS, BLOCK_BINDINGS, Binding, COMMAND_ALIASES, Dir, MENU, MENU_GROUPS,
+    MENU_GROUP_LABELS,
     MENU_TOGGLES,
     MOUSE_GESTURES, MenuToggles, menu_toggle_mark,
     MENU_TOPLEVEL, MenuEntry, MenuRow, MenuTop, PALETTE, PALETTE_CATS, PREFIX_BINDINGS,
@@ -57,6 +58,7 @@ pub use keymap::{
     menu_group_label, menu_is_toggle, menu_rows, palette_cat_label, palette_matches,
     palette_matches_in, palette_matches_with, palette_tab_cat, palette_tab_counts,
     palette_tab_counts_with, palette_tab_labels,
+    resolve_command_name,
     palette_tab_with_results,
 };
 pub use screens::{PanelTarget, Prompt, Screen, ScreenKey, Screens, TabFacts};

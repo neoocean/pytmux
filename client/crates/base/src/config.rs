@@ -1954,9 +1954,12 @@ impl Bind {
 
     /// 이 바인딩이 걸린 액션. 팔레트에 없는 명령이면 `None`.
     pub fn action(&self) -> Option<Action> {
+        // 정본이 받는 별칭(`bind-key X killp`)도 받는다(pytmux-470) — 설정 파일은 사람이
+        // 손으로 쓰는 자리라 tmux 이름이 그대로 들어오는 것이 오히려 보통이다.
+        let name = crate::resolve_command_name(&self.command);
         crate::PALETTE
             .iter()
-            .find(|e| e.name == self.command)
+            .find(|e| e.name == name)
             .map(|e| e.action)
     }
 }
