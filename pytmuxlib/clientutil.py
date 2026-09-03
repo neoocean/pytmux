@@ -1076,6 +1076,9 @@ COMMANDS = [
     # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
     # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
     ("version", "클라/서버 버전(p4 CL)·업타임 팝업(별칭 about)", "설정/기타"),
+    ("debug-stats", "클라 런타임 계측 팝업 — 산 객체·GC 세대·판 깊이·Timer 수"
+     "(-c 면 전체 수거까지 재고 그만큼 멎는다). pytmux-382 「수 일 두면 느려진다」"
+     "를 그 자리에서 재는 자", "설정/기타"),
     ("lang", "UI 언어 전환 (lang ko|en) — 한국어/영어", "설정/기타"),
     ("run-shell", "셸 명령 실행", "설정/기타"),
     ("if-shell", "조건부 셸 실행", "설정/기타"),
@@ -1594,6 +1597,10 @@ i18n.register({
         "cmd.display-message": "Show message in status bar",
         "cmd.display-popup": "Show command output in a popup",
         "cmd.single-border": "Show border when only one pane on/off (single-border on|off|toggle)",
+        "cmd.debug-stats": "Client runtime diagnostics popup — live objects · GC "
+                           "generations · screen depth · timer count (-c also runs a "
+                           "full collection and pauses that long). The measuring stick "
+                           "for pytmux-382 \u300cslows down after days\u300d",
         "cmd.coalesce-repaints": "Coalesce alt-screen full repaints on heavy output on/off — ssh responsiveness (coalesce-repaints on|off|toggle)",
         "cmd.nest-auto-attach": "Auto-promote remote pytmux run to remote-attach instead of rejecting on/off (nest-auto-attach on|off|toggle)",
         "cmd.exit-empty": "Exit server when session count hits 0 on/off — tmux exit-empty equivalent, off=stay resident for remote federation links (exit-empty on|off|toggle)",

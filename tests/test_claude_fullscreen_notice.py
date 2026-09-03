@@ -144,10 +144,21 @@ def _srv_seeing(*records):
     return read
 
 
+def _seeing(*records, version=None):
+    """`harness.patched(sm.fullscreen, **_seeing(...))` 용 묶음.
+
+    ⚠ `installed_version` 도 **함께** 고정한다 — 안 그러면 이 시험들이 그 상자에
+    실제로 깔린 claude 판을 읽어, 가짜 판을 쓴 기록이 「판이 다르다」로 접혀
+    (pytmux-415 ⓑ) 조용해진다. 기본값 None = 「판을 모른다」라 종전 행동
+    (=말한다)과 같고, 판 견주기 자체를 재는 시험은 아래에 따로 있다."""
+    return {"read_auto_disabled": _srv_seeing(*records),
+            "installed_version": lambda *a, **k: version}
+
+
 def test_notice_is_emitted():
     srv = _Srv()
     rec = {"version": "2.1.250", "at_ms": 1787896926320, "strikes": 2}
-    with harness.patched(sm.fullscreen, read_auto_disabled=_srv_seeing(rec)):
+    with harness.patched(sm.fullscreen, **_seeing(rec)):
         srv._notice_fullscreen_off()
     assert [m["key"] for m in srv.sent] == ["ccmsg.fullscreen_off"]
     kw = srv.sent[0]["kw"]
@@ -160,7 +171,7 @@ def test_notice_is_emitted():
 
 def test_a_healthy_machine_says_nothing():
     srv = _Srv()
-    with harness.patched(sm.fullscreen, read_auto_disabled=_srv_seeing()):
+    with harness.patched(sm.fullscreen, **_seeing()):
         srv._notice_fullscreen_off()
     assert srv.sent == []
 
@@ -170,7 +181,7 @@ def test_says_it_once():
     srv = _Srv()
     rec = {"version": "2.1.250", "at_ms": 111, "strikes": 2}
     with harness.patched(sm.fullscreen,
-                         read_auto_disabled=_srv_seeing(rec, rec, rec)):
+                         **_seeing(rec, rec, rec)):
         for _ in range(3):
             srv._notice_fullscreen_off()
     assert len(srv.sent) == 1
@@ -180,7 +191,7 @@ def test_a_new_trip_speaks_again():
     srv = _Srv()
     a = {"version": "2.1.250", "at_ms": 111, "strikes": 2}
     b = {"version": "2.1.251", "at_ms": 222, "strikes": 2}
-    with harness.patched(sm.fullscreen, read_auto_disabled=_srv_seeing(a, b)):
+    with harness.patched(sm.fullscreen, **_seeing(a, b)):
         srv._notice_fullscreen_off()
         srv._notice_fullscreen_off()
     assert [m["kw"]["ver"] for m in srv.sent] == ["2.1.250", "2.1.251"]
@@ -197,7 +208,7 @@ def test_a_blink_does_not_repeat_the_same_trip():
     srv = _Srv()
     rec = {"version": "2.1.250", "at_ms": 111, "strikes": 2}
     with harness.patched(sm.fullscreen,
-                         read_auto_disabled=_srv_seeing(rec, None, dict(rec))):
+                         **_seeing(rec, None, dict(rec))):
         srv._notice_fullscreen_off()
         srv._notice_fullscreen_off()      # 못 읽었다 — 조용
         srv._notice_fullscreen_off()      # 같은 트립이 도로 보인다 — 다시 말하지 않는다
@@ -268,3 +279,77 @@ def test_a_continuing_session_does_not_ask():
     srv._scan_session_boundary(_Frame(new_cl="claude", old_cl="claude"), pane)
     srv._scan_session_boundary(_Frame(new_cl=None, old_cl="claude"), pane)
     assert srv.asked == 0
+
+
+# ---- ⓑ 판 견주기 — 「판이 다른 기록」은 없는 경보다 (pytmux-415) ----
+
+def test_a_record_for_another_version_is_not_in_effect():
+    """정본 한 줄: `if(K && K.version !== T.version) K = void 0;`(2.1.259 이진).
+
+    claude 를 새 판으로 올리면 옛 기록은 **claude 가 없는 셈 친다** — fullscreen 은
+    멀쩡히 돈다. 그 기록을 보고 「꺼져 있다」라고 말하면 사용자는 안 꺼진 것을
+    되살리려 `/tui fullscreen` 을 친다."""
+    rec = {"version": "2.1.252", "at_ms": 1, "strikes": 2}
+    assert fs.auto_disabled_is_effective(rec, "2.1.259") is False
+    assert fs.auto_disabled_is_effective(rec, "2.1.252") is True
+
+
+def test_when_the_installed_version_is_unknown_we_still_speak():
+    """⛔ **거짓 침묵이 거짓 경보보다 나쁘다.**
+
+    설치 방식을 못 알아본 상자(npm·개발 트리·래퍼)에서 조용해지면 이 알림이 있는
+    이유가 통째로 사라진다 — 제보자는 「기능이 없어졌다」로만 겪었고 그 사이 stderr
+    알림은 한 번 뜨고 사라졌다. 판을 **적극적으로 다르게 읽었을 때만** 접는다."""
+    rec = {"version": "2.1.252", "at_ms": 1, "strikes": 2}
+    assert fs.auto_disabled_is_effective(rec, None) is True
+    assert fs.auto_disabled_is_effective(rec, "") is True
+
+
+def test_installed_version_reads_the_native_installer_symlink():
+    """네이티브 설치기 자리 규약: `…/bin/claude` → `…/versions/<판>`."""
+    assert fs.installed_version(
+        which=lambda n: "/home/u/.local/bin/claude",
+        realpath=lambda p: "/home/u/.local/share/claude/versions/2.1.259",
+    ) == "2.1.259"
+
+
+def test_installed_version_refuses_to_guess():
+    """⛔ 그 모양이 아니면 **모른다**(None) — 아무 basename 이나 판으로 읽지 않는다.
+
+    래퍼 스크립트(`/usr/local/bin/claude` 가 그냥 파일)나 npm 설치
+    (`…/node_modules/.bin/claude`)에서 basename 을 판이라고 우기면, 그 값이
+    기록의 판과 **절대 안 맞아** 알림이 영영 조용해진다."""
+    for target in ("/usr/local/bin/claude", "/x/node_modules/.bin/claude",
+                   "/x/versions/nightly", "/x/versions/2.1"):
+        assert fs.installed_version(
+            which=lambda n: "/usr/local/bin/claude",
+            realpath=lambda p, t=target: t) is None, target
+    # PATH 에 아예 없으면 None
+    assert fs.installed_version(which=lambda n: None) is None
+
+
+def test_notice_is_silent_for_a_stale_version_record():
+    """호출부까지 잰다 — 헬퍼만 재면 **그것을 부르는 줄을 지워도** 통과한다."""
+    srv = _Srv()
+    rec = {"version": "2.1.252", "at_ms": 111, "strikes": 2}
+    with harness.patched(sm.fullscreen, **_seeing(rec, version="2.1.259")):
+        srv._notice_fullscreen_off()
+    assert srv.sent == [], srv.sent
+
+
+def test_notice_speaks_for_a_record_of_the_running_version():
+    """대조군 — 판이 같으면 종전대로 말한다(위 시험이 「늘 조용하다」로 통과하지 않게)."""
+    srv = _Srv()
+    rec = {"version": "2.1.259", "at_ms": 111, "strikes": 3}
+    with harness.patched(sm.fullscreen, **_seeing(rec, version="2.1.259")):
+        srv._notice_fullscreen_off()
+    assert [m["key"] for m in srv.sent] == ["ccmsg.fullscreen_off"], srv.sent
+    # ☠ strikes 는 «임계»가 아니라 그 회차의 누적이다 — 3 이 그대로 실린다.
+    assert srv.sent[0]["kw"]["strikes"] == 3
+
+
+def test_the_threshold_constant_is_the_one_the_binary_uses():
+    """이진 상수 `yh = 2`(2.1.259 에서 직접 읽음 · 옛 이름 `vp`).
+
+    ⚠ 이 값이 바뀌면 우리 주석의 산수가 낡는다 — 그때 이 시험이 운다."""
+    assert fs.STRIKE_THRESHOLD == 2

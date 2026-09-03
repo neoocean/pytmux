@@ -926,6 +926,15 @@ class _CommandMixin:
                     self.hooks[opts[0]] = " ".join(opts[1:])
         elif c in ("display-message", "display", "displaym"):
             self.display_message(" ".join(args) if args else "")
+        elif c in ("debug-stats", "debug-stat"):
+            # pytmux-382 §8-⑤ — 「수 일 두면 점점 느려진다」를 **그 자리에서** 재는
+            # 한 줄. ⛔ 기본은 `gc.collect()` 를 **안 부른다**(전체 수거가 앱을
+            # 수십 ms 멎게 해, 진단이 재려던 증상을 자기가 만든다) — `-c` 로 명시.
+            from . import clientdiag
+            self.push_screen(InfoScreen(
+                clientdiag.render(clientdiag.collect_stats(
+                    self, collect=("-c" in args or "--collect" in args))),
+                title="debug-stats"))
         elif c == "show-hooks":
             self.push_screen(InfoScreen(
                 [f"{k} → {v}" for k, v in self.hooks.items()], title="hooks"))

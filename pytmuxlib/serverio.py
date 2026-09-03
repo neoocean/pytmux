@@ -1264,6 +1264,12 @@ class ServerIOMixin:
                         "remote-attach {target}: 원격 탭 병합됨",
                         severity="ok", target=target)
                 else:
+                    # pytmux-453: 이 알림은 sticky(수동 닫기)다 — 뒤늦게 status 가
+                    # 와서 탭이 생겨도 종전엔 이 경고가 그대로 남아 «탭은 있는데
+                    # 무응답» 으로 굳었다. 표식을 세워 두면 _remote_reader 가 첫
+                    # status 를 받는 그 자리에서 「늦게 병합됨」을 말한다.
+                    if link is not None:
+                        link.silent_notified = True
                     note = self._notice_msg("rnotice.attach_silent",
                         "remote-attach {target}: 연결됐지만 원격이 응답 없음 — "
                         "원격 서버 점검", sticky=True, severity="warn",

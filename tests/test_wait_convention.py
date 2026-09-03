@@ -41,7 +41,12 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
 # 2026-08-24: sleep 85→84. 코드를 지운 것이 아니라 **세는 법을 고쳤다** — 산문에 백틱으로
 # 인용된 `await asyncio.sleep(0)` 두 줄이 부채로 잡혀 있었다(`_code` 문서). 래칫은 실측을
 # 따라 같은 CL 에서 내린다(안 내리면 다음 사람이 그만큼 다시 늘릴 수 있다).
-TOTALS = {"pause": 249, "sleep": 84, "silent_skip": 17}
+# 2026-09-03: sleep 84→86. **이주가 아니라 자극이다**(pytmux-453) — `test_remote` 의
+# 가짜 «느린 상류» 가 첫-status 예산을 넘겨야 재려는 것(늦게 온 status 를 말하나)이
+# 성립한다. 그 0.4초는 조건을 기다리는 대기가 아니라 **재는 대상 그 자체**라 폴링으로
+# 옮길 수 없다(옮기면 그 시험이 아무것도 안 잰다). 나머지 한 줄은 그 가짜 서버가
+# EOF 까지 연결을 붙들고 있는 루프로, 옆의 `_mute` 상류가 쓰는 것과 같은 모양이다.
+TOTALS = {"pause": 249, "sleep": 86, "silent_skip": 17}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
@@ -84,7 +89,10 @@ CEILINGS = {
     "test_ptyhostclient": [0, 4, 0],
     "test_pytmux_home": [0, 0, 3],
     "test_redteam": [0, 0, 2],
-    "test_remote": [1, 5, 0],
+    # 2026-09-03(pytmux-453): sleep 5→7 — 위 TOTALS 주석의 그 둘(가짜 «느린 상류»의
+    # 자극 0.4초 + EOF 까지 붙드는 루프). 조용한 플랫폼 return 은 늘지 않았다:
+    # 새 시험 셋은 처음부터 `from run import skip` 을 쓴다.
+    "test_remote": [1, 7, 0],
     "test_restart": [7, 8, 0],
     "test_robustness": [0, 8, 0],
     "test_security_nest_redteam": [0, 1, 2],

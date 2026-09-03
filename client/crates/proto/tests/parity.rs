@@ -98,7 +98,12 @@ static COMMANDS: &[Item] = &[
     i(
         "commands",
         Done,
-        "팔레트(87/88 + 파이썬 설명·타이핑 필터) — monitor-bell 만 밖(§10-21ⓜ 로 화면에서 감춘 것이지 못 하는 것이 아니다). paste-clipboard 는 2026-08-23 에 들어왔다(pytmux-363)",
+        "팔레트(87/89 + 파이썬 설명·타이핑 필터) — 밖에 있는 것은 둘뿐이다: monitor-bell(§10-21ⓜ 로 화면에서 감춘 것이지 못 하는 것이 아니다) · debug-stats(파이썬 힙을 재는 명령이라 GUI 에는 잴 것이 없다 · pytmux-382). paste-clipboard 는 2026-08-23 에 들어왔다(pytmux-363)",
+    ),
+    i(
+        "debug-stats",
+        Missing,
+        "파이썬 클라 런타임 계측(pytmux-382 §8-⑤) — GUI 는 제 런타임을 재는 짝이 아직 없다",
     ),
     i("detach-client", Done, "prefix d — 창을 닫는다"),
     i("display-message", Done, "팔레트 → 알림 이력에 남는다"),
@@ -432,7 +437,19 @@ static SCORE: &[(&str, usize, usize)] = &[
 ///   아니면 넣지 않는다.
 #[test]
 fn every_python_command_is_in_the_palette() {
-    const NOT_IN_PALETTE: &[&str] = &["monitor-bell"];
+    const NOT_IN_PALETTE: &[&str] = &[
+        "monitor-bell",
+        // pytmux-382 §8-⑤. ⛔ **뷰별 능력이라 면제한다** — 위 ★ 가 못박은 그 조건이다.
+        // 이 명령이 내는 표는 **파이썬 클라 프로세스의 것**이다(`gc.get_objects()` 로
+        // 센 산 객체 · CPython 세대별 수거 횟수 · Textual `Timer`·`Strip`·`FIFOCache`
+        // 그래프). GUI 에는 그 힙이 아예 없으므로 같은 이름의 팔레트 항목을 실으면
+        // **누르면 아무것도 못 재는 입구**가 된다.
+        // ⇒ 그래서 아래 COMMANDS 표에는 **Missing 으로** 올려 둔다(면제와 분류는 다른
+        //   일이다 — 면제는 "팔레트에 없어도 된다"이고 분류는 "GUI 에 아직 없다"이다).
+        // ★ GUI 가 **제 런타임을 재는** 같은 화면을 갖게 되면 그때 이 줄을 지우고
+        //   COMMANDS 를 Done 으로 옮긴다.
+        "debug-stats",
+    ];
     let have: BTreeSet<&str> = base::PALETTE
         .iter()
         .flat_map(|e| [e.name, e.name.split(' ').next().unwrap_or(e.name)])

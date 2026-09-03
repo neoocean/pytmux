@@ -188,6 +188,7 @@ pub static EN: &[(&str, &str)] = &[
     ("같은 원격 서버의 다른 원격 탭을 현재 탭에 pane 으로 머지 (피커, 별칭 merge-remote) — §1.7 페더레이션", "Merge another remote tab from the same server into the current tab as a pane (picker, alias merge-remote) — federation"),
     ("다른 탭의 패널을 현재로 합치기 (-h)", "Join a pane from another tab (-h)"),
     ("다중 클라 미러링 시 공유 크기 규칙 smallest|latest|largest — latest=마지막 조작 창 크기(window-size smallest|latest|largest)", "Shared grid sizing rule for multi-client mirroring smallest|latest|largest — latest=size of last-operated client (window-size smallest|latest|largest)"),
+    ("클라 런타임 계측 팝업 — 산 객체·GC 세대·판 깊이·Timer 수(-c 면 전체 수거까지 재고 그만큼 멎는다). pytmux-382 「수 일 두면 느려진다」를 그 자리에서 재는 자", "Client runtime diagnostics popup — live objects · GC generations · screen depth · timer count (-c also runs a full collection and pauses that long). The measuring stick for pytmux-382 「slows down after days」"),
     ("대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "Coalesce alt-screen full repaints on heavy output on/off — ssh responsiveness (coalesce-repaints on|off|toggle)"),
     ("독립 드라이런 — 실행 없이 안전성(re-exec·직렬화·fd·relaunch) 점검 팝업(별칭 restart-dry-run)", "Standalone dry-run — check safety (re-exec·serialize·fd·relaunch) without running, popup (alias restart-dry-run)"),
     ("레이아웃 불러오기 → 새 탭 (이름)", "Load layout → new tab (name)"),

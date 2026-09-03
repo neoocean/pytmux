@@ -43,7 +43,9 @@ from pytmuxlib.model import Pane, Session, Tab
 #: **행이 하나도 없는** 것만 거둔다(`_sweep_stale_token_dbs` — pytmux-435 ④).
 #: 시험 상수라 모듈 전역에 둔다.
 _STALE_DB_DAYS = 7
-#: 한 번의 스윕이 볼 파일 수 상한 — 1463개가 쌓인 상자에서도 기동이 안 늘어지게.
+#: 한 번의 스윕이 **거둘** 파일 수 상한 — 1463개가 쌓인 상자에서도 기동이 안 늘어지게.
+#: ⛔ 「볼 개수」가 아니다(2026-09-03 정정 · `_sweep_stale_token_dbs` 주석 참조) —
+#: 그렇게 자르면 이름순 앞쪽이 못 지우는 것들일 때 스윕이 **영영 0건**이 된다.
 _STALE_DB_CAP = 200
 
 # 종료 토큰요약 배치의 OS 분기(_emit_auto_token_log): Windows(ConPTY)는 conhost
@@ -403,6 +405,12 @@ class ServerClaudeMixin:
             rec = fullscreen.read_auto_disabled()
             if rec is None:
                 return                # 걷혔다(또는 못 읽었다) — 말할 것이 없다
+            # ⛔ **판이 다른 기록은 claude 가 없는 셈 친다**(pytmux-415 ⓑ · 이진의
+            # `if(K && K.version!==T.version) K=void 0`). 그것을 「꺼져 있다」로 읽으면
+            # fullscreen 이 멀쩡히 도는데 경고가 뜨는 **없는 경보**다. 판을 못 알아본
+            # 상자에서는 종전대로 말한다(거짓 침묵이 더 나쁘다 — 헬퍼 docstring).
+            if not fullscreen.auto_disabled_is_effective(rec):
+                return
             if self._fullscreen_off_said == rec["at_ms"]:
                 return
             self._fullscreen_off_said = rec["at_ms"]
@@ -2782,7 +2790,18 @@ class ServerClaudeMixin:
             base = os.path.dirname(mine)
             cutoff = time.time() - _STALE_DB_DAYS * 86400
             gone = 0
-            for path in sorted(glob.glob(os.path.join(base, "claude-tokens-*.db")))[:_STALE_DB_CAP]:
+            # ⛔ **상한은 «본 개수»가 아니라 «거둔 개수»다**(pytmux-435 ④ 후속 ·
+            # 2026-09-03 실측). 종전엔 `sorted(glob(...))[:CAP]` 로 **거르기 전에**
+            # 잘랐다 — 파일이 CAP 보다 많으면 매 회차 **이름순 앞 CAP 개만** 보게
+            # 되고, 그것들이 「행이 있어서」 못 지우는 것이면 스윕은 영영 0건이다.
+            # 그 자리를 이 상자에서 그대로 봤다: 1144개 중 묵은 것 1098개인데 앞
+            # 200개 표본의 94%가 행이 있어, 지운 뒤로는 **한 개도 못 줄었다**.
+            # 이제 전부를 훑되 **거둔 것이 CAP 에 닿으면 멈춘다** — 한 회차가 태우는
+            # 일의 상한은 그대로이고(그것이 CAP 의 목적이다) 진도는 나간다.
+            for path in sorted(glob.glob(os.path.join(base,
+                                                      "claude-tokens-*.db"))):
+                if gone >= _STALE_DB_CAP:
+                    break
                 if os.path.abspath(path) == os.path.abspath(mine):
                     continue                      # ⑴ 내 것
                 try:

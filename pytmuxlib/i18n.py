@@ -758,6 +758,10 @@ register({
         "rnotice.attach_merged": "remote-attach {target}: 원격 탭 병합됨",
         "rnotice.attach_silent": "remote-attach {target}: 연결됐지만 원격이 응답 없음"
                                  " — 원격 서버 점검",
+        # pytmux-453: 3초 예산을 넘겨 attach_silent(sticky·warn)로 접은 뒤 **뒤늦게**
+        # 첫 status 가 와서 탭이 생긴 자리. 그 경고를 그대로 두면 「탭은 있는데
+        # 무응답」으로 굳는다 — 늦었다는 사실까지 함께 말한다.
+        "rnotice.attach_merged_late": "remote-attach {target}: 원격 탭 병합됨(늦게 도착)",
         "rnotice.attach_merged_nest": "remote-attach {target}: 원격 탭 병합됨(중첩 자동 승격)",
         "rnotice.attach_fail": "remote-attach {target} 실패 — {why}",
         "rnotice.attach_fail_nest": "remote-attach {target} 실패(중첩 자동 승격) — {why}",
@@ -795,6 +799,7 @@ register({
         "rnotice.attach_merged": "remote-attach {target}: remote tab merged",
         "rnotice.attach_silent": "remote-attach {target}: connected but remote is "
                                  "unresponsive — check the remote server",
+        "rnotice.attach_merged_late": "remote-attach {target}: remote tab merged (arrived late)",
         "rnotice.attach_merged_nest": "remote-attach {target}: remote tab merged (nested auto-promote)",
         "rnotice.attach_fail": "remote-attach {target} failed — {why}",
         "rnotice.attach_fail_nest": "remote-attach {target} failed (nested auto-promote) — {why}",

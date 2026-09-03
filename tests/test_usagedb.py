@@ -1031,3 +1031,67 @@ async def test_a_db_we_cannot_read_counts_as_not_empty():
         assert s._token_db_is_empty(os.path.join(d, "nope.db")) is False
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_the_cap_counts_what_it_reaps_not_what_it_looks_at():
+    """☠ pytmux-435 ④ 후속 — 상한이 **거르기 앞**에 서면 스윕이 영영 0건이 된다.
+
+    종전 구현은 `sorted(glob(...))[:CAP]` 였다. 파일이 CAP 보다 많으면 매 회차
+    **이름순 앞 CAP 개만** 보는데, 그것들이 「행이 있어서」 못 지우는 것이면 뒤쪽에
+    있는 «묵고 빈» 것에는 **영영 못 닿는다.** 이 상자에서 그 자리를 그대로 봤다
+    (2026-09-03): `claude-tokens-*.db` 1144개 · 7일보다 묵은 것 1098개인데, 앞
+    200개 표본의 94%가 행이 있어 스윕이 한 개도 못 줄이고 있었다.
+
+    아래는 그 모양을 작게 재현한다 — 이름순 **앞**을 못 지우는 것으로 채우고,
+    지울 것을 **뒤**에 둔다. 상한이 「본 개수」면 붉다."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    d = tempfile.mkdtemp()
+    old = time.time() - 30 * 86400
+    try:
+        def db(name, rows=0):
+            path = os.path.join(d, name)
+            conn = usagedb.connect(path)
+            for i in range(rows):
+                usagedb.insert(conn, _rec(1.0 + i, 0, 1, 1, "a@x.org", 42))
+            conn.close()
+            os.utime(path, (old, old))
+            return path
+
+        mine = db("claude-tokens-zzz-mine.db")
+        # 이름순 앞쪽 = 묵었지만 **행이 있어** 못 지우는 것들(상한만큼 채운다)
+        for i in range(sm._STALE_DB_CAP + 3):
+            db("claude-tokens-a%04d.db" % i, rows=1)
+        # 이름순 뒤쪽 = 묵고 **비어** 있어 마땅히 거둬야 하는 것
+        target = db("claude-tokens-yyy.db")
+
+        gone = sm.ServerClaudeMixin._sweep_stale_token_dbs(_sweeper(), mine)
+
+        assert not os.path.exists(target), \
+            "이름순 뒤에 있는 «묵고 빈» DB 에 스윕이 못 닿았다 — 상한이 거르기 앞에 섰다"
+        assert gone == 1, gone
+        assert os.path.exists(mine)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_the_cap_still_bounds_the_work():
+    """대조군 — 상한은 여전히 **한 회차가 태우는 일**을 묶는다(위 시험이 「상한을
+    지웠다」로도 통과하지 않게)."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    d = tempfile.mkdtemp()
+    old = time.time() - 30 * 86400
+    try:
+        mine = os.path.join(d, "claude-tokens-mine.db")
+        usagedb.connect(mine).close()
+        for i in range(sm._STALE_DB_CAP + 25):
+            p = os.path.join(d, "claude-tokens-e%04d.db" % i)
+            usagedb.connect(p).close()
+            os.utime(p, (old, old))
+        gone = sm.ServerClaudeMixin._sweep_stale_token_dbs(_sweeper(), mine)
+        assert gone == sm._STALE_DB_CAP, gone
+        left = [n for n in os.listdir(d) if n.startswith("claude-tokens-e")]
+        assert len(left) == 25, len(left)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)

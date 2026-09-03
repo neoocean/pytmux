@@ -18,7 +18,7 @@ Claude Code 는 스크롤로 지나간 프롬프트를 창 맨 위에 `› <프�
 ⛔ **이 모듈은 고치지 않는다 — 세고 말한다.** 끈 것을 도로 켜는 것은 사용자의 몫이고
 (`/tui fullscreen`), pytmux 가 남의 설정 파일을 쓰지 않는다.
 
-## 정본 (claude 2.1.250 이진에서 읽은 규칙 · 2026-08-28)
+## 정본 (claude 2.1.250 이진에서 읽은 규칙 · 2026-08-28 · 2.1.259 로 재확인 2026-09-03)
 
 설정 파일 자리 — `join(CLAUDE_CONFIG_DIR ?? homedir(), ".claude.json")`:
 
@@ -34,6 +34,24 @@ Claude Code 는 스크롤로 지나간 프롬프트를 창 맨 위에 `› <프�
 상수: 임계 `vp=2`(스트라이크 2회면 끈다) · 건강 창 `wp=1e4`(10초) ·
 pending TTL `Pp=600000`(10분) · 남의 host/platform TTL `Ep=2592000000`(30일).
 
+★ **2.1.259 에서 이름이 바뀐 채 값이 그대로임을 직접 읽었다**(pytmux-415 · 앞 회차가
+「200MB 이진의 정규식 탐색이 2분 상한에 걸려 못 읽었다」로 남긴 자리다 — 전수 정규식이
+아니라 `stickyStrikes` 의 **바이트 오프셋**을 먼저 잡고 그 둘레만 떴다):
+
+    function jc(w,T){let I=T.stickyStrikes??yh, …
+      if(K&&K.version!==T.version)K=void 0;            // 버전이 다르면 무효
+      …
+      if(W>=I)K={version:T.version,at:T.now,strikes:W} // 트립: strikes 는 «누적 W»
+    var yh=2      // 임계  (옛 vp)
+    Sh=600000     // pending TTL 10분 (옛 Pp)
+    _h=2592000000 // 남의 host/platform TTL 30일 (옛 Ep)
+
+☠ **그래서 `strikes` 가 임계보다 클 수 있다 — 그것은 「임계가 3」이 아니다.** 트립할 때
+싣는 값은 그 회차의 누적 `W` 이고, `W` 는 **한 번에 여러 개**가 더해진다(`W+=oe` —
+`oe` 는 이번 스캔에서 죽어 있던 pending 항목 수). 실측(이 상자 · 2026-09-03)
+`{"version":"2.1.259","strikes":3}` 은 **임계 3** 이 아니라 «한 회차에 죽은 fullscreen
+boot 가 셋 세어졌다»는 뜻이다. 앞 회차가 「3 이 임계인가」로 남긴 물음의 답이 이것이다.
+
 ★ **그래서 「디스크에 서 있으면 곧 효력이 있다」로 읽어도 된다.** 버전이 다른 기록은
 claude 가 **다음 기동에 지운다** — 위 `F=void 0` 가 `next` 에 그대로 실려 나가고
 `Dl` 이 「`fullscreenAutoDisabled?.version` 이 달라졌다」로 쓰기를 트립시킨다. 즉 낡은
@@ -47,6 +65,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 
 # 설정 파일의 그 칸. **리터럴을 한 곳에** 둔다 — 아래 빠른 거르기(substring)와
 # 파싱이 같은 이름을 봐야 「거르기는 통과했는데 파싱이 다른 칸을 본다」가 안 생긴다.
@@ -68,6 +88,52 @@ def config_path() -> str:
     것으로 적으면 `CLAUDE_CONFIG_DIR` 를 세운 사용자에게서 조용히 빗나간다."""
     base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~")
     return os.path.join(base, ".claude.json")
+
+
+# 네이티브 설치기의 자리 규약 — `<…>/claude` 가 `<…>/versions/<판>` 을 가리키는
+# 심링크다. 판 이름은 순수 semver 라 그 모양으로만 받아들인다(다른 설치 방식이면
+# 안 맞고, 그때는 **모른다**로 떨어진다 — 아래 `installed_version` 참조).
+_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def installed_version(which=None, realpath=None) -> str | None:
+    """지금 PATH 에 선 `claude` 의 판을 **best-effort** 로 읽는다. 모르면 None.
+
+    ⛔ **추측하지 않는다.** 네이티브 설치기는 `~/.local/bin/claude` 를
+    `~/.local/share/claude/versions/<판>` 으로 건다 — 그 모양일 때만 판을 말하고,
+    아니면(npm·개발 트리·래퍼 스크립트) **None** 이다. 부르는 쪽은 None 을
+    「버전이 다르다」로 읽으면 안 된다(아래 `auto_disabled_is_effective`).
+
+    인자 둘은 시험용 주입구다(실제 파일 시스템을 안 밟고 규칙만 재려고 둔다)."""
+    which = which or shutil.which
+    realpath = realpath or os.path.realpath
+    exe = which("claude")
+    if not exe:
+        return None
+    target = os.path.basename(realpath(exe))
+    return target if _VERSION_RE.match(target) else None
+
+
+_AUTO = object()          # `version` 미지정 = 스스로 알아본다(None = 「모른다」와 구분)
+
+
+def auto_disabled_is_effective(rec, version=_AUTO) -> bool:
+    """그 기록이 **지금 도는 claude 에 효력이 있나**(pytmux-415 ⓑ).
+
+    정본은 위 §정본의 한 줄이다 — `if(K && K.version !== T.version) K = void 0;`.
+    곧 **판이 다른 기록은 claude 가 없는 셈 친다.** 그것을 「꺼져 있다」로 읽고 경고를
+    띄우면 **없는 경보**다(claude 는 fullscreen 으로 멀쩡히 돈다).
+
+    ⛔ **모르면 «효력 있다»로 둔다.** 설치 방식을 못 알아본 상자에서 조용해지면
+    이 알림이 있는 이유(제보자는 「기능이 없어졌다」로만 겪었다)가 통째로 사라진다 —
+    거짓 침묵이 거짓 경보보다 나쁘다. 판을 **적극적으로 다르게 읽었을 때만** 접는다.
+    """
+    if not rec:
+        return False
+    ver = installed_version() if version is _AUTO else version
+    if not ver:
+        return True                      # 모른다 → 종전대로 말한다
+    return rec.get("version") == ver
 
 
 def parse_auto_disabled(text: str):
