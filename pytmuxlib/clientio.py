@@ -254,6 +254,11 @@ class _InputMixin:
             return
         if self.prefix_enabled and _normalize_key(event.key) == self.prefix_key:
             self.mode = "prefix"
+            # pytmux-467(449 ⑷): 다음 키를 기다리는 중임을 상태줄이 낸다(esc 모드의
+            # cmd_mode 배지와 같은 자리·같은 방식). 안 내면 「눌렀나 안 눌렀나」를
+            # 사람이 화면 어디서도 못 본다 — GUI 는 이미 `[prefix]` 칩으로 냈다.
+            self.status.prefix_mode = True
+            self.status.refresh()
             event.prevent_default()
             event.stop()
             return
@@ -314,6 +319,7 @@ class _InputMixin:
         if event.character == "\x00":
             return
         self.mode = "normal"
+        self._clear_prefix_badge()
         # IME(한글 자모)가 켜져 있어도 동작하도록 키를 QWERTY 로 정규화
         k = _normalize_key(event.key)
         ch = event.character
@@ -490,6 +496,7 @@ class _InputMixin:
             self._exit_esc()
         else:
             self.mode = "normal"
+            self._clear_prefix_badge()
         self.status.refresh()
         return True
 
@@ -523,6 +530,16 @@ class _InputMixin:
         # 제어문자(탭·개행 등)는 이름에 넣지 않는다 — isprintable 이 걸러 준다.
         if ch and ch.isprintable():
             sb.session_edit_insert(ch)
+
+    def _clear_prefix_badge(self):
+        """prefix 대기 표식을 내린다(pytmux-467).
+
+        prefix 모드를 나가는 자리가 둘이라(다음 키를 받은 `_handle_prefix` · 세션 이름
+        편집이 모드를 걷는 자리) 한 줄을 두 곳에 적는 대신 여기 한 자리를 둔다 —
+        **표식이 안 내려가면 평상시 입력에도 계속 떠 있는다.**"""
+        if self.status.prefix_mode:
+            self.status.prefix_mode = False
+            self.status.refresh()
 
     # ---- ESC(명령) 모드 ----
     def _exit_esc(self):

@@ -157,7 +157,11 @@ impl InputMode {
     /// 종전 `[esc]` 는 낱말이 아니라 기호라 카탈로그에 줄이 없었고, en 로케일에서도 그대로
     /// 나왔다. 뷰는 이 값을 **`t()` 로 감싸서** 그린다.
     ///
-    /// 나머지 셋(`[prefix]`·`[block]`·`[scroll]`)은 정본에 대응하는 문구가 없어 종전 표기를
+    /// `[prefix]` 는 **정본이 이 낱말을 그대로 받아 갔다**(pytmux-467 · 449 ⑷ — 정본
+    /// `i18n.py` 의 `ui.prefix_mode_badge`). 그 전에는 정본 상태줄에 그 표식이 아예
+    /// 없었고, 여기 있던 *"정본에 대응하는 문구가 없다"* 는 그때의 사실이다.
+    ///
+    /// 남은 둘(`[block]`·`[scroll]`)은 아직 정본에 대응하는 문구가 없어 종전 표기를
     /// 그대로 둔다 — 지어낸 문구를 정본 문구인 척 둘 수는 없다.
     pub fn badge(self) -> Option<&'static str> {
         match self {
@@ -166,6 +170,7 @@ impl InputMode {
             // 패딩으로 내므로 뺀다 — 정본은 세그먼트라 공백으로 자리를 벌린다).
             InputMode::Command => Some("CMD(←↑↓→ 이동, : 명령)"),
             InputMode::Scroll => Some("[scroll]"),
+            // 정본 `ui.prefix_mode_badge` 와 **같은 낱말**이다(pytmux-467).
             InputMode::Prefix => Some("[prefix]"),
             InputMode::Block => Some("[block]"),
         }

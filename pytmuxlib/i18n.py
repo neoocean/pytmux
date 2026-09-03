@@ -183,6 +183,10 @@ register({
         # §10-21ⓧ2 — 패널 글의 경로를 눌러 전체 경로를 복사했을 때.
         "span.copied": "경로를 복사했다: {path}",
         "ui.cmd_mode_badge": "CMD(←↑↓→ 이동, : 명령) ",
+        # pytmux-467(449 ⑷): prefix 를 누르고 **다음 키를 기다리는 중**이라는 표식.
+        # 낱말은 GUI 칩과 같은 것을 쓴다(`base::keys::InputMode::badge`) — 같은 상태가
+        # 클라마다 다른 낱말로 보이면 그것부터가 갈림이다.
+        "ui.prefix_mode_badge": "[prefix] ",
     },
     "en": {
         "lang.changed": "Language: {name}",
@@ -194,6 +198,7 @@ register({
         "ui.search": "Search…",
         "span.copied": "Copied path: {path}",
         "ui.cmd_mode_badge": "CMD(←↑↓→ move, : cmd) ",
+        "ui.prefix_mode_badge": "[prefix] ",
     },
 })
 

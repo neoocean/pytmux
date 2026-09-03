@@ -4233,6 +4233,59 @@ async def test_cmd_mode_badge_no_hangul_leak_in_en():
     await _with_app(body, cfg={"lang": "en"})
 
 
+async def test_prefix_mode_badge_shows_and_clears():
+    """pytmux-467(449 ⑷): prefix 를 누르면 상태줄에 `[prefix]` 표식이 뜨고, **다음 키를
+    받으면 내려간다.**
+
+    ⛔ 뜨는 것만 재면 안 된다 — 안 내려가는 표식은 평상시 입력에도 계속 떠 있어
+    「지금 모달이다」라는 거짓말이 된다. 나가는 자리가 둘이라(`_handle_prefix` ·
+    세션 이름 편집) 그 한 자리(`_clear_prefix_badge`)를 실제로 눌러 잰다.
+
+    색까지는 안 잰다(그림은 각 클라의 것) — 다만 **esc 배지와 다른 색**이어야 한다는
+    것은 `clientwidgets` 의 그 줄이 `primary`/`accent` 로 갈라 적는다."""
+    def shown():
+        return "[prefix]" in "".join(s.text for s in _app[0].status.render_line(0))
+
+    _app = [None]
+
+    async def body(app, pilot, srv):
+        _app[0] = app
+        assert app.status.prefix_mode is False, "기본은 안 떠 있다"
+        assert not shown()
+
+        await pilot.press("ctrl+b")
+        await wait_until(pilot, lambda: app.mode == "prefix")
+        assert app.status.prefix_mode is True
+        await wait_until(pilot, shown)
+        assert shown(), "prefix 표식이 렌더돼야 한다"
+
+        # 다음 키를 받으면 모드가 풀리고 표식도 함께 내려간다.
+        await pilot.press("z")                      # prefix z = zoom(아무 키라도 된다)
+        await wait_until(pilot, lambda: app.mode == "normal")
+        assert app.status.prefix_mode is False, "모드는 풀렸는데 표식이 남았다"
+        await wait_until(pilot, lambda: not shown())
+        assert not shown(), "표식이 안 내려갔다"
+    await _with_app(body)
+
+
+async def test_prefix_and_esc_badges_do_not_share_a_color():
+    """두 모달 표식이 **같은 색이면 배지가 어느 모드인지 못 말한다**(pytmux-467).
+
+    textual-dark 에서 `warning` 과 `accent` 가 같은 값이라 색이 조용히 겹친 전례가
+    있어(zoomed/cmd_mode) 값으로 잰다."""
+    async def body(app, pilot, srv):
+        app.status.cmd_mode = True
+        app.status.prefix_mode = True
+        app.status.refresh()
+        await wait_until(pilot, lambda: any(
+            "[prefix]" in s.text for s in app.status.render_line(0)))
+        segs = list(app.status.render_line(0))
+        cmd_bg = next(s.style.bgcolor for s in segs if "CMD(" in s.text)
+        pre_bg = next(s.style.bgcolor for s in segs if "[prefix]" in s.text)
+        assert cmd_bg != pre_bg, f"두 모달 표식이 같은 색이다: {cmd_bg}"
+    await _with_app(body)
+
+
 async def test_layout_save_load_client():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
