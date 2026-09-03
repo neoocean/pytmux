@@ -743,11 +743,22 @@ async def test_the_pct_columns_carry_their_meaning_next_to_their_value():
     """
     import importlib, time
     ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
-    now = time.time()
-    recs = [{"ts": now - i * 3600, "tokens": 1000 + i, "account": "a"}
+    # ⛔ 표본은 **오늘 안**에 심는다(pytmux-450). 종전에는 `time.time()` 에서 뒤로 여섯
+    #    시각을 잡았는데, 자정 직후에는 그 여섯이 **날짜 둘에 걸친다**(00:15 이면 어제
+    #    다섯 + 오늘 하나). [기간] 판이 내는 시각 행은 **오늘 것뿐**이라 남는 행이 하나가
+    #    되고, 그 하나의 등급만 보이니 아래 「세 등급이 다 나온다」가 **결정론적으로**
+    #    깨졌다 — 제품이 아니라 **시험이 벽시계에 매인 것**이다([[pytmux-433]] 과 같은 부류).
+    #    재현: `TZ='XXX-1' python3 tests/run.py test_plugin_screen`(지역시각을 자정 직후로 민다).
+    lt = time.localtime()
+    base = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 23, 0, 0, 0, 0, -1))
+    recs = [{"ts": base - i * 3600, "tokens": 1000 + i, "account": "a"}
             for i in range(6)]
     keys = sorted({time.strftime("%Y-%m-%d %H:00", time.localtime(r["ts"]))
                    for r in recs})
+    # ★ 그 매임을 여기서 **직접 문다** — 주석만 두면 다음 사람이 `time.time()` 으로
+    #   되돌려도 **낮에는 초록**이라 아무도 안 운다(그것이 이 결함이 오래 산 방식이다).
+    assert len({k[:10] for k in keys}) == 1, f"표본이 날짜 둘에 걸쳤다: {keys}"
+    assert len(keys) == 6, f"시각이 여섯이 아니다: {keys}"
     # 세 등급이 다 나오게 심는다 — 한 등급만 재면 「늘 그 이름」인 판도 통과한다.
     p5 = {k: v for k, v in zip(keys, (9, 55, 94, 9, 55, 94))}
     p1 = {k: 100 for k in keys}

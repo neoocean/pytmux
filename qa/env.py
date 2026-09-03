@@ -108,11 +108,25 @@ class HomeSlot:
     def __enter__(self) -> "HomeSlot":
         _guard_scratch(self.home)
         os.makedirs(self.home, exist_ok=True)
+        # ⛔ **설정만은 거두는 것이 아니라 세운다**(pytmux-474 가 덤으로 드러낸 자리).
+        # 탐색 차례는 `$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` →
+        # `$XDG_CONFIG_HOME/pytmux/config` → `~/.pytmux.conf` 다(`pytmuxlib/keymap.py`).
+        # 슬롯은 `PYTMUX_HOME` 을 세우지만 그 아래에 `config` 파일을 **안 만들었으므로**
+        # 두 번째 자리가 비어 세 번째 = **이 상자의 진짜 설정 파일**로 떨어졌다. 그러면
+        # QA 판정이 사람의 설정을 탄다 — 실측 선례로 `set status-position top` 한 줄이
+        # GUI 배지 자리 오라클을 떨궜다(pytmux-202). 파이썬 스위트(`tests/hermetic.py`)와
+        # 합본 게이트(`scripts/check_all.py` child_env)는 이미 같은 처방을 쓰고 있었고,
+        # QA 층에만 그 한 줄이 없었다. 빈 파일이면 읽기는 기본값으로 돌아오고 쓰기도
+        # 그 파일로 간다(제품이 `:settings` 로 설정을 쓰더라도 슬롯 안에 갇힌다).
+        cfg = os.path.join(self.home, "config")
+        with open(cfg, "w", encoding="utf-8") as f:
+            f.write("# pytmux QA 슬롯이 만든 빈 설정 파일(qa/env.py).\n"
+                    "# 런이 사용자의 ~/.config/pytmux/config 를 읽지도 쓰지도 않게 한다.\n")
         # NO_COLOR 는 에이전트 셸이 심는다 — 그대로 두면 Textual 이 Monochrome 필터를
         # 물려 실 클라 캡처가 통째로 무너진다(루트 CLAUDE.md 의 실측 110건과 같은 자리).
         # 제품 결함이 아닌 것을 결함으로 신고하지 않으려면 여기서 지운다.
-        for k, v in (("PYTMUX_HOME", self.home), ("NO_COLOR", None),
-                     ("PYTMUX", None), ("LC_PYTMUX", None)):
+        for k, v in (("PYTMUX_HOME", self.home), ("PYTMUX_CONFIG", cfg),
+                     ("NO_COLOR", None), ("PYTMUX", None), ("LC_PYTMUX", None)):
             self._saved[k] = os.environ.get(k)
             if v is None:
                 os.environ.pop(k, None)
@@ -167,13 +181,20 @@ class HomeSlot:
         return out
 
     def reap(self) -> None:
-        """남은 것을 **pid 로만** 회수한다. 이름 매칭으로 넓히지 않는다."""
+        """남은 것을 **pid 로만** 회수한다. 이름 매칭으로 넓히지 않는다.
+
+        ⛔ **죽이고 나서 «거둔다»**(2026-09-02). `start()` 는 서버를 `Popen(...,
+        start_new_session=True)` 로 띄우므로 그것은 이 프로세스의 **직계 자식**이다 —
+        SIGKILL 만 하고 `waitpid` 를 안 하면 **좀비**로 남고, `os.kill(pid, 0)` 은 좀비를
+        「살아 있다」고 답한다(실측: `ps -o stat` = `Z` · waitpid 뒤에야 ProcessLookupError).
+        죽인 쪽이 거두지 않으면 그 흔적을 누구도 못 지운다."""
         from pytmuxlib import proc          # 지연 import — 정리 경로에서만 필요하다
         for pid in list(self.spawned) + self.ptyhost_pids():
             try:
                 proc.terminate(pid, force=True)
             except Exception:
                 pass                        # 이미 죽은 pid 는 정상이다
+            _reap_zombie(pid)
 
     def residue(self, timeout: float = 3.0, step: float = 0.1) -> list[str]:
         """정리 판정 — **내 홈의 상태 파일**로만 한다(규율 ⑶).
@@ -188,6 +209,13 @@ class HomeSlot:
            `probe` 가 0.00s True → 0.25s False. 그래서 **수렴을 기다린 뒤** 판정한다.
            고친 이유를 지우지 않는 것은 다음 사람이 "왜 폴링인가"를 다시 묻지 않게 하려는
            것이다 — 저 지연은 제품의 의도이지 결함이 아니다.
+
+        ★ **그리고 「소켓이 대답하나」만으로는 눈이 먼다**(pytmux-435 ③ · 2026-09-02).
+           재기동은 소켓 이름을 **가져간다** — 앞 주인은 도달 불가가 된 소켓을 쥔 채
+           그대로 살 수 있고(그 거두기가 실패한 회차), 그때 `probe` 는 **새 주인**을 보고
+           「깨끗하다」고 답한다. 실측으로 시험 슬롯 하나(`/tmp/pxh-17368`)에 서버 **13개**
+           가 8월 2일부터 살아 있었고 각각 누적 CPU 155분을 태웠다 — 정리 코드는 있었고
+           **결과를 아무도 안 쟀다.** 그래서 `spawned`(우리가 띄운 pid)도 직접 묻는다.
         """
         end = time.time() + timeout
         while True:
@@ -195,6 +223,9 @@ class HomeSlot:
             sock = os.path.join(self.state_dir, "default.sock")
             if os.path.exists(sock) and ipc.probe(sock):
                 left.append(f"서버가 아직 응답한다: {sock}")
+            for pid in self.spawned:
+                if _alive(pid):
+                    left.append(f"우리가 띄운 서버가 아직 산다: pid {pid}")
             for pid in self.ptyhost_pids():
                 if _alive(pid):
                     left.append(f"pty-host 가 살아 있다: pid {pid}")
@@ -207,9 +238,40 @@ class HomeSlot:
         shutil.rmtree(self.home, ignore_errors=True)
 
 
+def _reap_zombie(pid: int) -> bool:
+    """그 pid 가 **우리 자식이고 이미 끝났으면** 거두고 True. 그 밖에는 False.
+
+    POSIX 전용 의미다(Windows 엔 좀비가 없다 — 죽으면 표에서 사라진다). 남의 자식이면
+    `ChildProcessError`, 아직 도는 우리 자식이면 `(0, 0)` 이라 둘 다 False 다."""
+    if IS_WINDOWS or pid <= 0:
+        return False
+    try:
+        done, _status = os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        return False                         # 우리 자식이 아니다 — 판정은 os.kill 이 한다
+    return done == pid
+
+
 def _alive(pid: int) -> bool:
+    """그 pid 가 살아 있나.
+
+    ⛔ **Windows 에서 「모른다」를 「살아 있다」로 접지 않는다.** 종전에는 신호로 물을 수
+    없다는 이유로 늘 True 를 돌려서, 이 상자에서는 잔여 오라클이 무엇을 재도 「남았다」
+    였다 — 위양성은 QA 를 끈다(원칙 ⓓ). 제품이 이미 그 답을 갖고 있다
+    (`proc.is_alive` = ToolHelp/tasklist 로 PID 정확대조)."""
     if IS_WINDOWS:
-        return True                          # 신호로 물을 수 없다 — 살아 있다고 본다
+        from pytmuxlib import proc            # 지연 import — 정리 경로에서만 필요하다
+        try:
+            return proc.is_alive(pid)
+        except Exception:
+            return True                      # 못 물었으면 남았다고 보는 쪽이 안전하다
+    # ⛔ **좀비를 「살아 있다」로 세지 않는다.** 우리가 띄운 서버는 이 프로세스의 직계
+    #    자식이라, 죽여도 `waitpid` 전까지는 `os.kill(pid, 0)` 이 성공한다 — 그것을
+    #    잔여로 세면 매 런 위양성이 난다(2026-09-02 에 실제로 결함 4건을 헛으로 냈다).
+    #    이 저장소가 같은 교훈을 이미 적어 뒀다: 「alive 는 짐작이 아니라 waitpid 다」
+    #    (pytmux-425·426·427 · `tests/ptyshot.py`).
+    if _reap_zombie(pid):
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

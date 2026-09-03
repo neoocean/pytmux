@@ -365,6 +365,35 @@ def token_path(endpoint: str) -> str:
     return endpoint + ".token"
 
 
+def server_pidfile(endpoint: str) -> str:
+    """서버가 게시하는 **자기 pid** 파일(`pytmux/pytmux-435`).
+
+    ⛔ 종전에는 이 파일이 **없었다**. 그래서 새 서버가 이 엔드포인트를 가져갈 때
+    (unix=`os.replace` 로 소켓 이름을 · TCP=포트파일을 덮어써서) 앞 주인에게
+    「너는 이제 아니다」를 알릴 **주소가 없었다** — 앞엣것은 경로 없는 소켓을 쥔 채
+    프로브·liveness·프레임 루프를 계속 돌았다. 실측(2026-09-02 · playground)으로 한
+    엔드포인트에 서버 **넷**이 36일·17일·5.8일·13분 나이로 살아 있었고, 그중 하나는
+    RSS 172MB·누적 CPU 622분이었다. 그림자 `/usage` 프로브도 여러 벌 돌아 토큰 DB 에
+    오프셋 다른 600초 계열이 겹쳐 찍혔다.
+
+    ⇒ pid 를 **파일 하나로 게시**해 두면 다음 주인이 앞 주인을 겨냥할 수 있다. 이름은
+    pty-host 가 같은 이유로 이미 쓰고 있는 규약(`.ptyhost.pid`)의 형제다
+    (`ptyhostmgr.host_pidfile` 머리말 — 「떠 있나」를 파일 존재가 아니라 **pid 생존**
+    으로 판정하려는 자리).
+    """
+    return state_base(endpoint) + ".server.pid"
+
+
+def read_server_pid(endpoint: str) -> Optional[int]:
+    """[`server_pidfile`] 이 가리키는 pid(없거나 쓰레기면 None)."""
+    try:
+        with open(server_pidfile(endpoint), encoding="ascii") as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
 _win_acl_hardened: set = set()
 _win_grantee_cache: list = []   # [str] 한 번만 계산해 재사용(캐시 미스=빈 리스트)
 _ACL_MARKER_SUFFIX = ".ok"

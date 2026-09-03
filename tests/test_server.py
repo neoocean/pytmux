@@ -1,6 +1,7 @@
 """서버 기능 테스트: 패널/윈도우/세션 조작, 검색·버퍼·캡처, 영속, 제어."""
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import shutil
@@ -4306,7 +4307,13 @@ async def test_win_mouse_motion_cap_in_layout_and_persist():
     선행 0)가 프롬프트에 **텍스트로 박혔다** → 'stale 플래그(앱 OFF인데 우리만 ON)'
     가설 H2 반증, ConPTY 가 주입 any-motion 을 소비 못 하는 지속성 버그. 그래서
     Windows 에서는 광고 mouse 를 drag(2)로 캡해 any-motion 을 아예 안 흘린다. 클릭/
-    드래그(1000/1002)는 누출 증거 없어 유지. win_mouse_motion 옵션으로 복구 가능."""
+    드래그(1000/1002)는 누출 증거 없어 유지. win_mouse_motion 옵션으로 복구 가능.
+
+    ★★ **기본은 2026-09-02 에 ON 으로 뒤집혔다**(pytmux-423). 캡 자체(옵션 off 일 때
+    any-motion → drag(2))는 그대로 남아 있고 — 되돌릴 자리다 — 갈린 것은 **기본값**
+    하나다. 그래서 이 시험도 «캡이 무는가»는 옵션을 명시로 끈 채 재고, 기본값은 따로
+    잰다(아래 `test_win_mouse_motion_defaults_on`). 근거 실측표는 `Server.__init__`
+    의 그 자리."""
     from pytmuxlib import serverio
     srv, task, sock = await server_only()
     saved = serverio.pty_backend.IS_WINDOWS
@@ -4347,14 +4354,57 @@ async def test_win_mouse_motion_cap_in_layout_and_persist():
         # opts.json 영속 + 재시작 round-trip(_load_opts↔_save_opts 짝맞춤)
         assert json.load(open(srv.opts_path))["win_mouse_motion"] is True
         assert pytmux.Server(sock).win_mouse_motion is True
-        assert srv.set_win_mouse_motion(None) is False   # 토글 → 기본 OFF
+        assert srv.set_win_mouse_motion(None) is False   # 토글 → off
         assert json.load(open(srv.opts_path))["win_mouse_motion"] is False
+        # 껐다는 것이 **영속되고 새 서버가 그것을 존중한다** — 기본이 on 이 된 뒤에도
+        # 사용자가 끈 값이 다음 기동에 되살아나면 안 된다(그것이 되돌릴 자리의 뜻이다).
+        assert pytmux.Server(sock).win_mouse_motion is False
     finally:
         serverio.pty_backend.IS_WINDOWS = saved
         try:
             os.unlink(srv.opts_path)
         except OSError:
             pass
+        await teardown(srv, task, sock)
+
+
+async def test_win_mouse_motion_defaults_on():
+    """기본은 **켬**이다(pytmux-423 · 2026-09-02 에 뒤집혔다).
+
+    껐던 근거(주입 SGR any-motion 이 ConPTY 를 못 지나 프롬프트로 샌다)는 그 뒤 셋이
+    각각 다른 원인으로 규명·수정됐고, Windows 실기에서 다시 재니 **누출이 없고 끈
+    값으로는 hover 계열이 하나도 안 살았다**:
+
+    | 옵션 | 1003 을 원하는 앱이 받은 이동 리포트 | 화면에 샌 SGR |
+    | --- | ---: | --- |
+    | off | **0건** | 없다 |
+    | on | **12건** | **없다** |
+
+    (`client/scripts/mouse_echo.py --any-motion` 을 패널 셸로 띄우고
+    `postmsg_mouse_on_window.ps1` 로 창의 메시지 큐에 이동을 넣어 원시 화면을 찍었다.)
+
+    되돌리면 실패해야 하는 것: `Server.__init__` 의 `_opts.get("win_mouse_motion", True)`
+    를 `False` 로 되돌리면 이 시험이 떨어진다.
+    """
+    from pytmuxlib import serverio
+    srv, task, sock = await server_only()
+    saved = serverio.pty_backend.IS_WINDOWS
+    try:
+        # 아무 값도 저장돼 있지 않은 새 서버의 기본
+        assert srv.win_mouse_motion is True, (
+            "기본이 off 로 되돌아갔다 — 그러면 Windows 에서 hover 가 안 산다")
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        p.update_mouse_modes(b"\x1b[?1003h\x1b[?1006h")
+        serverio.pty_backend.IS_WINDOWS = True
+        lay = srv._layout_msg(sess)
+        m = next(x for x in lay["panes"] if x["id"] == p.id)
+        assert m["mouse"] == 3, (
+            "기본값인데 any-motion 이 drag 로 캡됐다", m)
+    finally:
+        serverio.pty_backend.IS_WINDOWS = saved
+        with contextlib.suppress(OSError):
+            os.unlink(srv.opts_path)
         await teardown(srv, task, sock)
 
 

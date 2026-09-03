@@ -113,6 +113,61 @@ async def test_tokens_db_and_captures_under_home():
         await teardown(srv, task, sock)
 
 
+async def test_token_db_copy_never_shows_a_half_written_file():
+    """토큰 DB 복사는 **최종 이름으로 곧장 쓰지 않는다**(pytmux-474 의 근본).
+
+    실측(2026-09-03 · macOS): 72MB DB 를 복사하는 동안 다른 스레드가 같은 경로를 열면
+    SQLite 가 반쯤 쓰인 파일을 읽어 `sqlite3.DatabaseError: database disk image is
+    malformed` 로 죽는다. 토큰 동기화 워커의 executor 연결이 실제로 그 창에 끼어
+    서버 error.log 에 트레이스백을 남겼고, QA T3 의 여섯 스텝이 그 한 건을 S1 로
+    신고했다.
+
+    ⛔ **"복사가 끝난 뒤 내용이 맞다"로는 이걸 못 잡는다** — 그건 경쟁이 없을 때도
+       참이다. 그래서 복사가 **어디에 쓰는지**를 잰다: 최종 경로에 직접 쓰면 실패다.
+    """
+    if os.name == "nt":
+        from run import skip
+        skip("os.replace 원자성 규약은 POSIX 에서 잰다(Windows 는 별도 경로)")
+    import importlib
+    import shutil
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+
+    with tempfile.TemporaryDirectory() as d:
+        src_db = os.path.join(d, "src", "claude-tokens.db")
+        os.makedirs(os.path.dirname(src_db))
+        with open(src_db, "wb") as f:
+            f.write(b"REAL_DB")
+        with open(src_db + "-wal", "wb") as f:
+            f.write(b"WAL")
+        new_path = os.path.join(d, "home", "db", "claude-tokens.db")
+
+        wrote_to, real_copy2 = [], shutil.copy2
+
+        def spy(s, dst, *a, **kw):
+            wrote_to.append(dst)
+            # 복사가 도는 **그 순간** 최종 이름이 보이면 안 된다(경쟁자의 시점).
+            assert not os.path.exists(new_path), \
+                "복사 도중에 최종 파일이 보인다 — 남이 반쯤 쓰인 DB 를 연다"
+            return real_copy2(s, dst, *a, **kw)
+
+        shutil.copy2 = spy
+        try:
+            assert sm.ServerClaudeMixin._copy_db_tree(src_db, new_path) is True
+        finally:
+            shutil.copy2 = real_copy2
+
+        assert new_path not in wrote_to, \
+            "최종 이름으로 곧장 썼다 — 원자성이 없다: %r" % wrote_to
+        assert new_path + "-wal" not in wrote_to, \
+            "사이드카도 최종 이름으로 곧장 썼다: %r" % wrote_to
+        # 그러고도 결과는 온전해야 한다(원자성이 내용을 갉아먹으면 안 된다).
+        assert open(new_path, "rb").read() == b"REAL_DB"
+        assert open(new_path + "-wal", "rb").read() == b"WAL"
+        # 임시 부스러기를 남기지 않는다.
+        leftovers = [n for n in os.listdir(os.path.dirname(new_path)) if ".part-" in n]
+        assert not leftovers, "임시 파일이 남았다: %r" % leftovers
+
+
 async def test_token_db_migrates_plugin_to_home_preserving_original():
     """PYTMUX_HOME 통합 시 토큰 DB 가 평소 위치(플러그인 db/)에서 <home>/db 로 1회 **복사**
     되고 원본은 보존된다(WAL 사이드카 동반). 다른 머신에서 PYTMUX_HOME 을 켜면 기존 토큰

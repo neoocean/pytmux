@@ -94,6 +94,13 @@ class RemoteLink:
         # Stage 3: 재연결/재시작 복원용 원 spec({"host":…,"endpoint":…})과 소속 세션.
         self.spec: dict = {}
         self.sess = None
+        # pytmux-453: 첫 status 예산(3초)을 못 지켜 `attach_silent`(sticky·warn)로
+        # 접었다는 표식. 그 알림은 **수동으로 닫을 때까지 남는데**, 뒤늦게 status 가
+        # 오면 탭은 조용히 생기고 경고만 화면에 남아 사실과 어긋났다. 이 값이 서 있는
+        # 동안 첫 status 가 도착하면 그때 「병합됨」을 말하고 표식을 내린다
+        # (_remote_reader 의 status 갈래 · 그 자리가 「뒤늦은 status 면 그때 탭 출현」
+        # 이라는 주석이 약속한 유일한 자리다).
+        self.silent_notified = False
         # 업스트림 status 누적본(full 이 채운 옵션 키를 light 가 안 지우게 update 로
         # 합친다) — 보는 클라용 status 오버라이드(_remote_status_override)의 원천.
         self.last_status: dict = {}
@@ -439,6 +446,20 @@ class ServerRemoteMixin:
     # hello 는 받고도 _send_full 이 멈춰 status 를 안 보내는 웨지(원격 pty-host 고장
     # 등)를 조용한 실패 대신 '연결됐지만 무응답' 신호로 바꾼다. 테스트가 줄일 수 있게
     # 클래스 상수로 둔다(attach notice + 중첩 자동 승격이 공유).
+    #
+    # ★ **이 3초는 업스트림의 핸드셰이크 상한(protocol.HANDSHAKE_TIMEOUT = 10초)보다
+    # 훨씬 짧다 — 그리고 그것이 의도다**(pytmux-453 · 2026-09-03 실측). 업스트림이
+    # 아직 자기 예산 안에서 hello 를 기다리는 중이어도 우리는 3초에 「무응답」이라고
+    # 말한다. 사람을 10초 세워 두지 않기 위해서다. ⛔ 그래서 그 알림은 **종결이 아니다**
+    # — 뒤늦게 status 가 오면 `_remote_reader` 가 그 자리에서 「늦게 병합됨」을 말한다
+    # (link.silent_notified). 예산을 10초 위로 올려 「확실해진 뒤에 말하는」 길도 있으나,
+    # 그러면 진짜 고장 난 상대에게도 10초를 태운다.
+    #
+    # ⚠ **실측으로 갈린 것**(같은 이슈): 서버 둘을 «별 프로세스»로 띄운 실사용 형상에서는
+    # remote_attach 20회가 **20/20 병합**이다. 실패(1/4~3/4)는 **한 프로세스·한 이벤트
+    # 루프에 서버가 쌓인 조건**(= 시험 하네스와 전체 스위트)에서만 났고, 그 회차의 종결은
+    # 정확히 10.0초 = 업스트림의 HANDSHAKE_TIMEOUT 이었다(업스트림이 accept 는 했는데
+    # hello 를 그 시간 동안 못 읽었다). ⇒ 예산을 늘리는 것은 그 조건의 처방이 아니다.
     _FIRST_STATUS_TRIES = 30
     _FIRST_STATUS_DELAY = 0.1
 
@@ -744,7 +765,15 @@ class ServerRemoteMixin:
         if tok:
             hello["token"] = tok
         try:
-            await write_msg(writer, hello)
+            # ⛔ **반환값을 본다**(pytmux-453). `write_msg` 는 ConnectionError·
+            # RuntimeError·AssertionError 를 **예외가 아니라 False 로** 접는다
+            # (protocol.write_msg 의 백스톱). 그래서 아래 except 만으로는 hello 가
+            # 한 바이트도 안 나간 회차가 **성공으로 통과**했다 — 링크가 등록되고
+            # reader·ping 이 뜨지만 업스트림은 hello 를 못 받아 자기 핸드셰이크
+            # 상한(HANDSHAKE_TIMEOUT)까지 기다렸다 연결을 닫는다. 사용자에게는
+            # 「연결됐지만 원격이 응답 없음」으로 보이고 원인이 어디에도 안 남는다.
+            if not await write_msg(writer, hello):
+                raise ConnectionError("hello 송신 실패(write_msg=False)")
         except (OSError, ConnectionError) as e:
             # 전송은 열렸으나 hello 송신 실패 — 연 소켓/ssh proc 를 회수한다(H4: 안
             # 그러면 transport 가 연 writer + proc 가 누수). remotes 에 아직 등록 전.
@@ -1134,6 +1163,17 @@ class ServerRemoteMixin:
                     if wins != link.windows:
                         link.windows = wins
                         self._remote_status_push(link, broadcast=True)
+                        # pytmux-453: 첫 status 예산(3초)을 넘겨 '무응답'(sticky·warn)
+                        # 으로 접었던 링크가 **뒤늦게** 탭을 실어 왔다. 종전엔 탭바만
+                        # 조용히 갱신되고 그 경고는 화면에 그대로 남아 «탭은 있는데
+                        # 무응답이라고 적혀 있는» 상태로 굳었다(수동 닫기 전까지).
+                        # 늦게라도 병합됐다는 사실을 말해 그 경고를 대체한다.
+                        if link.silent_notified and wins:
+                            link.silent_notified = False
+                            self._remote_notice(
+                                link.sess, "rnotice.attach_merged_late",
+                                "remote-attach {target}: 원격 탭 병합됨(늦게 도착)",
+                                severity="ok", target=link.host)
                     else:
                         # 탭 목록 불변이어도 부가필드(Claude 헤더/토큰·pane_title
                         # 등)는 변했을 수 있다 — 보는 클라만 갱신.

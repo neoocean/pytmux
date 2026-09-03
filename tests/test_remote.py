@@ -16,7 +16,9 @@ import harness
 from harness import server_only, teardown, wait_for
 from run import skip
 from pytmuxlib import ipc
-from pytmuxlib.protocol import PROTO_VERSION, read_msg, write_msg
+from pytmuxlib import serverremote
+from pytmuxlib.protocol import (PROTO_VERSION, frame_msg, read_msg,
+                                write_msg)
 
 
 async def _attach_client(sock, caps=None):
@@ -48,6 +50,34 @@ async def _read_until(reader, pred, timeout=8.0, what="msg"):
         if pred(msg):
             return msg
     raise AssertionError(f"timeout waiting {what}: {seen}")
+
+
+async def _read_until_both(reader, pred_a, pred_b, timeout=8.0, what="msgs"):
+    """`pred_a`·`pred_b` 를 **둘 다** 볼 때까지 읽고 `pred_a` 에 맞은 메시지를 돌려준다.
+
+    ⛔ **순서를 가정하지 않는다**(pytmux-453). `_read_until` 을 두 번 이어 부르면
+    둘째가 먼저 온 회차에서 그것이 **첫 호출에 버려져** 시한까지 기다리다 넘어진다 —
+    두 신호가 서로 다른 코루틴에서 나가 순서가 안 정해지는 자리(status 방송과
+    attach notice)가 실제로 그렇다.
+    """
+    end = time.monotonic() + timeout
+    seen, got_a, got_b = [], None, False
+    while time.monotonic() < end:
+        if got_a is not None and got_b:
+            return got_a
+        msg = await asyncio.wait_for(read_msg(reader),
+                                     max(0.1, end - time.monotonic()))
+        if msg is None:
+            raise AssertionError(f"connection closed waiting {what}: {seen}")
+        seen.append(msg.get("t"))
+        if got_a is None and pred_a(msg):
+            got_a = msg
+        elif not got_b and pred_b(msg):
+            got_b = True
+    if got_a is not None and got_b:
+        return got_a
+    raise AssertionError(
+        f"timeout waiting {what} (a={got_a is not None} b={got_b}): {seen}")
 
 
 async def _assert_no(reader, pred, window=1.0, what="msg"):
@@ -1180,17 +1210,22 @@ async def test_remote_no_mixing_guards():
                           what="initial status")
         await write_msg(writer, {"t": "cmd", "action": "remote_attach",
                                  "endpoint": sockB})
-        stm = await _read_until(
-            reader, lambda m: m.get("t") == "status"
-            and any(w["name"].startswith("⇄") for w in m["windows"]),
-            what="merged status")
+        # ⛔ **순서를 가정하지 않는다**(pytmux-453 §곁가지). 종전엔 `status[⇄]` 를
+        # 먼저 읽고 그다음 '병합됨' notice 를 읽었는데, 실측으로 그 둘의 순서가
+        # 회차마다 갈렸다(`status→notice` 와 `notice→status` 가 둘 다 난다). 순서가
+        # 뒤집힌 회차에서는 앞 `_read_until` 이 notice 를 **버리고** 지나가 뒤엣것이
+        # 시한까지 기다리다 넘어졌다 — 고쳐야 할 것이 없는데 붉어지는 자리다.
+        # 둘을 **한 번에** 모아 소비한다(이후 단계가 읽는 notice 가 섞임-금지
+        # 알림임을 보장하는 원래 목적은 그대로다).
+        stm = await _read_until_both(
+            reader,
+            lambda m: (m.get("t") == "status"
+                       and any(w["name"].startswith("⇄") for w in m["windows"])),
+            lambda m: (m.get("t") == "notice"
+                       and m.get("key") == "rnotice.attach_merged"),
+            what="merged status + merged notice")
         gidx = next(w["index"] for w in stm["windows"]
                     if w["name"].startswith("⇄"))
-        # 첫 status(=탭 도착) 뒤에 오는 '병합됨' 알림을 소비해 둔다 — 이후 단계가
-        # 읽는 notice 가 섞임-금지 알림임을 보장(merged notice 가 status 뒤로 이동).
-        await _read_until(
-            reader, lambda m: m.get("t") == "notice"
-            and m.get("key") == "rnotice.attach_merged", what="merged notice")
 
         # ① 로컬 보기: 원격 index 겨냥 이동/합치기 거부 + 로컬 불변
         nA_tabs = len(sessA.tabs)
@@ -3572,3 +3607,208 @@ async def test_relay_two_hop_end_to_end_with_fake_ssh():
         shutil.rmtree(tmpdir, ignore_errors=True)
         await teardown(srvA, taskA, sockA)
         await teardown(srvC, taskC, sockC)
+
+
+async def test_remote_attach_late_status_says_merged_after_silent():
+    """pytmux-453 ①: 첫 status 예산(3초)을 넘겨 `attach_silent`(sticky·warn)로 접은
+    뒤 **뒤늦게** status 가 와서 탭이 생기면, 그 사실을 말한다.
+
+    ⛔ 종전엔 탭바만 조용히 갱신되고 그 경고는 **수동으로 닫을 때까지** 화면에 남아
+    「탭은 있는데 원격이 무응답이라고 적혀 있는」 상태로 굳었다. 코드 주석은
+    *"링크는 유지 — 뒤늦은 status 면 그때 탭 출현"* 이라고 약속했지만 **말하는 걸음이
+    없었다**(2026-09-03 실측: 20초를 더 기다려도 사용자에게는 경고뿐이다).
+    """
+    if os.name == "nt":
+        skip("POSIX 전용(in-process 페더레이션 코어는 POSIX 소켓 기준으로 검증)")
+    srvA, taskA, sockA = await server_only()
+    srvA._FIRST_STATUS_TRIES = 3          # 예산을 0.06초로 줄여 «늦음»을 만든다
+    srvA._FIRST_STATUS_DELAY = 0.02
+
+    slow_path = tempfile.mktemp(prefix="pytmux-slow-", suffix=".sock")
+    held, sent = [], asyncio.Event()
+
+    async def _slow(reader, writer):
+        """예산이 지난 **뒤에** 첫 status 를 보내는 상류(느린 핸드셰이크 대역)."""
+        held.append(writer)
+        try:
+            await read_msg(reader)                 # hello 소비
+            await asyncio.sleep(0.4)               # 예산(0.06초)을 확실히 넘긴다
+            await write_msg(writer, {"t": "status", "session": "s",
+                                     "windows": [{"index": 1, "name": "up",
+                                                  "active": True}]})
+            sent.set()
+            while not reader.at_eof():
+                await asyncio.sleep(0.05)
+        except (OSError, ConnectionError):
+            pass
+
+    slow_srv = await asyncio.start_unix_server(_slow, path=slow_path)
+    os.chmod(slow_path, 0o600)             # 위 mute 테스트와 같은 이유(_guard_local_socket)
+    reader = writer = None
+    try:
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": slow_path})
+        first = await _read_until(reader, lambda m: m.get("t") == "notice",
+                                  what="attach notice")
+        assert first.get("key") == "rnotice.attach_silent", first
+
+        # ★ 여기가 이 시험의 전부다 — 늦게 온 status 가 **말해진다**.
+        late = await _read_until(
+            reader, lambda m: (m.get("t") == "notice"
+                               and m.get("key") == "rnotice.attach_merged_late"),
+            what="late merged notice")
+        assert late.get("kw", {}).get("target") == slow_path, late
+        # 그리고 탭이 실제로 병합됐다(말만 하고 안 붙는 것이 아니다).
+        st = srvA._status_msg(list(srvA.sessions.values())[0])
+        assert any(w["name"].startswith("⇄") for w in st["windows"]), st
+
+        # ⛔ 한 번만 말한다 — 이후 status 가 더 와도 같은 알림이 되풀이되지 않는다.
+        link = list(srvA._remotes_dict().values())[0]
+        assert link.silent_notified is False, "표식은 말한 뒤에 내려간다"
+    finally:
+        if writer is not None:
+            writer.close()
+        for w in held:
+            try:
+                w.close()
+            except OSError:
+                pass
+        slow_srv.close()
+        await slow_srv.wait_closed()
+        try:
+            os.unlink(slow_path)
+        except OSError:
+            pass
+        await teardown(srvA, taskA, sockA)
+
+
+async def test_remote_attach_merged_does_not_say_late():
+    """대조군(pytmux-453 ①): 제때 병합된 회차는 «늦게 도착» 을 말하지 않는다.
+
+    ⛔ 이 대조군이 없으면 위 시험은 「늘 말한다」로도 통과한다.
+    """
+    if os.name == "nt":
+        skip("POSIX 전용(in-process 페더레이션 코어는 POSIX 소켓 기준으로 검증)")
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+        await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                 "endpoint": sockB})
+        note = await _read_until(
+            reader, lambda m: (m.get("t") == "notice"
+                               and str(m.get("key", "")).startswith(
+                                   "rnotice.attach_")),
+            what="attach notice")
+        assert note.get("key") == "rnotice.attach_merged", note
+        link = list(srvA._remotes_dict().values())[0]
+        assert link.silent_notified is False
+        await _assert_no(
+            reader,
+            lambda m: m.get("key") == "rnotice.attach_merged_late",
+            window=0.5, what="late notice on a healthy attach")
+    finally:
+        if writer is not None:
+            writer.close()
+        await teardown(srvA, taskA, sockA)
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_remote_attach_fails_when_hello_write_is_swallowed():
+    """pytmux-453 ②: hello 송신 실패는 **실패**다 — 성공으로 접히지 않는다.
+
+    ☠ `protocol.write_msg` 는 ConnectionError·RuntimeError·AssertionError 를
+    **예외가 아니라 False 로** 접는다(무감시 태스크용 백스톱). `remote_attach` 는
+    `except (OSError, ConnectionError)` 만 두고 **반환값을 안 봤다** — 그래서 hello 가
+    한 바이트도 안 나간 회차가 「성공」으로 통과하고, 링크·reader·ping 이 다 뜬 채
+    업스트림만 아무것도 못 받는다. 사용자에게는 「연결됐지만 원격이 응답 없음」으로
+    보이고 원인은 어디에도 안 남는다.
+    """
+    if os.name == "nt":
+        skip("POSIX 전용(in-process 페더레이션 코어는 POSIX 소켓 기준으로 검증)")
+    srvA, taskA, sockA = await server_only()
+    srvB, taskB, sockB = await server_only()
+    reader = writer = None
+    try:
+        srvB.ensure_default_session(80, 24)
+        srvA.ensure_default_session(80, 24)
+        reader, writer = await _attach_client(sockA)
+        await _read_until(reader, lambda m: m.get("t") == "status",
+                          what="initial status")
+
+        real_write = serverremote.write_msg
+
+        async def _swallow(w, obj):
+            if isinstance(obj, dict) and obj.get("t") == "hello":
+                return False            # write_msg 의 백스톱과 똑같이 «조용히» 실패
+            return await real_write(w, obj)
+
+        with harness.patched(serverremote, write_msg=_swallow):
+            await write_msg(writer, {"t": "cmd", "action": "remote_attach",
+                                     "endpoint": sockB})
+            note = await _read_until(
+                reader, lambda m: (m.get("t") == "notice"
+                                   and str(m.get("key", "")).startswith(
+                                       "rnotice.attach_")),
+                what="attach notice")
+        assert note.get("key") == "rnotice.attach_fail", note
+        # 그리고 **링크를 남기지 않는다**(reader·ping 태스크가 유령으로 안 돈다).
+        assert not srvA._remotes_dict(), srvA._remotes_dict()
+    finally:
+        if writer is not None:
+            writer.close()
+        # 이 시험은 hello 실패를 **일부러** 만든다 — 그 한 라벨만 좁게 허용한다
+        # (⛔ 전면 True 금지 · 루트 CLAUDE.md 의 서버 예외 만능가드 규약).
+        await teardown(srvA, taskA, sockA,
+                       allow_errors=("remote_attach hello",))
+        await teardown(srvB, taskB, sockB)
+
+
+async def test_read_until_both_does_not_assume_order():
+    """pytmux-453 §곁가지: 두 신호(`status[⇄]`·'병합됨' notice)의 순서는 안 정해진다.
+
+    실측(2026-09-03)으로 같은 코드에서 회차마다 `status→notice` 와 `notice→status`
+    가 **둘 다** 났다. 종전 시험은 `_read_until` 두 번을 이어 불러 고정 순서를
+    가정했고, 뒤집힌 회차에서는 앞 호출이 뒷 신호를 **버리고** 지나가 시한까지
+    기다리다 넘어졌다 — 고칠 것이 없는데 붉어지는 자리다.
+
+    ⛔ 이 시험은 하네스 헬퍼를 **두 순서 다** 재고, 옛 모양(`_read_until` 두 번)이
+    뒤집힌 순서에서 실제로 넘어진다는 것을 대조군으로 함께 못박는다.
+    """
+    async def _feed(msgs):
+        r = asyncio.StreamReader()
+        for m in msgs:
+            r.feed_data(frame_msg(m))
+        r.feed_eof()
+        return r
+
+    a = {"t": "status", "windows": [{"name": "⇄up", "index": 1}]}
+    b = {"t": "notice", "key": "rnotice.attach_merged"}
+    is_a = (lambda m: m.get("t") == "status"
+            and any(w["name"].startswith("⇄") for w in m["windows"]))
+    is_b = (lambda m: m.get("t") == "notice"
+            and m.get("key") == "rnotice.attach_merged")
+
+    for order in ((a, b), (b, a)):
+        got = await _read_until_both(await _feed(list(order)), is_a, is_b,
+                                     timeout=2.0, what="both")
+        assert got["t"] == "status", (order, got)
+
+    # 대조군 — 옛 모양은 뒤집힌 순서에서 넘어진다(그것이 이 헬퍼가 있는 이유다).
+    r = await _feed([b, a])
+    await _read_until(r, is_a, timeout=2.0, what="status first")
+    try:
+        await _read_until(r, is_b, timeout=0.5, what="notice second")
+    except (AssertionError, asyncio.TimeoutError):
+        pass
+    else:
+        raise AssertionError("옛 모양이 뒤집힌 순서에서 통과했다 — 대조군이 죽었다")

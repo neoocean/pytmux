@@ -207,7 +207,7 @@ class _NativeBase:
         self.cursor_position()
         self.saved_columns = None
 
-    def resize(self, lines=None, columns=None) -> None:
+    def resize(self, lines=None, columns=None, *, wrap_guard=True) -> None:
         old_cols = self.columns
         lines = lines or self.lines
         columns = columns or self.columns
@@ -239,7 +239,11 @@ class _NativeBase:
         self.lines, self.columns = lines, columns
         self.set_margins()
         # model._BCEMixin.resize: 폭 축소 시 autowrap 가드 + 탭스톱 재계산.
-        if columns < old_cols:
+        # ★ wrap_guard=False 면 가드를 안 건다 — **자식이 아직 한 바이트도 안 보낸**
+        #   화면이 그것이다(pytmux-418). 가드는 「옛 폭으로 그려진 것을 앱이 다시
+        #   그린다」를 전제로 오버플로를 버리는데, 아무것도 안 그려진 화면에는 다시
+        #   그릴 것이 없고 앱도 없다 — 그 자리에서 버리는 것은 **영구 손실**이다.
+        if columns < old_cols and wrap_guard:
             self._wrap_guard_until = time.monotonic() + WRAP_GUARD_SEC
         self.tabstops = set(range(8, self.columns, 8))
 

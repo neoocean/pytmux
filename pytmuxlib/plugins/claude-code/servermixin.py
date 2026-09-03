@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import time
@@ -38,6 +39,15 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      parse_reset_delay, parse_usage, screen_tail_key,
                      track_repeat)
 from pytmuxlib.model import Pane, Session, Tab
+
+#: 엔드포인트별 임시 토큰 DB(`claude-tokens-<id>.db`)의 수명(일). 이보다 오래되고
+#: **행이 하나도 없는** 것만 거둔다(`_sweep_stale_token_dbs` — pytmux-435 ④).
+#: 시험 상수라 모듈 전역에 둔다.
+_STALE_DB_DAYS = 7
+#: 한 번의 스윕이 **거둘** 파일 수 상한 — 1463개가 쌓인 상자에서도 기동이 안 늘어지게.
+#: ⛔ 「볼 개수」가 아니다(2026-09-03 정정 · `_sweep_stale_token_dbs` 주석 참조) —
+#: 그렇게 자르면 이름순 앞쪽이 못 지우는 것들일 때 스윕이 **영영 0건**이 된다.
+_STALE_DB_CAP = 200
 
 # 종료 토큰요약 배치의 OS 분기(_emit_auto_token_log): Windows(ConPTY)는 conhost
 # 화면버퍼가 권위라 Unix 식 스트림 주입이 프롬프트 재그리기에 덮인다 — 전용 경로
@@ -396,6 +406,12 @@ class ServerClaudeMixin:
             rec = fullscreen.read_auto_disabled()
             if rec is None:
                 return                # 걷혔다(또는 못 읽었다) — 말할 것이 없다
+            # ⛔ **판이 다른 기록은 claude 가 없는 셈 친다**(pytmux-415 ⓑ · 이진의
+            # `if(K && K.version!==T.version) K=void 0`). 그것을 「꺼져 있다」로 읽으면
+            # fullscreen 이 멀쩡히 도는데 경고가 뜨는 **없는 경보**다. 판을 못 알아본
+            # 상자에서는 종전대로 말한다(거짓 침묵이 더 나쁘다 — 헬퍼 docstring).
+            if not fullscreen.auto_disabled_is_effective(rec):
+                return
             if self._fullscreen_off_said == rec["at_ms"]:
                 return
             self._fullscreen_off_said = rec["at_ms"]
@@ -2693,19 +2709,63 @@ class ServerClaudeMixin:
 
     @staticmethod
     def _copy_db_tree(old: str, new_path: str) -> bool:
-        """old DB(+WAL 사이드카 -wal/-shm)를 new_path 로 **복사**(원본 보존). 성공 True."""
+        """old DB(+WAL 사이드카 -wal/-shm)를 new_path 로 **복사**(원본 보존). 성공 True.
+
+        ⛔ **최종 이름으로 곧장 쓰지 않는다**(pytmux-474). 실측(2026-09-03 · macOS):
+        72MB DB 를 복사하는 동안 다른 스레드가 같은 경로를 열면 SQLite 가 **반쯤 쓰인
+        파일**을 읽어 `database disk image is malformed` 로 죽는다. 실제로 토큰 동기화
+        워커의 executor 연결이 그 창에 끼어 서버 error.log 에 트레이스백을 남겼고,
+        QA T3 의 여섯 스텝이 그 한 건을 S1 로 신고했다(재현률: 복사 시작 직후 수십 ms).
+
+        그래서 **같은 디렉터리의 임시 이름**으로 다 쓴 뒤 `os.replace` 로 제자리에
+        놓는다 — 관찰자는 «아직 없음» 아니면 «완전한 것» 둘 중 하나만 본다. 임시 이름이
+        같은 디렉터리라야 rename 이 원자적이다(다른 파일시스템이면 rename 이 복사로
+        떨어져 원자성이 사라진다).
+
+        ★ 사이드카를 **먼저** 제자리에 놓고 메인 DB 를 **맨 마지막**에 놓는다: 메인이
+        없으면 아무도 그 DB 를 못 열므로, 그 순간의 사이드카는 아무 의미가 없다. 순서를
+        뒤집으면 «메인은 새 것인데 WAL 은 아직 없는» 창이 생겨 최근 커밋이 잠깐 사라져
+        보인다.
+        """
         import shutil
+
+        def _stage(src, dst):
+            """`dst` 옆의 임시 이름으로 복사하고 그 경로를 준다(실패면 None)."""
+            tmp = "%s.part-%d" % (dst, os.getpid())
+            try:
+                shutil.copy2(src, tmp)
+                return tmp
+            except OSError:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+                return None
+
         try:
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
-            shutil.copy2(old, new_path)
         except OSError:
             return False
+        main_tmp = _stage(old, new_path)
+        if main_tmp is None:
+            return False                # 메인 DB 는 필수 — 종전과 같이 False
+        # 사이드카는 **있을 때만·덮어쓰지 않고·실패해도 넘어간다**(종전 그대로 —
+        # WAL 이 없어도 DB 는 유효하다). 다만 자리에 놓는 순서는 아래가 정한다.
+        side = []
         for suffix in ("-wal", "-shm"):
-            if os.path.exists(old + suffix) and not os.path.exists(new_path + suffix):
-                try:
-                    shutil.copy2(old + suffix, new_path + suffix)
-                except OSError:
-                    pass
+            s_path, d_path = old + suffix, new_path + suffix
+            if not os.path.exists(s_path) or os.path.exists(d_path):
+                continue
+            tmp = _stage(s_path, d_path)
+            if tmp is not None:
+                side.append((tmp, d_path))
+        for tmp, d_path in side:        # 사이드카 먼저
+            with contextlib.suppress(OSError):
+                os.replace(tmp, d_path)
+        try:
+            os.replace(main_tmp, new_path)      # 메인은 맨 마지막(이 한 걸음이 원자성)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.unlink(main_tmp)
+            return False
         return True
 
     def _migrate_legacy_db(self, new_path: str):
@@ -2750,6 +2810,97 @@ class ServerClaudeMixin:
                 except OSError:
                     pass
 
+    def _sweep_stale_token_dbs(self, mine: str) -> int:
+        """엔드포인트별 임시 토큰 DB(`claude-tokens-<id>.db`)에 **수명**을 준다. 지운 수.
+
+        기본 소켓이 아닌 엔드포인트는 저마다 제 DB 파일을 갖는다(`_tokens_db_filename`).
+        시험·드라이버·일회용 슬롯이 그런 엔드포인트로 서버를 띄우므로 그 파일이
+        **끝없이 쌓인다** — 이 저장소 트리 실측(2026-09-02) 22개 · playground 실측
+        (pytmux-435 ④) **1463개**. 아무도 지우지 않았다.
+
+        ⛔ **자료를 잃지 않는 규칙으로만 지운다.** 나이만 보면 몇 주 뒤에 돌아온
+        `-L work` 소켓의 이력을 지울 수 있다. 그래서 셋을 다 만족할 때만 지운다:
+
+          ⑴ 내 것도, 공유 기본(`claude-tokens.db`)도 아니다
+          ⑵ `mtime` 이 `_STALE_DB_DAYS` 보다 오래됐다
+          ⑶ **행이 하나도 없다** — 사용자 테이블 전부를 세어 0 일 때만.
+
+        ⑶ 이 이 함수의 값이다. 「비었을 것이다」가 아니라 **비었음을 확인하고** 지우므로
+        규칙이 틀려도 잃는 것이 없다. 테이블 목록은 `sqlite_master` 에서 읽는다 —
+        스키마가 자라도 손볼 데가 없다(하드코딩한 목록은 조용히 낡는다).
+
+        어떤 실패도 삼킨다 — 토큰 로깅 본 흐름을 이 청소가 막으면 안 된다."""
+        import glob
+        try:
+            base = os.path.dirname(mine)
+            cutoff = time.time() - _STALE_DB_DAYS * 86400
+            gone = 0
+            # ⛔ **상한은 «본 개수»가 아니라 «거둔 개수»다**(pytmux-435 ④ 후속 ·
+            # 2026-09-03 실측). 종전엔 `sorted(glob(...))[:CAP]` 로 **거르기 전에**
+            # 잘랐다 — 파일이 CAP 보다 많으면 매 회차 **이름순 앞 CAP 개만** 보게
+            # 되고, 그것들이 「행이 있어서」 못 지우는 것이면 스윕은 영영 0건이다.
+            # 그 자리를 이 상자에서 그대로 봤다: 1144개 중 묵은 것 1098개인데 앞
+            # 200개 표본의 94%가 행이 있어, 지운 뒤로는 **한 개도 못 줄었다**.
+            # 이제 전부를 훑되 **거둔 것이 CAP 에 닿으면 멈춘다** — 한 회차가 태우는
+            # 일의 상한은 그대로이고(그것이 CAP 의 목적이다) 진도는 나간다.
+            for path in sorted(glob.glob(os.path.join(base,
+                                                      "claude-tokens-*.db"))):
+                if gone >= _STALE_DB_CAP:
+                    break
+                if os.path.abspath(path) == os.path.abspath(mine):
+                    continue                      # ⑴ 내 것
+                try:
+                    if os.path.getmtime(path) > cutoff:
+                        continue                  # ⑵ 아직 젊다
+                except OSError:
+                    continue
+                if not self._token_db_is_empty(path):
+                    continue                      # ⑶ 누군가의 이력이다 — 남긴다
+                for p in (path, path + "-wal", path + "-shm"):
+                    try:
+                        if os.path.exists(p):
+                            os.remove(p)
+                    except OSError:
+                        pass
+                gone += 1
+            if gone:
+                self._log_error("token_db_sweep",
+                                f"행 없는 묵은 임시 토큰 DB {gone}건을 거뒀다"
+                                f"(>{_STALE_DB_DAYS}일 · {base})")
+            return gone
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _token_db_is_empty(path: str) -> bool:
+        """그 DB 의 **사용자 테이블 전부**가 0행인가. 못 열거나 못 세면 False(= 남긴다).
+
+        판정을 못 한 것을 「비었다」로 접으면 그 순간 자료를 잃는다 — 모르면 남긴다."""
+        import sqlite3
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
+        except sqlite3.Error:
+            return False
+        try:
+            names = [r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%'").fetchall()]
+            if not names:
+                return False                      # 스키마조차 못 읽었다 — 모른다
+            for n in names:
+                row = conn.execute(
+                    f'SELECT 1 FROM "{n}" LIMIT 1').fetchone()
+                if row is not None:
+                    return False
+            return True
+        except sqlite3.Error:
+            return False
+        finally:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
     def _tokens_db_conn(self):
         """토큰 DB 연결(최초 1회 열고 보관). 먼저 이전 위치(루트 db/)의 DB 를 새 위치
         (플러그인 db/)로 1회 마이그레이션한다(S5 T5). 새(빈) DB 이고 기존 JSONL 이력이
@@ -2759,6 +2910,7 @@ class ServerClaudeMixin:
             return self._tokens_db
         path = self.tokens_db_path
         self._migrate_legacy_db(path)
+        self._sweep_stale_token_dbs(path)     # 형제 임시 DB 에 수명을 준다(pytmux-435 ④)
         try:
             conn = usagedb.connect(path)
         except Exception:

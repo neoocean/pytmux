@@ -283,6 +283,22 @@ def steps():
             needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
         ),
         Step(
+            "화면 키 적합성",
+            ["cargo", "test", "-p", "proto", "--test", "screen_key_conformance"], CLIENT,
+            "정본 화면의 on_key 를 AST 로 읽어 그 키를 실제로 눌러 대조한다(pytmux-454 —"
+            " 「같아 보인다」가 아니라 「눌러 봤다」)",
+            check=cargo_verdict,
+            needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
+        ),
+        Step(
+            "네이티브 등록표",
+            ["cargo", "test", "-p", "proto", "--test", "native_escape_ledger"], CLIENT,
+            "「이 오버레이는 내가 그린다」가 등록표·광고에서 같은 말을 하나(pytmux-458 —"
+            " 그 갈림이 어디에도 안 적히면 표가 조용히 는다)",
+            check=cargo_verdict,
+            needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
+        ),
+        Step(
             "Rust 스위트", ["cargo", "test", "--workspace", "--no-fail-fast"], CLIENT,
             "클라 둘 + core/proto 전부",
             check=cargo_verdict, slow=True,

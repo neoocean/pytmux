@@ -48,6 +48,22 @@ _MAX_PREAUTH_CONNS = 128
 # hello 의 `caps`(클라 능력 광고) 개수 상한. 정상 클라는 한두 개다 — 상한은 상대가
 # 프레임 상한(MAX_FRAME)까지 채운 목록을 서버가 집합으로 들고 있지 않게 한다.
 _MAX_CAPS = 64
+
+
+def _native_key(native):
+    """네이티브 상태의 **비교용 열쇠**(pytmux-458).
+
+    상태 dict 는 중첩이라 그대로는 튜플 비교에 못 넣는다. 여기서 한 겹 펴서 정렬한다 —
+    ⛔ `str(native)` 로 접지 않는다: dict 의 문자열화는 **삽입 차례**를 타서 같은 내용이
+    다른 열쇠가 되고, 그러면 30Hz 로 같은 그림을 흘린다(이 열쇠가 막으려는 그것).
+    """
+    return tuple(
+        (name, tuple((pane, tuple(sorted(state.items())))
+                     for pane, state in sorted(panes.items())))
+        for name, panes in sorted(native.items())
+    )
+
+
 # 死-클라 회수(_liveness_loop): 클라는 net_ping_interval(기본 0.5초)마다 ping 을
 # 보낸다. ping 을 한 번이라도 보낸(=ping 켜진) 클라가 이 시간 넘게 완전 무응답이면
 # 반-열린 TCP/콘솔 닫힘/웨지로 死한 고아로 보고 회수한다. 핀(=세션 공유 크기는
@@ -1020,11 +1036,16 @@ class ServerIOMixin:
             # 지금 보는 글은 상류 것이라 내 패널의 자리를 얹으면 엉뚱한 데를 누른다.
             overlays, facts = {}, {}
         cols, rows = self._session_size(sess)
+        # ★ **네이티브 탈출구**(Tier D · pytmux-458): 「이 오버레이는 내가 그린다」고
+        #   광고한 클라에게는 런 대신 **상태**를 싣는다. 광고 안 한 클라(정본)에게는
+        #   `req["native"]` 가 False 이고 프레임에 `native` 칸이 **아예 안 붙는다** —
+        #   그 바이트가 종전과 같아야 하는 것이 이 장치의 대조군이다.
+        native_ok = "native_overlay" in getattr(c, "caps", ())
         req = {"panes": pane_rects, "overlays": overlays, "facts": facts,
                # 활성 패널 id — 배지처럼 **거기 하나에만** 붙는 기여가 쓴다(Tier D).
                "active": (win.active_pane.id
                           if win and win.active_pane else None),
-               "cols": cols, "rows": rows}
+               "cols": cols, "rows": rows, "native": native_ok}
         zones = keys = []
         if not getattr(c, "remote_view", None):
             try:
@@ -1057,14 +1078,23 @@ class ServerIOMixin:
             try:
                 c._cells_runs = self.plugins.plugin_cells(self, sess, req)
                 c._cells_dim = self.plugins.plugin_dim_panes(self, sess, req)
+                # 네이티브 상태도 런과 **같은 주기**로 만든다 — 시계의 초가 그 주기에
+                # 걸려 있고, 둘을 다른 주기에 두면 같은 프레임에서 서로 다른 시각을
+                # 말하게 된다.
+                c._cells_native = (self.plugins.plugin_native(self, sess, req)
+                                   if native_ok else {})
             except Exception:
                 self._log_error("plugin_cells")
                 return None
         runs, dim = c._cells_runs, c._cells_dim
+        native = c._cells_native or {}
         # 클릭존·키도 판정에 넣는다. 달력에서는 이것만으로 달라지는 프레임을 만들 수
         # 없지만(화살표는 제목 런과 같은 자리 셈에서 나온다), Claude footer 존은
         # **런 없이 자리만** 있으므로 여기가 그 유일한 신호다.
         key = (tuple(sorted(dim)),
+               # 네이티브 상태도 판정에 넣는다 — 시계는 런이 없으므로 **이것만이**
+               # 「초가 넘어갔다」의 신호다. 안 넣으면 그 클라의 시계가 멎는다.
+               _native_key(native),
                tuple((r["x"], r["y"], r["text"]) for r in runs),
                tuple((z["x"], z["y"], z["w"], z["pane"], z["name"], z["do"],
                       z.get("opens", "")) for z in zones),
@@ -1072,9 +1102,14 @@ class ServerIOMixin:
         if key == c._cells_last:
             return None
         c._cells_last = key
-        return frame_msg({"t": "plugin_cells", "layer": "overlay",
-                          "dim": dim, "runs": runs,
-                          "zones": zones, "keys": keys})
+        msg = {"t": "plugin_cells", "layer": "overlay",
+               "dim": dim, "runs": runs,
+               "zones": zones, "keys": keys}
+        # ⛔ **광고 안 한 클라의 프레임은 종전 바이트 그대로다** — 빈 칸도 안 붙인다.
+        #   붙이면 정본 스위트의 와이어 골든과 Rust 픽스처가 함께 흔들린다.
+        if native:
+            msg["native"] = native
+        return frame_msg(msg)
 
     @staticmethod
     def _cells_shape_key(req):
@@ -1264,6 +1299,12 @@ class ServerIOMixin:
                         "remote-attach {target}: 원격 탭 병합됨",
                         severity="ok", target=target)
                 else:
+                    # pytmux-453: 이 알림은 sticky(수동 닫기)다 — 뒤늦게 status 가
+                    # 와서 탭이 생겨도 종전엔 이 경고가 그대로 남아 «탭은 있는데
+                    # 무응답» 으로 굳었다. 표식을 세워 두면 _remote_reader 가 첫
+                    # status 를 받는 그 자리에서 「늦게 병합됨」을 말한다.
+                    if link is not None:
+                        link.silent_notified = True
                     note = self._notice_msg("rnotice.attach_silent",
                         "remote-attach {target}: 연결됐지만 원격이 응답 없음 — "
                         "원격 서버 점검", sticky=True, severity="warn",
@@ -1830,8 +1871,24 @@ class ServerIOMixin:
         # 막는다. **재시작은 이 경로가 아니라 _host_restart_exit 를 거치므로** host 가
         # 보존된다 — 여기서만 host 를 죽인다.
         if self._pty_host is not None:
+            # ★ **바닥 소켓에 직접** 보내는 것이 먼저다(pytmux-435). 아래 비동기
+            #   경로는 `writer.write()` 로 버퍼에 넣을 뿐이고 실제 전송은 루프가
+            #   하는데, 이 함수는 몇 줄 뒤에 `loop.stop()` 을 부른다 — 실측으로 그
+            #   프레임은 **한 번도 안 나갔고**, 그래서 서버가 살아 있는 채
+            #   `kill-server` 를 하면 host 가 매번 새어 나갔다(대조군: 서버를 먼저
+            #   죽인 뒤 같은 명령을 치면 동기 폴백 갈래가 host 를 내린다).
+            #   사유·실측표는 `ptyhostclient.shutdown_host_now` 머리말.
+            #   ⛔ 이 연결의 «바닥 소켓»에 직접 쓰는 길은 **막혀 있다** — asyncio 가
+            #   주는 것은 `asyncio.trsock.TransportSocket` 이고 그 껍데기에는
+            #   `sendall`·`send` 가 **없다**(3.11+ · `setblocking`·`shutdown` 은 있다).
+            #   그래서 새 블로킹 소켓으로 붙는 `shutdown_host_sync` 를 쓴다 — 그 길이
+            #   실측으로 host 를 실제로 내린 유일한 길이다.
+            sent_now = False
             with contextlib.suppress(Exception):
-                self._pty_host.shutdown_host()
+                sent_now = ptyhostmgr.shutdown_host_sync(self.sock_path)
+            with contextlib.suppress(Exception):
+                if not sent_now:
+                    self._pty_host.shutdown_host()
                 # ★ 보낸 **뒤 쓰기단만 닫는다**(pytmux-134). 통째로 닫으면 host 가
                 #   응답을 쓰다 RST 를 받아 **아직 안 읽은 shutdown 프레임을 버리고**,
                 #   그걸 «연결만 끊김 = 재시작»으로 읽어 영원히 산다(고아 워치독도
@@ -1841,7 +1898,11 @@ class ServerIOMixin:
                 #   경로는 이미 루프를 멈추는 중이라 await 할 자리가 아니다. 반쪽으로
                 #   닫아 두면 서버 프로세스가 실제로 끝나 소켓이 닫힐 때까지 host 의
                 #   읽기단이 살아 있어 프레임이 안 버려진다.
-                self._pty_host.half_close()
+                #   ⚠ `shutdown_host_now` 가 성공했으면 그것이 이미 `SHUT_WR` 까지
+                #   했으므로 다시 걸지 않는다(두 번 걸어도 무해하지만, 이 줄이
+                #   「반쪽 닫기는 저기서 한다」를 말한다).
+                if not sent_now:
+                    self._pty_host.half_close()
         elif ptyhostmgr.host_enabled():
             # 폴백 모드로 돌던 서버의 종료(PTYHOST_ORPHAN_2026-07-24 P3/R2): host 연결이
             # 6초 예산 안에 안 붙어 인프로세스 백엔드로 돌아섰는데, 그 사이 뒤늦게 뜬
@@ -1931,6 +1992,16 @@ class ServerIOMixin:
             # 파일을 읽어 hello/control 에 실어 보내고, handle_client 가 검증한다. listen
             # 후에 쓰면 재시작 직후 클라가 빈/구토큰을 읽을 창이 생기므로 먼저 쓴다.
             self.auth_token = secrets.token_hex(32)
+            # 한 엔드포인트에는 서버가 **하나**다(pytmux-435). 이 자리에서 앞 주인을
+            # 거둔다 — bind 는 어차피 성공하므로(unix=임시 경로 후 `os.replace` ·
+            # TCP=에페메럴 포트) 그 뒤에 부르면 앞엣것은 **도달 불가인 채 영생**한다.
+            # ⛔ 내 토큰을 쓰기 **전**이다: 앞 주인은 물러나며 `owned_only` 정리로
+            # 「내용이 내 토큰인 파일」을 지운다. 여기서 먼저 거두면 그가 지우는 것은
+            # **자기 토큰**이고, 그 뒤 내가 쓴 것은 안 건드린다. 순서를 뒤집어도
+            # 내용 대조 덕에 안전하지만, 이 순서가 「죽는 자의 파일은 죽는 자가
+            # 치운다」로 읽혀 다음 사람이 덜 헷갈린다.
+            if getattr(self, "_evict_stale_owner", False):
+                self._evicted_owner = self._evict_previous_owner()
             try:
                 ipc.write_token(self.sock_path, self.auth_token)
             except OSError:
@@ -1939,6 +2010,13 @@ class ServerIOMixin:
             # 확정 엔드포인트(TCP 면 실제 포트)를 패널 셸 $PYTMUX 에 게시한다.
             server, self.resolved_endpoint = await ipc.start_server(
                 self.sock_path, self.handle_client)
+            # bind 가 선 뒤에 pid 를 게시한다(다음 주인이 나를 찾는 주소).
+            self._publish_server_pid()
+            # 그리고 부탁받은 앞 주인이 정말 죽는지는 **여기서부터** 지켜본다 —
+            # bind 앞에서 기다리면 attach 의 4.0초 예산을 넘긴다(그 사유는
+            # `_finish_eviction` 머리말). 백그라운드라 첫 프레임을 안 막는다.
+            if getattr(self, "_evict_pid", None):
+                self._spawn(self._finish_eviction(), "finish_eviction")
             if not ipc.is_tcp(self.sock_path):
                 # 종료 시 "이 소켓 파일이 아직 내 것인가" 판정용 inode(위 주석 참조).
                 with contextlib.suppress(OSError):

@@ -33,6 +33,12 @@ def no_traceback(ctx) -> list[Finding]:
         return []
     # 첫 줄의 예외 타입만 지문의 재료로 쓴다 — 경로·줄번호가 들어가면 같은 결함이 개정마다
     # 다른 지문을 얻어 재발 판정이 안 선다.
+    # ⚠ **그 의도가 한 번 무너졌다**(pytmux-474 · 이 자리를 지우지 않는다): 트레이스백을
+    #   길이로 자르던 시절(`session.error_blocks` 의 1200자 컷) 프레임이 여섯을 넘으면
+    #   컷이 예외 줄 **앞**에 떨어져, 3.13 의 앵커 줄(`~~~~~~~~~~~~~~^^^^^^`)이 그대로
+    #   지문이자 이슈 제목이 됐다. 예외 타입이 어디에도 안 남아 그 이슈를 읽는 사람은
+    #   무슨 예외였는지를 알 수 없었다 — 지문은 길이 컷 하나에 이렇게 쉽게 무너진다.
+    #   이제 블록은 경계(다음 `==== ` 머리)로 자르고 꼬리를 반드시 남긴다.
     head = _exception_line(blocks[0])
     return [Finding(
         scenario=ctx.scenario, oracle="server/no_traceback", key=head,
@@ -44,12 +50,19 @@ def no_traceback(ctx) -> list[Finding]:
 
 
 def _exception_line(block: str) -> str:
-    """트레이스백 블록의 마지막 줄(= 예외 타입과 메시지)."""
+    """트레이스백 블록의 마지막 줄(= 예외 타입과 메시지).
+
+    앵커 줄(`~~~^^^` — 3.13 이 실패한 부분식을 가리키는 줄)은 **예외 줄일 수 없다**.
+    블록이 어떤 이유로든 중간에서 끊겼을 때 그것이 지문이 되지 않게 여기서도 막는다
+    (pytmux-474 의 그 사고를 두 자리에서 막는다 — 경계 컷과 이 필터)."""
     for line in reversed(block.strip().splitlines()):
         s = line.strip()
-        if s and not s.startswith(("File \"", "Traceback", "During handling",
-                                   "The above exception")):
-            return s[:160]
+        if not s or s.startswith(("File \"", "Traceback", "During handling",
+                                  "The above exception")):
+            continue
+        if not s.strip("~^ "):          # 앵커만 있는 줄
+            continue
+        return s[:160]
     return "알 수 없는 예외"
 
 

@@ -956,3 +956,142 @@ async def test_connect_survives_readonly_db_and_still_reads():
         except OSError:
             pass
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ── 임시 토큰 DB 의 수명 (pytmux-435 ④) ──────────────────────────────────────────
+
+def _sweeper():
+    """스윕 메서드만 빌려 쓰는 최소 객체 — 실 서버를 세우지 않는다."""
+    import importlib
+    mix = importlib.import_module(
+        "pytmuxlib.plugins.claude-code.servermixin").ServerClaudeMixin
+
+    class _S(mix):
+        def __init__(self):
+            self.logged = []
+
+        def _log_error(self, where, detail=""):
+            self.logged.append((where, detail))
+
+    return _S()
+
+
+async def test_the_sweep_only_takes_dbs_that_are_old_and_have_no_rows():
+    """★ **행이 있는 것은 남긴다** — 이 조건이 이 수명 규칙의 전부다(pytmux-435 ④).
+
+    엔드포인트별 임시 DB(`claude-tokens-<id>.db`)는 끝없이 쌓인다(이 저장소 트리 실측
+    2026-09-02 에 22개 · playground 에 1463개). 나이만 보고 지우면 몇 주 뒤에 돌아온
+    `-L work` 소켓의 이력을 잃는다. 그래서 「비었을 것이다」가 아니라 **비었음을 확인**
+    하고 지운다 — 규칙이 틀려도 잃는 것이 없게.
+
+    ⚠ 네 부류를 한 자리에 놓고 **하나만** 사라지는지 본다(위양성이 곧 자료 유실이다).
+    """
+    d = tempfile.mkdtemp()
+    old = time.time() - 30 * 86400
+    try:
+        def db(name, rows=0, aged=True):
+            path = os.path.join(d, name)
+            conn = usagedb.connect(path)
+            for i in range(rows):
+                usagedb.insert(conn, _rec(1.0 + i, 0, 1, 1, "a@x.org", 42))
+            conn.close()
+            if aged:
+                os.utime(path, (old, old))
+            return path
+
+        mine = db("claude-tokens-mine.db")
+        empty_old = db("claude-tokens-t111x1.db")
+        empty_new = db("claude-tokens-t222x2.db", aged=False)
+        has_rows = db("claude-tokens-t333x3.db", rows=2)
+        shared = db("claude-tokens.db")
+
+        s = _sweeper()
+        gone = s._sweep_stale_token_dbs(mine)
+
+        assert not os.path.exists(empty_old), "묵고 빈 것을 안 거뒀다"
+        assert gone == 1, (gone, sorted(os.listdir(d)))
+        assert os.path.exists(empty_new), "아직 젊은 것을 거뒀다"
+        assert os.path.exists(has_rows), "★ 행이 있는 DB 를 지웠다 — 자료 유실이다"
+        assert os.path.exists(shared), "공유 기본 DB 를 지웠다"
+        assert os.path.exists(mine), "지금 쓰는 내 DB 를 지웠다"
+        assert s.logged and s.logged[-1][0] == "token_db_sweep", s.logged
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_a_db_we_cannot_read_counts_as_not_empty():
+    """모르면 **남긴다.** 판정 실패를 「비었다」로 접는 순간 자료를 잃는다."""
+    d = tempfile.mkdtemp()
+    try:
+        s = _sweeper()
+        junk = os.path.join(d, "claude-tokens-broken.db")
+        with open(junk, "wb") as f:
+            f.write(b"this is not a sqlite file at all")
+        assert s._token_db_is_empty(junk) is False
+        assert s._token_db_is_empty(os.path.join(d, "nope.db")) is False
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_the_cap_counts_what_it_reaps_not_what_it_looks_at():
+    """☠ pytmux-435 ④ 후속 — 상한이 **거르기 앞**에 서면 스윕이 영영 0건이 된다.
+
+    종전 구현은 `sorted(glob(...))[:CAP]` 였다. 파일이 CAP 보다 많으면 매 회차
+    **이름순 앞 CAP 개만** 보는데, 그것들이 「행이 있어서」 못 지우는 것이면 뒤쪽에
+    있는 «묵고 빈» 것에는 **영영 못 닿는다.** 이 상자에서 그 자리를 그대로 봤다
+    (2026-09-03): `claude-tokens-*.db` 1144개 · 7일보다 묵은 것 1098개인데, 앞
+    200개 표본의 94%가 행이 있어 스윕이 한 개도 못 줄이고 있었다.
+
+    아래는 그 모양을 작게 재현한다 — 이름순 **앞**을 못 지우는 것으로 채우고,
+    지울 것을 **뒤**에 둔다. 상한이 「본 개수」면 붉다."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    d = tempfile.mkdtemp()
+    old = time.time() - 30 * 86400
+    try:
+        def db(name, rows=0):
+            path = os.path.join(d, name)
+            conn = usagedb.connect(path)
+            for i in range(rows):
+                usagedb.insert(conn, _rec(1.0 + i, 0, 1, 1, "a@x.org", 42))
+            conn.close()
+            os.utime(path, (old, old))
+            return path
+
+        mine = db("claude-tokens-zzz-mine.db")
+        # 이름순 앞쪽 = 묵었지만 **행이 있어** 못 지우는 것들(상한만큼 채운다)
+        for i in range(sm._STALE_DB_CAP + 3):
+            db("claude-tokens-a%04d.db" % i, rows=1)
+        # 이름순 뒤쪽 = 묵고 **비어** 있어 마땅히 거둬야 하는 것
+        target = db("claude-tokens-yyy.db")
+
+        gone = sm.ServerClaudeMixin._sweep_stale_token_dbs(_sweeper(), mine)
+
+        assert not os.path.exists(target), \
+            "이름순 뒤에 있는 «묵고 빈» DB 에 스윕이 못 닿았다 — 상한이 거르기 앞에 섰다"
+        assert gone == 1, gone
+        assert os.path.exists(mine)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+async def test_the_cap_still_bounds_the_work():
+    """대조군 — 상한은 여전히 **한 회차가 태우는 일**을 묶는다(위 시험이 「상한을
+    지웠다」로도 통과하지 않게)."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    d = tempfile.mkdtemp()
+    old = time.time() - 30 * 86400
+    try:
+        mine = os.path.join(d, "claude-tokens-mine.db")
+        usagedb.connect(mine).close()
+        for i in range(sm._STALE_DB_CAP + 25):
+            p = os.path.join(d, "claude-tokens-e%04d.db" % i)
+            usagedb.connect(p).close()
+            os.utime(p, (old, old))
+        gone = sm.ServerClaudeMixin._sweep_stale_token_dbs(_sweeper(), mine)
+        assert gone == sm._STALE_DB_CAP, gone
+        left = [n for n in os.listdir(d) if n.startswith("claude-tokens-e")]
+        assert len(left) == 25, len(left)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)

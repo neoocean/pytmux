@@ -10,15 +10,30 @@
 여기서 재는 것은 **스펙이 실제로 무엇을 담는가**다 — 트리 모양(무엇이 펼쳐졌나)은 보는
 사람마다 다르고 그 클라의 보관함(`req["state"]`)에 산다.
 """
+import contextlib
 import importlib
 import os
 import tempfile
 
 import harness  # noqa: F401  (sys.path 주입)
+from pytmuxlib import proc
 from run import skip
 
 _pkg = importlib.import_module("pytmuxlib.plugins.ncd")
 PLUGIN = _pkg.PLUGIN
+
+
+@contextlib.contextmanager
+def _tmpdir():
+    r"""임시 디렉터리를 **온디스크 이름**으로 준다(POSIX 에선 `TemporaryDirectory` 그대로).
+
+    트리는 cwd 사슬을 `scandir` 의 이름과 맞춰 그린다. 그래서 서버가 넘기는 cwd 는
+    온디스크 이름이라는 것이 이 층의 계약이고(`proc.long_path` — 8.3 단축을 편다),
+    픽스처도 같은 표기여야 잰 것이 제품과 같아진다. 안 맞추면 `TMP` 가 단축 경로인
+    상자(`C:\Users\WOOJIN~1\...`)에서 이 모듈이 통째로 거짓 적색이 된다 — 실제로
+    그랬다(pytmux-237·-436..441). `long_path` 는 POSIX 에서 항등이다."""
+    with tempfile.TemporaryDirectory() as td:
+        yield proc.long_path(td)
 
 
 def _tree(td, cwd=None):
@@ -45,7 +60,7 @@ async def test_the_tree_opens_expanded_down_to_where_the_shell_stands():
     """열자마자 **지금 어디에 있는지**가 보여야 한다 — 정본이 뿌리→cwd 를 펼치는 이유다.
 
     커서도 그 줄에 선다: 열자마자 `Enter` 한 번이 뜻을 갖는다."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         here = os.path.join(td, "a")
         spec, _mine = _tree(td, cwd=here)
@@ -63,7 +78,7 @@ async def test_the_tree_opens_expanded_down_to_where_the_shell_stands():
 async def test_a_leaf_is_not_a_collapsed_node():
     """접힘과 **잎**은 다르다 — 빈 디렉터리에 `▸` 를 붙이면 눌러도 안 열리는 화살표가
     생기고, 그건 화면이 거짓말하는 것이다."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         spec, _mine = _tree(td)
         assert _row(spec, "z")["expand"] == "", _labels(spec)
@@ -72,7 +87,7 @@ async def test_a_leaf_is_not_a_collapsed_node():
 
 async def test_expanding_shows_the_children_and_collapsing_hides_them():
     """→ 로 펴고 ← 로 접는다(정본 손버릇). 지연 로드라 편 뒤에야 자식이 온다."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         # cwd 를 뿌리에 두면 `a` 는 접혀서 열린다.
         spec, mine = _tree(td)
@@ -91,7 +106,7 @@ async def test_collapsing_an_already_closed_row_goes_to_its_parent():
     """★ `←` 는 **두 뜻**이다(정본과 같다): 펴져 있으면 접고, 접혀 있으면 부모로.
 
     한 뜻만 두면 접힌 잎에서 `←` 가 죽은 키가 되고, 사람은 그 키를 안 쓰게 된다."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         here = os.path.join(td, "a")
         spec, mine = _tree(td, cwd=here)
@@ -104,7 +119,7 @@ async def test_the_spec_declares_the_keys_that_move_the_tree():
     """`←→` 는 글자가 아니다 — 스펙이 **이름 있는 키**로 실어야 클라가 먹는다.
 
     안 실으면 그 키는 목록 화면의 기본 뜻(닫기)으로 떨어져 판이 닫힌다."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         spec, _mine = _tree(td)
         assert spec["keys"].get("right") == "expand", spec["keys"]
@@ -161,7 +176,7 @@ async def test_enter_actually_types_the_cd_into_the_active_pane():
     ⛔ **이 자리를 재는 시험이 없었다.** `into` 갈래는 화면을 닫는 응답을 늘 돌려주므로
     (`plugin_screen_close`) 패널에 아무것도 안 써도 **겉보기는 성공과 똑같다** — 화면은
     닫히고 아무 말도 안 남는다. 그래서 눈으로도 기계로도 안 잡히던 자리다."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         target = os.path.join(td, "a")
         pane = _Pane()
@@ -195,7 +210,7 @@ async def test_an_into_without_a_path_does_not_pretend_it_worked():
 async def test_the_c_key_types_a_cd_too():
     """글자 키 `c`(여기로 cd)도 같은 자리를 지난다 — `into` 만 재고 이쪽을 안 재면
     한쪽이 조용히 죽는다(둘은 서로 다른 갈래다)."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         target = os.path.join(td, "a")
         pane = _Pane()
@@ -227,7 +242,7 @@ async def test_a_swallowed_send_says_why_instead_of_going_quiet():
         def write(self, _data):
             raise OSError("EIO")
 
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         target = os.path.join(td, "a")
 
@@ -249,7 +264,7 @@ async def test_a_swallowed_send_says_why_instead_of_going_quiet():
 
     # ⚠ **성공한 회차는 조용해야 한다** — 안 그러면 이 로그가 곧 잡음이 되고,
     #    잡음이 된 로그는 다음 사람이 안 읽는다(위양성 쪽도 함께 잰다).
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         server = _Server()
         PLUGIN.plugin_screen(
@@ -276,7 +291,7 @@ async def test_an_into_survives_a_pane_without_a_pty():
     """`pane.pty` 는 `None` 일 수 있다(`model.py` 의 `self.pty = None` · `reinit` 직후).
     거기서 터지면 `plugin_screen_close` 가 안 나가서 **화면이 안 닫힌다** — 오타 때와
     똑같은 증상이라, 고치면서 넣은 가드를 여기서 잰다(pytmux-173)."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         pane = _Pane()
         pane.pty = None
@@ -291,7 +306,7 @@ async def test_an_into_survives_a_pane_without_a_pty():
 async def test_the_label_stays_data():
     """⛔ 들여쓰기를 **글자로 섞지 않는다** — 그러면 이름이 더는 자료가 아니고,
     타이핑 찾기·복사가 그 공백을 물고 간다. 깊이는 따로 나른다."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         here = os.path.join(td, "a")
         spec, _mine = _tree(td, cwd=here)
@@ -305,7 +320,7 @@ async def test_a_cut_tree_says_so_and_keeps_the_path_visible():
     ⛔ **말없이 자르지 않는다** — 잘렸으면 그렇게 말하고, 무엇보다 **내가 서 있는 자리로
     가는 길**은 남긴다. 앞쪽 형제가 상한을 다 먹어 사슬이 끊기면 그건 자른 것이 아니라
     화면을 못 쓰게 만든 것이다."""
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         deep = os.path.join(td, "zzz-mine")
         os.mkdir(deep)
         # 상한을 넘기는 형제를 만든다(이름순 정렬이라 `zzz-mine` 은 맨 뒤로 밀린다).
@@ -361,7 +376,7 @@ async def test_ncd_never_wears_a_colour_its_own_screen_does_not_have():
     palette = {h.lower() for h in re.findall(r"#[0-9a-fA-F]{6}", src)}
     assert len(palette) >= 4, f"ncd 팔레트를 못 읽었다({palette}) — 정규식이 헛돌았다"
 
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         here = os.path.join(td, "a")
         spec, _mine = _tree(td, cwd=here)
@@ -544,7 +559,7 @@ async def test_posix_still_has_exactly_one_root():
     """
     if os.name == "nt":
         skip("POSIX 전용(진짜 파일시스템을 본다 — Windows 는 드라이브 층이 정상이다)")
-    with tempfile.TemporaryDirectory() as td:
+    with _tmpdir() as td:
         _mktree(td)
         spec, mine = _tree(td)
         assert mine["root"] == PLUGIN._chain(td)[0] != "", mine["root"]

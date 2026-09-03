@@ -8,9 +8,11 @@ import contextlib
 import inspect
 import itertools
 import os
+import shutil
 import signal
 import sys
 import tempfile
+import time
 
 # 상위 디렉토리(pytmux 패키지/진입점)를 import 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -273,6 +275,11 @@ def cleanup(srv, endpoint):
                                 pass
                 except Exception:
                     pass
+    # 서버가 게시한 자기 pid(pytmux-435). 전송 종류와 무관하게 남으므로 여기서
+    # 함께 치운다 — 안 치우면 한 러너가 띄우는 수백 대의 pid 파일이 상태 디렉터리에
+    # 그대로 쌓인다(아래 포트파일·토큰과 같은 사유).
+    with contextlib.suppress(OSError, ValueError):
+        os.unlink(ipc.server_pidfile(endpoint))
     if not ipc.is_tcp(endpoint):
         try:
             if os.path.exists(endpoint):
@@ -352,17 +359,135 @@ def assert_no_server_errors(sock, allow=False):
             % (len(bad), "\n".join(head[:14])))
 
 
+def _discard_temp(path, prefix):
+    r"""`server_only` 가 만든 임시물을 지운다 — **우리 접두사인 것만.**
+
+    종전엔 teardown 이 환경변수만 풀고 파일은 뒀다. 서버 하나당 임시 토큰 DB 하나와
+    캡처 디렉터리 하나가 상자의 `TMP` 에 **영구히** 쌓인다는 뜻이고, 스위트는 서버를
+    수백 곳에서 띄운다. 이 상자 실측(2026-09-02): `pytmux-db-*` **2393개** ·
+    `pytmux-cap-*` **2847개**. 아무도 그것을 세지 않았고 아무도 지우지 않았다
+    (pytmux-435 ④ 가 같은 부류를 playground 에서 1463개로 셌다).
+
+    ⛔ **접두사를 확인하고 지운다.** 테스트가 **자기 값을 세운** 회차(캡처 override
+    자체를 재는 시험 등)의 파일을 대신 지우면 그 시험을 망친다. SQLite WAL 사이드카
+    (`-wal`/`-shm`)도 함께 거둔다 — 안 그러면 이름만 다른 잔여가 남는다."""
+    if not path or prefix not in os.path.basename(path):
+        return
+    for p in (path, path + "-wal", path + "-shm"):
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            elif os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass                      # 지워지지 않는 잔여는 sweep_stale_temp 가 나중에 본다
+
+
+def sweep_stale_temp(hours: float = 24.0) -> int:
+    r"""**이전** 런들이 남긴 우리 접두사 임시물을 거둔다(스위트 시작 1회). 지운 수.
+
+    teardown 이 자기 것을 거두게 된 뒤에도 **이미 쌓인 것**은 그대로 남는다 — 그것이
+    이 함수다(pytmux-435 ④ 「임시 토큰 DB 에 수명을 준다」의 시험 쪽 몫).
+
+    ⛔ **나이로 가른다.** 병렬로 도는 다른 런이 지금 쥐고 있는 것을 지우면 그 런을
+    망친다 — `hours` 보다 오래된 것만 본다. 그리고 **우리가 지은 이름만** 본다
+    (`pytmux-db-`·`pytmux-cap-`) — 접두사 밖으로 넓히지 않는다(저장소 안전 규율의
+    「이름 매칭으로 넓히지 않는다」와 같은 결이다)."""
+    cutoff = time.time() - hours * 3600
+    tmp = tempfile.gettempdir()
+    gone = 0
+    try:
+        names = os.listdir(tmp)
+    except OSError:
+        return 0
+    for name in names:
+        if not (name.startswith("pytmux-db-") or name.startswith("pytmux-cap-")):
+            continue
+        p = os.path.join(tmp, name)
+        try:
+            if os.path.getmtime(p) > cutoff:
+                continue
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                os.remove(p)
+            gone += 1
+        except OSError:
+            continue                  # 남의 것·권한·경합은 그냥 넘긴다
+    return gone
+
+
+async def _reap_serve(task, timeout=2.0):
+    """취소한 `serve` 태스크를 **실제로 거둔다**(pytmux-453).
+
+    ⛔ 종전에는 `cancel()` 만 하고 끝냈다. 그러면 `serve()` 는 자기 `async with
+    server:` 를 못 빠져나와 **listen 소켓이 안 닫히고**, 그 안에서 띄운 루프 다섯
+    (`_flush_loop`·`_autorename_loop`·`_usage_loop`·`_liveness_loop`·
+    `server_background`)도 취소되지 않는다. 한 이벤트 루프에서 서버를 여러 번 띄우는
+    테스트(페더레이션 E2E)에서는 그것이 **회차마다 쌓인다** — 실측(2026-09-03 ·
+    macOS · 14회차): **fd 10 → 30 · 산 태스크 7 → 15**, 그중 `_capture_version`
+    (executor 로 `p4 changes` 를 부르는 태스크)이 여덟까지 겹쳤다.
+
+    그 누적이 곧 pytmux-453 의 「`remote_attach` 가 간헐적으로 병합에 실패한다」가
+    나던 **조건**이다: 같은 이슈의 실측이 서버 둘을 «별 프로세스»로 띄우면 20/20
+    병합이고, **한 프로세스에 서버가 쌓인 조건**에서만 1/4~3/4 로 실패한다고 갈라
+    놓았다. 제품이 아니라 이 자리가 그 조건을 만들고 있었다.
+
+    ⚠ **그래도 맨 `await task` 는 안 된다** — 거두지 못하는 형상이 실제로 있고(무엇이
+    막는지는 `_close_client_conns` 머리말), 그 자리에서 무한정 기다리면 스위트가
+    통째로 매단다. 그래서 시한을 걸고, **못 거두면 그냥 두고 간다** — 그것이 곧 종전
+    거동이라 나빠지지 않는다.
+    """
+    # ⛔ `asyncio.wait_for` 를 쓰지 않는다(실측으로 **매달렸다**): 시한이 끝나면 그것은
+    # 안쪽 태스크를 취소하고 **그 취소가 끝나기를 무한정 기다린다**.
+    # `asyncio.wait` 는 취소도 안 하고 예외도 안 던진다 — 시한 안에 끝나면 거두고,
+    # 안 끝나면 **그냥 두고 간다**(그것이 곧 종전 거동이라 나빠지지 않는다).
+    await asyncio.wait({task}, timeout=timeout)
+
+
+def _close_client_conns(srv) -> None:
+    """서버에 붙어 있는 클라 연결을 닫는다 — **거두기 전에** 해야 한다.
+
+    ☠ 여기가 이 고침의 진짜 관문이었다(2026-09-03 · Python 3.13.13 실측). `serve()` 는
+    `async with server:` 안에서 도는데, 그 블록을 나갈 때 3.12+ 의 `Server.wait_closed()`
+    는 **살아 있는 클라 핸들러가 끝나기를 기다린다**. 그래서 클라가 붙은 채로 serve
+    태스크를 거두려 하면 영영 안 끝난다 — 전체 스위트에서 `test_client` 여러 건이
+    90초 타임아웃(hang)으로 떨어졌고, 그것이 종전 코드가 **await 를 피한** 진짜 이유다
+    (그 주석은 증상만 알고 기제는 몰랐다).
+
+    대조군까지 재서 못 박았다: 같은 형상에서 클라를 끊자 그 자리에서 끝난다.
+    ⇒ 그러니 «먼저 클라를 끊고, 그다음 거둔다». 실제 종료(kill-server)가 하는 순서와
+    같다 — 서버가 죽으면 클라 연결은 어차피 끊긴다.
+    """
+    for c in list(getattr(srv, "clients", ()) or ()):
+        with contextlib.suppress(Exception):
+            if getattr(c, "writer", None) is not None:
+                c.writer.close()
+
+
 async def teardown(srv, task, sock, allow_errors=False):
-    # 주의: 여기서 task 를 await 하지 않는다. Textual run_test 종료 직후엔 루프가
-    # 정리 중이라 serve 태스크를 await 하면 "Event loop stopped" 가 난다.
-    # cancel 만 하고 asyncio.run 의 마무리에 맡긴다.
-    cleanup(srv, sock)
+    # ⛔ **먼저 멈추고, 그다음 해체한다**(pytmux-453). 순서가 중요하다:
+    # 종전에는 `cleanup`(패널 PTY 를 SIGKILL) 이 먼저였고 serve 는 취소만 해 뒀다 —
+    # 취소된 코루틴이 **나중에** 돌기 때문에 그 순서로도 사고가 안 났다. 그런데
+    # 아래처럼 취소를 **그 자리에서 거두면** 남은 코루틴이 곧바로 한 걸음 더 도는데,
+    # 그때 패널 PTY 는 이미 죽어 있어 `_induce_redraw_all → pty.set_winsize` 가
+    # 터진다(실측: test_remote 8건이 「서버가 예외를 로그로만 삼켰다」로 붉어졌다).
+    # 그러니 서버를 **먼저** 세우고, 아무도 안 도는 상태에서 PTY 를 거둔다.
+    srv.running = False
+    _close_client_conns(srv)            # ⛔ 거두기 전에(_close_client_conns 머리말)
     task.cancel()
+    # 취소한 것을 **거둔다**. 종전엔 여기서 멈추고 asyncio.run 의 마무리에 맡겼는데,
+    # 그러면 한 루프 안에서 서버를 여러 번 띄우는 테스트가 회차마다 앞 서버를 통째로
+    # 이고 간다(`_reap_serve` 머리말의 실측).
+    await _reap_serve(task)
+    cleanup(srv, sock)
     # server_only 가 주입한 캡처 격리 override 를 해제 — 같은 프로세스의 다른
     # 테스트(capture_dir 의 비-override 동작을 검증하는 test_capture_dir_project_and_override
     # 등)에 새지 않게 한다.
-    os.environ.pop("PYTMUX_CAPTURE_DIR", None)
-    os.environ.pop("PYTMUX_TOKENS_DB", None)
+    # ⛔ 값을 버리지 말고 **그 자리에서 거둔다** — 종전엔 환경변수만 풀어서 파일이
+    #    상자에 영구히 쌓였다(`_discard_temp` 주석의 실측 5240건).
+    _discard_temp(os.environ.pop("PYTMUX_CAPTURE_DIR", None), "pytmux-cap-")
+    _discard_temp(os.environ.pop("PYTMUX_TOKENS_DB", None), "pytmux-db-")
     os.environ.pop("PYTMUX_PTY_HOST", None)
     # 정리 **뒤에** 검사한다 — 종료 경로에서 나는 예외까지 잡는다. 소켓 파일은 이미
     # 지워졌지만 error.log 는 남아 있다(경로가 다르다).

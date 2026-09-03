@@ -92,6 +92,79 @@ def test_no_traceback_fingerprint_ignores_paths_and_line_numbers():
     assert a.fp == b.fp, f"같은 예외인데 지문이 갈렸다: {a.fp} != {b.fp}"
 
 
+def test_fingerprint_survives_a_traceback_longer_than_the_display_cap():
+    """긴 트레이스백에서도 지문의 재료는 **예외 타입 줄**이어야 한다(pytmux-474).
+
+    ⛔ 이것이 실제로 무너진 적이 있다: 블록을 길이(1200자)로 자르던 시절, 프레임이
+       여섯을 넘으면 컷이 예외 줄 **앞**에 떨어져 3.13 의 앵커 줄
+       (`~~~~~~~~~~~~~~^^^^^^`)이 그대로 지문이자 이슈 제목이 됐다. 예외 타입이
+       어디에도 안 남아, 그 이슈를 여는 사람은 **무슨 예외였는지를 알 수 없었다** —
+       "경로·줄번호를 지문에서 뺀다"는 이 오라클의 설계 의도가 컷 하나로 무너진 것이다.
+    """
+    from qa import session as qa_session
+
+    frames = "".join(
+        '  File "/Users/x/p4/playground/scripts/pytmux/pytmuxlib/plugins/'
+        'claude-code/tokensync.py", line %d, in some_function_name\n'
+        '    up = client.push_limits()\n'
+        '         ~~~~~~~~~~~~~~^^^^^^\n' % (800 + i) for i in range(12))
+    rest = ":\n" + frames + "sqlite3.DatabaseError: database disk image is malformed\n"
+    assert len(rest) > 1200, "시험 전제: 표시 상한을 넘는 트레이스백이어야 한다"
+
+    block = "Traceback (most recent call last)" + qa_session._one_traceback(rest)
+    found = oracles.no_traceback(_FakeCtx(_slot(), _FakeSession([block])))[0]
+    assert "database disk image is malformed" in found.title, \
+        "긴 트레이스백에서 예외 타입이 제목에서 사라졌다: %r" % found.title
+    assert "^^^" not in found.title, "앵커 줄이 지문이 됐다: %r" % found.title
+
+
+def test_a_traceback_block_stops_at_the_next_log_header():
+    """블록은 **경계**로 자른다 — 다음 `==== ` 머리 뒤의 것을 삼키면 안 된다.
+
+    error.log 는 append 라 트레이스백 뒤에 다음 항목의 머리와 진단 본문이 붙는다.
+    그것까지 한 블록으로 보면 '마지막 줄'이 예외가 아니라 **남의 로그 본문**이 된다.
+    """
+    from qa import session as qa_session
+
+    rest = (':\n  File "x.py", line 1, in x\n'
+            'RuntimeError: 진짜 예외\n'
+            '\n==== 2026-09-03 17:51:00 [claude_format_unrecognized] ====\n'
+            '이건 예외가 아니라 진단 로그 본문이다\n')
+    block = qa_session._one_traceback(rest)
+    assert "진단 로그 본문" not in block, "다음 블록을 삼켰다: %r" % block
+    assert block.strip().endswith("RuntimeError: 진짜 예외"), block
+
+
+def test_the_slot_points_config_at_an_empty_file_inside_itself():
+    """슬롯은 `PYTMUX_CONFIG` 를 **자기 안의 빈 파일**로 세운다(pytmux-474 덤).
+
+    안 세우면 탐색 차례(`$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` →
+    `$XDG_CONFIG_HOME/pytmux/config`)의 두 번째 자리가 비어 **이 상자의 진짜 설정
+    파일**로 떨어진다 — QA 판정이 사람의 설정을 타고(실측 선례: `set status-position
+    top` 한 줄이 GUI 배지 자리 오라클을 떨궜다), 제품이 설정을 쓰면 그 파일에 쓴다.
+    """
+    saved = os.environ.get("PYTMUX_CONFIG")
+    slot = _slot()
+    try:
+        with slot:
+            cfg = os.environ.get("PYTMUX_CONFIG", "")
+            assert cfg, "슬롯이 PYTMUX_CONFIG 를 안 세웠다 — 사람 설정으로 떨어진다"
+            assert os.path.isfile(cfg), "가리키는 파일이 없다: %r" % cfg
+            assert os.path.abspath(cfg).startswith(os.path.abspath(slot.home)), \
+                "설정 파일이 슬롯 밖에 있다(정리도 격리도 안 된다): %r" % cfg
+            body = open(cfg, encoding="utf-8").read()
+            assert not [ln for ln in body.splitlines()
+                        if ln.strip() and not ln.startswith("#")], \
+                "빈 설정이어야 한다(값이 있으면 그것이 판정을 탄다): %r" % body
+        assert os.environ.get("PYTMUX_CONFIG") == saved, "슬롯을 나가며 안 되돌렸다"
+    finally:
+        slot.cleanup() if hasattr(slot, "cleanup") else None
+        if saved is None:
+            os.environ.pop("PYTMUX_CONFIG", None)
+        else:
+            os.environ["PYTMUX_CONFIG"] = saved
+
+
 def test_screen_judgement_bites_on_a_dead_or_empty_client():
     """실 클라 화면 판정이 **정말로 무는지**.
 
@@ -1129,3 +1202,75 @@ def test_the_gui_harness_attaches_to_the_slot_and_never_starts_its_own_server():
     assert '"--socket", endpoint' in src, "GUI 를 엔드포인트로 지목해 붙이지 않는다"
     assert "self.slot.spawned.append(p.pid)" in src, \
         "우리가 띄운 GUI 의 pid 를 안 쥔다 — 정리가 이름 매칭으로 번진다"
+
+
+async def test_residue_counts_a_server_we_started_that_did_not_die():
+    """★ 잔여 판정이 **「소켓이 대답하나」만 보면 눈이 먼다**(pytmux-435 ③).
+
+    재기동은 소켓 이름을 가져간다 — 앞 주인은 도달 불가가 된 소켓을 쥔 채 그대로 살 수
+    있고(거두기가 실패한 회차), 그때 `probe` 는 **새 주인**을 보고 「깨끗하다」고 답한다.
+    그 눈먼 자리에서 시험 슬롯 하나에 서버 **13개**가 8월 2일부터 살아 있었다(playground
+    실측 2026-09-02 · 각 누적 CPU 155분). 정리 코드는 **있었고** 결과를 아무도 안 쟀다.
+
+    ⚠ **양쪽을 다 잰다** — 살아 있으면 세고, 죽은 뒤에는 조용해야 한다. 뒤엣것이 없으면
+    이 오라클은 매 런 잔여를 신고하는 늑대소년이 된다(원칙 ⓓ).
+    """
+    import subprocess
+    with _slot() as slot:
+        # 진짜 서버는 필요 없다 — 재는 것은 「등록된 pid 가 살아 있으면 세는가」다.
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        slot.spawned.append(child.pid)
+        try:
+            left = slot.residue(timeout=0.4, step=0.1)
+            assert any(str(child.pid) in line for line in left), (child.pid, left)
+        finally:
+            child.kill()
+            child.wait()
+        assert slot.residue(timeout=0.4, step=0.1) == [], "죽은 뒤에도 잔여로 셌다"
+
+
+async def test_residue_does_not_count_a_process_we_already_reaped():
+    """⛔ **좀비를 잔여로 세지 않는다** — 이 오라클이 처음 돌던 날 그것으로 결함 4건을
+    헛으로 냈다(2026-09-02 · pytmux-445..448 = 위양성).
+
+    슬롯이 띄우는 서버는 `Popen(..., start_new_session=True)` 라 **이 프로세스의 직계
+    자식**이다. SIGKILL 만 하고 `waitpid` 를 안 하면 좀비로 남고, `os.kill(pid, 0)` 은
+    좀비에도 성공한다(실측 `ps -o stat` = `Z`). 그러면 정리는 완벽했는데 판정이 「남았다」
+    가 된다 — 위양성은 QA 를 끈다(원칙 ⓓ). 이 저장소가 같은 교훈을 이미 적어 뒀다:
+    「alive 는 짐작이 아니라 waitpid 다」(pytmux-425·426·427).
+
+    ★ 재는 것은 **`reap()` 뒤에 조용한가**다 — 죽인 쪽이 거두기까지 해야 성립한다.
+    """
+    import subprocess
+    with _slot() as slot:
+        # ☠ **`start_new_session=True` 를 빼면 이 시험이 스위트를 통째로 끈다**
+        #   (pytmux-451 · 2026-09-03). `slot.reap()` 은 `proc.terminate(pid, force=True)`
+        #   이고 그것은 POSIX 에서 `os.killpg(os.getpgid(pid), SIGKILL)` 이다 — 대역이
+        #   러너와 **같은 프로세스 그룹**에 있으면 그 한 줄이 **러너와 부모 셸을** 죽인다
+        #   (실측: 출력도 트레이스백도 없이 사라진다). 이 저장소가 이미 한 번 밟은
+        #   부류다(`pty_backend._UnixPty._signal_group` · p4 67413 · lessons_2026-07-26).
+        #
+        #   ★ 그리고 이것이 **재려는 상황에 맞는** 모양이기도 하다: 위 독스트링이 적듯
+        #   슬롯이 띄우는 서버가 `Popen(..., start_new_session=True)` 다. 세션을 갈라도
+        #   **직계 자식인 것은 그대로**라 좀비·`waitpid` 를 재려던 뜻은 안 상한다.
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        slot.spawned.append(child.pid)
+        try:
+            assert slot.residue(timeout=0.4, step=0.1), "살아 있는데 안 셌다(대조군)"
+            slot.reap()
+            left = slot.residue(timeout=0.4, step=0.1)
+            assert left == [], f"거둔 뒤에도 잔여로 셌다 — 좀비를 세고 있다: {left}"
+        finally:
+            try:
+                child.kill()
+            except OSError:
+                pass
+            try:
+                child.wait(timeout=5)
+            except Exception:
+                pass

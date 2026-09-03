@@ -4,7 +4,7 @@ import json
 import os
 
 from harness import (make_app, server_only, teardown, wait_mounted,
-                     wait_until)
+                     wait_until, wait_until_settled)
 from pytmuxlib import plugins
 from textual.widgets import Input, ListView
 
@@ -200,28 +200,41 @@ async def test_plugin_manager_typing_filters_list():
         scr = await wait_mounted(pilot, "PluginManagerScreen", child="#plgbox")
         lv = scr.query_one("#plglist", ListView)
         search_input = scr.query_one("#plgsearch", Input)
-        await wait_until(pilot, lambda: len(lv.children) > 0)
+        # ⛔ **「하나라도 붙었다」로 세면 안 된다**(pytmux-473 · 실측 플레이크).
+        #    목록은 한 번에 안 붙는다 — `len(lv.children) > 0` 은 **첫 항목**에서 참이
+        #    되고, 그때 센 수는 아직 자라는 중인 값이다. 실제로 초기 11 · 필터 뒤 14 로
+        #    「필터링 후 늘었다」가 됐다(같은 회차 재시도에서는 통과 — 곧 경합이다).
+        #    ⇒ 수가 **멎을 때까지** 기다린 뒤에 센다.
+        async def _settled(*, at_least=1):
+            ok, snap = await wait_until_settled(
+                pilot,
+                lambda: len(lv.children) >= at_least,
+                lambda: len(lv.children),
+            )
+            assert ok, f"목록이 안 찼다(멎은 수 {snap})"
+            return len(lv.children)
 
         # 초기: 모든 플러그인 표시
-        initial_count = len(lv.children)
+        initial_count = await _settled(at_least=2)
         assert initial_count > 1, "최소 2개 이상 플러그인 있어야 함"
 
         # 'c' 입력 → clock, claude 등 c로 시작하는 플러그인만 필터링
         await pilot.press("c")
         await wait_until(pilot, lambda: search_input.value == "c")
-        filtered_count = len(lv.children)
+        # 필터도 **다시 그려지고 멎을 때까지** 기다린다(같은 이유).
+        filtered_count = await _settled(at_least=0)
         assert filtered_count < initial_count, f"필터링 후 줄어야 함: {filtered_count} < {initial_count}"
 
         # 다시 'l' 입력 → clock 정도만 남음
         await pilot.press("l")
         await wait_until(pilot, lambda: search_input.value == "cl")
-        more_filtered = len(lv.children)
+        more_filtered = await _settled(at_least=0)
         assert more_filtered <= filtered_count, f"더 필터링되어야 함: {more_filtered} <= {filtered_count}"
 
         # Backspace → 'c' 로 돌아감
         await pilot.press("backspace")
         await wait_until(pilot, lambda: search_input.value == "c")
-        back_count = len(lv.children)
+        back_count = await _settled(at_least=0)
         assert back_count == filtered_count, f"Backspace 후 이전 상태로: {back_count} == {filtered_count}"
 
         # Escape → 창 닫힘

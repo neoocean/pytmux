@@ -232,6 +232,9 @@ def test_capture_never_calls_a_dead_child_alive():
     ⚠ 그 셋을 가르는 것이 이 시험이므로 **양쪽을 다 잰다** — 죽은 것은 False,
     살아서 안 그리는 것은 True 여야 한다(뒤엣것까지 False 면 오라클이 통째로 뒤집힌다).
     """
+    if ptyshot.IS_WINDOWS:
+        from run import skip
+        skip("POSIX 전용 하네스(stdlib pty)")
     import sys
 
     raw, alive = ptyshot.capture([sys.executable, "-c", "raise SystemExit(0)"], seconds=6.0)
@@ -253,6 +256,9 @@ def test_capture_stops_as_soon_as_until_is_true():
 
     `until` 을 안 주면 상한을 통째로 쉬고, 그때 화면에 있는 것이 판정 재료가 된다.
     """
+    if ptyshot.IS_WINDOWS:
+        from run import skip
+        skip("POSIX 전용 하네스(stdlib pty)")
     import sys, time
 
     argv = [sys.executable, "-c",

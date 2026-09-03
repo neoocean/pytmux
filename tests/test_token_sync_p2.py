@@ -407,6 +407,117 @@ async def test_missing_crypto_backs_off_without_logging_a_traceback():
     assert slept[1] > slept[0], "그래도 백오프는 해야 한다(매 30s 재시도 금지)"
 
 
+async def test_unreachable_server_backs_off_without_logging_a_traceback():
+    """**닿지 못한 것**은 이 상자 밖의 일시 상태다 — error.log 를 안 건드린다
+    (pytmux-474 ⓐ).
+
+    ⚠ 값이 큰 이유: `token_sync_url` 의 기본값이 **실 주소**라(`default_sync_url`)
+    등록조차 안 한 상자도 매 주기 이 길을 지난다. 네트워크가 잠깐 흔들리기만 해도
+    트레이스백이 쌓이고, 그러면 서버 예외 가드가 그것을 "조용한 서버 크래시"로 읽어
+    **무관한 테스트를 떨군다** — 실제로 QA T3 의 여섯 스텝이 그런 한 건을 S1 로
+    신고했다. 사유는 남는다(패널이 읽는 last_err).
+
+    ⛔ **닿았는데 실패한 것은 여전히 로그로 간다** — 아래에서 같이 잰다. 그 갈림이
+       없으면 이 고침은 "동기화 실패를 통째로 감추기"가 된다."""
+    import asyncio
+
+    class FakeServer:
+        running = True
+        token_sync = "server"
+        token_sync_url = "https://x"
+        token_sync_sec = 60
+
+        def __init__(self):
+            self.logged = []
+
+        def _log_error(self, m):
+            self.logged.append(m)
+
+    async def drive(boom):
+        srv, slept = FakeServer(), []
+
+        async def fake_sleep(n):
+            slept.append(n)
+            if len(slept) >= 3:
+                raise asyncio.CancelledError
+
+        try:
+            await tokensync.run_worker(srv, make_client=boom, sleep=fake_sleep)
+        except asyncio.CancelledError:
+            pass
+        return srv, slept
+
+    def unreachable(_s):
+        raise tokensync.SyncUnreachable("서버 응답 시간 초과 — 네트워크·서버 상태 확인")
+
+    srv, slept = await drive(unreachable)
+    assert srv.logged == [], "닿지 못한 것을 error.log 에 적었다: %r" % srv.logged
+    assert slept[1] > slept[0], "그래도 백오프는 해야 한다"
+
+    # 대조군 — 닿았는데 실패한 것(HTTP 상태·응답 형식)은 **로그가 필요하다**.
+    def http_500(_s):
+        raise tokensync.SyncError("업로드 실패(HTTP 500)")
+
+    srv2, _ = await drive(http_500)
+    assert srv2.logged, "닿았는데 실패한 것까지 조용히 넘겼다 — 갈림이 무너졌다"
+
+
+async def test_transport_raises_unreachable_not_bare_sync_error():
+    """부류를 **타입으로** 말한다 — 문구로 가르면 워커가 구분할 길이 없다."""
+    send = tokensync.http_transport("https://127.0.0.1:1")   # 아무도 안 듣는 포트
+    try:
+        send("GET", "/v1/health")
+    except tokensync.SyncUnreachable as e:
+        assert "확인" in str(e) or "서버" in str(e), str(e)
+    except Exception as e:                                   # noqa: BLE001
+        raise AssertionError(
+            "닿지 못한 것을 %s 로 던졌다 — 워커가 조용한 갈래로 못 보낸다"
+            % type(e).__name__)
+    else:
+        raise AssertionError("127.0.0.1:1 에 닿았다고 한다(시험 전제가 깨졌다)")
+
+
+async def test_client_for_settles_the_db_migration_before_the_worker_thread():
+    """`_client_for` 는 워커가 일을 executor 로 밀기 **전에** 서버의 토큰 DB 연결을
+    확정시킨다(pytmux-474 의 근본 고침).
+
+    안 하면 두 경쟁이 남는다(둘 다 실측):
+      ⑴ 마이그레이션이 <home>/db 로 72MB 를 복사하는 **도중** 워커 스레드가 그 경로를
+         열어 `database disk image is malformed` → error.log 트레이스백.
+      ⑵ 역경쟁 — 워커가 먼저 이겨 **빈 DB** 를 만들면 마이그레이션의 멱등 가드가
+         걸려 이력이 영영 안 따라온다(격리 홈에서 4KB 빈 파일을 실측).
+    """
+    import os
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    order = []
+
+    class FakeServer:
+        token_sync_url = "https://x"
+        token_sync_accounts = ""
+        token_sync_encrypt = True
+
+        @property
+        def tokens_db_path(self):
+            order.append("path")
+            return os.path.join(d, "claude-tokens.db")
+
+        def _migrate_legacy_db(self, path):
+            order.append("migrate")
+
+        def _tokens_db_conn(self):          # 대조군 — 여기까지 열면 안 된다
+            order.append("connect")
+            return None
+
+    tokensync._client_for(FakeServer())
+    assert "migrate" in order, \
+        "_client_for 가 이전을 확정 안 하고 지나갔다 — 워커 스레드가 그것과 경쟁한다"
+    assert "connect" not in order, \
+        ("연결까지 열었다 — 토큰 DB 의 최초 사용 시점이 기동으로 당겨져 레거시 JSONL "
+         "임포트·연결 실패 진단의 시점 단언이 깨진다: %r" % order)
+
+
 async def test_readonly_db_backs_off_without_logging_a_traceback():
     """읽기 전용 토큰 DB 도 **환경 상태**다 — error.log 를 안 건드린다(pytmux-124).
 

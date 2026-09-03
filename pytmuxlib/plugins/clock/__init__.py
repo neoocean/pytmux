@@ -136,12 +136,35 @@ class _ClockPlugin:
     # 다른 것은 도착 방식뿐이다: 정본은 그 런을 자기 프로세스에서 격자에 얹고, 네이티브
     # 클라는 같은 런을 서버에게서 받는다.
     def plugin_cells(self, server, sess, req):
+        # ⛔ **네이티브로 그리는 클라에는 런을 안 준다**(pytmux-458·459) — 주면 벡터
+        #    시계 위에 격자 글자가 겹쳐 두 벌이 한 화면에 뜬다. 그 클라는 아래
+        #    `plugin_native` 가 준 **상태**로 자기 시계를 그린다.
+        if req.get("native"):
+            return []
         from .cells import clock_cells
         panes = [p for p in req.get("panes") or []
                  if p["id"] in (req.get("overlays") or {}).get("clock", ())]
         if not panes:
             return []
         return clock_cells(panes)
+
+    def plugin_native(self, server, sess, req):
+        """네이티브로 그리는 클라에 줄 **상태**(Tier D 탈출구 · pytmux-459).
+
+        ⛔ 주는 것은 **재료**이지 그림이 아니다. 시각의 권위는 서버 그대로이고
+        (`clock_time` 이 정본 런과 **같은 함수**로 짓는다) 자리는 이미 `panes` 에 있다 —
+        클라는 그 패널 안에 그 글자를 자기 방식으로 크게 그릴 뿐이다.
+
+        ⛔ 딤은 여기 없다 — 종전대로 [`plugin_dim_panes`] 가 정한다. 표현만 클라가
+        가져가고 뜻·상태·입구는 서버 것이라는 것이 이 장치의 계약이다(설계 §4.1).
+        """
+        from .cells import clock_time
+        panes = [p for p in req.get("panes") or []
+                 if p["id"] in (req.get("overlays") or {}).get("clock", ())]
+        if not panes:
+            return {}
+        text = clock_time()
+        return {p["id"]: {"time": text} for p in panes}
 
     def plugin_dim_panes(self, server, sess, req):
         """시계가 켜진 패널은 **뒤를 흐리게** 한다(정본 `dim_pane` 과 같은 뜻).

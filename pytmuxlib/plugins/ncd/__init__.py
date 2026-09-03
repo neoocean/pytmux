@@ -47,6 +47,18 @@ COMMANDS = [
 NOARG = {"ncd", "nc"}
 
 
+def _visible(text: str) -> str:
+    r"""진단 로그에 실을 글자 — **제어문자만** 보이게 펴고 나머지는 그대로 둔다.
+
+    종전엔 `{text!r}` 였다. repr 은 `\r` 을 보이게 해 주는 대신 **백슬래시를 겹쳐**
+    Windows 경로를 `C:\Users\woojinkim\...` 로 만든다. 사람이 「무엇을 넣으려 했나」를
+    읽자고 남기는 줄에서 경로가 제 모습을 잃는 것은 그 줄의 목적을 깎는 것이고, 넣으려던
+    글자를 **경로로 찾는 것**도 안 된다(그 오라클이 Windows 에서만 떨어졌다 —
+    pytmux-438). 제어문자만 손으로 펴면 둘 다 산다."""
+    out = (text.replace("\r", "\r").replace("\n", "\n").replace("\t", "\t"))
+    return f"'{out}'"
+
+
 def _cd_command(path: str, nt: bool | None = None) -> str:
     r"""ncd 의 Enter(현재 패널 cd)로 보낼 명령 문자열. Windows(cmd.exe)에선
     `cd /d "<경로>"` 로 **드라이브까지 전환**하고, 그 외엔 `cd <shlex.quote(경로)>`.
@@ -305,7 +317,8 @@ class _NcdPlugin:
             if log:
                 # 예외 없는 진단 로그다 — 스위트의 error.log 만능가드는 트레이스백만
                 # 세므로 이 줄은 초록을 안 깬다(루트 CLAUDE.md §서버 예외 만능가드).
-                log("ncd_send_to_pane", f"{why} · 넣으려던 글자: {text!r}")
+                log("ncd_send_to_pane",
+                    f"{why} · 넣으려던 글자: {_visible(text)}")
         return not why
 
     # ---- 트리(pytmux-11 B) --------------------------------------------------

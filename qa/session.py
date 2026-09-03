@@ -57,6 +57,11 @@ GUI_BINARIES = ("client/target/release/pytmux-gui", "client/target/debug/pytmux-
 #: 그쪽만 폴링이라 부하 회차에 그쪽만 살아남았다(pytmux-425·426·427).
 DRAW_TIMEOUT = 25.0
 
+#: 트레이스백 한 벌의 표시 상한(자)과, 넘칠 때 **반드시 남기는 꼬리**의 길이.
+#: 꼬리가 곧 예외 타입 줄이고 그것이 지문의 재료다(`_one_traceback` 머리말).
+_BLOCK_MAX = 1200
+_BLOCK_TAIL = 300
+
 
 class EnvBroken(Exception):
     """스택을 못 세웠다. ⛔ **`exit 0` 으로 빠지지 않는다** — 환경 구성 실패도 결함이다
@@ -236,11 +241,17 @@ class Session:
         통과시키고(거짓 초록), 강하면 다 그린 회차까지 상한을 태운다.
         `tests/test_qa_layer.py` 의 AST 게이트가 「안 준 캡처」를 센다.
         """
-        if IS_WINDOWS:
-            raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
+        # ★ **오용 검사가 능력 검사보다 «먼저»다** — `clients()` 가 2026-08-25 에 같은
+        #   순서로 고쳐진 자리인데(그 주석 참조) 이 함수만 남아 있었다. `until` 을 안 준
+        #   것은 어느 OS 에서든 **호출부의 오류**지 「이 상자가 못 하는 일」이 아니고,
+        #   순서가 뒤집혀 있는 동안 Windows 에서는 그 규율을 **잴 수가 없었다**
+        #   (NotSupported 가 먼저 나가 test_capture_client_refuses_a_fixed_wait 이
+        #   붉었다 — pytmux-444). 커버리지를 SKIP 으로 덮는 대신 잴 수 있는 쪽으로 옮긴다.
         if until is None:
             raise Refused("capture_client 에 until 이 없다 — 고정 대기는 부하 때 "
                           "안 그린 화면을 결함으로 신고한다(pytmux-425·426·427)")
+        if IS_WINDOWS:
+            raise NotSupported("ptyshot 은 POSIX 전용(stdlib pty)")
         raw, alive = ptyshot.capture(
             self.client_argv(),
             cols=self.cols, rows=self.rows, seconds=seconds, feed=feed,
@@ -343,5 +354,31 @@ class Session:
             except OSError:
                 continue
             for block in txt.split("Traceback (most recent call last)")[1:]:
-                out.append("Traceback (most recent call last)" + block[:1200])
+                out.append("Traceback (most recent call last)" + _one_traceback(block))
         return out
+
+
+def _one_traceback(rest: str) -> str:
+    """`Traceback (most recent call last)` 뒤에 붙은 꼬리에서 **그 트레이스백 한 벌만**
+    잘라낸다.
+
+    ⛔ 종전에는 여기서 `rest[:1200]` 로 **길이만** 잘랐다(pytmux-474 에서 그 대가를
+    실측했다). 트레이스백의 마지막 줄 = 예외 타입은 `oracles._exception_line` 이
+    **지문의 재료**로 쓰는 것인데, 프레임이 여섯을 넘으면 1200자 컷이 그 줄에 닿기 전에
+    떨어져 **엉뚱한 줄이 지문이 된다**. 실제로 어느 결함은 3.13 의 앵커 줄
+    (`~~~~~~~~~~~~~~^^^^^^`)을 제목으로 달고 트래커에 들어갔다 — 예외 타입이 어디에도
+    안 남아서, 그 이슈를 읽는 사람은 **무슨 예외였는지를 알 수 없다**. 오라클이 경로·
+    줄번호를 지문에서 빼려고 애쓴 그 이유가 컷 하나로 무너진 것이다.
+
+    그래서 길이가 아니라 **경계**로 자른다: 로그의 다음 블록 머리(`\n==== …`)까지가
+    한 트레이스백이다(서버 `_log_error` 와 클라 `_log_client_crash` 가 같은 머리를 쓴다).
+    그 안에서만 상한을 걸되, 넘칠 때는 **머리와 꼬리를 둘 다 남긴다** — 꼬리가 곧
+    예외 타입이다.
+    """
+    end = rest.find("\n====")
+    block = rest if end < 0 else rest[:end]
+    if len(block) <= _BLOCK_MAX:
+        return block
+    head, tail = block[:_BLOCK_MAX - _BLOCK_TAIL], block[-_BLOCK_TAIL:]
+    return "%s\n… (%d자 생략) …\n%s" % (head, len(block) - _BLOCK_MAX + _BLOCK_TAIL,
+                                        tail)
