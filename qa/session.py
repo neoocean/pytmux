@@ -57,6 +57,19 @@ GUI_BINARIES = ("client/target/release/pytmux-gui", "client/target/debug/pytmux-
 #: 그쪽만 폴링이라 부하 회차에 그쪽만 살아남았다(pytmux-425·426·427).
 DRAW_TIMEOUT = 25.0
 
+#: 제어 라인 한 줄(`pytmux cmd …`)에 주는 시한(초).
+#:
+#: ⛔ **20초는 이 상자의 부하에서 깨졌다**(pytmux-480·481 · 2026-09-03). 그 회차는
+#: `pytmux cmd selectt 1` 에서 시한을 넘겨 시나리오가 예외로 멈췄고, 그 뒤 스텝이 통째로
+#: 안 돌아 커버리지 원장이 **14/49** 를 신고했다(pytmux-482) — 없는 구멍이다. 같은
+#: 시나리오를 한가한 상자에서 돌리면 **49/49 · 결함 0** 이고, 격리 홈에서 그 명령 하나만
+#: 재면 **0.1초**다(시한의 200분의 1).
+#:
+#: 값을 크게 준 이유: 이 시한이 재는 것은 **「매달렸나」**이지 「빠른가」가 아니다. 빠름을
+#: 재고 싶으면 아래 `slowest_cli` 가 그 값을 들고 있다(예산만 올리고 계측을 안 달면 다음에
+#: 또 걸렸을 때 처음부터 다시 재야 한다 — pytmux-382 가 값을 치르고 배운 것이다).
+CLI_TIMEOUT = float(os.environ.get("PYTMUX_QA_CLI_TIMEOUT") or 90.0)
+
 #: 트레이스백 한 벌의 표시 상한(자)과, 넘칠 때 **반드시 남기는 꼬리**의 길이.
 #: 꼬리가 곧 예외 타입 줄이고 그것이 지문의 재료다(`_one_traceback` 머리말).
 _BLOCK_MAX = 1200
@@ -170,6 +183,11 @@ class Session:
         #: 커버리지 원장(`qa/ledger.py`). ★ **여기서 적는다** — 시나리오가 따로 적으면
         #: 적기를 잊은 명령이 「안 지났다」로 세어져 원장이 조용히 거짓말한다.
         self.ledger = ledger
+        #: 이 런에서 **가장 오래 걸린** 제어 라인과 그 초(pytmux-480·481). 예산을 올리면서
+        #: 계측을 함께 다는 이유는 pytmux-382 가 적어 둔 그것이다 — 다음에 또 시한에
+        #: 걸렸을 때 「부하였나 진짜였나」를 처음부터 다시 재지 않아도 된다.
+        self.slowest_cli = 0.0
+        self.slowest_args = ""
 
     # ── 수명 ─────────────────────────────────────────────────────────────────
     def start(self, timeout: float = 12.0) -> None:
@@ -192,9 +210,29 @@ class Session:
         self.slot.reap()
 
     # ── 조작 ─────────────────────────────────────────────────────────────────
-    def _run(self, args: list[str], timeout: float = 20.0) -> str:
-        r = subprocess.run([self.python, os.path.join(ROOT, "pytmux.py")] + args,
-                           cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+    def _run(self, args: list[str], timeout: float | None = None) -> str:
+        t0 = time.time()
+        try:
+            r = subprocess.run(
+                [self.python, os.path.join(ROOT, "pytmux.py")] + args,
+                cwd=ROOT, capture_output=True, text=True,
+                timeout=CLI_TIMEOUT if timeout is None else timeout)
+        except subprocess.TimeoutExpired:
+            # ⛔ **시한 초과를 그냥 위로 던지지 않는다.** 종전에는 `TimeoutExpired` 가
+            #    시나리오 밖으로 튀어 `scenario_crashed` 로 적혔고, 그 회차는 거기서
+            #    멎어 **뒤 스텝이 통째로 「미커버」로 남았다** — 없는 커버리지 구멍이
+            #    신고된다(pytmux-482 의 «14/49» 가 그 그림자였다. 한가한 상자에서 같은
+            #    시나리오가 **49/49** 를 낸다).
+            raise EnvBroken(
+                f"pytmux {' '.join(args)} 가 {CLI_TIMEOUT:.0f}초 안에 안 끝났다 "
+                f"(느린 것 중 가장 느렸던 것: {self.slowest_cli:.1f}초 · "
+                f"{self.slowest_args or '—'}). 이 상자가 무거우면 "
+                f"PYTMUX_QA_CLI_TIMEOUT 으로 올린다") from None
+        took = time.time() - t0
+        # ★ **값을 남긴다**(pytmux-382 가 `/usage` 프로브에 간 길과 같다): 예산만 올리면
+        #   다음에 또 걸렸을 때 「부하였나 진짜였나」를 다시 처음부터 재야 한다.
+        if took > self.slowest_cli:
+            self.slowest_cli, self.slowest_args = took, " ".join(args)
         if r.returncode != 0:
             raise EnvBroken(f"pytmux {' '.join(args)} → rc={r.returncode}\n{r.stderr.strip()}")
         return r.stdout
