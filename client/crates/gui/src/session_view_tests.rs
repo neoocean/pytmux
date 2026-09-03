@@ -1933,6 +1933,145 @@ fn cursor_row_of(key: &str) -> usize {
         .unwrap_or_else(|| panic!("커서 판에 {key} 줄이 없다"))
 }
 
+// ── N13 정보의 그림(pytmux-462) — 값은 서버 것, 표현만 ──────────────────────
+
+/// RTT 표본을 몇 개 심고 상태 판을 연 뷰.
+fn info_with_rtt(samples: &[f64]) -> SessionView {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    let now = view.pinger.now();
+    for (i, ms) in samples.iter().enumerate() {
+        view.state.rtt_mut().sample(now - (samples.len() - i) as f64, ms / 1000.);
+    }
+    view
+}
+
+#[test]
+fn the_rtt_graph_rows_are_found_by_asking_the_graph_not_by_reading_the_text() {
+    // ⛔ 글자를 보고 「이건 그래프 같다」로 고르지 않는다 — 같은 그래프를 낸 함수의
+    //    출력과 그대로 견준다. 표본이 없으면 그래프도 없고, 그때는 한 줄도 안 고른다.
+    let view = info_with_rtt(&[]);
+    let lines = proto::info::tabs(&view.state, "/tmp/x.sock", view.pinger.now());
+    let server = lines.iter().find(|(name, _)| name.contains("서버")).expect("서버 탭이 없다");
+    let (rows, _) = view.rtt_graph_rows(&server.1);
+    assert!(rows.is_empty(), "표본이 없는데 그래프 줄을 골랐다");
+
+    let view = info_with_rtt(&[12., 40., 8., 90., 30.]);
+    let lines = proto::info::tabs(&view.state, "/tmp/x.sock", view.pinger.now());
+    let server = lines.iter().find(|(name, _)| name.contains("서버")).expect("서버 탭이 없다");
+    let (rows, first) = view.rtt_graph_rows(&server.1);
+    assert_eq!(
+        rows.len(),
+        proto::rtt::GRAPH_H,
+        "그래프 줄 수가 {} 가 아니다",
+        proto::rtt::GRAPH_H
+    );
+    assert!(rows.contains(&first), "첫 줄이 목록에 없다");
+    // 고른 줄이 실제로 **막대 글자**를 든 줄이라야 한다(자리를 한 칸 밀면 여기서 죽는다).
+    let picked = &server.1[first];
+    assert!(
+        picked.chars().any(|c| "▁▂▃▄▅▆▇█┄".contains(c)),
+        "고른 줄이 그래프 줄이 아니다: {picked:?}"
+    );
+}
+
+#[test]
+fn one_rule_makes_both_the_bars_and_the_block_characters() {
+    // ⛔ 채우는 규칙이 두 벌이면 GUI 의 막대와 정본의 글자가 **다른 높이**를 말한다.
+    //    글자 그래프는 이제 `graph_cells` 를 접어 쓰므로 그럴 길이 없다 — 그 사실을
+    //    같은 자료로 두 번 물어 잰다.
+    let view = info_with_rtt(&[12., 40., 8., 90., 30.]);
+    let now = view.pinger.now();
+    let data = view
+        .state
+        .rtt()
+        .graph_data(now, proto::rtt::GRAPH_W, proto::rtt::GRAPH_H)
+        .expect("표본을 넣었는데 그래프가 없다");
+    let grid = proto::rtt::graph_cells(&data, proto::rtt::GRAPH_W, proto::rtt::GRAPH_H);
+    let text = view
+        .state
+        .rtt()
+        .graph_lines(now, proto::rtt::GRAPH_W, proto::rtt::GRAPH_H)
+        .expect("글자 그래프가 없다");
+    const BLOCKS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    for (r, row) in grid.iter().enumerate() {
+        // 글자 줄은 축 여섯 칸을 앞에 둔다(제목 한 줄 뒤가 첫 막대 줄이다).
+        let cells: Vec<char> = text[r + 1].chars().skip(6).collect();
+        for (c, cell) in row.iter().enumerate() {
+            if cell.gap || cell.on_threshold {
+                continue; // 그 자리는 글자 쪽이 축·빈칸 표기를 따로 쓴다
+            }
+            assert_eq!(
+                cells[c],
+                BLOCKS[cell.eighths as usize],
+                "줄 {r} 칸 {c}: 막대와 글자가 다른 높이를 말한다"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_graph_row_draws_bars_and_keeps_its_axis_number() {
+    // 양성 오라클 — 막대가 실제로 늘고, 축의 **숫자는 남는다**(값을 그림으로 바꾸면
+    // 정확한 값을 잃는다 · 사용량 막대와 같은 판단).
+    let view = info_with_rtt(&[12., 40., 8., 90., 30.]);
+    let lines = proto::info::tabs(&view.state, "/tmp/x.sock", view.pinger.now());
+    let server = lines.iter().find(|(name, _)| name.contains("서버")).unwrap();
+    let (rows, first) = view.rtt_graph_rows(&server.1);
+    assert!(!rows.is_empty(), "그래프가 없다 — 이 오라클이 잴 것이 없다");
+    let axis: String = server.1[first].chars().take(6).collect();
+    assert!(
+        axis.chars().any(|c| c.is_ascii_digit()),
+        "축에 숫자가 없다: {axis:?}"
+    );
+}
+
+#[test]
+fn the_graph_rows_are_actually_swapped_for_bars() {
+    // ⛔ **「호출 제거」 뮤테이션**(시계·달력의 짝). 위 오라클들은 줄을 **고르는** 함수와
+    //    막대를 **만드는** 함수를 각각 재는데, 본문 루프에서 그 둘을 잇는 갈래를 지우면
+    //    화면은 종전 글자 그래프로 조용히 되돌아가고 전부 초록이다.
+    const VIEW: &str = include_str!("session_view.rs");
+    assert!(
+        VIEW.contains("None if spark.contains(&(row - actions.len())) =>"),
+        "본문 루프가 그래프 줄을 막대로 안 바꾼다 — 만드는 함수가 멀쩡해도 화면은 글자다"
+    );
+    assert!(
+        VIEW.contains("self.rtt_spark_row("),
+        "막대를 그리는 함수를 아무도 안 부른다"
+    );
+}
+
+#[test]
+fn the_prompt_history_candidates_are_already_native_rows() {
+    // pytmux-462 의 「프롬프트 이력 바 — 표현 확인 필요」에 대한 답이다.
+    // 우리 후보 목록은 **글자 바가 아니라 줄 위젯**이다(고른 줄이 배경으로 말한다) —
+    // 그 사실을 재서, 다음 사람이 「아직 글자 바다」로 다시 열지 않게 한다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.screens.ask(base::screens::Prompt::RenameTab, "");
+    view.screens
+        .set_prompt_history(vec!["build".into(), "buildall".into()]);
+    view.handle_key(Key::Char('b'), Mods::NONE);
+    let matches = view.screens.prompt_matches();
+    assert!(!matches.is_empty(), "후보가 안 좁혀졌다 — 이 오라클이 잴 것이 없다");
+    // 후보 하나하나가 **제 줄**로 그려진다(한 덩어리 글자 바가 아니다).
+    let painted = painted_after_setup(vec![layout_one_pane()], &[], |v| {
+        v.screens.ask(base::screens::Prompt::RenameTab, "");
+        v.screens
+            .set_prompt_history(vec!["build".into(), "buildall".into()]);
+        v.handle_key(Key::Char('b'), Mods::NONE);
+    });
+    for cand in ["build", "buildall"] {
+        assert!(
+            painted.iter().any(|t| t.contains(cand)),
+            "후보 {cand:?} 가 제 줄로 안 떴다: {painted:?}"
+        );
+    }
+}
+
 // ── N12 크롬 마감(pytmux-461) — 글자로 말하던 것을 그림으로 ─────────────────
 //
 // ⛔ 재는 것은 **그림이 실제로 늘었나**다. 색만 재면 「색은 맞는데 아무것도 안 그렸다」를

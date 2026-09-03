@@ -7115,6 +7115,9 @@ impl SessionView {
             column.with_child(Container::new(head).with_padding_bottom(4.).finish());
         // 판이 쓰는 줄은 **탭줄 1 + 본문 예산 + 바닥 막대 1** 이다. 셋을 안 빼면 그만큼
         // 판이 아래로 넘친다(다른 판이 구역 선을 예산에 세는 것과 같은 규율).
+        // 그래프 **줄 번호**를 미리 찾는다 — 글자를 파싱하지 않고 **같은 함수가 낸 줄과
+        // 견줘서** 찾는다(그 줄이 그래프인 이유가 「그래프 출력과 같다」라야 한다).
+        let (spark, spark_at) = self.rtt_graph_rows(&lines);
         let budget = self.panel_budget().saturating_sub(2);
         // 커서가 예산 밖이면 그만큼 민다 — 이것이 「굴리기」의 전부다.
         let start = (cursor + 1).saturating_sub(budget);
@@ -7136,6 +7139,13 @@ impl SessionView {
                 ))
                 .with_background_color(if on { palette::SELECTED_BG } else { theme::HOVER })
                 .finish(),
+                // ★ **RTT 그래프 줄은 글자가 아니라 막대다**(pytmux-462 · 허용 갈림 ⓑ).
+                //   아래 주석이 적어 둔 그 사정 — 세로 막대(`▁▂▃…`)가 폴백 글꼴에서 와
+                //   축과 어긋난다 — 을 **뿌리에서** 없앤다: 그 줄은 이제 글꼴을 안 탄다.
+                //   ⛔ 축 글자(`600 ┤`)는 그대로 둔다. 그것은 **값**이지 그림이 아니다.
+                None if spark.contains(&(row - actions.len())) => self.panel_row_box(
+                    self.rtt_spark_row(&lines[row - actions.len()], row - actions.len() - spark_at),
+                ),
                 None => {
                     // ★ **격자에 못박아** 그린다(pytmux-9 ⑵). 이 줄들은 글자 그림이다 —
                     //   RTT 그래프의 세로 막대(`▁▂▃…`)·축(`┤┄─`)이 전부 비 ASCII 라 폴백
@@ -7175,6 +7185,92 @@ impl SessionView {
             base::PanelTarget::InfoClose,
             self.info_close_bar(close_on || self.panel_hovered(body_i + rows)),
         ))
+    }
+
+    /// 본문 줄 중 **RTT 그래프 막대 줄**의 번호들과 그 첫 줄(pytmux-462).
+    ///
+    /// ⛔ 글자를 보고 「이건 그래프 같다」로 고르지 않는다 — 같은 그래프를 낸 함수의
+    /// 출력과 **그대로 견준다**. 그 줄이 그래프인 이유가 「그래프 출력과 같다」라야
+    /// 다음 사람이 형식을 바꿔도 이 자리가 조용히 어긋나지 않는다.
+    fn rtt_graph_rows(&self, lines: &[String]) -> (std::collections::BTreeSet<usize>, usize) {
+        let empty = (std::collections::BTreeSet::new(), 0);
+        let Some(graph) = self
+            .state
+            .rtt()
+            .graph_lines(self.pinger.now(), proto::rtt::GRAPH_W, proto::rtt::GRAPH_H)
+        else {
+            return empty;
+        };
+        let Some(at) = lines
+            .windows(graph.len())
+            .position(|w| w == graph.as_slice())
+        else {
+            return empty;
+        };
+        // 첫 줄은 제목(`RTT 그래프 (최근 60분):`)이고 그 뒤 `GRAPH_H` 줄이 막대다.
+        let first = at + 1;
+        ((first..first + proto::rtt::GRAPH_H).collect(), first)
+    }
+
+    /// 그래프 한 줄 — 축 글자 + **막대들**.
+    ///
+    /// 축(`600 ┤`)은 글자로 남긴다: 그것은 값이지 그림이 아니고, 숫자를 그림으로 바꾸면
+    /// 정확한 값을 잃는다(사용량 막대와 같은 판단 · pytmux-461).
+    fn rtt_spark_row(&self, line: &str, row: usize) -> Box<dyn Element> {
+        // 축은 글자 그래프가 만든 그 줄의 **앞 여섯 칸**이다(`{vmax:>4} ┤`).
+        let axis: String = line.chars().take(6).collect();
+        let mut out = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::End)
+            .with_child(self.mono_row(&axis, 13., palette::DIM));
+        let Some(data) = self.state.rtt().graph_data(
+            self.pinger.now(),
+            proto::rtt::GRAPH_W,
+            proto::rtt::GRAPH_H,
+        ) else {
+            return out.finish();
+        };
+        let grid = proto::rtt::graph_cells(&data, proto::rtt::GRAPH_W, proto::rtt::GRAPH_H);
+        let Some(cells) = grid.get(row) else {
+            return out.finish();
+        };
+        // 한 칸의 픽셀 크기는 **잰 값**을 쓴다 — 못 재면 글자 줄로 물러선다(자리를
+        // 지어내면 축과 어긋나고, 그것이 이 변경이 없애려던 그 증상이다).
+        let (cw, ch) = self.cell_px.get().unwrap_or((8., 16.));
+        for cell in cells {
+            let bar: Box<dyn Element> = if cell.eighths > 0 {
+                let h = (ch * cell.eighths as f32 / 8.).max(1.);
+                ConstrainedBox::new(
+                    Container::new(Empty::new().finish())
+                        .with_background_color(if cell.on_threshold {
+                            theme::WARN
+                        } else {
+                            theme::OK
+                        })
+                        .finish(),
+                )
+                .with_width(cw)
+                .with_height(h)
+                .finish()
+            } else if cell.on_threshold {
+                // 임계선 — 글자 그래프의 `┄` 자리다(1px 점선 대신 한 줄).
+                ConstrainedBox::new(
+                    Container::new(Empty::new().finish())
+                        .with_background_color(theme::BORDER)
+                        .finish(),
+                )
+                .with_width(cw)
+                .with_height(1.)
+                .finish()
+            } else {
+                ConstrainedBox::new(Empty::new().finish())
+                    .with_width(cw)
+                    .with_height(1.)
+                    .finish()
+            };
+            out = out.with_child(bar);
+        }
+        out.finish()
     }
 
     /// 판 **가로 가득**을 차지하는 한 줄 — 고른 줄·단추의 배경이 글자 폭에서 끊기지

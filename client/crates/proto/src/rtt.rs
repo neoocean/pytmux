@@ -62,6 +62,63 @@ fn pyround(x: f64) -> i64 {
     }
 }
 
+/// 한 칸이 그 줄에서 **얼마나 차 있나**(pytmux-462).
+///
+/// # 왜 이 갈래가 생겼나
+///
+/// 글자 그래프는 이 값을 [`VBLOCKS`] 의 글자 하나로 접는다. GUI 는 같은 값을 **막대**로
+/// 그릴 수 있고(허용 갈림 ⓑ), 그러면 그 줄이 폴백 글꼴을 안 타서 축과 어긋날 일이
+/// 없어진다(`session_view.rs` 의 그 줄 주석이 적어 둔 자리다).
+///
+/// ⛔ 채우는 **규칙**은 한 벌이다 — 아래 [`graph_cells`] 한 자리에서 나오고, 글자 그래프도
+/// 그 값을 접어 쓴다. 두 벌로 두면 GUI 의 막대와 정본의 글자가 다른 높이를 말하게 된다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphCell {
+    /// 이 줄에서 찬 1/8 칸 수(0~8). 0 이면 이 줄에는 안 찬다.
+    pub eighths: u8,
+    /// 측정이 **없는** 칸인가(0 에 가까운 것과 다르다).
+    pub gap: bool,
+    /// 이 줄이 임계선인가(글자 그래프의 `┄`).
+    pub on_threshold: bool,
+}
+
+/// 그래프를 **칸 격자**로 편다 — `[줄][칸]`. 줄 0 이 맨 위다.
+///
+/// 두 소비자가 이 한 벌을 쓴다: 글자 그래프([`render_graph_lines`])와 GUI 의 막대.
+pub fn graph_cells(data: &GraphData, width: usize, height: usize) -> Vec<Vec<GraphCell>> {
+    let total8 = (height * 8) as i64;
+    // 칸별 1/8 채움. 측정값은 최소 1 로 띄워 '0 에 가까움'과 '측정 없음'을 가른다.
+    let eighths: Vec<Option<i64>> = data
+        .buckets
+        .iter()
+        .take(width)
+        .map(|b| b.map(|v| pyround(v / data.vmax * total8 as f64).clamp(1, total8)))
+        .collect();
+    let thr_e = pyround(data.threshold / data.vmax * total8 as f64);
+    let thr_row = if 0 < thr_e && thr_e <= total8 {
+        Some(height as i64 - 1 - (thr_e - 1) / 8)
+    } else {
+        None
+    };
+    (0..height as i64)
+        .map(|r| {
+            let base = (height as i64 - 1 - r) * 8;
+            let on_threshold = thr_row == Some(r);
+            eighths
+                .iter()
+                .map(|e| match e {
+                    None => GraphCell { eighths: 0, gap: true, on_threshold },
+                    Some(e) => GraphCell {
+                        eighths: (e - base).clamp(0, 8) as u8,
+                        gap: false,
+                        on_threshold,
+                    },
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// `GraphData` 를 글자 그래프로 렌더링한다. 뷰용.
 fn render_graph_lines(data: &GraphData, width: usize, height: usize) -> Vec<String> {
     let thr = data.threshold;
@@ -70,43 +127,30 @@ fn render_graph_lines(data: &GraphData, width: usize, height: usize) -> Vec<Stri
     let avg = data.avg;
     let count = data.count;
 
-    let total8 = (height * 8) as i64;
-    // 칸별 1/8 채움. 측정값은 최소 1 로 띄워 '0 에 가까움'과 '측정 없음'을 가른다.
-    let eighths: Vec<Option<i64>> = data
-        .buckets
+    let grid = graph_cells(data, width, height);
+    let thr_row = grid
         .iter()
-        .map(|b| b.map(|v| pyround(v / vmax * total8 as f64).clamp(1, total8)))
-        .collect();
-    let thr_e = pyround(thr / vmax * total8 as f64);
-    let thr_row = if 0 < thr_e && thr_e <= total8 {
-        Some(height as i64 - 1 - (thr_e - 1) / 8)
-    } else {
-        None
-    };
+        .position(|row| row.first().is_some_and(|c| c.on_threshold))
+        .map(|r| r as i64);
     let mut out = vec![t("RTT 그래프 (최근 60분):").to_owned()];
     let vmax_ms = pyround(vmax * 1000.0);
     let thr_ms = pyround(thr * 1000.0);
     for r in 0..height as i64 {
-        let base = (height as i64 - 1 - r) * 8;
         let on_thr = thr_row == Some(r);
         let mut cells = String::new();
-        for e in &eighths {
-            match e {
-                None => cells.push(if on_thr {
+        for cell in &grid[r as usize] {
+            if cell.gap {
+                cells.push(if on_thr {
                     '┄'
                 } else if r == height as i64 - 1 {
                     '·'
                 } else {
                     ' '
-                }),
-                Some(e) => {
-                    let blk = e - base;
-                    if blk > 0 {
-                        cells.push(VBLOCKS[blk.min(8) as usize]);
-                    } else {
-                        cells.push(if on_thr { '┄' } else { ' ' });
-                    }
-                }
+                });
+            } else if cell.eighths > 0 {
+                cells.push(VBLOCKS[cell.eighths as usize]);
+            } else {
+                cells.push(if on_thr { '┄' } else { ' ' });
             }
         }
         let axis = if r == 0 {
