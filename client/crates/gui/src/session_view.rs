@@ -522,6 +522,18 @@ pub struct SessionView {
     /// ⛔ 깜빡임을 껐을 때도 이 값은 `true` 여야 한다 — 「안 보임」에서 껐다고 커서가
     /// 영영 사라지면 되돌릴 입구가 없다(`tick_cursor_blink` 가 그 자리를 지킨다).
     blink_on: bool,
+    /// 이 뷰가 그린 프레임 수와 그 **간격**(`debug-stats` · pytmux-457).
+    ///
+    /// ⛔ `render(&self)` 라 `&mut self` 가 없다 — 그래서 `Cell`/`RefCell` 이다.
+    /// 이 둘을 `pump` 에서 세지 않는 이유: pump 는 33ms 타이머라 **그리지 않은 틱도
+    /// 센다**. 재려는 것은 「그렸나」이고, 그 사실을 아는 자리는 `render` 하나다.
+    frames: std::cell::Cell<u64>,
+    /// 직전 `render` 시각 — 다음 렌더와의 차가 한 표본이다.
+    last_render: std::cell::Cell<Option<Instant>>,
+    /// 최근 프레임 간격(ms · 최대 [`base::diag::FRAME_WINDOW`] 개).
+    frame_ms: std::cell::RefCell<std::collections::VecDeque<f64>>,
+    /// 마지막으로 그린 캔버스의 칸 수 — 한 프레임에 실제로 한 그리기 일의 크기다.
+    painted_cells: std::cell::Cell<usize>,
     /// 입력기 배지(`한`/`EN`) — OS 에 물어본 값. 모르면 `None`(배지를 안 그린다).
     ime_badge: Option<&'static str>,
     /// **조합 중인** 글자(`ㅎ`→`하`→`한`). 비어 있으면 조합 중이 아니다.
@@ -819,6 +831,10 @@ impl SessionView {
             last_status: Instant::now(),
             last_blink: Instant::now(),
             blink_on: true,
+            frames: std::cell::Cell::new(0),
+            last_render: std::cell::Cell::new(None),
+            frame_ms: std::cell::RefCell::new(std::collections::VecDeque::new()),
+            painted_cells: std::cell::Cell::new(0),
             ime_badge: None,
             preedit: String::new(),
             last_ime: Instant::now(),
@@ -1789,6 +1805,10 @@ impl SessionView {
             }
             // 커서 판(pytmux-375). 값은 설정 화면과 **같은 다섯**이고 새로 지은 것은
             // 화면이다 — 왜 화면이 따로 서는지는 `render_cursor` 가 적는다.
+            Action::ShowDebugStats => {
+                self.screens.open(Screen::DebugStats);
+                return true;
+            }
             Action::ShowCursor => {
                 self.screens.open(Screen::Cursor);
                 return true;
@@ -7138,6 +7158,57 @@ impl SessionView {
     /// ⛔ **`End` 만의 일이 아니다** — `Down`·`PageDown` 도 위쪽 상한을 안 걸고 지나므로
     /// 안 접으면 아래에서 넘긴 만큼 `Up` 이 **헛돈다**(그림은 그대로인데 키가 안 먹는
     /// 것으로 보인다). 종전에는 그 넷이 전부 판을 닫아 이 자리가 드러날 일이 없었다.
+    /// `debug-stats` 판이 보일 값을 **이 뷰에서** 모은다(pytmux-457).
+    ///
+    /// # 왜 두 칸이 늘 «못 쟀다» 인가
+    ///
+    /// 글리프 캐시(`warpui_core::fonts::Cache`)와 씬 원소(`Scene`)는 **상류 스냅샷의
+    /// 사유 필드**라 크기를 내주는 길이 없다(`glyphs_by_char` 등은 비공개 `DashMap`).
+    /// 그것을 재려면 상류를 고쳐야 하고, 그러면 MIT 경계 문서(`PROVENANCE.md`)가 관리하는
+    /// 스냅샷에 드리프트가 생긴다 — 진단 한 줄의 값보다 그 비용이 크다.
+    /// ⛔ 그래서 **0 으로 적지 않고 「못 쟀다」로 남긴다**: 0 은 「캐시가 비었다」로
+    /// 읽히고, 그건 우리가 모르는 사실이다(`base::diag` 의 그 규율).
+    /// 대신 우리가 실제로 하는 그리기 일의 크기는 [`Self::painted_cells`] 가 잰다.
+    fn runtime_stats(&self) -> base::diag::RuntimeStats {
+        let layout = self.state.layout();
+        base::diag::RuntimeStats {
+            pid: std::process::id(),
+            frames: self.frames.get(),
+            frame_ms: self.frame_ms.borrow().iter().copied().collect(),
+            // 위 머리말 — 상류가 크기를 안 내준다.
+            glyph_cache: None,
+            scene_nodes: None,
+            painted_cells: Some(self.painted_cells.get()),
+            queue_depth: self.pending.len(),
+            rtt_ms: self.state.rtt().last.map(|s| s * 1000.0),
+            rss: Self::rss_bytes(),
+            grid: layout.map(|l| (l.cols, l.rows)).unwrap_or((0, 0)),
+            tabs: self.state.tabs().tabs.len(),
+            panes: layout.map(|l| l.panes.len()).unwrap_or(0),
+            screen_depth: self.screens.depth(),
+        }
+    }
+
+    /// 상주 메모리(바이트). **못 알아내는 OS 에서는 `None`** — 추측하지 않는다.
+    ///
+    /// 리눅스는 `/proc/self/statm` 한 줄로 끝난다(둘째 칸 = 상주 페이지 수). macOS 는
+    /// `task_info` 를, Windows 는 `GetProcessMemoryInfo` 를 부르는 일이라 이 크레이트의
+    /// 의존을 늘려야 해서 안 했다 — 이슈가 「메모리(**가능한 OS 만**)」로 적은 자리다.
+    fn rss_bytes() -> Option<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            let text = std::fs::read_to_string("/proc/self/statm").ok()?;
+            let pages: u64 = text.split_whitespace().nth(1)?.parse().ok()?;
+            // `sysconf(_SC_PAGESIZE)` 를 부를 libc 가 없다 — 리눅스에서 4KiB 가 아닌
+            // 페이지는 드물고, 틀려도 「자라나」의 판정은 안 바뀐다(그 사실을 적어 둔다).
+            Some(pages * 4096)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
     fn settle_settings_cursor(&mut self) {
         let rows = match self.screens.top() {
             Some(Screen::Settings) => self.screens.plugins().settings_len(),
@@ -9108,6 +9179,14 @@ impl SessionView {
             Screen::Commands => self.render_palette(column),
             Screen::Settings => self.render_settings(column),
             Screen::Cursor => self.render_cursor(column),
+            // 읽는 판 — 줄은 `base::diag` 가 짓고 값은 `runtime_stats()` 가 모은다
+            // (pytmux-457). 정본이 이 표를 `InfoScreen` 에 띄우는 것과 같은 손이다.
+            Screen::DebugStats => self
+                .runtime_stats()
+                .lines()
+                .into_iter()
+                .skip(self.screens.scroll())
+                .fold(column, |c, row| c.with_child(self.text(row, 13., palette::FG))),
             Screen::Plugins => self.render_plugins(column),
             Screen::PluginView => self.render_plugin_view(column),
             Screen::SearchResults => self.render_search_results(column),
@@ -10023,6 +10102,19 @@ impl View for SessionView {
     }
 
     fn render(&self, _: &AppContext) -> Box<dyn Element> {
+        // ★ **프레임은 여기서 센다**(pytmux-457). `pump` 는 33ms 타이머라 그리지 않은
+        //   틱도 세고, 재려는 것은 「그렸나」다. 간격 표본도 같은 자리에서 뜬다 —
+        //   상류가 프레임 시간을 안 내주므로 우리가 잴 수 있는 것은 **렌더 사이의
+        //   시간**이고, 표에도 그렇게 적는다(없는 값을 지어내지 않는다).
+        self.frames.set(self.frames.get().saturating_add(1));
+        let now = Instant::now();
+        if let Some(prev) = self.last_render.replace(Some(now)) {
+            let mut window = self.frame_ms.borrow_mut();
+            window.push_back(now.duration_since(prev).as_secs_f64() * 1000.0);
+            while window.len() > base::diag::FRAME_WINDOW {
+                window.pop_front();
+            }
+        }
         let mut column = Flex::column().with_main_axis_size(MainAxisSize::Max);
         // ★ 머리줄은 **여기 없다**(`pytmux-1`) — 이 열의 첫 줄이 아니라 창의 맨 위
         //   한 줄로 나갔다(아래 `render` 꼬리의 `titlebar::row`). 종전에는 앱 이름과
@@ -10047,6 +10139,10 @@ impl View for SessionView {
         match self.composite_for_paint() {
             Some(canvas) => {
                 let (_, height) = canvas.size();
+                // 이 프레임이 실제로 그린 칸 수 — 상류가 씬 원소 수를 안 내주므로
+                // **우리가 아는 그리기 일의 크기**가 이것이다(pytmux-457).
+                let (cw, ch) = canvas.size();
+                self.painted_cells.set(usize::from(cw) * usize::from(ch));
                 // 자리표는 **딱 한 번만** 남긴다 — 같은 id 를 여러 줄이 쓰면 마지막에
                 // 그려진 줄의 값이 남아 원점이 화면 아래로 밀린다. 그 한 번이 몇
                 // 행인지는 내용이 정한다(테두리 줄에는 ASCII 가 없다).

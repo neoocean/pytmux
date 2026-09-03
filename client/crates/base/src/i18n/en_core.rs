@@ -589,4 +589,35 @@ pub static EN: &[(&str, &str)] = &[
     ("클라 재기동 가능(이진 경로 해석)", "Client relaunch possible (binary path resolved)"),
     ("이진 경로를 못 찾았다: {err}", "Could not find binary path: {err}"),
     ("다시 띄우지 못했다: {err}", "Failed to relaunch: {err}"),
+    // ── diag.rs — `debug-stats` 판(pytmux-457) ──
+    // ⚠ 판 제목(`debug-stats`)과 팔레트 이름은 **번역하지 않는다** — 명령 이름이라
+    //   옮기면 정본과 이름이 갈리고, 그러면 「어느 명령이 이 판을 열었나」가 끊긴다.
+    ("격자", "Grid"),
+    ("상주 메모리", "Resident memory"),
+    ("이 OS 에서는 못 잰다", "not measurable on this OS"),
+    ("못 쟀다", "not measured"),
+    ("그리는 쪽", "Drawing"),
+    ("그린 프레임", "Frames drawn"),
+    ("프레임 중앙값", "Frame median"),
+    ("최댓값", "max"),
+    ("최근 표본", "recent samples"),
+    ("프레임 시간 표본이 아직 없다", "No frame-time samples yet"),
+    ("글리프 캐시", "Glyph cache"),
+    ("씬 원소", "Scene elements"),
+    ("그린 칸", "Cells painted"),
+    ("붙어 있는 쪽", "Link"),
+    ("링크 RTT", "Link RTT"),
+    ("아직 표본이 없다", "no samples yet"),
+    ("보낼 큐 깊이", "Outgoing queue depth"),
+    ("탭", "Tabs"),
+    ("패널", "Panes"),
+    ("판 깊이", "Screen depth"),
+    (
+        "이 표는 **이 프로세스**를 잰다 — 정본의 같은 이름은 파이썬 클라의 힙을 재고, 항목이 1:1 이 아닌 것은 그래서다(런타임이 다르다).",
+        "This table measures **this process**. The canon command of the same name measures the Python client's heap, which is why the entries are not 1:1 (different runtimes).",
+    ),
+    (
+        "값이 «자라다 눕는» 모양이면 상시 세금이지 누적이 아니다. 계속 자라면 그것이 새 결함이다.",
+        "Values that grow and then flatten are a standing cost, not a leak. Values that keep growing are a new defect.",
+    ),
 ];

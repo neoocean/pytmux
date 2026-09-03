@@ -1933,6 +1933,130 @@ fn cursor_row_of(key: &str) -> usize {
         .unwrap_or_else(|| panic!("커서 판에 {key} 줄이 없다"))
 }
 
+// ── `debug-stats` — GUI 가 **제 런타임**을 재는 판(pytmux-457) ─────────────────
+//
+// ⛔ 「판이 뜬다」로 초록을 만들지 않는다. 이 이슈의 관문은 *"판의 값이 실제로 움직인다는
+// 오라클 — 값 없는 판을 초록으로 접지 않는다"* 다. 줄의 **모양**은 `base::diag` 의 시험이
+// 재고, 여기서 재는 것은 ⑴ 팔레트가 그 판을 열고 ⑵ 그린 값이 **판에 실제로 뜨고**
+// ⑶ 프레임을 더 그리면 **그 수가 는다** 셋이다.
+
+/// `debug-stats` 판을 팔레트로 연 뷰.
+fn debug_stats_panel() -> SessionView {
+    let (mut view, _tx, _sent) = harness();
+    view.pump_headless();
+    let entry = base::PALETTE
+        .iter()
+        .find(|e| e.name == "debug-stats")
+        .expect("팔레트에 `debug-stats` 가 없다 — 이 판에 들어갈 길이 없다");
+    assert!(view.apply_action(entry.action), "팔레트 줄이 아무 일도 안 했다");
+    assert_eq!(
+        view.screens.top(),
+        Some(Screen::DebugStats),
+        "그 줄이 다른 판을 열었다"
+    );
+    view
+}
+
+#[test]
+fn the_palette_is_the_way_into_the_debug_stats_panel() {
+    let mut view = debug_stats_panel();
+    // 같은 이름을 다시 부르면 닫힌다(판 토글 — 다른 판과 같은 손이다).
+    let entry = base::PALETTE.iter().find(|e| e.name == "debug-stats").unwrap();
+    view.apply_action(entry.action);
+    assert_eq!(view.screens.top(), None, "같은 입구를 다시 눌렀는데 안 닫힌다");
+}
+
+#[test]
+fn the_debug_stats_panel_paints_numbers_it_actually_measured() {
+    // ⛔ 이 판이 **빈 껍데기가 아니다**를 재는 자리다.
+    let painted = painted_after_setup(vec![layout_one_pane()], &[], |view| {
+        let entry = base::PALETTE
+            .iter()
+            .find(|e| e.name == "debug-stats")
+            .expect("팔레트에 `debug-stats` 가 없다");
+        view.apply_action(entry.action);
+    });
+    let all = painted.join("\n");
+    assert!(
+        all.contains(&format!("pid {}", std::process::id())),
+        "판에 이 프로세스의 pid 가 없다:\n{all}"
+    );
+    // 격자는 위 `layout_one_pane()` 이 정한 80×4 다 — 지어낸 값이 아니라 **받은 값**이다.
+    assert!(all.contains("80×4"), "판이 지금 격자를 안 보인다:\n{all}");
+    for needle in ["그린 프레임", "보낼 큐 깊이", "링크 RTT", "그린 칸"] {
+        assert!(all.contains(needle), "{needle:?} 줄이 판에 없다:\n{all}");
+    }
+}
+
+/// 프레임을 **두 번** 그리고 그때마다 판에 뜬 「그린 프레임」 줄을 돌려준다.
+///
+/// 위 `painted_scene_setup` 은 한 프레임만 세운다 — 이 이슈의 관문(*"프레임을 두 번
+/// 돌리면 프레임 수가 는다"*)은 두 번이 필요해서 여기만 따로 짓는다.
+fn frames_line_after_two_paints() -> (String, String) {
+    use warpui::platform::WindowStyle;
+    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
+    warpui::App::test((), |mut app| async move {
+        let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+        let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+        tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+        view.pump_headless();
+        let entry = base::PALETTE
+            .iter()
+            .find(|e| e.name == "debug-stats")
+            .expect("팔레트에 `debug-stats` 가 없다");
+        view.apply_action(entry.action);
+        let (window_id, _handle) = app.add_window(WindowStyle::NotStealFocus, move |_| view);
+        let mut presenter = Presenter::new(window_id);
+        let root = app.root_view_id(window_id).unwrap();
+        app.update(move |ctx| {
+            let mut grab = || {
+                let mut updated = EntityIdSet::default();
+                updated.insert(root);
+                presenter.invalidate(
+                    WindowInvalidation { updated, ..Default::default() },
+                    ctx,
+                );
+                let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+                scene
+                    .painted_texts()
+                    .map(|t| t.text.clone())
+                    .find(|t| t.starts_with("  ") && t.contains("그린 프레임"))
+                    .unwrap_or_default()
+            };
+            let first = grab();
+            let second = grab();
+            (first, second)
+        })
+    })
+}
+
+#[test]
+fn drawing_one_more_frame_shows_up_in_the_panel() {
+    // 이 이슈가 못박은 관문 그 줄 — *"프레임을 두 번 돌리면 프레임 수가 는다"*.
+    // ⛔ 값 없는 판을 초록으로 접지 않는다: 두 줄이 **다르다**를 재고, 첫 줄이 비어
+    //    있으면(= 판이 그 줄을 아예 안 그렸으면) 그것도 실패다.
+    let (first, second) = frames_line_after_two_paints();
+    assert!(!first.is_empty(), "판에 「그린 프레임」 줄이 아예 없다");
+    assert_ne!(
+        first, second,
+        "프레임을 한 번 더 그렸는데 판이 세는 수가 그대로다: {first:?}"
+    );
+    assert!(first.contains('1'), "첫 프레임의 수가 1 이 아니다: {first:?}");
+    assert!(second.contains('2'), "둘째 프레임의 수가 2 가 아니다: {second:?}");
+}
+
+#[test]
+fn what_the_upstream_will_not_tell_us_is_named_not_zeroed() {
+    // 글리프 캐시·씬 원소는 상류 스냅샷의 사유 필드라 크기를 못 얻는다. 그 사실을
+    // **0 으로 적으면** 다음 사람이 「캐시가 비었다」로 읽는다 — 우리가 모르는 사실이다.
+    let view = debug_stats_panel();
+    let stats = view.runtime_stats();
+    assert_eq!(stats.glyph_cache, None, "못 얻는 값을 얻은 척한다");
+    assert_eq!(stats.scene_nodes, None, "못 얻는 값을 얻은 척한다");
+    // 대신 우리가 아는 그리기 일의 크기는 **잰다**.
+    assert!(stats.painted_cells.is_some(), "그린 칸도 못 잰다면 판이 비었다");
+}
+
 #[test]
 fn the_palette_is_the_way_into_the_cursor_panel() {
     let mut view = cursor_panel();

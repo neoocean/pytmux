@@ -226,6 +226,8 @@ impl BlockList {
             | Action::ToggleClock
             | Action::ShowSummary
             | Action::ShowCursor
+            // 제 런타임을 재는 판 — 패널과 무관하다(pytmux-457).
+            | Action::ShowDebugStats
             | Action::SelectBlocks
             | Action::FontScale { .. }
             | Action::FontScaleReset

@@ -375,12 +375,25 @@ static CONTRACTS: &[Contract] = &[
          했다(pytmux-374 ⑵·273 이 걸린 그 함정). 갈리는 것은 `Tab` 하나뿐이다(이 판에는 \
          분류가 없어 삼킨다)",
     ),
+    c(
+        Screen::DebugStats,
+        Closes,
+        Same("screen_key_conformance — 정본은 이 표를 범용 `InfoScreen` 에 띄운다 \
+         (`clientcmd.py` 의 `push_screen(InfoScreen(clientdiag.render(...), \
+         title=debug-stats))`) — 아무 키나 닫고 `↑↓`·`PgUp/PgDn`·`Home/End` 가 \
+         굴린다. `canon_class` 가 `InfoScreen` 이라 그 시험이 이 판도 눌러 본다 \
+         (pytmux-457)"),
+        "런타임 계측 판. **손은 정본과 같고 항목이 갈린다** — 저쪽은 파이썬 힙·GC \
+         세대를 재고 이쪽은 그린 프레임·프레임 시간·글리프 캐시·씬 원소·큐 깊이·RTT 를 \
+         잰다(런타임이 다르다). 그 갈림은 대장 ⓑ 한 줄이고, 이 축이 재는 「같게 구나」는 \
+         갈리지 않는다",
+    ),
 ];
 
 /// 지금 점수. **양방향 래칫**이다 — 늘어도 줄어도 여기를 고쳐야 한다(`parity.rs` 규칙 2).
 ///
 /// `(같다, 허용된 갈림, 결함, 못 쟀다)`.
-static SCORE: (usize, usize, usize, usize) = (23, 3, 0, 0);
+static SCORE: (usize, usize, usize, usize) = (24, 3, 0, 0);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4). **지금은 0 이다**(pytmux-454).
 ///

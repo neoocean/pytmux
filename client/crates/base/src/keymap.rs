@@ -403,6 +403,16 @@ pub enum Action {
     /// 기본 키 표에 자리를 하나 먹으면 그만큼 정본과 멀어진다 — 입구는 팔레트 하나다
     /// (`font-scale-*` 이 키를 갖는 것과 갈리는 지점이고, 그쪽은 키가 **주** 입구다).
     ShowCursor,
+    /// **런타임 계측 판**을 연다(`debug-stats` · pytmux-457).
+    ///
+    /// 정본에도 같은 이름이 있고 같은 뜻이다 — *"내 프로세스를 잰다"*. 항목은 1:1 이
+    /// 아니다(런타임이 다르다): 저쪽은 파이썬 힙·GC 세대이고 이쪽은 그린 프레임·
+    /// 프레임 시간·글리프 캐시·씬 원소·큐 깊이·RTT 다. 줄을 만드는 것은
+    /// [`crate::diag::RuntimeStats`] 이고 값을 모으는 것은 뷰다.
+    ///
+    /// ⛔ 키를 안 준다 — 진단 명령이라 자주 여는 자리가 아니고, 정본도 팔레트/명령
+    /// 한 줄이 유일한 입구다(`ShowCursor` 와 같은 판단).
+    ShowDebugStats,
     /// UI 언어를 이 로케일로 바꾼다(`lang ko|en` — 파이썬 `cmd_lang`).
     ///
     /// **클라 안에서 끝난다** — 로케일은 per-user 라 서버에 보낼 것이 없다(파이썬도
@@ -570,6 +580,7 @@ impl Action {
             Action::ToggleAutoresume => "자동재개",
             Action::ShowAutoresume => "자동재개 설명",
             Action::ShowCursor => "커서",
+            Action::ShowDebugStats => "debug-stats",
             Action::TogglePromptClear => "프롬프트 클리어",
             Action::SetLang(_) => "언어",
             Action::Reconnect => "재접속",
@@ -1329,6 +1340,11 @@ pub static PALETTE: &[PaletteEntry] = &[
     //   대해 적는다). 키를 안 주므로 **팔레트가 유일한 입구**다 — 그 사정은
     //   `Action::ShowCursor` 가 쥔다.
     pe("cursor", "설정/기타", Action::ShowCursor),
+    // ★ 정본에도 **같은 이름**이 있다(pytmux-457). 종전에는 패리티 래칫의
+    //   `NOT_IN_PALETTE` 가 이 줄을 면제했다 — 사유가 *"파이썬 힙을 재는 명령이라
+    //   GUI 에는 잴 것이 없다"* 였는데, 이제 **제 런타임을 재는 판**이 생겨 그 사유가
+    //   사라졌다. 면제와 분류는 다른 일이고, 없앤 것은 뒤엣것(「GUI 에 아직 없다」)이다.
+    pe("debug-stats", "설정/기타", Action::ShowDebugStats),
     // GUI 만의 모드(pytmux-18). 키(`esc b`)가 주 입구이고 팔레트는 그 키를 모르는
     // 사람의 입구다 — 요약 판(위)이 목록을 **보여 주는** 자리라면 이쪽은 캔버스 위에서
     // 그 블록을 **집는** 자리다.
@@ -1812,6 +1828,7 @@ fn variant_index(action: Action) -> usize {
         // 빈틈없이 차야 `all_actions()` 의 전수 검사가 성립하므로, 구멍을 남기는 대신
         // 맨 끝 것을 그리로 옮기고 [`ACTION_COUNT`] 를 하나 줄였다.
         Action::ShowCursor => 104,
+        Action::ShowDebugStats => 118,
         Action::Reconnect => 98,
         Action::RestartAll => 99,
         Action::SetLang(_) => 100,
@@ -1825,7 +1842,7 @@ fn variant_index(action: Action) -> usize {
     }
 }
 
-const ACTION_COUNT: usize = 118;
+const ACTION_COUNT: usize = 119;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -1942,6 +1959,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::ToggleAutoresume,
         Action::ShowAutoresume,
         Action::ShowCursor,
+        Action::ShowDebugStats,
         Action::Reconnect,
         Action::ToggleFullscreen,
         Action::RestartAll,

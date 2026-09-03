@@ -186,6 +186,20 @@ pub enum Screen {
     /// `press_settings` 의 `_ => Consumed` 팔이 그것을 지키고, 그 사실은
     /// `proto/tests/interaction.rs` 가 실제로 눌러서 잰다.
     Cursor,
+    /// **이 클라의 런타임 계측 판**(`debug-stats` · pytmux-457).
+    ///
+    /// 정본에도 **같은 이름**이 있고 같은 뜻이다 — *"내 프로세스를 잰다"*. 다만 재는
+    /// 항목이 1:1 이 아니다(저쪽은 파이썬 힙 · 이쪽은 그린 프레임·글리프 캐시·씬
+    /// 원소·큐 깊이·RTT). 그 갈림은 [[pytmux-185]] 의 ⓑ 로 대장에 적는다.
+    ///
+    /// 손은 정본과 **같다**: 정본은 이 표를 범용 `InfoScreen` 에 띄우므로
+    /// (`clientcmd.py` 의 `push_screen(InfoScreen(..., title="debug-stats"))`)
+    /// 아무 키나 닫고 `↑↓`·`PgUp/PgDn`·`Home/End` 가 굴린다. 그래서
+    /// [`Screen::canon_class`] 가 `InfoScreen` 을 가리키고,
+    /// `proto/tests/screen_key_conformance.rs` 가 그 손을 **눌러서** 지킨다.
+    ///
+    /// 값은 [`crate::diag::RuntimeStats`] 가 줄로 만든다 — 뷰는 모으기만 한다.
+    DebugStats,
 }
 
 impl Screen {
@@ -227,6 +241,7 @@ impl Screen {
                 Screen::Summary => 22,
                 Screen::SearchResults => 23,
                 Screen::Cursor => 25,
+                Screen::DebugStats => 26,
             }
         }
         const ALL: &[Screen] = &[
@@ -256,6 +271,7 @@ impl Screen {
             Screen::SearchResults,
             Screen::Autoresume,
             Screen::Cursor,
+            Screen::DebugStats,
         ];
         // 중복·자리 어긋남은 여기서 잡는다(빠짐은 위 match 가 이미 막았다).
         debug_assert!(
@@ -291,6 +307,9 @@ impl Screen {
             Screen::Autoresume => "자동 재개",
             // GUI 전용 판(pytmux-375) — 정본에 짝이 없어 옮겨 올 문구도 없다.
             Screen::Cursor => "커서",
+            // ⚠ 정본 팔레트의 이름 그대로다 — 판 제목이 이름과 갈리면 「어느 명령이
+            //   이 판을 열었나」를 사용자가 못 잇는다(pytmux-457).
+            Screen::DebugStats => "debug-stats",
             Screen::ShellOutput => "셸 결과",
             Screen::MergeRemote => "원격 탭 머지",
             // 파이썬 `compose.title` 과 같은 문구다.
@@ -350,6 +369,10 @@ impl Screen {
             | Screen::Autoresume
             // 네이티브 전용(정본에 짝이 없다) — 플랜 전문·거부 사유도 **읽는 판**이라
             // 같은 관습을 따른다.
+            // 런타임 계측도 **읽는 판**이고, 정본이 범용 `InfoScreen` 으로 띄우므로
+            // 자리도 그 클래스 기본(`align: center top`)이다 — 앵커 픽스처가 그것을
+            // 정본에서 뽑아 대조한다(pytmux-457).
+            | Screen::DebugStats
             | Screen::ClaudeDetail => Anchor::Top,
             // 읽는 판인데 **짧아서** 가운데인 예외 — 정본도 이 둘만 `center=True` 다
             // (위 「예외」 · §10-21ⓐ3·ⓓ3). 재시작 점검은 그 위에 **고르는 판**이기도
@@ -478,6 +501,9 @@ impl Screen {
             | Screen::RestartCheck
             // 정본도 `InfoScreen` 을 쓴다 — `hide_key="a"` 로 뒤집고 닫는 그 판이다
             // (`clientconn.py::open_autoresume_info`).
+            // 정본은 이 표도 범용 `InfoScreen` 에 띄운다
+            // (`clientcmd.py` → `InfoScreen(clientdiag.render(...), title="debug-stats")`).
+            | Screen::DebugStats
             | Screen::Autoresume => "InfoScreen",
             // 정본에 짝이 없다 — 이 구역은 GUI 만 갖고 있던 것이다(§10-21ⓓ).
             Screen::Summary => return None,
@@ -528,6 +554,8 @@ impl Screen {
             // 설정 화면과 같은 손인데 **분류가 없어** `Tab` 칸만 뺀다 — 안내에 적힌
             // 키가 안 먹으면 도움말이 없느니만 못하다(이 함수 머리말).
             Screen::Cursor => "(↑↓ 고르기 · ←→ 값 · Enter 바꾸기 · Esc 닫기)",
+            // 정본 `InfoScreen` 의 손 그대로(아무 키나 닫고 넷이 굴린다).
+            Screen::DebugStats => "(아무 키나 닫기 · ↑↓ 스크롤)",
             // Space 도 받는 것은 파이썬 클라와 같다 — 체크박스 목록의 손버릇이다.
             Screen::Plugins => "(↑↓ 고르기 · Enter/Space 켜고끄기 · Esc 닫기)",
             // 안내도 스펙이 준다(플러그인이 자기 키를 안다) — 이건 폴백이다.
@@ -980,6 +1008,12 @@ impl Screens {
 
     pub fn top(&self) -> Option<Screen> {
         self.stack.last().copied()
+    }
+
+    /// 쌓여 있는 판의 **수**. 판을 여닫은 것이 거둬지나를 보는 가장 싼 값이다
+    /// (`debug-stats` 가 쓴다 — 정본 `clientdiag.screen_depth` 와 같은 뜻).
+    pub fn depth(&self) -> usize {
+        self.stack.len()
     }
 
     pub fn is_open(&self) -> bool {
@@ -1675,6 +1709,7 @@ impl Screens {
                             | Screen::RestartCheck
                             | Screen::Hooks
                             | Screen::Autoresume
+                            | Screen::DebugStats
                     )
                 ) =>
             {
@@ -1691,6 +1726,7 @@ impl Screens {
                             | Screen::RestartCheck
                             | Screen::Hooks
                             | Screen::Autoresume
+                            | Screen::DebugStats
                     )
                 ) =>
             {

@@ -102,8 +102,12 @@ static COMMANDS: &[Item] = &[
     ),
     i(
         "debug-stats",
-        Missing,
-        "파이썬 클라 런타임 계측(pytmux-382 §8-⑤) — GUI 는 제 런타임을 재는 짝이 아직 없다",
+        Done,
+        "팔레트 → 이 클라의 런타임 판(pytmux-457). **항목이 1:1 이 아니다** — 저쪽은 \
+         파이썬 힙·GC 세대를 재고 이쪽은 그린 프레임·프레임 간격·그린 칸·큐 깊이·RTT 를 \
+         잰다(런타임이 다르다). 같아야 하는 것은 「같은 이름 · 같은 뜻(내 프로세스를 \
+         잰다) · 같은 손(정본도 InfoScreen 이라 아무 키나 닫는다)」 셋이고, 그 셋은 \
+         `screen_key_conformance`·`interaction` 이 잰다",
     ),
     i("detach-client", Done, "prefix d — 창을 닫는다"),
     i("display-message", Done, "팔레트 → 알림 이력에 남는다"),
@@ -414,7 +418,7 @@ static TABLES_ONLY: &[&[Item]] = &[COMMANDS, PREFIX_KEYS, ESC_KEYS, SETTINGS, SC
 /// 이 칸을 진짜로 재는 것(=표면 189개를 GUI 기준으로 전수 확인)이 **Rust TUI 퇴역의
 /// 문턱**이다(같은 문서 §5 의 S3). 그때까지 이 숫자를 "GUI 가 다 된다"로 읽지 말 것.
 static SCORE: &[(&str, usize, usize)] = &[
-    ("commands", 88, 0),
+    ("commands", 89, 0),
     ("prefix_keys", 32, 0),
     ("esc_keys", 19, 0),
     ("settings", 38, 0),
@@ -439,16 +443,13 @@ static SCORE: &[(&str, usize, usize)] = &[
 fn every_python_command_is_in_the_palette() {
     const NOT_IN_PALETTE: &[&str] = &[
         "monitor-bell",
-        // pytmux-382 §8-⑤. ⛔ **뷰별 능력이라 면제한다** — 위 ★ 가 못박은 그 조건이다.
-        // 이 명령이 내는 표는 **파이썬 클라 프로세스의 것**이다(`gc.get_objects()` 로
-        // 센 산 객체 · CPython 세대별 수거 횟수 · Textual `Timer`·`Strip`·`FIFOCache`
-        // 그래프). GUI 에는 그 힙이 아예 없으므로 같은 이름의 팔레트 항목을 실으면
-        // **누르면 아무것도 못 재는 입구**가 된다.
-        // ⇒ 그래서 아래 COMMANDS 표에는 **Missing 으로** 올려 둔다(면제와 분류는 다른
-        //   일이다 — 면제는 "팔레트에 없어도 된다"이고 분류는 "GUI 에 아직 없다"이다).
-        // ★ GUI 가 **제 런타임을 재는** 같은 화면을 갖게 되면 그때 이 줄을 지우고
-        //   COMMANDS 를 Done 으로 옮긴다.
-        "debug-stats",
+        // ★ `debug-stats` 는 **2026-09-03 에 이 목록에서 나갔다**(pytmux-457).
+        //   여기 적혀 있던 사유는 *"이 명령이 내는 표는 파이썬 클라 프로세스의 것이라
+        //   GUI 에는 그 힙이 아예 없다 — 같은 이름을 실으면 누르면 아무것도 못 재는
+        //   입구가 된다"* 였고, 그 문장이 스스로 조건을 적어 뒀다: *"GUI 가 제 런타임을
+        //   재는 같은 화면을 갖게 되면 그때 이 줄을 지우고 COMMANDS 를 Done 으로."*
+        //   그 화면이 `Screen::DebugStats` 다(그린 프레임·프레임 간격·그린 칸·큐 깊이·
+        //   RTT·상주 메모리). ⇒ 사유가 사라졌으므로 면제도 사라진다.
     ];
     let have: BTreeSet<&str> = base::PALETTE
         .iter()

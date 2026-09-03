@@ -1944,6 +1944,9 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         // 커서 판도 같다(pytmux-375) — 다섯 값의 주인은 **설정 파일**이고 그 파일은
         // 클라가 읽고 쓴다. 서버는 커서를 그리지도 않는다(자리만 프레임으로 준다).
         Action::ShowCursor => None,
+        // 이 클라의 런타임을 재는 판이라 서버에 물을 것이 없다(pytmux-457) —
+        // 값은 뷰가 자기에게서 모은다.
+        Action::ShowDebugStats => None,
         // 블록 고르기도 같다 — 모드 전이라 서버에 보낼 것이 없다(복사할 때에야
         // `CopyRange` 가 나간다. 그 명령은 마우스 드래그 복사와 **같은 하나**다).
         Action::SelectBlocks => None,

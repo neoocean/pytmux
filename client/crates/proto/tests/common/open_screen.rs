@@ -54,6 +54,9 @@ pub fn opened(screen: Screen) -> Screens {
         | Screen::SearchResults
         // 커서 판은 `open()` 한 줄이면 선다 — 줄 다섯이 정적이고(설정 표에서 온다)
         // 견본은 그림이라 core 가 들 상태가 없다(pytmux-375).
+        // 런타임 계측 판도 `open()` 한 줄이면 선다 — 줄은 뷰가 모은 값에서 나오고
+        // core 가 들 상태가 없다(pytmux-457).
+        | Screen::DebugStats
         | Screen::Cursor => screens.open(screen),
     }
     assert_eq!(

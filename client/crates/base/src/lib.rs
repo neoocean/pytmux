@@ -25,6 +25,7 @@ pub mod block;
 pub mod build;
 pub mod chrome;
 pub mod config;
+pub mod diag;
 pub mod editor;
 pub mod hooks;
 pub mod i18n;
