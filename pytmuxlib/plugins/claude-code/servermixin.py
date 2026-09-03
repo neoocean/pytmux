@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import os
 import time
@@ -39,6 +40,11 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      parse_reset_delay, parse_usage, screen_tail_key,
                      track_repeat)
 from pytmuxlib.model import Pane, Session, Tab
+
+
+def _secs(v) -> str:
+    """계측용 초 표기 — 없으면 «못 잼». 0.0 과 None 을 눈으로 안 헷갈리게 한다."""
+    return "못 잼" if v is None else "%.1fs" % v
 
 #: 엔드포인트별 임시 토큰 DB(`claude-tokens-<id>.db`)의 수명(일). 이보다 오래되고
 #: **행이 하나도 없는** 것만 거둔다(`_sweep_stale_token_dbs` — pytmux-435 ④).
@@ -2485,9 +2491,16 @@ class ServerClaudeMixin:
             from . import usageprobe
             loop = asyncio.get_event_loop()
             cwd = self._probe_cwd()   # 신뢰된 폴더(Claude 패널 cwd) — 위 docstring
+            # ⛔ 바깥 캡은 **안쪽 예산의 합보다 커야 한다**(pytmux-382). 안 그러면
+            # 안쪽이 아직 기다리는 중에 밖이 잘라, 「무엇에서 오래 걸렸나」가 통째로
+            # 사라지고 아래 계측도 빈손이 된다. 35초였을 때 안쪽 합이 이미 20초였고
+            # 실측 전체가 27.4초라 여유가 거의 없었다.
+            timings: dict = {}
             u = await asyncio.wait_for(
-                loop.run_in_executor(None, usageprobe.query_usage, "claude", cwd),
-                timeout=35)
+                loop.run_in_executor(
+                    None, functools.partial(usageprobe.query_usage, "claude", cwd,
+                                            timings=timings)),
+                timeout=usageprobe.BOOT_TIMEOUT + usageprobe.PANEL_TIMEOUT + 25)
         except Exception:
             # #28: 프로브 실패(타임아웃·spawn 불가)는 표시상 '미확인' 폴백으로
             # 충분하지만, 진단 단서는 남긴다 — 10분 주기 반복이라 첫 실패만 기록.
@@ -2497,6 +2510,7 @@ class ServerClaudeMixin:
             u = None
         finally:
             self._usage_busy = False
+            self._note_usage_probe(timings)
         if u:
             self._usage_probe_err = False             # 회복 — 재발 시 다시 1회 기록
             self._usage = u
@@ -2656,6 +2670,10 @@ class ServerClaudeMixin:
         # 프로브)가 error.log 를 도배하지 않게 '첫 실패만' 기록하는 플래그.
         self._tokens_db_err = False
         self._usage_probe_err = False
+        # pytmux-382 계측: 마지막 프로브 회차의 소요시간·성공 여부(메모리 전용) 와,
+        # 「느림」 상태 래치(상태가 바뀔 때만 한 줄 남긴다 — _note_usage_probe).
+        self._usage_probe_last = {}
+        self._usage_probe_slow = False
         # S6 T3: 마지막 실측(/usage) 수신 시각 — 표시층 stale 표기·T4 게이트 신선도
         # 판단용. _usage(값)는 코어 잔류 초기화(§1.4)지만 ts 는 플러그인 소유.
         self._usage_ts = None
@@ -3132,6 +3150,42 @@ class ServerClaudeMixin:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:
             pass
+
+    def _note_usage_probe(self, timings: dict) -> None:
+        """프로브 한 회차가 **얼마나 걸렸고 성공했나**를 남긴다(pytmux-382).
+
+        왜 있나: 이 프로브는 진짜 `claude` 를 띄워 그 TUI 를 VT 파싱하므로 한 회차가
+        수십 초짜리 CPU 다. 그런데 종전엔 **소요시간도 성공 여부도 아무 데도 안 적었다**
+        — office1 에서 「아무도 아무 일을 안 하는데 서버가 코어를 먹는다」를 가리는 데
+        py-spy 로 라이브 프로세스를 뜨는 수밖에 없었다. 그 한 줄이 있었으면 한 번에
+        끝날 일이었다.
+
+        ⛔ **매 회차 로그를 쌓지 않는다** — 10분마다 도는 것이고 `error.log` 에는 회전이
+        없다. «상태가 바뀔 때만» 한 줄 남긴다(느려졌다 / 다시 빨라졌다). 값 자체는
+        메모리에 늘 들고 있어(`_usage_probe_last`) 나중에 서버측 진단이 그대로 읽는다.
+
+        ⚠ 트레이스백을 안 남긴다 — `_log_error(where, detail)` 의 진단 갈래다(예외
+        컨텍스트가 없으면 트레이스백 자리가 "NoneType: None" 이라 서버-예외 가드가
+        안 센다). 이건 크래시가 아니라 **계측**이다.
+        """
+        if not isinstance(timings, dict) or not timings:
+            return
+        from . import usageprobe          # 지연 import — refresh_usage 와 같은 규약
+        timings["at"] = time.time()
+        self._usage_probe_last = timings
+        boot = timings.get("boot")
+        budget = getattr(usageprobe, "BOOT_TIMEOUT", 0.0) or 0.0
+        slow = bool(budget) and boot is not None and \
+            boot >= budget * getattr(usageprobe, "SLOW_FRACTION", 0.6)
+        if slow == bool(getattr(self, "_usage_probe_slow", False)):
+            return                              # 상태 불변 — 로그를 안 쌓는다
+        self._usage_probe_slow = slow
+        self._log_error("usage_probe_timing",
+                        "부팅 %s · 패널 %s · 전체 %s · 성공 %s (예산 %.1f/%.1f) — %s"
+                        % (_secs(boot), _secs(timings.get("panel")),
+                           _secs(timings.get("total")), timings.get("ok"),
+                           budget, getattr(usageprobe, "PANEL_TIMEOUT", 0.0),
+                           "느려졌다" if slow else "다시 여유가 생겼다"))
 
     def _record_usage_snapshot(self, usage, source: str):
         """실측 `/usage` 한도 스냅샷을 SQLite limits 테이블에 적는다(S6 T1,
