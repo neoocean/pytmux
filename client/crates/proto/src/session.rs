@@ -416,6 +416,22 @@ pub struct PluginCells {
     /// 패널이 이미 덮여 있으니 셸 입력을 가리지 않는다(정본도 같은 규칙이다).
     #[serde(default)]
     pub keys: Vec<PluginKey>,
+    /// **네이티브로 그리는 오버레이의 상태**(Tier D 탈출구 · pytmux-458).
+    ///
+    /// `{오버레이 이름: {패널 id: {…상태…}}}`. 「이 오버레이는 내가 그린다」고
+    /// [`crate::message::CAPS`] 로 광고한 클라에만 온다 — 광고 안 한 클라의 프레임에는
+    /// 이 칸이 **아예 안 붙는다**(정본 프레임의 바이트가 종전 그대로여야 한다).
+    ///
+    /// ⛔ **서버는 그 안의 뜻을 모른다.** 이름은 레지스트리가 찍고 값의 모양은 그
+    /// 오버레이를 그리는 쪽이 정한다 — 그래서 `serde_json::Value` 다. 플러그인 이름을
+    /// 프로토콜에 박지 않는 것이 이 장치의 계약이고(P8 이 `overlay_style::{clock_digit,
+    /// calendar}` 를 걷어낸 것과 같은 빚), 그 계약은 `native_escape_ledger.rs` 가 잰다.
+    ///
+    /// ⚠ 이 칸이 있는 오버레이는 같은 프레임에서 [`Self::runs`] 를 **안 받는다**(서버
+    /// 플러그인이 런 대신 상태를 낸다) — 둘 다 오면 벡터 그림 위에 격자 글자가 겹친다.
+    /// `dim` 은 종전대로 서버가 정한다.
+    #[serde(default)]
+    pub native: std::collections::BTreeMap<String, std::collections::BTreeMap<String, serde_json::Value>>,
 }
 
 /// 누를 수 있는 자리 하나. 좌표는 런과 같은 **창 절대 좌표**다.
@@ -2003,6 +2019,14 @@ impl SessionState {
     /// 를 보낸다 — 상태 누적기는 소켓을 모른다.
     pub fn take_redraw_request(&mut self) -> bool {
         std::mem::take(&mut self.want_redraw)
+    }
+
+    /// 플러그인이 얹은 셀 기여(Tier B) — **네이티브 상태**(Tier D)를 읽는 자리이기도 하다.
+    ///
+    /// 합성기는 이 값을 안에서 쓰지만 **네이티브로 그리는 오버레이는 캔버스가 아니라
+    /// 뷰가 그린다**(pytmux-458·459) — 그래서 뷰가 읽을 길이 있어야 한다.
+    pub fn plugin_cells(&self) -> &PluginCells {
+        &self.plugin_cells
     }
 
     pub fn layout(&self) -> Option<&Layout> {

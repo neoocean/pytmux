@@ -1933,6 +1933,144 @@ fn cursor_row_of(key: &str) -> usize {
         .unwrap_or_else(|| panic!("커서 판에 {key} 줄이 없다"))
 }
 
+// ── 네이티브 시계(pytmux-458 장치 · 459 그림) ────────────────────────────────
+//
+// ⛔ 여기서 재는 것은 **그림이 실제로 서나**다. 「상태를 받았다」로 초록을 만들면 그리기
+// 배선이 통째로 빠져도 통과한다 — 이 저장소가 두 번 밟은 그 자리(§슬라이스 규칙 ①).
+
+/// 서버가 네이티브 시계 상태를 실어 보내는 프레임.
+fn native_clock_frame(time: &str) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay",
+        "dim": [1], "runs": [], "zones": [], "keys": [],
+        "native": {"clock": {"1": {"time": time}}}
+    }))
+    .unwrap()
+}
+
+/// 종전(격자 글자) 시계 프레임 — 네이티브를 안 광고한 클라가 받는 그것.
+fn run_clock_frame() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [1],
+        "runs": [{"x": 2, "y": 1, "text": "12:34:56", "style": {}}],
+        "zones": [], "keys": []
+    }))
+    .unwrap()
+}
+
+/// 그 시각의 시계가 **실제로 그리는 막대 수**.
+///
+/// ⚠ 씬에서 못 잰다 — 헤드리스 글꼴은 칸 폭이 0 이라 오버레이 그리기가 통째로
+/// 건너뛰어진다(`SplitterOverlay::clock_rects` 머리말이 그 사정을 적는다). 그래서 뷰가
+/// 만든 판을 **그리는 함수**에 진짜 칸 크기와 함께 넣어 같은 코드를 부른다.
+fn clock_strokes(time: &str) -> usize {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(native_clock_frame(time)))).unwrap();
+    view.pump_headless();
+    crate::splitter::SplitterOverlay::for_clock_test(view.clock_faces())
+        .clock_rects(vec2f(0., 0.), 9., 18.)
+        .len()
+}
+
+#[test]
+fn the_native_clock_actually_draws_something() {
+    // 양성 오라클 — 「시계를 안 켜면 없다」만 재면 배선이 빠져도 통과한다.
+    let none = {
+        let (mut view, tx, _sent) = harness();
+        tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+        view.pump_headless();
+        crate::splitter::SplitterOverlay::for_clock_test(view.clock_faces())
+            .clock_rects(vec2f(0., 0.), 9., 18.)
+            .len()
+    };
+    assert_eq!(none, 0, "시계를 안 켰는데 무언가 그려졌다");
+    let some = clock_strokes("01:23:45");
+    // 숫자 여섯 + 점 넷은 최소 이만큼을 낸다(`1` 이 획 둘로 가장 적다).
+    assert!(
+        some >= 6 * 2 + 4,
+        "그려진 막대가 {some}뿐이다 — 숫자를 다 안 그렸다"
+    );
+}
+
+#[test]
+fn a_different_time_draws_a_different_number_of_strokes() {
+    // ⛔ 「무언가 그렸다」로 접지 않는다 — **받은 글자를** 그렸나를 잰다.
+    //    `11:11:11`(획 2×6) 과 `88:88:88`(획 7×6) 는 획 수가 정확히 갈린다.
+    let few = clock_strokes("11:11:11");
+    let many = clock_strokes("88:88:88");
+    assert_eq!(
+        many - few,
+        6 * (7 - 2),
+        "일곱 획 표대로 안 그렸다(1 은 획 둘 · 8 은 일곱): {few} vs {many}"
+    );
+}
+
+#[test]
+fn the_run_shaped_clock_still_paints_for_a_client_without_the_cap() {
+    // 대조군 — 네이티브를 안 받는 프레임(종전 런)은 종전대로 **글자**로 뜬다.
+    // 그래야 이 장치가 정본의 그림을 안 건드렸다고 말할 수 있다.
+    let painted = painted_after(vec![layout_one_pane(), run_clock_frame()], &[]);
+    assert!(
+        painted.iter().any(|t| t.contains("12:34:56")),
+        "격자 글자 시계가 안 떴다 — 네이티브 전환이 종전 경로를 깨뜨렸다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_screen_on_top_hides_the_native_clock() {
+    // 판이 캔버스를 덮는 자리라, 시계가 그 위로 뚫고 나오면 안 된다(한/영 배지와 같은 판단).
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(native_clock_frame("88:88:88")))).unwrap();
+    view.pump_headless();
+    assert!(!view.clock_faces().is_empty(), "판이 없을 때도 시계가 없다");
+    view.screens.open(Screen::Keys);
+    assert!(
+        view.clock_faces().is_empty(),
+        "판이 떠 있는데 시계가 그 위로 뚫고 나온다"
+    );
+}
+
+#[test]
+fn the_clock_faces_are_actually_handed_to_the_overlay() {
+    // ⛔ **「호출 제거」 뮤테이션을 잡는 자리다.** 위 오라클들은 값을 만드는 함수
+    //    (`clock_faces`)와 그리는 함수(`clock_rects`)를 각각 재는데, 그 둘을 **잇는 한
+    //    줄**을 지우면 화면에서 시계가 사라진 채로 전부 초록이다 — 이 저장소가 두 번
+    //    밟은 공허 통과가 정확히 그 모양이다.
+    //
+    //    ⚠ 씬에서 못 잰다: 헤드리스 글꼴은 칸 폭이 0 이라 `SplitterOverlay::paint` 가
+    //    오버레이를 통째로 건너뛴다(그 함수의 `cw <= 0.5` 가드). 그래서 남는 오라클은
+    //    **소스가 그 줄을 들고 있나**뿐이고, 그것을 이렇게 적어 둔다.
+    const VIEW: &str = include_str!("session_view.rs");
+    assert!(
+        VIEW.contains(".with_clocks(self.clock_faces())"),
+        "렌더가 시계 판을 오버레이에 안 넘긴다 — 그리는 함수가 멀쩡해도 화면에는 안 뜬다"
+    );
+    const OVERLAY: &str = include_str!("splitter.rs");
+    assert!(
+        OVERLAY.contains("self.paint_clock(origin, cw, ch, ctx);"),
+        "오버레이가 시계를 그리는 함수를 안 부른다"
+    );
+    assert!(
+        OVERLAY.contains("&& self.clocks.is_empty()"),
+        "그릴 것이 시계뿐일 때 오버레이가 일찍 빠져나간다 — 그러면 시계만 안 뜬다"
+    );
+}
+
+#[test]
+fn the_clock_reads_the_time_from_the_server_not_from_this_box() {
+    // ⛔ 클라가 제 시계를 읽으면 원격 세션에서 두 시각이 갈린다 — 그때 어느 쪽이
+    //    맞는지 알 길이 없다. 서버가 보낸 글자가 **그대로** 판에 실려야 한다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(native_clock_frame("03:04:05")))).unwrap();
+    view.pump_headless();
+    let faces = view.clock_faces();
+    assert_eq!(faces.len(), 1, "패널 하나에 시계 하나가 아니다");
+    assert_eq!(faces[0].text, "03:04:05", "서버가 준 시각을 안 쓴다");
+}
+
 // ── `debug-stats` — GUI 가 **제 런타임**을 재는 판(pytmux-457) ─────────────────
 //
 // ⛔ 「판이 뜬다」로 초록을 만들지 않는다. 이 이슈의 관문은 *"판의 값이 실제로 움직인다는

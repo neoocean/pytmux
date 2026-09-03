@@ -9889,6 +9889,56 @@ impl SessionView {
     ///
     /// 판이 떠 있으면 캔버스 배지는 안 그린다 — 그때 글자를 받는 곳은 그 판이고, 배지는
     /// 판 안 입력줄로 간다(pytmux-14 의 규칙 그대로).
+    /// **네이티브 시계 판들**(pytmux-459) — 서버가 준 상태에서 곧장 만든다.
+    ///
+    /// ⛔ 클라가 시각을 스스로 읽지 않는다. 그 글자는 서버의 `plugin_cells.native` 에
+    /// 실려 오고(`clock_time` — 격자 런과 **같은 함수**), 우리는 「이 패널 안에 이 글자를
+    /// 크게」만 한다. 원격 세션에서 두 시계가 갈리면 어느 쪽이 맞는지 알 길이 없다.
+    ///
+    /// ⛔ 딤은 여기서 안 한다 — 종전대로 서버가 `dim` 으로 정하고 합성기가 칠한다
+    /// (표현만 클라가 가져간다 · 설계 §4.1).
+    fn clock_faces(&self) -> Vec<crate::splitter::ClockFace> {
+        // 판이 떠 있으면 안 그린다 — 판이 캔버스를 덮는 자리라 시계가 그 위로 뚫고
+        // 나온다(한/영 배지와 같은 판단).
+        if self.screens.top().is_some() {
+            return Vec::new();
+        }
+        let Some(state) = self.state.plugin_cells().native.get("clock") else {
+            return Vec::new();
+        };
+        let Some(layout) = self.state.layout() else {
+            return Vec::new();
+        };
+        // 색은 정본이 정한 **의미 이름**을 이 클라의 표에서 푼다(pytmux-16 의 그 자리 —
+        // 표에 없는 이름이면 아예 안 그린다).
+        // ⚠ 여기서는 **못 풀어도 안 그린다로 가지 않는다** — 한/영 배지와 갈리는
+        //   자리다. 저쪽은 못 그려도 화면에 잃는 것이 배지 하나지만, 시계는 이 길이
+        //   막히면 **아무것도 안 남는다**(런은 이미 서버가 안 보낸다). 색을 잃는 것과
+        //   시계를 잃는 것 중 앞엣것이 훨씬 싸다.
+        let color = match proto::session::theme::resolve("success") {
+            proto::session::theme::Resolution::Color(c) => to_gui_color(&c),
+            _ => palette::FG,
+        };
+        let mut out = Vec::new();
+        for pane in &layout.panes {
+            let Some(fields) = state.get(&pane.id.to_string()) else {
+                continue;
+            };
+            let Some(text) = fields.get("time").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            out.push(crate::splitter::ClockFace {
+                x: pane.x,
+                y: pane.y,
+                w: pane.w,
+                h: pane.h,
+                text: text.to_owned(),
+                color,
+            });
+        }
+        out
+    }
+
     fn ime_overlay(&self, canvas: &proto::canvas::Canvas) -> Option<crate::splitter::ImeBadge> {
         if self.screens.top().is_some() {
             return None;
@@ -10225,6 +10275,7 @@ impl View for SessionView {
                             height as u16,
                         )
                         .with_ime(self.ime_overlay(&canvas))
+                        .with_clocks(self.clock_faces())
                         .with_matte(self.letterbox(&canvas))
                         .finish(),
                     )

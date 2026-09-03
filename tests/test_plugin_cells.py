@@ -1018,3 +1018,119 @@ async def test_the_bytes_the_interrupt_zone_carries_are_the_ones_canon_types():
 
     plugin._interrupt_pane(_App(), 7)
     assert sent == [(7, fz.SENDS["interrupt"].encode("utf-8"))], sent
+
+
+def _body(frame):
+    """프레임 바이트에서 메시지 본문을 되꺼낸다(길이 프리픽스 + JSON)."""
+    import json
+    assert frame is not None, "프레임이 없다"
+    return json.loads(frame[4:].decode("utf-8"))
+
+
+# ── Tier D 탈출구 — 「이 오버레이는 내가 그린다」(pytmux-458·459) ─────────────
+#
+# ⛔ 이 장치의 **대조군이 알맹이**다. 표현만 클라가 가져가는 것이라, 광고 안 한 클라
+#    (= 정본)의 프레임 바이트는 종전과 **같아야** 한다. 안 그러면 이 전환은
+#    「GUI 를 고쳤다」가 아니라 「프로토콜을 흔들었다」다.
+
+
+class _NativeClient:
+    """네이티브 오버레이를 광고한 클라."""
+
+    caps = ("native_overlay",)
+
+    def __init__(self, pane):
+        self.plugin_state = {"overlays": {"clock": {pane: {}}}}
+        self._cells_at = 0.0
+        self._cells_last = ()
+        self._cells_native = {}
+
+
+class _PlainClient(_NativeClient):
+    """광고 안 한 클라 — 정본이 이쪽이다."""
+
+    caps = ()
+
+
+async def test_the_client_that_advertises_gets_state_instead_of_runs():
+    """광고한 클라에는 **런 대신 상태**가 온다(설계 §4.3 · pytmux-458)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        pane = win.active_pane.id
+
+        frame = srv._plugin_cells_frame(_NativeClient(pane), sess, win, 100.0)
+        assert frame is not None, "켰는데 아무것도 안 왔다"
+        body = _body(frame)
+        native = body.get("native")
+        assert native, f"상태가 안 실렸다: {body}"
+        assert set(native) == {"clock"}, native
+        # ⚠ JSON 을 지나면 패널 id 는 **문자열 키**가 된다 — 클라가 보는 그대로다.
+        assert str(pane) in native["clock"], native
+        assert len(native["clock"][str(pane)]["time"]) == 8, native   # HH:MM:SS
+        # ⛔ 런은 **안 온다** — 오면 벡터 시계 위에 격자 글자가 겹친다.
+        assert body["runs"] == [], f"네이티브인데 런도 함께 왔다: {body['runs']}"
+        # 딤은 **여전히 서버 것**이다(표현만 클라가 가져간다 · 설계 §4.1).
+        assert body["dim"] == [pane], body["dim"]
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_a_client_that_does_not_advertise_sees_exactly_what_it_saw_before():
+    """대조군 — 광고 안 한 클라의 프레임에는 `native` 칸이 **아예 없다**.
+
+    「빈 칸이라도 붙이면 되지 않나」가 아니다: 그 한 칸이 정본 스위트의 와이어 골든과
+    Rust 픽스처를 함께 흔든다. 이 장치의 계약은 **바이트가 같다**이다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        pane = win.active_pane.id
+
+        frame = srv._plugin_cells_frame(_PlainClient(pane), sess, win, 100.0)
+        assert frame is not None, "켰는데 아무것도 안 왔다"
+        body = _body(frame)
+        assert "native" not in body, f"광고 안 한 클라에 새 칸이 붙었다: {sorted(body)}"
+        # 그리고 종전대로 **런**을 받는다 — 그것이 정본이 그리는 그림이다.
+        assert body["runs"], "격자 글자 시계가 사라졌다"
+        assert body["dim"] == [pane], body["dim"]
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_clock_hand_moves_for_the_native_client_too():
+    """초가 넘어가면 **네이티브 클라도** 새 프레임을 받는다.
+
+    시계는 런이 없으므로 종전 판정(런·딤·클릭존 비교)만으로는 「아무것도 안 바뀌었다」가
+    되어 그 클라의 시계가 **멎는다**. 상태를 판정 열쇠에 넣은 것이 그 자리다.
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        pane = win.active_pane.id
+        c = _NativeClient(pane)
+
+        from pytmuxlib.plugins.clock import cells as clock_cells_mod
+        ticks = iter(["01:02:03", "01:02:04"])
+        real = clock_cells_mod.clock_time
+        clock_cells_mod.clock_time = lambda now=None: next(ticks)
+        try:
+            first = srv._plugin_cells_frame(c, sess, win, 100.0)
+            assert first is not None, "첫 프레임이 없다"
+            second = srv._plugin_cells_frame(c, sess, win, 102.0)
+            assert second is not None, (
+                "초가 넘어갔는데 프레임이 안 나갔다 — 그 클라의 시계가 멎는다")
+        finally:
+            clock_cells_mod.clock_time = real
+        # 같은 시각이면 다시 안 보낸다(같은 그림을 30Hz 로 흘리지 않는다).
+        clock_cells_mod.clock_time = lambda now=None: "01:02:04"
+        try:
+            assert srv._plugin_cells_frame(c, sess, win, 104.0) is None, (
+                "같은 시각인데 프레임이 또 나갔다")
+        finally:
+            clock_cells_mod.clock_time = real
+    finally:
+        await teardown(srv, task, sock)

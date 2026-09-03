@@ -48,6 +48,22 @@ _MAX_PREAUTH_CONNS = 128
 # hello 의 `caps`(클라 능력 광고) 개수 상한. 정상 클라는 한두 개다 — 상한은 상대가
 # 프레임 상한(MAX_FRAME)까지 채운 목록을 서버가 집합으로 들고 있지 않게 한다.
 _MAX_CAPS = 64
+
+
+def _native_key(native):
+    """네이티브 상태의 **비교용 열쇠**(pytmux-458).
+
+    상태 dict 는 중첩이라 그대로는 튜플 비교에 못 넣는다. 여기서 한 겹 펴서 정렬한다 —
+    ⛔ `str(native)` 로 접지 않는다: dict 의 문자열화는 **삽입 차례**를 타서 같은 내용이
+    다른 열쇠가 되고, 그러면 30Hz 로 같은 그림을 흘린다(이 열쇠가 막으려는 그것).
+    """
+    return tuple(
+        (name, tuple((pane, tuple(sorted(state.items())))
+                     for pane, state in sorted(panes.items())))
+        for name, panes in sorted(native.items())
+    )
+
+
 # 死-클라 회수(_liveness_loop): 클라는 net_ping_interval(기본 0.5초)마다 ping 을
 # 보낸다. ping 을 한 번이라도 보낸(=ping 켜진) 클라가 이 시간 넘게 완전 무응답이면
 # 반-열린 TCP/콘솔 닫힘/웨지로 死한 고아로 보고 회수한다. 핀(=세션 공유 크기는
@@ -1020,11 +1036,16 @@ class ServerIOMixin:
             # 지금 보는 글은 상류 것이라 내 패널의 자리를 얹으면 엉뚱한 데를 누른다.
             overlays, facts = {}, {}
         cols, rows = self._session_size(sess)
+        # ★ **네이티브 탈출구**(Tier D · pytmux-458): 「이 오버레이는 내가 그린다」고
+        #   광고한 클라에게는 런 대신 **상태**를 싣는다. 광고 안 한 클라(정본)에게는
+        #   `req["native"]` 가 False 이고 프레임에 `native` 칸이 **아예 안 붙는다** —
+        #   그 바이트가 종전과 같아야 하는 것이 이 장치의 대조군이다.
+        native_ok = "native_overlay" in getattr(c, "caps", ())
         req = {"panes": pane_rects, "overlays": overlays, "facts": facts,
                # 활성 패널 id — 배지처럼 **거기 하나에만** 붙는 기여가 쓴다(Tier D).
                "active": (win.active_pane.id
                           if win and win.active_pane else None),
-               "cols": cols, "rows": rows}
+               "cols": cols, "rows": rows, "native": native_ok}
         zones = keys = []
         if not getattr(c, "remote_view", None):
             try:
@@ -1057,14 +1078,23 @@ class ServerIOMixin:
             try:
                 c._cells_runs = self.plugins.plugin_cells(self, sess, req)
                 c._cells_dim = self.plugins.plugin_dim_panes(self, sess, req)
+                # 네이티브 상태도 런과 **같은 주기**로 만든다 — 시계의 초가 그 주기에
+                # 걸려 있고, 둘을 다른 주기에 두면 같은 프레임에서 서로 다른 시각을
+                # 말하게 된다.
+                c._cells_native = (self.plugins.plugin_native(self, sess, req)
+                                   if native_ok else {})
             except Exception:
                 self._log_error("plugin_cells")
                 return None
         runs, dim = c._cells_runs, c._cells_dim
+        native = c._cells_native or {}
         # 클릭존·키도 판정에 넣는다. 달력에서는 이것만으로 달라지는 프레임을 만들 수
         # 없지만(화살표는 제목 런과 같은 자리 셈에서 나온다), Claude footer 존은
         # **런 없이 자리만** 있으므로 여기가 그 유일한 신호다.
         key = (tuple(sorted(dim)),
+               # 네이티브 상태도 판정에 넣는다 — 시계는 런이 없으므로 **이것만이**
+               # 「초가 넘어갔다」의 신호다. 안 넣으면 그 클라의 시계가 멎는다.
+               _native_key(native),
                tuple((r["x"], r["y"], r["text"]) for r in runs),
                tuple((z["x"], z["y"], z["w"], z["pane"], z["name"], z["do"],
                       z.get("opens", "")) for z in zones),
@@ -1072,9 +1102,14 @@ class ServerIOMixin:
         if key == c._cells_last:
             return None
         c._cells_last = key
-        return frame_msg({"t": "plugin_cells", "layer": "overlay",
-                          "dim": dim, "runs": runs,
-                          "zones": zones, "keys": keys})
+        msg = {"t": "plugin_cells", "layer": "overlay",
+               "dim": dim, "runs": runs,
+               "zones": zones, "keys": keys}
+        # ⛔ **광고 안 한 클라의 프레임은 종전 바이트 그대로다** — 빈 칸도 안 붙인다.
+        #   붙이면 정본 스위트의 와이어 골든과 Rust 픽스처가 함께 흔들린다.
+        if native:
+            msg["native"] = native
+        return frame_msg(msg)
 
     @staticmethod
     def _cells_shape_key(req):

@@ -49,6 +49,16 @@ def _run(x, y, text, st):
     return run
 
 
+def clock_time(now=None):
+    """시계가 말하는 **글자** — `HH:MM:SS`.
+
+    격자 런과 네이티브 상태가 **같은 함수**를 지나야 한 화면에 두 시각이 안 뜬다
+    (pytmux-459). 시각의 권위는 서버이고, 클라가 자기 시계를 읽지 않는 이유가 이것이다 —
+    원격 세션에서 두 시계가 갈리면 어느 쪽이 맞는지 알 길이 없다.
+    """
+    return (now or _datetime.now()).strftime("%H:%M:%S")
+
+
 def clock_cells(panes, now=None):
     """`runs` — 시계가 켜진 패널들의 런.
 
@@ -59,8 +69,7 @@ def clock_cells(panes, now=None):
     (`clock_font_for`): 넓고 높으면 한 칸 높이 픽셀의 큰 폰트(5행·글자 6칸), 아니면
     반칸 폰트(3행·글자 3칸), 그마저 안 들어가면 단순 시각 문자열로 폴백한다.
     """
-    now = now or _datetime.now()
-    text = now.strftime("%H:%M:%S")
+    text = clock_time(now)
     runs = []
     for p in panes:
         px, py, pw, ph = p["x"], p["y"], p["w"], p["h"]

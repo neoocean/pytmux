@@ -185,6 +185,47 @@ pub struct ImeBadge {
     pub knob: ColorU,
 }
 
+/// **네이티브 시계 한 판**(pytmux-459) — 캔버스 셀 좌표의 패널 사각형과 보일 글자.
+///
+/// # 왜 글자가 아니라 그림인가
+///
+/// 정본은 격자 안에 살아 「큰 시계」를 **블록 글자**로밖에 못 만든다(70×12 큰 폰트 ·
+/// 40×6 반칸 · 14×3 폴백 — `plugins/clock/cells.py`). GUI 는 캔버스 위에 그릴 수 있고,
+/// 그것이 [[pytmux-185]] 의 허용 갈림 ⓑ(픽셀 단위 그림)다.
+///
+/// ⛔ **뜻·상태·입구는 서버 것 그대로다.** 시각을 정하는 것은 서버이고(`clock_time` 이
+/// 격자 런과 **같은 함수**다) 켜고 끄는 것도, 뒤를 흐리게 하는 것(`dim`)도 서버다 —
+/// 여기가 아는 것은 「이 사각형 안에 이 글자를 크게」뿐이다. 클라가 제 시계를 읽으면
+/// 원격 세션에서 두 시각이 갈리고, 그때 어느 쪽이 맞는지 알 길이 없다.
+pub struct ClockFace {
+    /// 시계가 덮는 **내용 영역**(테두리 안) — 캔버스 셀 좌표.
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+    /// 서버가 정한 글자(`HH:MM:SS`).
+    pub text: String,
+    /// 획 색 — 의미 이름(`success`)을 뷰가 테마에서 푼 값이다.
+    pub color: ColorU,
+}
+
+/// 일곱 획 — `a` 부터 `g` 까지(위·오른위·오른아래·아래·왼아래·왼위·가운데).
+///
+/// 숫자마다 어느 획이 켜지나. 표로 두는 이유는 이것이 **자료**라서다 — 글리프를 그리는
+/// 코드에 `if d == 0` 를 열 번 적으면 한 숫자만 틀려도 눈으로 찾아야 한다.
+const SEVEN_SEG: [[bool; 7]; 10] = [
+    [true, true, true, true, true, true, false],     // 0
+    [false, true, true, false, false, false, false], // 1
+    [true, true, false, true, true, false, true],    // 2
+    [true, true, true, true, false, false, true],    // 3
+    [false, true, true, false, false, true, true],   // 4
+    [true, false, true, true, false, true, true],    // 5
+    [true, false, true, true, true, true, true],     // 6
+    [true, true, true, false, false, false, false],  // 7
+    [true, true, true, true, true, true, true],      // 8
+    [true, true, true, true, false, true, true],     // 9
+];
+
 /// 블록 선택 모드에서 **고른 블록**의 칸 범위(pytmux-18) — 캔버스 셀 좌표.
 ///
 /// 뷰가 이미 뷰포트에 맞춰 잘라서 준다([`SessionView::block_mark`](crate::session_view)) —
@@ -460,6 +501,8 @@ pub struct SplitterOverlay {
     slack: f32,
     /// 한/영 배지(없으면 안 그린다 — 상태 미상·비 Windows).
     ime: Option<ImeBadge>,
+    /// 네이티브로 그리는 시계들(pytmux-459). 비면 아무것도 안 그린다.
+    clocks: Vec<ClockFace>,
     /// 레터박스 띠(없으면 안 그린다 — 내 창이 공유 격자와 같거나 작다).
     matte: Option<Matte>,
     /// 이번 레이아웃에서 **받은** 크기. ⛔ 자식 것을 그대로 돌려주면 안 된다 — 부모
@@ -495,6 +538,7 @@ impl SplitterOverlay {
             probe_id,
             rows,
             ime: None,
+            clocks: Vec::new(),
             matte: None,
             slack: 0.,
             size: None,
@@ -559,6 +603,163 @@ impl SplitterOverlay {
     pub fn with_ime(mut self, ime: Option<ImeBadge>) -> Self {
         self.ime = ime;
         self
+    }
+
+    /// 네이티브 시계를 얹는다(pytmux-459). 없으면 아무것도 안 그린다 — 그때 화면에
+    /// 뜨는 것은 서버가 준 격자 글자 시계이고, 그것이 정본의 그림이다.
+    pub fn with_clocks(mut self, clocks: Vec<ClockFace>) -> Self {
+        self.clocks = clocks;
+        self
+    }
+
+    /// 시계 한 판 — 일곱 획 숫자와 두 점.
+    ///
+    /// # 자리 셈
+    ///
+    /// 글자 크기는 **패널에 비례한다**(정본이 세 단으로 갈라 고르는 것과 같은 뜻이되,
+    /// 여기서는 칸이 아니라 픽셀이라 단이 없다). 폭·높이 둘 다에서 들어가는 크기를
+    /// 고르고 가운데 정렬한다 — 한쪽만 보면 좁고 높은 패널에서 옆으로 삐져나온다.
+    fn paint_clock(&self, origin: Vector2F, cw: f32, ch: f32, ctx: &mut PaintContext) {
+        for (rect, color, radius) in self.clock_rects(origin, cw, ch) {
+            ctx.scene
+                .draw_rect_without_hit_recording(rect)
+                .with_background(Fill::Solid(color))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(radius)));
+        }
+    }
+
+    /// 시계만 든 오버레이 — **오라클 전용**(그리기 함수를 창 없이 부르는 자리).
+    ///
+    /// 종전 생성자는 인자가 열하나라 시험이 그것을 다 채우면 재려는 것(시계)보다
+    /// 채우는 코드가 길어지고, 그 인자들은 이 그림과 아무 상관이 없다.
+    #[cfg(test)]
+    pub fn for_clock_test(clocks: Vec<ClockFace>) -> Self {
+        Self::new(
+            warpui::elements::Empty::new().finish(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            "clock-oracle",
+            0,
+        )
+        .with_clocks(clocks)
+    }
+
+    /// 시계가 그릴 **막대들** — `(사각형, 색, 모서리 반지름)`.
+    ///
+    /// # 왜 그리기와 갈랐나
+    ///
+    /// 헤드리스 시험의 글꼴은 **빈 줄**을 돌려줘 칸 폭이 0 이고, 그러면
+    /// [`SplitterOverlay::paint`] 가 칸 크기를 못 얻어 오버레이를 **통째로 건너뛴다**
+    /// (`cw <= 0.5` 가드). 즉 씬에서 재는 오라클로는 이 그림을 영영 못 본다.
+    /// 그래서 자리 셈을 **순수 함수**로 떼어, 시험이 진짜 칸 크기를 주고 같은 코드를
+    /// 부른다 — 「그림이 실제로 서나」를 창 없이 재는 자리가 이것이다.
+    pub fn clock_rects(
+        &self,
+        origin: Vector2F,
+        cw: f32,
+        ch: f32,
+    ) -> Vec<(RectF, ColorU, f32)> {
+        let mut out = Vec::new();
+        for face in &self.clocks {
+            let px = origin.x() + face.x as f32 * cw;
+            let py = origin.y() + face.y as f32 * ch;
+            let pw = face.w as f32 * cw;
+            let ph = face.h as f32 * ch;
+            let digits = face.text.chars().filter(char::is_ascii_digit).count();
+            let colons = face.text.chars().filter(|c| *c == ':').count();
+            if digits == 0 || pw <= 0. || ph <= 0. {
+                continue;
+            }
+            // 한 숫자의 폭:높이 = 1:2 · 숫자 사이 여백은 숫자 폭의 0.35 · 점 칸은 0.5.
+            const ASPECT: f32 = 0.5;
+            const GAP: f32 = 0.35;
+            const COLON: f32 = 0.5;
+            let units = digits as f32 * (1.0 + GAP) + colons as f32 * (COLON + GAP);
+            // 폭에서 오는 한계와 높이에서 오는 한계 중 **작은 쪽**을 쓴다.
+            let by_w = (pw * 0.86) / units;
+            let by_h = (ph * 0.62) * ASPECT;
+            let dw = by_w.min(by_h);
+            if dw < 3. {
+                continue; // 이만큼도 안 되면 안 그린다 — 뭉갠 그림은 없는 것만 못하다
+            }
+            let dh = dw / ASPECT;
+            let total = units * dw;
+            let mut x = px + (pw - total) / 2.;
+            let y = py + (ph - dh) / 2.;
+            let thick = (dh * 0.13).max(1.);
+            for ch_ in face.text.chars() {
+                if let Some(d) = ch_.to_digit(10) {
+                    Self::digit_rects(
+                        d as usize,
+                        x,
+                        y,
+                        dw,
+                        dh,
+                        thick,
+                        face.color,
+                        &mut out,
+                    );
+                    x += dw * (1.0 + GAP);
+                } else if ch_ == ':' {
+                    let r = thick * 0.75;
+                    for cy in [y + dh * 0.32, y + dh * 0.68] {
+                        out.push((
+                            RectF::new(
+                                vec2f(x + (dw * COLON - r * 2.) / 2., cy - r),
+                                vec2f(r * 2., r * 2.),
+                            ),
+                            face.color,
+                            r,
+                        ));
+                    }
+                    x += dw * (COLON + GAP);
+                }
+            }
+        }
+        out
+    }
+
+    /// 숫자 하나 — 일곱 획 중 켜진 것만 둥근 막대로.
+    #[allow(clippy::too_many_arguments)]
+    fn digit_rects(
+        digit: usize,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        t: f32,
+        color: ColorU,
+        out: &mut Vec<(RectF, ColorU, f32)>,
+    ) {
+        let Some(on) = SEVEN_SEG.get(digit) else { return };
+        // (x, y, w, h) — 가로 획 셋과 세로 획 넷.
+        let mid = y + (h - t) / 2.;
+        let segs = [
+            (x, y, w, t),                // a 위
+            (x + w - t, y, t, h / 2.),   // b 오른위
+            (x + w - t, mid, t, h / 2.), // c 오른아래
+            (x, y + h - t, w, t),        // d 아래
+            (x, mid, t, h / 2.),         // e 왼아래
+            (x, y, t, h / 2.),           // f 왼위
+            (x, mid, w, t),              // g 가운데
+        ];
+        for (i, lit) in on.iter().enumerate() {
+            if !lit {
+                continue;
+            }
+            let (sx, sy, sw, sh) = segs[i];
+            out.push((
+                RectF::new(vec2f(sx, sy), vec2f(sw, sh)),
+                color,
+                t / 2.,
+            ));
+        }
     }
 
     /// 한/영 배지 — 알약 하나와 손잡이 하나. **글자는 없다**(pytmux-392).
@@ -813,6 +1014,7 @@ impl Element for SplitterOverlay {
             && self.cursor.is_none()
             && self.pick.is_none()
             && self.ime.is_none()
+            && self.clocks.is_empty()
             && self.matte.is_none()
         {
             return;
@@ -828,6 +1030,9 @@ impl Element for SplitterOverlay {
         self.paint_matte(origin, cw, ch, ctx);
         // 블록이 맨 먼저 — 패널 **안**의 그림이라 크롬(테두리·바)이 그 위를 덮는 것이 맞다.
         self.paint_blocks(origin, cw, ch, ctx);
+        // 시계는 **패널을 덮는** 그림이라 배지·테두리보다 **먼저** 간다 — 딤 위에
+        // 얹히고, 그 위를 크롬이 덮는다(격자 글자 시계가 서던 자리와 같은 층이다).
+        self.paint_clock(origin, cw, ch, ctx);
         // 한/영 배지는 **글자 위에** 뜬다 — 그것이 이 배지가 글자를 안 지우는 방법이다.
         self.paint_ime(origin, cw, ch, ctx);
         // 테두리를 **먼저** — 스플리터 바는 그 위에 얹혀야 잡는 자리가 또렷하다.

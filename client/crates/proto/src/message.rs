@@ -622,9 +622,39 @@ pub const CAPS: &[&str] = &[
     "claude",
     "clipboard",
     "cwd",
+    // **네이티브 탈출구**(Tier D · pytmux-458): 아래 [`NATIVE_OVERLAYS`] 에 적힌
+    // 오버레이는 서버가 격자 런 대신 **상태**를 준다. 정본은 이것을 광고하지 않는다 —
+    // 격자 안에 살아서 그릴 다른 방법이 없기 때문이고, 그래서 저쪽 프레임의 바이트는
+    // 종전 그대로다(대조군 시험이 그것을 잰다).
+    "native_overlay",
     "plugin_surface",
     "plugin_screen",
 ];
+
+/// **우리가 직접 그리는 오버레이의 등록표**(설계 §4.4 Tier D · pytmux-458).
+///
+/// # 왜 표가 있어야 하나
+///
+/// [`CAPS`] 의 `native_overlay` 는 *"내가 그리는 것이 있다"* 만 말한다. **무엇을** 그리고
+/// **왜** 서버가 못 그리는지, 그리고 **그 클라가 아닌 곳에서는 무엇이 보이는지**는 그
+/// 문자열이 못 나른다. 그 셋을 안 적으면 다음 사람은 「왜 이 오버레이만 다르게 오나」를
+/// 코드로 되짚어야 하고, 그 사이 표는 조용히 는다.
+///
+/// ⛔ 이 표와 실제로 그리는 것이 갈리면 `native_escape_ledger.rs` 가 운다.
+pub struct NativeOverlay {
+    /// 서버가 보내는 `plugin_cells.native` 의 키(= 플러그인 이름).
+    pub name: &'static str,
+    /// **왜** 서버가 이것을 격자로 그리면 안 되나.
+    pub why: &'static str,
+    /// 이것을 광고하지 **않는** 클라에서는 무엇이 보이나 — 곧 정본의 그림이다.
+    pub without: &'static str,
+}
+
+pub const NATIVE_OVERLAYS: &[NativeOverlay] = &[NativeOverlay {
+    name: "clock",
+    why: "정본은 격자 안에 살아 「큰 시계」를 블록 글자로밖에 못 만든다(70×12 큰 폰트 ·           40×6 반칸 · 14×3 폴백). GUI 는 캔버스 위에 그릴 수 있고, 그것이 pytmux-185 의           허용 갈림 ⓑ(픽셀 단위 그림)다. 뜻·상태·입구는 그대로다 — 서버가 시각을 정하고           (`clock_time`) 딤도 서버가 정한다(pytmux-459)",
+    without: "종전대로 블록 글자 시계(서버 `plugin_cells.runs`) — 정본이 그리는 그것",
+}];
 
 /// 클라 → 서버 첫 프레임.
 #[derive(Debug, Clone, Serialize)]
@@ -736,6 +766,10 @@ mod tests {
                 "claude",
                 "clipboard",
                 "cwd",
+                // Tier D 탈출구(pytmux-458) — 이것을 광고하면 서버가 등록표
+                // ([`NATIVE_OVERLAYS`])의 오버레이에 대해 **런 대신 상태**를 준다.
+                // 정본은 광고하지 않는다.
+                "native_overlay",
                 "plugin_surface",
                 "plugin_screen"
             ])

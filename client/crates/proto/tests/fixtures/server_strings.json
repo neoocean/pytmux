@@ -330,6 +330,7 @@
     "pytmuxlib/serverio.py:_layout_msg",
     "pytmuxlib/serverio.py:_liveness_loop",
     "pytmuxlib/serverio.py:_log_error",
+    "pytmuxlib/serverio.py:_native_key",
     "pytmuxlib/serverio.py:_on_flush_done",
     "pytmuxlib/serverio.py:_plugin_cells_frame",
     "pytmuxlib/serverio.py:_plugin_surface",

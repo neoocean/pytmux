@@ -525,6 +525,40 @@ class Registry:
                 runs.extend(got)
         return runs
 
+    def plugin_native(self, server, sess, req) -> dict:
+        """Tier D **탈출구** — 「이 오버레이는 내가 그린다」고 광고한 클라에게는 런 대신
+        **상태**를 준다(설계 §4.3·§5 · pytmux-458).
+
+        # 왜 필요한가
+
+        [`plugin_cells`] 는 그림을 **격자 글자**로 나른다. 정본은 격자 안에 살아서 그것이
+        곧 화면이지만, GUI 는 캔버스 위에 그릴 수 있다 — 큰 시계를 글자로 흉내내는 대신
+        벡터로 그리는 것이 [[pytmux-185]] 의 허용 갈림 ⓑ(픽셀 단위 그림)다.
+
+        ⛔ **표현만 클라가 가져간다.** 뜻·상태·입구는 서버 것 그대로다 — 클라가 자기
+        상태 사본을 만들면 둘로 갈라진 채 한쪽만 지워진다(플러그인 설계 §4.2). 그래서
+        여기서 주는 것은 **그릴 재료**이지 「무엇을 할지」가 아니고, `dim` 도 종전대로
+        서버가 정한다.
+
+        ⛔ **플러그인 이름을 프로토콜에 박지 않는다.** 돌려주는 것은 오버레이 이름을 키로
+        든 dict 이고, **그 이름은 레지스트리가 찍는다**(`plugin_triggers` 와 같은 규약) —
+        서버는 그 안의 뜻을 모른다.
+
+        `req["native"]` 가 참일 때만 불린다. 같은 플러그인의 [`plugin_cells`] 는 그때
+        **빈 목록**을 돌려줘야 한다 — 안 그러면 격자 글자와 네이티브 그림이 겹친다.
+
+        돌려줄 것 — `{패널 id: {…상태…}}`(없으면 빈 dict).
+        """
+        out = {}
+        for p in self.plugins:
+            fn = getattr(p, "plugin_native", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, req)
+            if got:
+                out[p.name] = got
+        return out
+
     def plugin_triggers(self, server, sess, req) -> dict:
         """오버레이가 **되돌려 받고 싶은 것** — 클릭존과 키 표(설계 Tier B).
 
