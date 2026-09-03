@@ -35,6 +35,13 @@ SYNC_QUERY = b"\x1b[?2026$p"
 SYNC_REPLY = b"\x1b[?2026;2$y"
 
 
+# 패널에서 «떼어낸» PTY 자식을 거두는 두 걸음의 예산(§ServerPtyMixin._retire_pty).
+# 실측(pytmux-415 · 2026-09-03 · macOS)으로 정한 값이다 — SIGHUP 을 받은 Claude Code
+# 가 자기 기록을 지우는 데 0.07초, 프로세스가 실제로 사라지는 데 0.54초였다.
+_RETIRE_GRACE = 2.0                 # 초 — 이 안에 안 죽으면 그때 SIGKILL
+_RETIRE_POLL = 0.05                 # 초 — 죽었나 되묻는 간격
+
+
 def _has_query(data: bytes, carry: bytes, query: bytes) -> bool:
     """*data*(또는 직전 청크 꼬리 *carry* 와 걸친 경계)에 *query* 가 있는가."""
     return query in data or query in (carry + data[: len(query) - 1])
@@ -226,6 +233,52 @@ class ServerPtyMixin:
         self._attach_reader(pane)
         return pane
 
+    def _retire_pty(self, pty_proc) -> None:
+        """패널에서 떼어낸 PTY 자식을 «종료 훅이 돌 틈을 주고» 거둔다.
+
+        ⛔ **SIGKILL 로 시작하지 않는다.** 그것은 자식의 종료 훅을 통째로 건너뛴다.
+        실측(pytmux-415 · 2026-09-03 · macOS · 격리 CLAUDE_CONFIG_DIR · 대조군 4종):
+        Claude Code 는 fullscreen 으로 뜰 때 ~/.claude.json 의
+        fullscreenBootPending[pid] 에 자기를 적고 **종료 훅에서** 그것을 지운다.
+
+        | 어떻게 죽였나 | 그 기록이 고아로 남나 |
+        | --- | --- |
+        | SIGHUP · SIGTERM · 정상 종료 | **아니오**(0.07초에 스스로 지운다) |
+        | **SIGKILL** | **예** |
+
+        고아 기록이 **둘**이면 claude 가 그 머신의 fullscreen 을 통째로 끈다(임계
+        yh=2 · 이진에서 읽음). 곧 SIGKILL 한 번이 사용자 패널의 렌더러를 절반
+        망가뜨리는 표를 던진다 — 그래서 이 자리는 «부탁»부터 한다.
+
+        ⛔ **그렇다고 여기서 기다리지 않는다.** 이 자리는 단일 스레드 asyncio 루프
+        안이라 동기 대기를 걸면 그 시간 동안 **모든 클라가 멎는다**(pytmux-435 가
+        같은 함정을 「부탁 · 확인 사살」 두 걸음으로 갈랐다). 부탁은 지금 하고,
+        확인 사살은 백그라운드 태스크가 유예 뒤에 한다.
+
+        ⚠ Windows 에서는 terminate 도 kill 도 TerminateProcess 라 이 걸음이 훅을
+        살리지 못한다 — POSIX 전용 이득이다(그래도 해롭지 않다).
+        """
+        with contextlib.suppress(Exception):
+            pty_proc.stop_reader()
+        with contextlib.suppress(Exception):
+            pty_proc.terminate()            # SIGHUP — 훅이 돌 틈
+        with contextlib.suppress(Exception):
+            pty_proc.close()
+        self.loop.create_task(self._finish_retire(pty_proc))
+
+    async def _finish_retire(self, pty_proc) -> None:
+        """`_retire_pty` 의 뒷걸음 — 유예 안에 안 죽으면 그때 SIGKILL 하고 거둔다."""
+        end = self.loop.time() + _RETIRE_GRACE
+        while self.loop.time() < end:
+            await asyncio.sleep(_RETIRE_POLL)
+            with contextlib.suppress(Exception):
+                if pty_proc.reap(block=False) is not None:
+                    return                  # 질서 있게 물러났다
+        with contextlib.suppress(Exception):
+            pty_proc.kill()
+        with contextlib.suppress(Exception):
+            pty_proc.reap(block=False)
+
     def respawn_pane(self, sess: Session):
         """활성 패널의 셸을 종료하고 같은 슬롯에서 새 셸을 띄운다."""
         win = sess.active_window
@@ -235,10 +288,7 @@ class ServerPtyMixin:
         cwd = self._pane_cwd(pane)
         self._stop_pane_feed(pane)          # 진행 중 드레인 취소(새 셸로 교체 전)
         if pane.pty is not None:
-            pane.pty.stop_reader()
-            pane.pty.kill()                 # SIGKILL 즉시 종료
-            pane.pty.close()
-            pane.pty.reap(block=True)       # SIGKILL 이므로 블로킹 회수 안전
+            self._retire_pty(pane.pty)      # SIGHUP → (백그라운드) 확인 사살
         if self._pty_host is not None:      # host 모드: 새 원격 PTY 로 교체
             argv, env = self._shell_argv_env(None)
             pane_id = self._next_pane_id()
