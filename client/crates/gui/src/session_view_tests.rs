@@ -6759,6 +6759,42 @@ fn the_text_panel_stops_scrolling_at_the_end_instead_of_running_away() {
 }
 
 #[test]
+fn a_text_panel_that_fits_does_not_move_when_you_press_down() {
+    // ⛔ **제보의 화면은 이것이었다**(pytmux-184 ⑵ · 스크린샷 3장): *"내용이 화면 안에 다
+    //    들어가 스크롤이 필요 없는데도 아래 방향키를 누르면 스크롤되어 내용이 사라지고
+    //    빈 칸만 남는다."* 형제 오라클
+    //    (`the_text_panel_stops_scrolling_at_the_end_instead_of_running_away`)은 **긴 글**로
+    //    「끝에서 ↑ 가 헛도나」를 재는데, 그것은 제보의 화면이 아니다 — 그 판은 애초에
+    //    끝이 없다(다 보인다). 상한이 `lines - budget` 이라 그 값이 0 으로 포화되는지는
+    //    **짧은 글로만** 재진다.
+    //
+    // ⛔ 값이 아니라 **그림**을 본다(형제와 같은 이유): 자르는 자리가 뷰든 core 든
+    //    사용자가 겪는 것은 「눌렀는데 화면이 달아나나」 하나다.
+    let body: String = (1..=4).map(|n| format!("줄{n}\n")).collect();
+    let short: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-usage-view", "kind": "text",
+        "title": "Claude usage limit (/usage)", "hint": "(↑↓ 스크롤 · Esc 닫기)",
+        "text": body, "note": "", "keys": {}
+    }))
+    .unwrap();
+
+    let rest = painted_after(vec![layout_one_pane(), short.clone()], &[]);
+    let downs: Vec<(Key, Mods)> = std::iter::repeat_n((Key::Down, Mods::NONE), 12)
+        .chain(std::iter::repeat_n((Key::PageDown, Mods::NONE), 3))
+        .collect();
+    let after = painted_after(vec![layout_one_pane(), short], &downs);
+
+    assert!(
+        rest.iter().any(|t| t.contains("줄4")),
+        "이 오라클의 전제가 깨졌다 — 짧은 글이 판 안에 다 안 들어간다: {rest:?}"
+    );
+    assert_eq!(
+        rest, after,
+        "다 보이는 판이 ↓·PgDn 에 움직였다 — 제보의 그 화면이다(pytmux-184 ⑵)"
+    );
+}
+
+#[test]
 fn the_list_panel_cursor_comes_back_from_the_end_in_one_press() {
     // 제보(pytmux-432 · 실 GUI 로 잰 것): `:usage-panel` 에서 `End` 를 누른 뒤 `↑` 를
     // **세 번** 눌러도 커서가 마지막 줄에 그대로 있었다.
