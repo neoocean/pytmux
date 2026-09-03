@@ -3073,6 +3073,73 @@ async def test_auto_retry_not_fired_when_busy():
         await teardown(srv, task, sock)
 
 
+# pytmux-477 픽스처 — Claude 가 **스스로 재시도 중**인 프레임. 배너가 남아 있어
+# `claude_api_error` 는 True 인데 스피너가 없어 `claude_state` 는 **busy 가 아니다**.
+# 그 조합이 이 슬라이스의 까닭이다(실측 프레임은 test_claude 가 든다).
+_SELF_RETRY = (b"\x1b[2J\x1b[H\xe2\x8f\xba API Error: 529 Overloaded. This is a\r\n"
+               b"  server-side issue, usually temporary.\r\n"
+               b"\r\n"
+               b"  \xe2\x8e\xbf  Retrying in 14s \xc2\xb7 attempt 7/10\r\n")
+
+
+async def test_auto_retry_holds_while_claude_retries_itself():
+    """☠ **종전 가드가 이 화면을 못 막는다**(pytmux-477 ⑸).
+
+    `_fire_retry` 는 `claude_state(text) == "busy"` 로 「스스로 재시도 중」을 걸렀는데,
+    실측 프레임은 배너가 남아 `claude_api_error` 는 True 이면서 스피너가 없어
+    **busy 가 아니다**. 그래서 `계속` 이 들어갔고 제보 스크린샷의 네 번이 그것이다.
+
+    지금은 **미룬다** — 주입하지 않고 다음 케이던스로 다시 예약한다(자체 재시도가 끝내
+    실패해도 영영 멈춰 있지 않게)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        p.feed(_SELF_RETRY)
+        srv._fire_retry(p)
+        assert writes == [], (writes, "자체 재시도 중인데 끼어들었다")
+        assert p._retry_pending is True, "미루기만 하고 다시 예약을 안 걸었다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+def _screen(pane):
+    """지금 화면의 글(스캔 phase 가 받는 것과 같은 값)."""
+    import importlib
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    return sm.screen_text(pane.screen)
+
+
+async def test_the_scan_gate_does_not_reset_the_counter_while_claude_retries():
+    """자체 재시도 화면에서 **카운터를 리셋하지 않는다**.
+
+    리셋하면 그 뒤 진짜로 굳었을 때 백오프가 1분부터 다시 시작해, 회복 중인 Claude 를
+    오히려 더 자주 두드린다. 그리고 그 상태가 표면에 `self` 로 나가야 배지가 «우리
+    카운트다운» 대신 «Claude 재시도 중 — 대기» 를 말한다."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._hdr_claude = True
+        p._retry_attempts = 3
+        p.feed(_SELF_RETRY)
+        srv._scan_retry_gates(p, _screen(p), None)
+        assert p._retry_attempts == 3, "자체 재시도 중에 카운터가 리셋됐다"
+        assert p._self_retry is True
+        act = srv._retry_action(p)
+        assert act and act["self"] is True and act["n"] == 3, act
+        # 화면이 평범한 idle 로 돌아가면 그때 리셋된다(종전 계약 그대로).
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        srv._scan_retry_gates(p, _screen(p), "idle")
+        assert p._retry_attempts == 0 and p._self_retry is False
+        assert srv._retry_action(p) is None, "다 풀렸는데 배지가 남는다"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_auto_retry_cancelled_on_pane_close():
     """#9 M1: 패널 종료 시 무장된 재시도/재개 타이머를 거둔다 — 닫힌 Pane 참조가 최대
     백오프 간격(최대 5분) 동안 call_later 큐에 살아있지 않게(pane_closing → _cancel_*)."""

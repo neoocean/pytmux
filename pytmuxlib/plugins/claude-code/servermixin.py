@@ -31,6 +31,7 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      fmt_unknown_update,
                      claude_input_box,
                      claude_auto_yes_ready,
+                     claude_self_retry,
                      claude_managed_settings_yes,
                      claude_model_badge,
                      claude_prompt, claude_prompt_marks, claude_perm_mode,
@@ -507,9 +508,28 @@ class ServerClaudeMixin:
         text = screen_text(pane.screen)
         if not claude_api_error(text) or claude_state(text) == "busy":
             return
+        # ☠ **`busy` 가드만으로는 안 막힌다**(pytmux-477 ⑸ · 실측). Claude 가 스스로
+        #    재시도 중인 프레임은 `claude_api_error()==True` 인데 `claude_state()` 가
+        #    `busy` 가 아니라 **None** 이다(배너가 남아 있고 footer 는 없다). 그 화면에
+        #    `계속` 을 넣으면 회복 중에 끼어드는 것이고, 제보 스크린샷의 `계속` 네 번이
+        #    바로 그 자국이다. **미룬다** — 예약은 다시 걸어(다음 케이던스) 자체 재시도가
+        #    끝내 실패해도 영영 멈춰 있지 않게 한다.
+        if claude_self_retry(text):
+            self._maybe_schedule_retry(pane)
+            return
         try:
             pane.pty.write((self._RETRY_MSG + "\r").encode("utf-8"))
             pane._retry_attempts = getattr(pane, "_retry_attempts", 0) + 1
+            pane._retry_last = time.time()
+            note = getattr(self, "_notice_msg", None)
+            if note is not None:
+                # ⛔ **비활성 탭에 있는 사람에게 닿는 유일한 자리**다(제보: 탭 3 에서
+                #    늦게 알았다). 배지는 활성 패널의 것이라 다른 탭을 보고 있으면
+                #    아무것도 안 보인다.
+                note("ccmsg.retry_injected",
+                     "전송 에러 자동 재시도: '{msg}' 주입({n}회째 · 패널 {pane})",
+                     severity="warn", msg=self._RETRY_MSG,
+                     n=pane._retry_attempts, pane=pane.id)
         except OSError:
             pass
 
@@ -1782,14 +1802,25 @@ class ServerClaudeMixin:
         # 5h 사용량 배너("usage limit reached")는 claude_api_error 에 안 잡히고,
         # "rate limit exceeded" 처럼 둘 다 걸리는 경우만 autoresume 가 이미 재개를
         # 무장(_resume_pending)했으면 양보해 중복 주입을 막는다(reset 시각으로 다룸).
-        if p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
+        # ⓐ Claude 가 **스스로 재시도 중**이면 그 화면은 「에러로 멈췄다」가 아니라
+        #    「아직 안 끝났다」다(pytmux-477 ④). 예약을 걷지도 **카운터를 리셋하지도**
+        #    않는다 — 리셋하면 그 뒤 진짜로 굳었을 때 백오프가 1분부터 다시 시작해
+        #    회복 중인 Claude 를 더 자주 두드린다.
+        if p._hdr_claude and claude_self_retry(txt):
+            if not p._self_retry:
+                p._self_retry = True
+            self._maybe_schedule_retry(p)
+        elif p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
+            p._self_retry = False
             self._maybe_schedule_retry(p)
         else:
+            p._self_retry = False
             # 에러 아님(해소·busy/idle 복귀·autoresume 양보·non-Claude) → 무장
             # 예약 취소 + 연속 재시도 카운터 리셋(다음 새 에러는 다시 1분부터, #9 H3).
             if p._retry_handle is not None:
                 self._cancel_retry(p)
             p._retry_attempts = 0
+            p._retry_last = 0.0
 
     def _scan_idle_actions(self, p, txt, new_cl) -> bool:
         """idle 프레임의 자동개입 phase — 보류 리네임 주입·시작 규칙·auto-launch(/rc→
@@ -2730,6 +2761,34 @@ class ServerClaudeMixin:
         except (AttributeError, RuntimeError, TypeError):
             return None
         return {"kind": "resume", "eta": eta}
+
+    def _retry_action(self, pane):
+        """재시도가 **도는 중**임을 표면에 낼 값(없으면 None) — `{n, eta, self}`.
+
+        # 왜 이 자리가 필요했나 (pytmux-477)
+
+        재시도는 2026-06-15 부터 **무기한** 돌고 있었는데 **그 사실을 말하는 표면이
+        하나도 없었다** — 배지 넷(model·usage·pending·warn) 어디에도 없고 알림에도
+        `retry` 문자열이 0건이었다. 짝인 자동재개에는 카운트다운이 있다. 그래서 제보는
+        「멈춰 있다」로 읽혔고, 스크린샷은 **돌고 있었다**를 찍고 있었다.
+
+        `n` 은 지금까지 주입한 횟수, `eta` 는 다음 주입까지 남은 초(무장돼 있을 때),
+        `self` 는 **Claude 가 스스로 재시도 중**이라 우리가 미루고 있다는 뜻이다.
+        """
+        if pane is None or self.loop is None:
+            return None
+        n = int(getattr(pane, "_retry_attempts", 0) or 0)
+        selfr = bool(getattr(pane, "_self_retry", False))
+        h = getattr(pane, "_retry_handle", None)
+        if h is None and not (n or selfr):
+            return None
+        eta = None
+        if h is not None:
+            try:
+                eta = max(0, int(round(h.when() - self.loop.time())))
+            except (AttributeError, RuntimeError, TypeError):
+                eta = None
+        return {"n": n, "eta": eta, "self": selfr}
 
     # ---- 토큰 사용량 영속 저장(#7, SQLite) — S5 토큰 모듈화 T2 에서 코어 server.py
     # 에서 이리로 이전. 코어는 더 이상 토큰 DB를 모른다(usagedb/usagelog

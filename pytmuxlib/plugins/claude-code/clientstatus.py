@@ -21,6 +21,12 @@ i18n.register({
         # ⓑ: 라벨을 인자로 넘기면 클라가 자기 포맷에 **서버 로케일 조각**을 끼운다
         # (`⏳ 자동재개 30s (input=cancel)`). 라벨을 포맷 안에 넣은 판을 따로 둔다.
         "claude.countdown_ar": " ⏳ 자동재개 {eta}s(입력=취소) ",
+        # pytmux-477: 재시도가 **도는 중**. `retry_wait` 는 다음 주입까지, `retry_n` 은
+        # 예약이 안 잡힌 창(막 주입한 직후), `retry_self` 는 Claude 가 스스로 재시도
+        # 중이라 우리가 **미루고** 있다는 뜻이다.
+        "claude.retry_wait": " ↻ 재시도 {n}회 · {eta}s ",
+        "claude.retry_n": " ↻ 재시도 {n}회 ",
+        "claude.retry_self": " ↻ Claude 재시도 중 — 대기 ",
         "claude.limit_used": "{pct}%/5h 사용",
         "claude.limit_week_sonnet": "{pct}%/주(Sonnet)",
         "claude.limit_unknown": "?%/5h 사용",
@@ -33,6 +39,9 @@ i18n.register({
         "claude.auto_resume": "auto-resume",
         "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
         "claude.countdown_ar": " ⏳ auto-resume {eta}s (input=cancel) ",
+        "claude.retry_wait": " ↻ retry ×{n} · {eta}s ",
+        "claude.retry_n": " ↻ retry ×{n} ",
+        "claude.retry_self": " ↻ Claude retrying — holding ",
         "claude.limit_used": "{pct}%/5h used",
         "claude.limit_week_sonnet": "{pct}%/wk(Sonnet)",
         "claude.limit_unknown": "?%/5h used",
@@ -85,6 +94,8 @@ def init_defaults(status):
     status.claude_long_turn_sec = 600  # M17: 장기 턴 경고 임계(초, 0=끔)
     status.claude_repeat_alert = 3     # M17: 반복 루프 경고 임계(회, 0=끔)
     status.claude_pending = None   # 무장된 자동재개 {kind, eta초} 카운트다운
+    # pytmux-477: 전송 에러 재시도가 도는 중인가 — {n, eta, self}(없으면 None).
+    status.claude_retry = None
 
 
 def absorb(status, msg):
@@ -156,6 +167,7 @@ def absorb(status, msg):
     status.token_debug = msg.get("token_debug", status.token_debug)
     # 카운트다운: 서버가 매 status 에 항상 키를 실어 보낸다(없으면 None).
     status.claude_pending = msg.get("claude_pending")
+    status.claude_retry = msg.get("claude_retry")
 
 
 def _fields_of(status):
@@ -170,6 +182,7 @@ def _fields_of(status):
         "tok5h_pct": status.tok5h_pct,
         "week_sonnet_pct": status.week_sonnet_pct,
         "claude_pending": status.claude_pending,
+        "claude_retry": status.claude_retry,
         "claude_warn": status.claude_warn,
         "claude_warn_kind": status.claude_warn_kind,
         "claude_warn_n": status.claude_warn_n,

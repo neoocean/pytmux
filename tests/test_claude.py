@@ -1053,6 +1053,67 @@ async def test_public_parsers_linear_on_hostile_screen():
     assert elapsed < 1.0, f"공개 파서 적대적 입력 처리 {elapsed:.3f}s — 폭주 의심"
 
 
+# ── pytmux-477: Claude 가 **스스로 재시도 중**인 화면 ────────────────────────
+# ★ 실측이다 — captures/playground.local/20260614_093019_0_0.win_p1.log.gz 를
+# `scripts/extract_frame.py … "Retrying in"` 으로 렌더한 프레임이고, **제보의 장면
+# 그대로**다: 529 배너 + 우리가 넣은 `계속` 둘 + 그 아래 Claude 자신의 재시도 줄.
+_SELF_RETRY_REAL = (
+    "✻ Worked for 3m 28s\n"
+    "\n"
+    "❯ <system-reminder>Message sent at Mon 2026-06-15\n"
+    "  07:40:15 UTC.</system-reminder>\n"
+    "  계속\n"
+    "\n"
+    "⏺ API Error: 529 Overloaded. This is a\n"
+    "  server-side issue, usually temporary —\n"
+    "  try again in a moment. If it persists,\n"
+    "  check https://status.claude.com.\n"
+    "\n"
+    "✻ Cooked for 3m 29s\n"
+    "\n"
+    "❯ <system-reminder>Message sent at Mon 2026-06-15\n"
+    "  07:45:20 UTC.</system-reminder>\n"
+    "  계속\n"
+    "  ⎿  Retrying in 14s · attempt 7/10\n"
+    "  ❯ 계속\n"
+)
+
+
+async def test_self_retry_frame_is_not_busy_so_the_old_guard_missed_it():
+    """이 슬라이스의 **까닭**을 실물로 고정한다.
+
+    `_fire_retry` 의 종전 발화직전 가드는 `claude_state(text) == "busy"` 였다. 그런데
+    Claude 가 스스로 재시도 중인 프레임은 배너가 남아 있어 `claude_api_error` 는 True 인데
+    `claude_state` 는 **`busy` 가 아니라 None** 이다 — 그래서 그 가드가 **안 막는다.**
+    제보 스크린샷의 `계속` 네 번이 그 자국이고, 이 프레임이 그 화면 그대로다."""
+    from pytmuxlib.claude import claude_api_error
+    assert claude_api_error(_SELF_RETRY_REAL) is True
+    assert claude_state(_SELF_RETRY_REAL) is None, "busy 면 종전 가드가 이미 막았을 것이다"
+
+
+async def test_claude_self_retry_needs_both_halves_on_one_line():
+    """`Retrying in …` 과 `attempt N/M` 이 **한 줄에 그 차례로** 있을 때만 True.
+
+    ⛔ 한쪽만 보면 코퍼스가 문다(§3.7 규율):
+      · `attempt N/M` 만 → 우리 도구의 로그(`p4: submit attempt 1/3 failed`)가 걸린다.
+      · `Retrying in` 만 → `No response from API … · Retrying in 2m 12s` **배너**가
+        걸리는데 그쪽은 `claude_api_error` 가 다루는 **다른 것**이다."""
+    from pytmuxlib.claude import claude_self_retry as f
+    assert f(_SELF_RETRY_REAL) is True
+    assert f("  ⎿  Retrying in 1s · attempt 1/10") is True
+    assert f("✳ 529 Overloaded · Retrying in 36s · attempt 8/10") is True
+    # 대조군 — 코퍼스에 실제로 있는 오탐 후보들.
+    assert f("2026-06-09 17:21 WARNING p4: submit attempt 1/3 failed (rc=1)") is False
+    assert f("⏺ No response from API   · Retrying in 2m 12s · check your network") is False
+    assert f("⏺ API Error: 529 Overloaded. This is a server-side issue") is False
+    # 차례가 뒤집히면 안 잡는다(다른 글이다).
+    assert f("attempt 7/10 … Retrying in 14s") is False
+    # 사용자가 친 글·소스 줄은 _claude_body 가 걸러 낸다.
+    assert f("> Retrying in 3s · attempt 2/10 이라고 나오는데 왜?") is False
+    assert f("") is False
+    assert f(None) is False
+
+
 # ── pytmux-475: auto mode 패널의 yes/no 자동 «예» 확정 판정 ───────────────────
 # ★ 이 픽스처는 **실측**이다 — captures/playground.local/20260615_171414_0_0
 # .pytmux_p1.log.gz 를 `scripts/extract_frame.py … "Do you want to proceed"` 로

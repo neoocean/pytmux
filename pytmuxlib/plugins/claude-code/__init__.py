@@ -227,6 +227,10 @@ i18n.register({
         # F3 벡터 3: 정책 차단 래치는 투명해야 하고(조용한 중단 금지) 자기치유한다.
         "ccmsg.rc_policy_blocked": "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})",
         "ccmsg.rc_policy_cleared": "원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다",
+        # pytmux-477: 재시도가 **도는 중**임을 비활성 탭에 있는 사람에게도 알린다
+        # (배지는 활성 패널의 것이라 다른 탭을 보고 있으면 아무것도 안 보인다).
+        "ccmsg.retry_injected":
+            "전송 에러 자동 재시도: '{msg}' 주입({n}회째 · 패널 {pane})",
         "ccmsg.model_apply": "/model {arg} 적용 요청",
         "ccmsg.perm_switching": "권한모드 → {target} 전환 중…",
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
@@ -262,6 +266,8 @@ i18n.register({
             "back (claude {ver} · {when} · {strikes} strikes)",
         "ccmsg.rc_policy_blocked": "Org policy message seen — stopping auto /rc injection (pane {pane})",
         "ccmsg.rc_policy_cleared": "Remote control is actually on — clearing the policy-block latch",
+        "ccmsg.retry_injected":
+            "Transmission-error auto-retry: injected '{msg}' (#{n} · pane {pane})",
         "ccmsg.resume_unverified": "Auto-resume suppressed: only {used} tokens used in "
                                    "the last 5h (<{need}) — limit banner looks forged "
                                    "(pane {pane}, claude-resume-verify {mode})",
@@ -1220,6 +1226,8 @@ class _ClaudeCodePlugin:
         msg["claude_auto_yes"] = server.claude_auto_yes
         # 무장된 자동재개 카운트다운(없으면 None): {kind, eta(초)}.
         msg["claude_pending"] = server._pending_action(ap)
+        # pytmux-477: 전송 에러 재시도가 도는 중인가({n, eta, self}) — 없으면 None.
+        msg["claude_retry"] = server._retry_action(ap)
         # C4: 토글로만 바뀌는 정적 옵션은 full(신규 attach·_broadcast_session)일 때만
         # 싣는다 — set_* 핸들러가 _broadcast_session(full=True)으로 회신하므로 변경·
         # 접속 시 항상 도달하고, 주기(full=False) status 에선 빠져도 클라가 직전 값 유지.

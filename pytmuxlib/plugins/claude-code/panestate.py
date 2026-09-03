@@ -107,6 +107,11 @@ def init_pane(pane) -> None:
     # 표시용 _perm_mode 와 달리 `_claude is None` 프레임에서 안 비워진다 — 비우는 곳은
     # 확정 세션 종료와 새 셸 둘뿐이다.
     pane._perm_seen = None
+    # pytmux-477: 전송 에러 재시도가 **도는 중**임을 표면에 내기 위한 둘 —
+    # `_self_retry` 는 Claude 가 스스로 재시도 중이라 우리가 미루고 있다는 뜻이고,
+    # `_retry_last` 는 마지막 주입 시각(진단·표시용).
+    pane._self_retry = False
+    pane._retry_last = 0.0
     # 수동 /clear 감지 디바운스(환영 배너가 머무는 동안 토큰세션 재리셋 방지).
     pane._welcome_seen = False
     pane._rules_pending = False     # 시작 규칙 주입 예약(다음 idle 1회, #27)

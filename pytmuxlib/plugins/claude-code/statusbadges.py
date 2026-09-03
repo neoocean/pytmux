@@ -124,6 +124,21 @@ def badges(fields) -> list:
         #   ⚠ 나머지 둘(pending·warn)에는 아직 안 싣는다. 정본에서 그 클릭이 여는
         #   화면들은 여전히 Tier C 가 없다 — **선언은 있고 배선이 없는 칸**을 안 만든다.
         out.append(_badge("usage", text, _SEC, spec, do="usage-panel"))
+    # pytmux-477: **재시도가 도는 중**임을 낸다. 이 배지가 없던 동안 사용자는 「멈춰
+    # 있다」와 「1분마다 깨우는 중」을 화면에서 못 갈랐다 — 짝인 자동재개에는 이미
+    # 카운트다운이 있는데 이쪽만 안 보였다.
+    retry = fields.get("claude_retry")
+    if isinstance(retry, dict):
+        if retry.get("self"):
+            # Claude 가 제 힘으로 재시도 중 — 우리는 **미루고 있다**. 그 사실을 그대로
+            # 말한다(우리 카운트다운을 보이면 곧 주입할 것처럼 읽힌다).
+            text, spec = i18n.phrase("claude.retry_self")
+        else:
+            eta = retry.get("eta")
+            text, spec = i18n.phrase(
+                "claude.retry_wait" if isinstance(eta, int) else "claude.retry_n",
+                n=int(retry.get("n", 0) or 0), eta=int(eta or 0))
+        out.append(_badge("retry", text, _WARN, spec))
     pending = fields.get("claude_pending")
     if isinstance(pending, dict):
         # 라벨을 **포맷 안에** 둔 판을 쓴다 — 인자로 넘기면 클라가 자기 포맷에 서버

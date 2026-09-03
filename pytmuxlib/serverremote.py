@@ -1334,7 +1334,7 @@ class ServerRemoteMixin:
         # 플러그인 동적 헤더(claude-code·rec·prompt-history)
         "panes_claude", "claude_active", "claude_usage", "claude_tokens",
         "claude_model", "claude_account", "claude_account_full", "claude_pending",
-        "claude_auto_mode", "claude_auto_yes",
+        "claude_auto_mode", "claude_auto_yes", "claude_retry",
         "claude_auto_redraw", "claude_resume_verify",
         "claude_warn", "claude_warn_kind",
         "claude_warn_n", "autoresume", "auto_token_on_exit", "usage_limits",

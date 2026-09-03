@@ -190,6 +190,40 @@ _API_ERROR_RE = re.compile(
     re.I)
 
 
+# Claude 가 **스스로 재시도하는 중**임을 알리는 진행형 줄(pytmux-477 ⑸).
+#
+#     ⎿  Retrying in 14s · attempt 7/10
+#
+# ★ 모양은 실측이다 — 캡처 셋(2026-06-07·06-14·06-16)이 전부 같은 줄을 낸다. 그중
+# 하나(`20260614_093019_0_0.win_p1`)는 **제보의 장면 그대로**다: `⏺ API Error: 529
+# Overloaded …` 배너 + 우리가 넣은 `계속` 둘 + 그 아래 이 줄.
+#
+# ⛔ **`attempt N/M` 만 보면 안 된다.** 같은 코퍼스에 우리 도구의 로그가 있다 —
+#     `2026-06-09 17:21:57 WARNING p4: submit attempt 1/3 failed (rc=1); …`
+# 그것을 재시도로 세면 셸 출력 하나가 패널을 「클로드가 재시도 중」으로 만든다. 반대로
+# `Retrying in` 만 봐도 안 된다 — 그 낱말은 `No response from API … · Retrying in 2m 12s
+# · check your network` **배너**에도 있고 그쪽은 `claude_api_error` 가 다루는 다른 것이다.
+# ⇒ **한 줄에 둘이 그 차례로** 있을 때만 잡는다.
+#
+# `[^\n]{0,40}` 는 음의 클래스 + 상한이라 선형이다(ReDoS 안전 — `_API_ERROR_RE` 와 같은 규율).
+_SELF_RETRY_RE = re.compile(
+    r"\bretrying\s+in\b[^\n]{0,40}?\battempt\s+\d+\s*/\s*\d+", re.I)
+
+
+def claude_self_retry(text: str) -> bool:
+    """Claude Code 가 **스스로 재시도하는 중**이면 True(`Retrying in 14s · attempt 7/10`).
+
+    이 신호의 쓰임은 「에러다」가 아니라 **「아직 안 끝났다」**이다 — 그 화면에서는 우리
+    재시도를 **미룬다**(사람 결정 2026-09-04 ④). 실측이 그 필요를 증명한다: 그 프레임은
+    `claude_api_error()==True` 인데 `claude_state()` 는 **`busy` 가 아니라 `None`** 이라,
+    `_fire_retry` 의 종전 발화직전 가드(`state == "busy"`)가 **안 막는다.** 제보 화면의
+    `계속` 네 번이 그것이다.
+
+    `claude_api_error` 와 같은 `_claude_body` 가드를 쓴다 — 사용자가 친 글·소스/diff 에
+    같은 문구가 있어도 안 잡히게."""
+    return bool(_SELF_RETRY_RE.search(_claude_body(text)))
+
+
 def claude_api_error(text: str) -> bool:
     """화면이 **전송 에러(API error·rate limit·overloaded·네트워크 무응답)** 로 멈춘 상태면 True.
 
