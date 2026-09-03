@@ -20,6 +20,10 @@ base.workspace = true
 # (클립보드 도구와 같은 자리).
 clip.workspace = true
 proto.workspace = true
+# 네이티브 오버레이의 **상태**는 그 오버레이를 그리는 쪽이 모양을 정한다(설계 Tier D ·
+# pytmux-458) — 프로토콜이 플러그인 이름도 필드도 모르므로 값이 `serde_json::Value` 다.
+# 그것을 읽는 자리가 뷰라서 여기에 붙는다.
+serde_json.workspace = true
 warpui.workspace = true
 # `--frame-dump` 하네스가 드로어블을 뜨는 자리(`request_frame_capture`)와 PNG 쓰기.
 # 화면 캡처가 아니라 자가 덤프인 이유는 main.rs `take_frame_dump` 문서에 있다.

@@ -2071,6 +2071,166 @@ fn the_clock_reads_the_time_from_the_server_not_from_this_box() {
     assert_eq!(faces[0].text, "03:04:05", "서버가 준 시각을 안 쓴다");
 }
 
+// ── 네이티브 달력(pytmux-460) ────────────────────────────────────────────────
+//
+// 시계와 갈리는 것 하나 — **per-client 상태가 왕복한다**. 그래서 재는 것도 하나 더 있다:
+// 단추를 누르면 **서버로 나가나**(큐 오라클)와, 되받은 `offset` 을 **그대로 그리나**.
+
+/// 달력이 실제로 그려지려면 **픽셀 자리**가 필요하다(패널 위에 얹는 위젯이라서).
+/// 제품에서는 자리표가 그 값을 주지만 헤드리스에는 창이 없어 자리표가 없다 — 그래서
+/// 오라클이 손으로 세운다. ⛔ 이 값을 안 세우면 위젯이 **정당하게** 안 그려지고,
+/// 그때 붉는 것은 제품이 아니라 오라클이다.
+fn measured(view: &mut SessionView) {
+    view.note_cell_size(9., 18.);
+    view.note_canvas_for_test(0., 40., 800., 600.);
+}
+
+/// 서버가 달력 상태를 실어 보내는 프레임.
+fn native_calendar_frame(offset: i64, title: &str, today: i64) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay",
+        "dim": [1], "runs": [], "zones": [], "keys": [],
+        "native": {"calendar": {"1": {
+            "offset": offset,
+            "title": title,
+            "heads": ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"],
+            "weeks": [[0, 0, 1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11, 12]],
+            "today": today,
+        }}}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn the_native_calendar_paints_the_month_the_server_sent() {
+    // 양성 오라클 — 「없으면 안 뜬다」만 재면 배선이 통째로 빠져도 통과한다.
+    let plain = painted_after_setup(vec![layout_one_pane()], &[], measured);
+    assert!(
+        !plain.iter().any(|t| t == "2026-07"),
+        "달력을 안 켰는데 달 제목이 떴다"
+    );
+    let painted = painted_after_setup(
+        vec![layout_one_pane(), native_calendar_frame(-2, "2026-07", 0)],
+        &[],
+        measured,
+    );
+    assert!(
+        painted.iter().any(|t| t == "2026-07"),
+        "서버가 준 달이 안 떴다: {painted:?}"
+    );
+    for needle in ["Su", "Sa", "‹", "›"] {
+        assert!(
+            painted.iter().any(|t| t == needle),
+            "{needle:?} 가 안 떴다 — 요일 머리와 화살표는 이 위젯의 알맹이다"
+        );
+    }
+    // 이 달이 아닌 칸은 **빈 자리**다(정본과 같은 정보량 · 계획 §7 ②).
+    assert!(
+        painted.iter().any(|t| t == "12"),
+        "달 격자의 날짜가 안 떴다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_different_offset_paints_a_different_month() {
+    // ⛔ 「무언가 그렸다」로 접지 않는다 — **받은 상태를** 그렸나를 잰다.
+    let july = painted_after_setup(
+        vec![layout_one_pane(), native_calendar_frame(-2, "2026-07", 0)],
+        &[],
+        measured,
+    );
+    let sept = painted_after_setup(
+        vec![layout_one_pane(), native_calendar_frame(0, "2026-09", 3)],
+        &[],
+        measured,
+    );
+    assert!(july.iter().any(|t| t == "2026-07"), "{july:?}");
+    assert!(sept.iter().any(|t| t == "2026-09"), "{sept:?}");
+    assert!(
+        !sept.iter().any(|t| t == "2026-07"),
+        "달을 바꿨는데 옛 제목이 남았다 — 상태를 안 읽고 그리고 있다"
+    );
+}
+
+#[test]
+fn a_screen_on_top_hides_the_native_calendar() {
+    let painted = painted_after_setup(
+        vec![layout_one_pane(), native_calendar_frame(0, "2026-09", 3)],
+        &[],
+        |view| {
+            measured(view);
+            view.screens.open(Screen::Keys);
+        },
+    );
+    assert!(
+        !painted.iter().any(|t| t == "2026-09"),
+        "판이 떠 있는데 달력이 그 위로 뚫고 나온다"
+    );
+}
+
+#[test]
+fn the_arrow_sends_the_name_the_server_gave_and_never_counts_months_itself() {
+    // ⛔ **이 이슈의 관문이다.** 단추는 「이전/다음」이라는 이름만 올리고, 몇 달인지는
+    //    서버가 정한다. 클라가 세면 상태가 두 벌이 되고 원격 보기·재접속에서 한쪽만
+    //    되돌아간다(플러그인 설계 §4.2).
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(native_calendar_frame(0, "2026-09", 3))))
+        .unwrap();
+    view.pump_headless();
+    for _ in 0..2 {
+        view.handle_action_for_test(ViewAction::OverlayAction {
+            name: "calendar",
+            pane: 1,
+            act: "prev",
+        });
+    }
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    let asks: Vec<&Outgoing> = out
+        .iter()
+        .filter(|o| {
+            matches!(
+                o,
+                Outgoing::Command(Command::PluginOverlayAction { name, act, .. })
+                    if name == "calendar" && act == "prev"
+            )
+        })
+        .collect();
+    assert_eq!(asks.len(), 2, "`‹` 를 두 번 눌렀는데 나간 것이 {}: {out:?}", asks.len());
+    // ⛔ **클라가 스스로 그린 달이 없다** — 되받기 전에는 서버가 준 그대로다.
+    let painted = {
+        let faces = view.calendar_month_for_test(1);
+        faces.unwrap_or_default()
+    };
+    assert_eq!(
+        painted, "2026-09",
+        "단추를 눌렀다고 클라가 달을 혼자 넘겼다 — offset 은 서버 것이다"
+    );
+
+    // 서버가 되돌려준 상태로 그린다.
+    tx.send(LinkEvent::Message(Box::new(native_calendar_frame(-2, "2026-07", 0))))
+        .unwrap();
+    view.pump_headless();
+    assert_eq!(
+        view.calendar_month_for_test(1).unwrap_or_default(),
+        "2026-07",
+        "되받은 상태를 안 그린다"
+    );
+}
+
+#[test]
+fn the_calendar_widgets_are_actually_handed_to_the_frame() {
+    // ⛔ **「호출 제거」 뮤테이션을 잡는 자리다**(시계의 짝). 위 오라클들은 픽셀 자리를
+    //    손으로 세우고 재므로, 그 자리를 못 재는 프레임에서 위젯이 정당하게 빠지는 것과
+    //    **렌더가 아예 안 부르는 것**을 못 가른다.
+    const VIEW: &str = include_str!("session_view.rs");
+    assert!(
+        VIEW.contains("for overlay in self.calendar_overlays()"),
+        "렌더가 달력 위젯을 프레임에 안 넣는다 — 만드는 함수가 멀쩡해도 화면에는 안 뜬다"
+    );
+}
+
 // ── `debug-stats` — GUI 가 **제 런타임**을 재는 판(pytmux-457) ─────────────────
 //
 // ⛔ 「판이 뜬다」로 초록을 만들지 않는다. 이 이슈의 관문은 *"판의 값이 실제로 움직인다는

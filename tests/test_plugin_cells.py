@@ -1134,3 +1134,79 @@ async def test_the_clock_hand_moves_for_the_native_client_too():
             clock_cells_mod.clock_time = real
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_the_calendar_state_travels_and_the_grid_arrows_do_not():
+    """달력도 같은 탈출구를 탄다 — 다만 **상태가 왕복한다**(pytmux-460).
+
+    ⛔ 클릭존은 **안 준다**: 그 자리는 격자 글자 제목 줄에서 나온 것이라 위젯을 그리는
+    클라에서는 엉뚱한 칸을 가리킨다. 키는 그대로 준다(키의 자리는 그림과 무관하다).
+    """
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        pane = win.active_pane.id
+
+        class _Cal(_NativeClient):
+            def __init__(self, pane, offset=0):
+                super().__init__(pane)
+                self.plugin_state = {
+                    "overlays": {"calendar": {pane: {"offset": offset}}}}
+
+        body = _body(srv._plugin_cells_frame(_Cal(pane, -2), sess, win, 100.0))
+        cal = body["native"]["calendar"][str(pane)]
+        assert cal["offset"] == -2, cal
+        assert len(cal["heads"]) == 7, cal
+        assert cal["weeks"] and len(cal["weeks"][0]) == 7, cal
+        # 지난 달을 보고 있으므로 「오늘」은 그 달에 없다(정본 `month_of` 의 규칙).
+        assert cal["today"] == 0, cal
+        assert body["runs"] == [], f"네이티브인데 런도 왔다: {body['runs']}"
+        assert body["zones"] == [], f"네이티브인데 격자 클릭존이 왔다: {body['zones']}"
+        assert body["keys"], "키까지 사라졌다 — 키의 자리는 그림과 무관하다"
+
+        # 대조군 — 광고 안 한 클라는 종전대로 런과 클릭존을 받는다.
+        class _Plain(_Cal):
+            caps = ()
+
+        plain = _body(srv._plugin_cells_frame(_Plain(pane, -2), sess, win, 100.0))
+        assert "native" not in plain, sorted(plain)
+        assert plain["runs"], "격자 글자 달력이 사라졌다"
+        assert plain["zones"], "`‹ ›` 클릭존이 사라졌다"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_the_month_the_client_gets_back_is_the_one_the_server_moved():
+    """`‹` 를 두 번 누르면 되받는 것이 **offset -2** 다(pytmux-460 관문).
+
+    ⛔ 클라는 「이전」이라는 **이름**만 올린다. 몇 달인지는 서버가 정하고, 그 값이 다음
+    프레임의 상태로 되돌아온다 — 클라가 세면 상태가 두 벌이 된다.
+    """
+    from pytmuxlib.servercmd import _CMD_TABLE
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        pane = win.active_pane.id
+
+        class _Cal(_NativeClient):
+            def __init__(self):
+                super().__init__(pane)
+                self.plugin_state = {"overlays": {"calendar": {pane: {}}}}
+
+        c = _Cal()
+        handler = _CMD_TABLE["plugin_overlay_action"][0]
+        for _ in range(2):
+            await handler(srv, c, sess,
+                          {"name": "calendar", "pane": pane, "do": "prev"})
+        body = _body(srv._plugin_cells_frame(c, sess, win, 100.0))
+        cal = body["native"]["calendar"][str(pane)]
+        assert cal["offset"] == -2, f"서버가 옮긴 달이 안 돌아왔다: {cal}"
+        # 그리고 제목도 그 달이다(상태와 그림이 한 자리에서 나온다).
+        from datetime import datetime
+        from pytmuxlib.plugins.calendar.cells import month_of
+        yr, mo, _ = month_of(datetime.now(), -2)
+        assert cal["title"] == f"{yr}-{mo:02d}", cal
+    finally:
+        await teardown(srv, task, sock)

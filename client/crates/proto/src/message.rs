@@ -650,11 +650,18 @@ pub struct NativeOverlay {
     pub without: &'static str,
 }
 
-pub const NATIVE_OVERLAYS: &[NativeOverlay] = &[NativeOverlay {
-    name: "clock",
-    why: "정본은 격자 안에 살아 「큰 시계」를 블록 글자로밖에 못 만든다(70×12 큰 폰트 ·           40×6 반칸 · 14×3 폴백). GUI 는 캔버스 위에 그릴 수 있고, 그것이 pytmux-185 의           허용 갈림 ⓑ(픽셀 단위 그림)다. 뜻·상태·입구는 그대로다 — 서버가 시각을 정하고           (`clock_time`) 딤도 서버가 정한다(pytmux-459)",
-    without: "종전대로 블록 글자 시계(서버 `plugin_cells.runs`) — 정본이 그리는 그것",
-}];
+pub const NATIVE_OVERLAYS: &[NativeOverlay] = &[
+    NativeOverlay {
+        name: "calendar",
+        why: "정본은 달 격자를 격자 글자로 그린다(블록 폰트 두 단 + 일반 그리드 + 좁으면 날짜 문자열 폴백). GUI 는 캔버스 위에 진짜 위젯을 얹을 수 있고 — 픽셀 단위 그림이라 pytmux-185 의 허용 갈림 ⓑ 다 — `‹ ›` 도 그려진 글자가 아니라 **실제 단추**가 된다. ⛔ 그래도 `offset` 은 서버 상태다: 단추는 종전과 같은 `plugin_overlay_action` 을 올리고, 몇 달인지는 서버가 정해 다음 프레임으로 되돌려준다(pytmux-460)",
+        without: "종전대로 격자 글자 달력 + 서버가 준 `zones` 위의 `‹ ›` — 정본이 그리는 그것",
+    },
+    NativeOverlay {
+        name: "clock",
+        why: "정본은 격자 안에 살아 「큰 시계」를 블록 글자로밖에 못 만든다(70×12 큰 폰트 · 40×6 반칸 · 14×3 폴백). GUI 는 캔버스 위에 그릴 수 있고, 그것이 pytmux-185 의 허용 갈림 ⓑ(픽셀 단위 그림)다. 뜻·상태·입구는 그대로다 — 서버가 시각을 정하고(`clock_time`) 딤도 서버가 정한다(pytmux-459)",
+        without: "종전대로 블록 글자 시계(서버 `plugin_cells.runs`) — 정본이 그리는 그것",
+    },
+];
 
 /// 클라 → 서버 첫 프레임.
 #[derive(Debug, Clone, Serialize)]

@@ -211,11 +211,52 @@ class _CalendarPlugin:
         return [p for p in req.get("panes") or [] if p["id"] in on], on
 
     def plugin_cells(self, server, sess, req):
+        # ⛔ **네이티브로 그리는 클라에는 런을 안 준다**(pytmux-458·460) — 주면 위젯
+        #    위에 격자 글자가 겹쳐 달력이 두 벌 뜬다.
+        if req.get("native"):
+            return []
         from .cells import calendar_cells
         panes, states = self._panes(req)
         if not panes:
             return []
         return calendar_cells(panes, states)[0]
+
+    def plugin_native(self, server, sess, req):
+        """네이티브로 그리는 클라에 줄 **상태**(Tier D 탈출구 · pytmux-460).
+
+        시계와 갈리는 것 하나 — **per-client 상태가 왕복한다**. `offset` 은 그 연결의
+        것이고(`ClientConn.plugin_state["overlays"]["calendar"][pane]`), 클라는
+        `plugin_overlay_action` 으로 「다음/이전」이라는 **이름**만 올린다. 그 이름이 몇
+        달인지는 여기가 정하고(`apply_action`), 바뀐 값은 다음 프레임의 이 칸으로
+        되돌아간다.
+
+        ⛔ **클라가 offset 을 스스로 계산하지 않는다.** 계산하면 상태가 두 벌이 되고,
+        원격 보기·재접속에서 한쪽만 되돌아간다(플러그인 설계 §4.2).
+
+        ⛔ 달 격자도 여기서 짓는다 — 「그 달의 첫 요일이 무엇인가」는 규칙이고, 규칙이
+        두 벌이면 갈린다(이 플러그인이 정본 `render.py` 의 두 번째 달력을 없앤 그 이유).
+        클라는 **그 표를 그리기만** 한다.
+        """
+        import calendar as _calendar
+        from datetime import datetime as _datetime
+        from .cells import month_of, _WDS
+        panes, states = self._panes(req)
+        if not panes:
+            return {}
+        now = _datetime.now()
+        out = {}
+        for p in panes:
+            off = int((states.get(p["id"]) or {}).get("offset", 0))
+            yr, mo, today = month_of(now, off)
+            out[p["id"]] = {
+                "offset": off,
+                "title": f"{yr}-{mo:02d}",
+                "heads": list(_WDS),
+                # 0 = 그 칸은 이 달이 아니다(정본 `monthdayscalendar` 의 표기 그대로).
+                "weeks": _calendar.Calendar(firstweekday=6).monthdayscalendar(yr, mo),
+                "today": today,
+            }
+        return out
 
     def plugin_triggers(self, server, sess, req):
         """클릭존(`‹`/`›`)과 키 표 — **클라는 뜻을 모른 채** 되돌려 보낸다.
@@ -227,9 +268,15 @@ class _CalendarPlugin:
         panes, states = self._panes(req)
         if not panes:
             return {}
-        zones = calendar_cells(panes, states)[1]
         keys = [{"key": k, "pane": p["id"], "do": d}
                 for p in panes for k, d in KEYS]
+        # ⛔ **네이티브 클라에는 클릭존을 안 준다**(pytmux-460) — 그 자리는 격자 글자
+        #    제목 줄에서 나온 것이라, 위젯을 그리는 클라에서는 **엉뚱한 칸**을 가리킨다.
+        #    그쪽의 `‹ ›` 는 제 단추이고 누르면 같은 이름(`do`)을 올려 보낸다.
+        #    ⚠ **키는 그대로 준다** — 키의 자리는 그림과 무관하다.
+        if req.get("native"):
+            return {"keys": keys}
+        zones = calendar_cells(panes, states)[1]
         return {"zones": zones, "keys": keys}
 
     def plugin_dim_panes(self, server, sess, req):

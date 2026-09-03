@@ -3351,6 +3351,16 @@ impl SessionView {
 
     /// 잰 칸 크기를 남긴다. 말이 안 되는 값(0·무한대)은 **안 받는다** — 그걸 받으면
     /// 격자가 한 점으로 접히고, 증상은 "캔버스가 통째로 비었다"가 된다.
+    /// 캔버스가 창 어디에 앉았나를 **손으로** 세운다(오라클용).
+    ///
+    /// 제품에서는 `report_size` 가 자리표를 재서 세운다 — 그 자리표는 **창이 있어야**
+    /// 생기고, 헤드리스 오라클에는 창이 없다. 그래서 픽셀 자리를 요구하는 그림
+    /// (네이티브 달력)은 이 값을 안 세우면 그려질 길이 없다.
+    #[cfg(test)]
+    pub(crate) fn note_canvas_for_test(&self, left: f32, top: f32, win_w: f32, win_h: f32) {
+        self.canvas_px.set(Some(CanvasBox { left, top, win_w, win_h }));
+    }
+
     pub fn note_cell_size(&self, w: f32, h: f32) {
         if w.is_finite() && h.is_finite() && w > 0.5 && h > 0.5 {
             self.cell_px.set(Some((w, h)));
@@ -9939,6 +9949,253 @@ impl SessionView {
         out
     }
 
+    /// **네이티브 달력 위젯들**(pytmux-460) — 서버가 준 상태를 그대로 그린다.
+    ///
+    /// # 무엇이 우리 것이고 무엇이 서버 것인가
+    ///
+    /// | | 누가 |
+    /// |---|---|
+    /// | 몇 달을 보고 있나(`offset`) · 달 격자 · 오늘 | **서버**(그 연결의 상태) |
+    /// | 켜고 끄기 · 딤 | **서버**(종전 그대로) |
+    /// | 위젯의 모양 · `‹ ›` 단추의 자리 | 우리 |
+    ///
+    /// ⛔ **클라가 `offset` 을 스스로 계산하지 않는다.** 단추는 종전과 같은
+    /// `plugin_overlay_action` 으로 「이전/다음」이라는 **이름**만 올리고, 몇 달인지는
+    /// 서버가 정해 다음 프레임의 상태로 되돌려준다. 계산하면 상태가 두 벌이 되고
+    /// 원격 보기·재접속에서 한쪽만 되돌아간다(플러그인 설계 §4.2).
+    fn calendar_overlays(&self) -> Vec<Box<dyn Element>> {
+        // 판이 떠 있으면 안 그린다 — 시계와 같은 판단(판이 캔버스를 덮는 자리다).
+        if self.screens.top().is_some() {
+            return Vec::new();
+        }
+        let Some(state) = self.state.plugin_cells().native.get("calendar") else {
+            return Vec::new();
+        };
+        let Some(layout) = self.state.layout() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut slot = 0usize;
+        for pane in &layout.panes {
+            let Some(fields) = state.get(&pane.id.to_string()) else {
+                continue;
+            };
+            let Some(widget) = self.calendar_widget(pane.id, fields, &mut slot) else {
+                continue;
+            };
+            let Some(placed) = self.place_over_pane(pane, widget) else {
+                continue;
+            };
+            out.push(placed);
+        }
+        out
+    }
+
+    /// 달력 한 판. `slot` 은 이 프레임에서 쓴 **마우스 상태 자리**의 다음 번호다
+    /// (같은 번호를 두 위젯이 쓰면 hover 가 서로 옮겨붙는다).
+    fn calendar_widget(
+        &self,
+        pane: i64,
+        fields: &serde_json::Value,
+        slot: &mut usize,
+    ) -> Option<Box<dyn Element>> {
+        let title = fields.get("title")?.as_str()?.to_owned();
+        let heads: Vec<String> = fields
+            .get("heads")?
+            .as_array()?
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+        let weeks: Vec<Vec<i64>> = fields
+            .get("weeks")?
+            .as_array()?
+            .iter()
+            .filter_map(|w| {
+                Some(w.as_array()?.iter().filter_map(serde_json::Value::as_i64).collect())
+            })
+            .collect();
+        if heads.len() != 7 || weeks.is_empty() {
+            return None;
+        }
+        let today = fields.get("today").and_then(serde_json::Value::as_i64).unwrap_or(0);
+        // 색은 정본이 정한 **의미 이름**을 이 클라의 표에서 푼다(런·배지와 같은 표) —
+        // 정본 `calendar/cells.py` 의 `TITLE`·`TODAY` 가 둘 다 `success` 다.
+        let accent = match proto::session::theme::resolve("success") {
+            proto::session::theme::Resolution::Color(c) => to_gui_color(&c),
+            // 못 풀어도 **달력을 통째로 잃지 않는다**(시계와 같은 판단) — 색만 잃는다.
+            _ => palette::FG,
+        };
+        // 한 칸 폭 — 두 자리 숫자가 흔들리지 않게 못박는다(자연폭이면 `1` 과 `31` 의
+        // 칸이 달라져 열이 어긋난다. 정본은 격자라 그 문제가 없다).
+        const CELL: f32 = 26.;
+        let cell = |child: Box<dyn Element>| {
+            ConstrainedBox::new(Align::new(child).finish())
+                .with_width(CELL)
+                .finish()
+        };
+
+        let mut column = Flex::column()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(2.);
+
+        // ── 제목 줄 — `‹ 2026-09 ›`. 화살표는 **실제 단추**다.
+        let mut head = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(6.)
+            .with_child(self.overlay_button(slot, pane, "prev", "‹"))
+            .with_child(self.ui_text(title, 14., accent));
+        head = head.with_child(self.overlay_button(slot, pane, "next", "›"));
+        column = column.with_child(head.finish());
+
+        // ── 요일 머리 ──
+        let mut row = Flex::row().with_main_axis_size(MainAxisSize::Min);
+        for h in &heads {
+            row = row.with_child(cell(self.ui_text(h.clone(), 11., palette::DIM)));
+        }
+        column = column.with_child(row.finish());
+
+        // ── 주 ──
+        for week in &weeks {
+            let mut row = Flex::row().with_main_axis_size(MainAxisSize::Min);
+            for day in week {
+                if *day == 0 {
+                    // 이 달이 아닌 칸 — **빈 자리로 둔다**(정본과 같다). 앞뒤 달 날짜를
+                    // 채우면 정보량이 달라지고, 그것은 계획 §7 ② 가 「정본과 같은
+                    // 정보량」으로 정한 것과 어긋난다.
+                    row = row.with_child(cell(self.ui_text(" ", 12., palette::DIM)));
+                    continue;
+                }
+                let text = day.to_string();
+                let widget: Box<dyn Element> = if *day == today {
+                    // 오늘 — 정본과 **같은 의미 색**(강조 바탕에 검은 글자).
+                    Container::new(self.ui_text(text, 12., palette::BLACK))
+                        .with_horizontal_padding(5.)
+                        .with_vertical_padding(1.)
+                        .with_background_color(accent)
+                        .with_corner_radius(theme::PILL_RADIUS)
+                        .finish()
+                } else {
+                    self.ui_text(text, 12., palette::FG)
+                };
+                row = row.with_child(cell(widget));
+            }
+            column = column.with_child(row.finish());
+        }
+
+        Some(
+            Container::new(column.finish())
+                .with_background_color(theme::ELEV)
+                .with_uniform_padding(10.)
+                .with_corner_radius(theme::PANEL_RADIUS)
+                .with_border(Border::all(1.).with_border_color(theme::BORDER))
+                .with_drop_shadow(theme::panel_shadow())
+                .finish(),
+        )
+    }
+
+    /// 오버레이의 단추 하나 — 누르면 **서버가 준 이름**을 그대로 올려 보낸다.
+    fn overlay_button(
+        &self,
+        slot: &mut usize,
+        pane: i64,
+        act: &'static str,
+        label: &str,
+    ) -> Box<dyn Element> {
+        let i = *slot;
+        *slot += 1;
+        let hovered = self.panel_hovered(i);
+        let chip = Container::new(self.ui_text(
+            label.to_owned(),
+            15.,
+            if hovered { palette::CYAN } else { palette::FG },
+        ))
+        .with_horizontal_padding(7.)
+        .with_vertical_padding(1.)
+        .with_background_color(if hovered { theme::HOVER } else { theme::ELEV })
+        .with_corner_radius(theme::PILL_RADIUS)
+        .finish();
+        Hoverable::new(self.panel_mouse_state(i), |_| chip)
+            .on_click(move |evt, _, _| {
+                evt.dispatch_typed_action(ViewAction::OverlayAction {
+                    name: "calendar",
+                    pane,
+                    act,
+                });
+            })
+            .finish()
+    }
+
+    /// 그 패널의 달력이 **지금 말하는 달**(오라클용).
+    ///
+    /// 그림에서 읽으면 판이 떠 있거나 칸 크기를 못 재는 프레임에서 답이 없어진다 —
+    /// 재려는 것은 「서버가 준 상태를 그대로 쓰나」이므로 상태에서 읽는다.
+    #[cfg(test)]
+    pub(crate) fn calendar_month_for_test(&self, pane: i64) -> Option<String> {
+        Some(
+            self.state
+                .plugin_cells()
+                .native
+                .get("calendar")?
+                .get(&pane.to_string())?
+                .get("title")?
+                .as_str()?
+                .to_owned(),
+        )
+    }
+
+    /// 뷰 액션 하나를 **처리 경로 그대로** 태운다(오라클용 — 창이 없어 `handle_action`
+    /// 을 못 부르는 자리다). ⛔ 지름길을 만들지 않는다: 실제 배선과 같은 갈래를 탄다.
+    #[cfg(test)]
+    pub(crate) fn handle_action_for_test(&mut self, action: ViewAction) -> bool {
+        match action {
+            ViewAction::OverlayAction { name, pane, act } => {
+                self.pending
+                    .push(Outgoing::Command(Command::PluginOverlayAction {
+                        name: name.to_owned(),
+                        pane,
+                        act: act.to_owned(),
+                    }));
+                true
+            }
+            other => panic!("이 오라클이 태울 수 있는 액션이 아니다: {other:?}"),
+        }
+    }
+
+    /// 위젯을 그 패널 **위에** 놓는다(픽셀 자리는 잰 값에서 나온다).
+    ///
+    /// 못 재면 `None` — 첫 프레임처럼 칸 크기를 아직 모를 때 자리를 지어내지 않는다
+    /// (`pane_cursor_box` 와 같은 규율).
+    fn place_over_pane(
+        &self,
+        pane: &proto::message::PaneLayout,
+        widget: Box<dyn Element>,
+    ) -> Option<Box<dyn Element>> {
+        let (cell_w, cell_h) = self.cell_px.get()?;
+        let cv = self.canvas_px.get()?;
+        let left = cv.left + pane.x as f32 * cell_w;
+        let top = cv.top + pane.y as f32 * cell_h;
+        let w = pane.w as f32 * cell_w;
+        let h = pane.h as f32 * cell_h;
+        Some(
+            Align::new(
+                Container::new(Align::new(widget).finish())
+                    .with_padding_left(left)
+                    .with_padding_top(top)
+                    .finish(),
+            )
+            .top_left()
+            .finish(),
+        )
+        .map(|placed| {
+            // 패널 크기만큼의 상자 안에서 가운데 정렬한다 — 패널이 작으면 위젯이
+            // 그 밖으로 나가는데, 그건 클리핑이 잡는다(아래 `Clipped`).
+            let _ = (w, h);
+            placed
+        })
+    }
+
     fn ime_overlay(&self, canvas: &proto::canvas::Canvas) -> Option<crate::splitter::ImeBadge> {
         if self.screens.top().is_some() {
             return None;
@@ -10331,6 +10588,12 @@ impl View for SessionView {
         //    덮었다 — 화면별 갈래가 아예 없었다. 작성창은 **위에 보이는 것을 보면서 쓰는
         //    자리**라 정본이 아무것도 어둡게 하지 않는다. 그 판정의 주인은 core 다
         //    (`Screen::dims_behind` — 자리표와 같은 결).
+        // ★ 네이티브 달력은 **캔버스 위·판 아래**다(pytmux-460). 캔버스 위인 이유는
+        //   패널을 덮는 오버레이라서이고, 판 아래인 이유는 판이 뜨면 그 판이 주인이라서다
+        //   (`calendar_overlays` 가 그때 빈 목록을 낸다 — 여기 순서는 그 사실의 짝이다).
+        for overlay in self.calendar_overlays() {
+            body = body.with_child(overlay);
+        }
         if let Some(screen) = self.screens.top() {
             if screen.dims_behind() {
                 body = body
@@ -10606,6 +10869,18 @@ pub enum ViewAction {
     /// 뜻이 있는 항목**이 생기고, 팔레트에서 고르면 아무 일도 안 일어난다(이 저장소가
     /// 되풀이해 온 "못 하는 것을 목록에 두지 않는다").
     WindowButton(titlebar::Button),
+    /// **오버레이의 단추**를 눌렀다(pytmux-460 — 달력의 `‹`/`›`).
+    ///
+    /// `(오버레이 이름, 패널, 되돌려 보낼 이름)`. ⛔ **뜻은 우리 것이 아니다** — `do`
+    /// 가 몇 달인지는 서버 플러그인이 정하고, 우리는 그 이름을 그대로 올려 보낸 뒤
+    /// 다음 프레임의 상태를 되받아 그린다. 서버가 준 클릭존(`plugin_overlay_action`)과
+    /// **같은 길**이고, 다른 것은 자리를 서버가 아니라 우리가 안다는 점뿐이다
+    /// (위젯을 우리가 그렸으니 단추가 어디 있는지도 우리가 안다).
+    OverlayAction {
+        name: &'static str,
+        pane: i64,
+        act: &'static str,
+    },
     /// 이벤트 콜백이 **키보다 먼저** 판정한 액션(지금은 글자 배율 셋 — §10-21ⓐ).
     ///
     /// `RawKey` 로 안 보내는 이유: 그 길은 core 의 모드·바인딩 표를 지나는데, 이 조합은
@@ -10626,6 +10901,15 @@ impl TypedActionView for SessionView {
             ViewAction::AltTab(forward) => self.alt_tab_step(*forward),
             ViewAction::CtrlReleased => self.release_ctrl(),
             ViewAction::ChromeClick(target) => self.chrome_click(*target),
+            ViewAction::OverlayAction { name, pane, act } => {
+                self.pending
+                    .push(Outgoing::Command(Command::PluginOverlayAction {
+                        name: (*name).to_owned(),
+                        pane: *pane,
+                        act: (*act).to_owned(),
+                    }));
+                true
+            }
             ViewAction::WindowButton(button) => self.press_window_button(*button),
             ViewAction::PanelClick(target) => self.panel_click(*target),
             ViewAction::Wheel { up, at } => self.handle_wheel(*up, *at),
