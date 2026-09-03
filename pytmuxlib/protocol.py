@@ -125,15 +125,29 @@ async def write_msg(writer: asyncio.StreamWriter, obj) -> bool:
     # catch 를 빠져나가 awaited 안 된 백그라운드 태스크가 터진다 → None 가드로 흡수.
     if writer is None:
         return False
+    # 프레임 만들기는 **try 밖**이다 — 여기서 나는 오류(직렬화 불가 객체 등)는 진짜
+    # 결함이라 아래 백스톱이 삼키면 안 된다.
+    data = frame_msg(obj)
     try:
-        writer.write(frame_msg(obj))
+        writer.write(data)
         await writer.drain()
         return True
-    except (ConnectionError, RuntimeError, AssertionError):
+    except (ConnectionError, RuntimeError, AssertionError, AttributeError):
         # AssertionError: 같은 writer 에 두 코루틴이 동시 drain 하면 CPython
         # FlowControlMixin._drain_helper 가 assert 로 터진다(-O 에선 영구 hang).
         # 서버측은 _send_to/_flush_to_client 가 write_lock 으로 직렬화해 원천봉쇄하지만,
         # 여기서도 흡수해 무감시 태스크(flush 루프 등)가 죽지 않게 백스톱을 둔다.
+        #
+        # AttributeError: **writer 는 None 이 아닌데 그 «전송»이 이미 닫힌** 창이다
+        # (pytmux-453 에서 실측). `transport.close()` 는 `_closing` 만 세우고 실제
+        # `_sock = None` 은 다음 루프 턴의 `_call_connection_lost` 가 한다 — 그 사이의
+        # write 는 `_SelectorSocketTransport.write` 안에서 `self._sock.send(data)` 로
+        # 내려가 `'NoneType' object has no attribute 'send'` 가 된다. 위의 None 가드가
+        # 겨눈 것과 **같은 부류의 종료 레이스**인데 한 겹 안쪽이라 안 잡혔다.
+        # 값: 클라 하나가 떨어질 때 서버가 남은 클라에게 `_send_full` 을 다시 보내는데
+        # (`handle_client` 의 finally), 둘이 거의 동시에 떨어지면 그 자리에서 이 예외가
+        # 나고 서버는 그것을 `send_full(teardown)` 트레이스백으로 error.log 에 적었다 —
+        # **정상적인 끊김이 「조용한 서버 크래시」로 기록되던 자리다.**
         return False
 
 
@@ -148,8 +162,8 @@ async def write_frames(writer: asyncio.StreamWriter, frames) -> bool:
         writer.write(b"".join(frames))
         await writer.drain()
         return True
-    except (ConnectionError, RuntimeError, AssertionError):
-        return False               # write_msg 와 동일 백스톱(동시 drain assert 흡수)
+    except (ConnectionError, RuntimeError, AssertionError, AttributeError):
+        return False               # write_msg 와 동일 백스톱(그 머리말의 두 사유)
 
 
 def clamp_dim(val, lo: int, hi: int, default: int) -> int:

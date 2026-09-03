@@ -91,6 +91,60 @@ async def test_write_msg_none_writer_guard():
     assert (await write_frames(None, [])) is True
 
 
+async def test_write_msg_survives_a_transport_closed_mid_write():
+    """writer 는 살아 있는데 그 **전송이 이미 닫힌** 창(pytmux-453 실측).
+
+    asyncio 의 `transport.close()` 는 `_closing` 만 세우고 `_sock = None` 은 다음 루프
+    턴이 한다. 그 사이의 write 는 `self._sock.send(data)` 로 내려가
+    `AttributeError: 'NoneType' object has no attribute 'send'` 가 된다 —
+    `ConnectionError` 가 **아니라서** 종전 그물을 빠져나갔다.
+
+    값: 클라 둘이 거의 동시에 떨어지면 서버가 남은 클라에 `_send_full` 을 다시 보내다
+    이 예외를 맞고, 그것을 `send_full(teardown)` 트레이스백으로 error.log 에 적었다.
+    **정상적인 끊김이 「조용한 서버 크래시」로 기록되던 자리다.**
+    """
+    from pytmuxlib.protocol import write_msg, write_frames, frame_msg
+
+    class _ClosedTransport:
+        def write(self, data):
+            raise AttributeError("'NoneType' object has no attribute 'send'")
+
+        async def drain(self):
+            return None
+
+    w = _ClosedTransport()
+    assert (await write_msg(w, {"t": "status"})) is False, \
+        "닫히는 전송에 쓰다 난 AttributeError 가 호출부로 새어 나갔다"
+    assert (await write_frames(w, [frame_msg({"t": "x"})])) is False, \
+        "write_frames 도 같은 백스톱이어야 한다(같은 자리에서 같은 예외가 난다)"
+
+
+async def test_write_msg_does_not_swallow_a_bad_payload():
+    """⛔ 대조군 — **프레임을 못 만드는 것은 진짜 결함**이라 삼키면 안 된다.
+
+    위 백스톱을 넓히면서 `frame_msg` 를 try 안에 두면, 직렬화 불가 객체가 조용히
+    False 로 접혀 «안 보냈는데 아무도 모르는» 상태가 된다.
+    """
+    from pytmuxlib.protocol import write_msg
+
+    class _Ok:
+        def write(self, data):
+            return None
+
+        async def drain(self):
+            return None
+
+    class _Weird:
+        pass
+
+    try:
+        await write_msg(_Ok(), {"t": "x", "bad": _Weird()})
+    except Exception:
+        pass                    # 던지는 것이 맞다
+    else:
+        raise AssertionError("직렬화 불가 payload 를 조용히 False 로 접었다")
+
+
 async def test_key_to_ctrl_bytes():
     assert pytmux._key_to_ctrl_bytes("ctrl+a") == b"\x01"
     assert pytmux._key_to_ctrl_bytes("ctrl+b") == b"\x02"
