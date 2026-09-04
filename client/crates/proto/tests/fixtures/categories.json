@@ -108,6 +108,7 @@
     "rotate-window": "패널",
     "run-shell": "설정/기타",
     "save-layout": "레이아웃",
+    "select-blocks": "복사/버퍼",
     "select-layout": "패널",
     "select-pane": "패널",
     "select-tab": "탭",
@@ -347,6 +348,11 @@
     "clock-mode": "Toggle clock mode (big clock on current pane)"
   },
   "plugin_commands": [
+    {
+      "name": "select-blocks",
+      "desc": "블록(명령 + 그 출력) 하나를 골라 복사(↑↓ 이동 · Ctrl+C 복사)",
+      "cat": "복사/버퍼"
+    },
     {
       "name": "calendar-mode",
       "desc": "현재 패널을 이번 달 달력으로 덮기(토글, ←/→ 이전·다음 달, ↑/↓ 연 이동, Home 오늘)",
@@ -605,6 +611,7 @@
     "plan-detail",
     "prompt-history",
     "prompts",
+    "select-blocks",
     "submitted",
     "token-machines",
     "token-period",

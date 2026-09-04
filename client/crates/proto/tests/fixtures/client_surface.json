@@ -310,6 +310,7 @@
   "esc_keys": {
     "e_P": "P",
     "e_arrows": "↑ ↓ ← →",
+    "e_b": "b",
     "e_bt": "`",
     "e_c": "c",
     "e_colon": ":",
@@ -1339,6 +1340,10 @@
     "`": {
       "mode": "exit",
       "sends": "60"
+    },
+    "b": {
+      "mode": "exit",
+      "sends": null
     },
     "c": {
       "mode": "exit",

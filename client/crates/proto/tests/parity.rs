@@ -266,6 +266,11 @@ static PREFIX_KEYS: &[Item] = &[
 static ESC_KEYS: &[Item] = &[
     i("e_P", Done, "esc P — 탭 고정(핀) 토글"),
     i("e_arrows", Done, "esc ←↑↓→ — 패널 이동(G1c) · **모드를 유지한다**(정본과 같다 — 연속으로 옮긴다)"),
+    // esc b — 블록(명령 + 그 출력) 하나를 골라 `↑↓` 로 옮기고 `Ctrl+C` 로 복사한다.
+    // ★ **정본이 우리를 뒤따라 온 줄**이다(pytmux-469 · 449 ⑴): 이 표면은 GUI 에 먼저
+    //   섰고(pytmux-18), 갈림 대장이 그 줄을 「정본에도 낼 수 있는데 없다」로 들고
+    //   있었다. 이제 양쪽에 있으므로 대장에서 빠지고 이 표에 든다.
+    i("e_b", Done, "esc b — 블록 고르기 모드(↑↓ 이동 · Ctrl+C 복사 · Esc/q/Enter 나가기)"),
     i("e_bt", Done, "esc ` — 리터럴 백틱"),
     i("e_colon", Done, "esc : — 같은 팔레트"),
     i("e_down", Done, "↓ 최하단 → 하단 배지 포커스 · ←→ 순환 · Enter 실행"),
@@ -444,7 +449,7 @@ static TABLES_ONLY: &[&[Item]] = &[COMMANDS, PREFIX_KEYS, ESC_KEYS, SETTINGS, SC
 static SCORE: &[(&str, usize, usize)] = &[
     ("commands", 89, 0),
     ("prefix_keys", 32, 0),
-    ("esc_keys", 19, 0),
+    ("esc_keys", 20, 0),
     ("settings", 38, 0),
     ("screens", 18, 0),
 ];

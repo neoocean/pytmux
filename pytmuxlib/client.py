@@ -972,8 +972,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.exit(message=i18n.t("msg.connect_failed"))
                 return
             cols, rows = self._content_size()
+            # 능력은 코어 + 플러그인이다 — 플러그인 디렉토리를 지우면 그 기능의
+            # 프레임이 한 바이트도 안 오게 된다(`Registry.client_caps`).
             hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols,
-                     "rows": rows, "caps": list(CLIENT_CAPS)}
+                     "rows": rows,
+                     "caps": sorted(set(CLIENT_CAPS) | set(self.plugins.client_caps()))}
             if cellwidth.ambiguous_wide():    # 서버 pyte 격자도 모호폭=2 로 맞추도록
                 hello["ambig"] = "wide"
             tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
@@ -1327,6 +1330,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         for _pid in [k for k in _cache if k not in _declared]:
                             del _cache[_pid]
                     self._delta_no_base &= _declared
+                    # 패널별 캐시를 든 플러그인도 같은 걸음에 정리한다(blocks 의
+                    # 블록 목록 — 같은 무한 증가를 그쪽에서 다시 만들지 않게).
+                    self.plugins.client_panes_changed(self, _declared)
                 # ESC 모드 방향키로 패널 전환을 요청했고(active 가 실제로 바뀜) 깜빡임이
                 # 예약돼 있으면 새 활성 패널을 깜빡인다(요청 — 선택 패널 가시화).
                 if (self._flash_pending and new_active is not None

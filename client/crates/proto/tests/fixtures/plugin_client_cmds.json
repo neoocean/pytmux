@@ -41,6 +41,7 @@
     "prompt-clear-queue",
     "prompt-history",
     "prompt-history-lines",
+    "select-blocks",
     "usage-panel",
     "usage-view"
   ],
@@ -109,6 +110,7 @@
     "prompt-clear",
     "prompt-clear-message",
     "prompt-history-lines",
+    "select-blocks",
     "usage-view"
   ]
 }

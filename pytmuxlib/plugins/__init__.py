@@ -296,6 +296,53 @@ class Registry:
                 out.update(caps)
         return sorted(out)
 
+    def client_caps(self):
+        """정본 클라가 hello 에 실을 능력 중 **플러그인이 기여하는 것**.
+
+        코어의 `protocol.CLIENT_CAPS` 와 합쳐져 hello 에 실린다. 서버는 광고한 것만
+        보내므로(§10-13 계약), 여기 없는 기능은 프레임이 **한 바이트도** 안 온다 —
+        디렉토리를 지우면 그 기능의 대역폭까지 함께 사라지는 것이 이 훅의 값이다
+        (`blocks` 가 그렇게 붙어 있다).
+
+        정렬해 돌려준다: hello 가 실행마다 달라지면 진단이 어려워진다(`upstream_caps`
+        와 같은 규율).
+        """
+        out = set()
+        for p in self.plugins:
+            caps = getattr(p, "client_caps", None)
+            if caps:
+                out.update(caps)
+        return sorted(out)
+
+    def client_mode_key(self, app, event) -> bool:
+        """코어가 **모르는 입력 모드**의 키 하나를 그 모드를 세운 플러그인이 받는다.
+
+        코어의 모드는 다섯이고(`normal|prefix|scroll|display|esc`) 그 밖의 값은 전부
+        플러그인이 세운 것이다 — `blocks` 의 `block` 모드가 그렇다. 소비한 플러그인이
+        하나라도 있으면 True.
+
+        ⛔ **아무도 안 받으면 코어가 모드를 푼다**(호출부). 플러그인 디렉토리를 지운
+        뒤에도 그 모드가 남아 있으면 클라가 **키를 하나도 안 먹는 상태로 갇힌다** —
+        delete-to-disable 이 「조용히 사라진다」가 아니라 「조용히 망가진다」가 되는
+        자리라, 그 복구를 코어가 든다.
+        """
+        for p in self.plugins:
+            fn = getattr(p, "client_mode_key", None)
+            if fn is not None and fn(app, event):
+                return True
+        return False
+
+    def client_panes_changed(self, app, live_ids):
+        """레이아웃이 바뀌어 **살아 있는 패널 집합**이 이것이 됐다.
+
+        패널별 캐시를 든 플러그인이 사라진 패널의 것을 버리는 자리다. 안 버리면 캐시가
+        무한히 는다 — 신뢰 못 할 상류가 패널 id 를 흘리면 그것만으로 메모리가 자란다.
+        """
+        for p in self.plugins:
+            fn = getattr(p, "client_panes_changed", None)
+            if fn is not None:
+                fn(app, live_ids)
+
     def pane_blocks_changed(self, pane):
         """마지막으로 물어본 뒤 블록이 바뀌었나. 물어보면 표식이 내려간다.
 

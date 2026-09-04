@@ -166,14 +166,6 @@ pub static LEDGER: &[Row] = &[
         "정본 명령 해석기가 같은 이름을 받는다(`reconnect` 의 별칭)",
     ),
     p(
-        "select-blocks",
-        "복사/버퍼",
-        Class::Todo(DECIDE),
-        "블록(명령 + 그 출력) 하나를 골라 옮기고 복사하는 모드(pytmux-18). 정본 클라는 \
-         서버가 보내는 `blocks` 를 **안 그린다** — 못 그릴 이유는 없으므로 「정본이 가질 수 \
-         없는 것」이 아니라 **아직 안 낸 것**이다",
-    ),
-    p(
         "status",
         "설정/기타",
         Class::SameFeature("set_options:status"),
@@ -183,8 +175,9 @@ pub static LEDGER: &[Row] = &[
         "summary",
         "설정/기타",
         Class::Todo(DECIDE),
-        "블록 목록 + Claude 항목 요약 판(§10-21ⓓ). 앞 절반이 위 `select-blocks` 와 같은 \
-         표면이라 함께 정해진다",
+        "블록 목록 + Claude 항목 요약 판(§10-21ⓓ). ★ 앞 절반이던 `select-blocks` 는 \
+         **정본에 섰다**(pytmux-469 · 이 대장에서 빠졌다) — 남은 것은 그 목록을 **판으로** \
+         보여 주는 절반이고, 사람이 「고르기·복사 먼저, 판은 뒤 CL」로 정했다",
     ),
     // ── 설정 ──────────────────────────────────────────────────────────────────
     //
@@ -267,12 +260,6 @@ pub static LEDGER: &[Row] = &[
         Class::SameFeature("prefix_keys:p_lb"),
         "스크롤 모드 진입. 정본은 그 입구가 `prefix [` 하나이고 우리는 esc 에도 뒀다 — \
          tmux 의 copy-mode 관습을 두 모드 어느 쪽에서도 쓸 수 있게 한 것이다",
-    ),
-    r(
-        Axis::EscKey,
-        "b",
-        Class::Todo(DECIDE),
-        "블록 고르기 모드로 들어간다 — 위 팔레트 `select-blocks` 와 **같은 줄**이다",
     ),
     r(
         Axis::EscKey,

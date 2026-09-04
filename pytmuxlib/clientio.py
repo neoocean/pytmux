@@ -179,6 +179,21 @@ class _InputMixin:
             event.prevent_default()
             event.stop()
             return
+        if self.mode not in ("normal", "prefix", "scroll", "display", "esc"):
+            # 코어가 모르는 모드 = **플러그인이 세운 것**이고, 그 모드의 키는 전부
+            # 그 플러그인 것이다(blocks 의 `block` 모드 — pytmux-469).
+            #
+            # ⛔ 아무도 안 받으면 **여기서 모드를 푼다.** 플러그인 디렉토리를 지운
+            #    뒤에도 그 모드가 남아 있으면 클라가 키를 하나도 안 먹는 상태로
+            #    갇힌다 — delete-to-disable 이 「조용히 사라진다」가 아니라 「조용히
+            #    망가진다」가 되는 자리다. 키는 그래도 안 흘린다(그 한 번은 삼킨다):
+            #    삼키지 않으면 사용자가 못 본 모드의 마지막 키가 셸에 찍힌다.
+            if not self.plugins.client_mode_key(self, event):
+                self.mode = "normal"
+                self.status.refresh()
+            event.prevent_default()
+            event.stop()
+            return
         # normal
         # ESC: 활성 패널에 시계/달력 오버레이가 떠 있으면 그것부터 닫는다(요청 —
         # Shift+ESC 뿐 아니라 단순 ESC 로도 닫힘). 오버레이가 없을 때만 명령(esc)
@@ -680,6 +695,23 @@ class _InputMixin:
             # 이제 esc e)에서만 — 단독 ESC 두 번은 여전히 전달 없음(56632 불변).
             self.send_input(b"\x1b")
             self._exit_esc()
+            return
+        if ch == "b":
+            # esc b: 블록(명령 + 그 출력) 하나를 골라 복사하는 모드(pytmux-469 · 449 ⑴).
+            # GUI 의 같은 키와 **같은 자리**다(`base::BINDINGS` 의 `b`).
+            #
+            # ⛔ 이 키가 여는 것은 **플러그인 소유 표면**이다(`plugins/blocks`). 그
+            #    디렉토리가 없으면 `_run_command` 가 모르는 이름을 조용히 무시하므로
+            #    키는 무동작이 되고 모드만 빠진다 — esc ctrl+↑/↓(jump_prompt)가 이미
+            #    선 자리와 같은 규약이다(delete-to-disable).
+            #
+            # ⚠ **여기서 `self.mode` 를 세우지 않는다.** 들어갈지 말지는 그 패널에
+            #    블록이 있느냐가 정하고, 그건 플러그인만 안다 — 여기서 모드를 박으면
+            #    빈 패널에서 배지만 켜진 채 키가 통째로 죽는다. 네이티브 클라의
+            #    `ModeState` 도 같은 이유로 이 키에서 모드를 안 바꾼다(모드 전이 게이트가
+            #    그 둘을 맞대 본다).
+            self._exit_esc()
+            self._run_command("select-blocks")
             return
         if ch == "f":
             # esc f: 열린 **모든 탭·패널**을 가로지르는 검색(pytmux-27 ①). 스크롤

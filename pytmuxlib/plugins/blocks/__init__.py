@@ -6,11 +6,16 @@
 이 디렉토리를 지우면 기능이 조용히 사라져야 한다(delete-to-disable). 코어가 건드리는
 곳은 OSC 훅 하나뿐이다(`vtparse` → `Pane._on_osc` → 이 훅).
 
-# 기존 클라는 한 바이트도 더 받지 않는다
+# 능력을 광고하는 클라만 받는다
 
-클라가 hello 에 `caps: ["blocks"]` 를 실어 보내야만 `blocks` 메시지를 보낸다. 파이썬
-Textual 클라는 그 능력을 광고하지 않으므로 프레임이 늘지 않는다 — 새 기능이 기존
-클라의 대역폭·파싱 비용을 건드리지 않게 하는 계약이다.
+클라가 hello 에 `caps: ["blocks"]` 를 실어 보내야만 `blocks` 메시지를 보낸다.
+★ **그 능력은 이 플러그인이 싣는다**(`client_caps`) — 디렉토리를 지우면 정본 클라가
+블록을 안 광고하고 서버는 프레임을 한 바이트도 안 보낸다. 기능과 그 대역폭이 한 자리에
+붙어 있는 것이 이 계약의 값이다.
+
+⚠ 2026-09-04(pytmux-469)까지는 정본 클라가 그 능력을 **아예 안 광고했다**. 그리지도
+파싱하지도 않으면서 최대 500개 목록을 받는 것이 그때는 순 비용이었기 때문이다. 이제
+그린다 — 고르기·강조·복사가 `clientside.py` 에 섰다.
 
 # 서버가 권위다
 
@@ -25,7 +30,7 @@ Textual 클라는 그 능력을 광고하지 않으므로 프레임이 늘지 �
 있어서 누가 이기는지는 `Registry._blocks_sources`(`blocks_rank`)가 정한다. 이 디렉토리를
 지우면 셸 블록만 사라지고 Claude 턴은 남는다.
 """
-from .segment import MAX_BLOCKS, Segmenter
+from .segment import MAX_BLOCKS, Segmenter, row_span
 
 #: 패널에 붙는 세그멘터를 담는 속성명. 플러그인 네임스페이스를 지켜 코어 필드와
 #: 섞이지 않게 한다.
@@ -99,11 +104,26 @@ def clear_blocks_dirty(pane):
     pane._blocks_dirty = False
 
 
+#: 팔레트에 뜨는 이름. 네이티브 클라의 같은 줄(`base::PALETTE` 의 `select-blocks`)과
+#: **같은 이름·같은 분류**라야 한다 — 갈림 대장이 그 자리를 실제로 찾아본다.
+COMMANDS = [
+    ("select-blocks", "블록(명령 + 그 출력) 하나를 골라 복사(↑↓ 이동 · Ctrl+C 복사)",
+     "복사/버퍼"),
+]
+NOARG = {"select-blocks"}
+PANE_SCOPED = {"select-blocks"}
+
+
 class _BlocksPlugin:
     """레지스트리가 훅을 찾아가는 객체. 실제 로직은 위 모듈 함수들에 있다."""
 
     name = "blocks"
     description = "셸 통합(OSC 133)으로 명령 경계를 감지해 블록을 클라에 보낸다"
+    category = "복사/버퍼"
+    commands = COMMANDS
+    noarg = NOARG
+    pane_scoped = PANE_SCOPED
+    completions = []
 
     #: 페더레이션: 이 서버가 업스트림에 붙을 때 광고할 능력. 이게 있어야 업스트림이
     #: 블록을 내려보내고, 원격 탭을 보는 클라도 블록을 받는다. `cwd` 도 여기서 나온다 —
@@ -119,10 +139,47 @@ class _BlocksPlugin:
     #: 패널 cwd(경로 존의 기준). 블록과 갈라 내주는 이유는 함수 docstring.
     pane_cwd = staticmethod(pane_cwd)
 
+    # ---- 클라이언트 측(pytmux-469) ----
+    #
+    # ⛔ **지연 import** 다. `clientside` 는 rich/Textual 을 건드리므로 서버 프로세스가
+    #    그것을 읽으면 안 된다(rec 플러그인과 같은 규율).
+
+    #: 정본 클라가 hello 에 실을 능력. 이게 없으면 블록 프레임이 안 온다.
+    client_caps = ("blocks",)
+
+    def attach_client(self, app):
+        from .clientside import attach_client
+        attach_client(app)
+
+    def handle_message(self, app, msg):
+        from .clientside import handle_message
+        return handle_message(app, msg)
+
+    def handle_command(self, app, c, args):
+        from .clientside import handle_command
+        return handle_command(app, c, args)
+
+    def client_mode_key(self, app, event):
+        from .clientside import client_mode_key
+        return client_mode_key(app, event)
+
+    def client_render(self, app, cells, W, H):
+        from .clientside import client_render
+        client_render(app, cells, W, H)
+
+    def client_statusbar_badges(self, app, status, segs, w, w0=None):
+        from .clientside import client_statusbar_badges
+        return client_statusbar_badges(app, status, segs, w, w0)
+
+    def client_panes_changed(self, app, live_ids):
+        from .clientside import forget_panes
+        forget_panes(app, live_ids)
+
 
 PLUGIN = _BlocksPlugin()
 
 __all__ = [
+    "COMMANDS",
     "MAX_BLOCKS",
     "PLUGIN",
     "blocks_dirty",
@@ -130,4 +187,5 @@ __all__ = [
     "clear_blocks_dirty",
     "pane_cwd",
     "pane_osc",
+    "row_span",
 ]
