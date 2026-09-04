@@ -154,3 +154,46 @@ fn probe_overlay(rows: u16) -> SplitterOverlay {
         rows,
     )
 }
+
+// ── 레터박스는 «맨 위»다 (pytmux-381) ─────────────────────────────────────────────
+
+#[test]
+fn the_matte_is_painted_last_so_no_chrome_survives_on_the_dead_area() {
+    // ☠ **실측이 이 차례를 뒤집었다**(2026-09-04 · 작은 코-뷰어 40×12 + 실 GUI 창):
+    //
+    //     라이브 격자는 x ≤ 320 · y < 226 인데
+    //     두 패널 사이 스플리터 선이 **y 77 → 764**(창 바닥)로 한 줄기였다.
+    //
+    // 종전 주석은 무광을 *"남는 자리의 **바탕**"* 이라 불렀고 그래서 맨 먼저 칠했다.
+    // 그 자리는 **살아 있지 않은 영역**이라 거기 얹히는 것은 전부 거짓말이다 — 테두리가
+    // 「이 패널은 여기까지다」라고 말하는데 그 안의 대부분이 죽은 영역이었다.
+    //
+    // ⛔ 화소로 재려면 실 창이 있어야 한다(그건 qa T3 의 일이다). 여기서는 **차례**를
+    //    잰다 — 차례가 곧 층이고, 조용히 되돌아오는 것이 이 부류다.
+    let src = include_str!("splitter.rs");
+    let body = src
+        .split("fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext)")
+        .nth(1)
+        .expect("`paint` 를 못 찾았다 — 이 오라클의 전제가 깨졌다");
+    let mut calls: Vec<&str> = Vec::new();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with("//") {
+            continue;                      // 주석 속 이름은 차례가 아니다
+        }
+        if let Some(rest) = line.strip_prefix("self.paint_") {
+            if let Some(name) = rest.split('(').next() {
+                calls.push(name);
+            }
+        }
+        if line.starts_with("fn dispatch_event(") {
+            break;                          // 다음 형제 함수 — 여기까지가 `paint` 다
+        }
+    }
+    assert!(calls.len() > 5, "`paint` 에서 그리기 호출을 거의 못 찾았다: {calls:?}");
+    assert_eq!(
+        calls.last(),
+        Some(&"matte"),
+        "무광이 마지막이 아니다 — 그 뒤에 그리는 것은 **죽은 영역 위에 남는다**: {calls:?}"
+    );
+}

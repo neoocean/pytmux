@@ -599,8 +599,15 @@ impl SplitterOverlay {
         let Some(m) = self.matte.as_ref() else { return };
         let live_w = m.live_cols as f32 * cw;
         let live_h = m.live_rows as f32 * ch;
-        let full_w = m.cols as f32 * cw;
-        let full_h = m.rows as f32 * ch;
+        // ⛔ **칸 수로만 셈하면 바닥에 조각이 남는다**(pytmux-381 · 실측 9px). 알린 칸 수는
+        //    정수라 `rows * ch` 가 캔버스의 실제 높이보다 조금 짧다 — 그 틈으로 아래쪽
+        //    테두리 한 조각이 살아남았다(실측: 무광이 y754 에서 끝나는데 선이 756~764).
+        //    그래서 **내가 실제로 받은 크기**가 있으면 그것까지 덮는다(칸 수는 하한).
+        let (box_w, box_h) = self
+            .size
+            .map_or((0., 0.), |s| (s.x(), s.y()));
+        let full_w = (m.cols as f32 * cw).max(box_w);
+        let full_h = (m.rows as f32 * ch).max(box_h);
         let mut band = |x0: f32, y0: f32, w: f32, h: f32| {
             if w <= 0.5 || h <= 0.5 {
                 return;
@@ -1121,8 +1128,7 @@ impl Element for SplitterOverlay {
         if !(cw.is_finite() && ch.is_finite()) || cw <= 0.5 || ch <= 0.5 {
             return;
         }
-        // 레터박스가 **가장 먼저** — 남는 자리의 바탕이라 그 위에 무엇이든 얹힌다.
-        self.paint_matte(origin, cw, ch, ctx);
+        // (레터박스는 **맨 끝**이다 — 아래 `paint_matte` 주석 참조.)
         // 블록이 맨 먼저 — 패널 **안**의 그림이라 크롬(테두리·바)이 그 위를 덮는 것이 맞다.
         self.paint_blocks(origin, cw, ch, ctx);
         // ★ 패널 번호는 **가장 위**다(합성기에서 그랬던 자리 그대로) — 시계·달력 위에서도
@@ -1207,6 +1213,21 @@ impl Element for SplitterOverlay {
         // ★ 패널 번호는 **그 커서보다도 위**다(합성기에서 그랬던 자리 그대로 · pytmux-461):
         //   시계·달력 위에서도 번호가 보여야 그 패널로 갈 수 있다.
         self.paint_numbers(origin, cw, ch, ctx);
+        // ☠ **레터박스는 «바탕»이 아니라 «맨 위»다**(pytmux-381 · 라이브 실측 2026-09-04).
+        //
+        //   종전 주석은 *"남는 자리의 **바탕**이라 그 위에 무엇이든 얹힌다"* 였다. 그
+        //   「무엇이든」이 문제였다 — 그 자리는 **살아 있지 않은 영역**이고, 거기 얹히는
+        //   것은 전부 거짓말이다. 실측(작은 코-뷰어 40×12 + 실 GUI 창 `--frame-dump`):
+        //
+        //       라이브 격자는 x ≤ 320 · y < 226 인데
+        //       두 패널 사이 스플리터 선이 **y 77 → 764**(창 바닥)로 한 줄기였다.
+        //
+        //   즉 테두리·스플리터가 무광 위를 뚫고 지나가, 화면이 「이 패널은 여기까지다」라고
+        //   말하는데 그 안의 대부분이 죽은 영역인 **큰 빈 상자**로 보였다.
+        //
+        //   ⇒ 맨 끝으로 옮긴다. 무광은 그 영역을 **덮는 것**이 일이다. 커서·패널 번호도
+        //   덮이는데 그것이 맞다 — 죽은 영역에는 커서도 번호도 있을 수 없다.
+        self.paint_matte(origin, cw, ch, ctx);
     }
 
     fn dispatch_event(
