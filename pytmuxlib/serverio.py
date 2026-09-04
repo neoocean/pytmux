@@ -808,7 +808,7 @@ class ServerIOMixin:
         if not self.running or self.loop is None:
             return
         self._pty_host = None
-        self.loop.create_task(self._reconnect_host())
+        self._spawn(self._reconnect_host(), "reconnect_host")   # 검수 S-4 — 들고 돈다
 
     async def _reconnect_host(self):
         # 폭주 가드: 직전 연결이 곧바로(STABLE 미만) 끊겼으면 급속 churn 으로 보고

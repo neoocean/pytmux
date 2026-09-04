@@ -1605,7 +1605,9 @@ impl Screens {
                             return Some(ScreenKey::Consumed);
                         }
                         Key::Right => {
-                            self.selected += per_col;
+                            // `End` 가 두고 간 `usize::MAX` 위에서도 눌린다 — 넘치지 않게
+                            // 포화한다(`press_settings` 와 같은 규약 · 검수 2026-09-05 G-2).
+                            self.selected = self.selected.saturating_add(per_col);
                             return Some(ScreenKey::Consumed);
                         }
                         Key::PageUp => {
@@ -1613,7 +1615,7 @@ impl Screens {
                             return Some(ScreenKey::Consumed);
                         }
                         Key::PageDown => {
-                            self.selected += per_col * cols;
+                            self.selected = self.selected.saturating_add(per_col * cols);
                             return Some(ScreenKey::Consumed);
                         }
                         _ => {}
@@ -1833,7 +1835,8 @@ impl Screens {
                 ScreenKey::Consumed
             }
             Key::Down => {
-                self.selected += 1;
+                // `End` 가 두고 간 `usize::MAX` 위에서도 눌린다 — 포화한다(검수 G-2).
+                self.selected = self.selected.saturating_add(1);
                 ScreenKey::Consumed
             }
             Key::PageUp => {
@@ -1841,7 +1844,7 @@ impl Screens {
                 ScreenKey::Consumed
             }
             Key::PageDown => {
-                self.selected += PAGE;
+                self.selected = self.selected.saturating_add(PAGE);
                 ScreenKey::Consumed
             }
             Key::Home => {
@@ -1922,7 +1925,7 @@ impl Screens {
     fn press_list(&mut self, key: Key) -> ScreenKey {
         match key {
             Key::Down | Key::Tab => {
-                self.selected += 1;
+                self.selected = self.selected.saturating_add(1);
                 ScreenKey::Consumed
             }
             Key::Up | Key::BackTab => {
@@ -2628,7 +2631,7 @@ impl Screens {
                 ScreenKey::Consumed
             }
             Key::Down | Key::Tab => {
-                self.selected += 1;
+                self.selected = self.selected.saturating_add(1);
                 ScreenKey::Consumed
             }
             Key::Up | Key::BackTab => {

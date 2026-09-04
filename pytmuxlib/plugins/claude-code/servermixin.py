@@ -383,10 +383,10 @@ class ServerClaudeMixin:
                            "자동재개: '{msg}' 주입(패널 {pane})",
                            severity="info", pane=pane.id,
                            msg=getattr(pane, "resume_msg", ""))
-            import asyncio as _a
             for c in list(getattr(self, "clients", ())):
                 if getattr(c, "session", None) is not None:
-                    _a.create_task(self._send_to(c, dict(msg)))
+                    # 맨 create_task 금지(pytmux-410 · 검수 2026-09-05 S-4) — 서버가 든다.
+                    self._spawn(self._send_to(c, dict(msg)), "autoresume_notice")
         except Exception:       # noqa: BLE001 — 알림이 자동재개를 죽이면 안 된다
             pass
 
@@ -442,10 +442,10 @@ class ServerClaudeMixin:
                 severity="warn", ver=rec["version"],
                 when=self._fmt_fullscreen_at(rec["at_ms"]),
                 strikes=rec["strikes"])
-            import asyncio as _a
             for c in list(getattr(self, "clients", ())):
                 if getattr(c, "session", None) is not None:
-                    _a.create_task(self._send_to(c, dict(msg)))
+                    # 맨 create_task 금지(pytmux-410 · 검수 2026-09-05 S-4) — 서버가 든다.
+                    self._spawn(self._send_to(c, dict(msg)), "fullscreen_notice")
         except Exception:       # noqa: BLE001 — 알림이 세션 경계를 죽이면 안 된다
             pass
 

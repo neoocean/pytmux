@@ -821,7 +821,11 @@ def _refresh_usage(server):
         asyncio.get_running_loop()
     except RuntimeError:
         return          # 루프 밖(단위 시험) — 띄울 자리가 없다
-    asyncio.create_task(fn())
+    spawn = getattr(server, "_spawn", None)
+    if callable(spawn):
+        spawn(fn(), "refresh_usage")     # 서버가 든다(pytmux-410 · 검수 S-4)
+    else:
+        asyncio.ensure_future(fn())      # 인형 서버(시험) — 루프가 든다
 
 
 def _goto_of(sid):

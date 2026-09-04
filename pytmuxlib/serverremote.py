@@ -1122,7 +1122,7 @@ class ServerRemoteMixin:
                 except Exception:
                     self._log_error(f"remote_restore({name})")
 
-        self.loop.create_task(_restore())
+        self._spawn(_restore(), "remote_restore")   # 검수 2026-09-05 S-4 — 들고 돈다
 
     # ---- 업스트림 수신 ----
     async def _remote_reader(self, link: RemoteLink):
@@ -2031,8 +2031,8 @@ class ServerRemoteMixin:
                 pass
         # `-J` 는 래퍼가 기록한 것만 쓴다(_ssh_dest 와 같은 provenance 게이트를 이미
         # 통과한 값) — self-report 는 여기서도 안 믿는다.
-        self.loop.create_task(self._nest_do_attach(
-            sess, dest, getattr(pane, "_ssh_jump", "") or None))
+        self._spawn(self._nest_do_attach(
+            sess, dest, getattr(pane, "_ssh_jump", "") or None), "nest_attach")
 
     def _nest_pane_session(self, pane):
         for sess in self.sessions.values():

@@ -264,7 +264,9 @@ class ServerPtyMixin:
             pty_proc.terminate()            # SIGHUP — 훅이 돌 틈
         with contextlib.suppress(Exception):
             pty_proc.close()
-        self.loop.create_task(self._finish_retire(pty_proc))
+        # ⛔ 맨 create_task 금지(pytmux-410) — 안 들면 GC 가 거둬 SIGKILL 폴백이 영영 안
+        #    나가고 고아 셸이 남는다(검수 2026-09-05 S-4 · 게이트 밖이던 자리).
+        self._spawn(self._finish_retire(pty_proc), "retire_pty")
 
     async def _finish_retire(self, pty_proc) -> None:
         """`_retire_pty` 의 뒷걸음 — 유예 안에 안 죽으면 그때 SIGKILL 하고 거둔다."""
