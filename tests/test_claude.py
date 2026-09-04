@@ -1051,3 +1051,170 @@ async def test_public_parsers_linear_on_hostile_screen():
         fn(hostile)
     elapsed = time.perf_counter() - t0
     assert elapsed < 1.0, f"공개 파서 적대적 입력 처리 {elapsed:.3f}s — 폭주 의심"
+
+
+# ── pytmux-477: Claude 가 **스스로 재시도 중**인 화면 ────────────────────────
+# ★ 실측이다 — captures/playground.local/20260614_093019_0_0.win_p1.log.gz 를
+# `scripts/extract_frame.py … "Retrying in"` 으로 렌더한 프레임이고, **제보의 장면
+# 그대로**다: 529 배너 + 우리가 넣은 `계속` 둘 + 그 아래 Claude 자신의 재시도 줄.
+_SELF_RETRY_REAL = (
+    "✻ Worked for 3m 28s\n"
+    "\n"
+    "❯ <system-reminder>Message sent at Mon 2026-06-15\n"
+    "  07:40:15 UTC.</system-reminder>\n"
+    "  계속\n"
+    "\n"
+    "⏺ API Error: 529 Overloaded. This is a\n"
+    "  server-side issue, usually temporary —\n"
+    "  try again in a moment. If it persists,\n"
+    "  check https://status.claude.com.\n"
+    "\n"
+    "✻ Cooked for 3m 29s\n"
+    "\n"
+    "❯ <system-reminder>Message sent at Mon 2026-06-15\n"
+    "  07:45:20 UTC.</system-reminder>\n"
+    "  계속\n"
+    "  ⎿  Retrying in 14s · attempt 7/10\n"
+    "  ❯ 계속\n"
+)
+
+
+async def test_self_retry_frame_is_not_busy_so_the_old_guard_missed_it():
+    """이 슬라이스의 **까닭**을 실물로 고정한다.
+
+    `_fire_retry` 의 종전 발화직전 가드는 `claude_state(text) == "busy"` 였다. 그런데
+    Claude 가 스스로 재시도 중인 프레임은 배너가 남아 있어 `claude_api_error` 는 True 인데
+    `claude_state` 는 **`busy` 가 아니라 None** 이다 — 그래서 그 가드가 **안 막는다.**
+    제보 스크린샷의 `계속` 네 번이 그 자국이고, 이 프레임이 그 화면 그대로다."""
+    from pytmuxlib.claude import claude_api_error
+    assert claude_api_error(_SELF_RETRY_REAL) is True
+    assert claude_state(_SELF_RETRY_REAL) is None, "busy 면 종전 가드가 이미 막았을 것이다"
+
+
+async def test_claude_self_retry_needs_both_halves_on_one_line():
+    """`Retrying in …` 과 `attempt N/M` 이 **한 줄에 그 차례로** 있을 때만 True.
+
+    ⛔ 한쪽만 보면 코퍼스가 문다(§3.7 규율):
+      · `attempt N/M` 만 → 우리 도구의 로그(`p4: submit attempt 1/3 failed`)가 걸린다.
+      · `Retrying in` 만 → `No response from API … · Retrying in 2m 12s` **배너**가
+        걸리는데 그쪽은 `claude_api_error` 가 다루는 **다른 것**이다."""
+    from pytmuxlib.claude import claude_self_retry as f
+    assert f(_SELF_RETRY_REAL) is True
+    assert f("  ⎿  Retrying in 1s · attempt 1/10") is True
+    assert f("✳ 529 Overloaded · Retrying in 36s · attempt 8/10") is True
+    # 대조군 — 코퍼스에 실제로 있는 오탐 후보들.
+    assert f("2026-06-09 17:21 WARNING p4: submit attempt 1/3 failed (rc=1)") is False
+    assert f("⏺ No response from API   · Retrying in 2m 12s · check your network") is False
+    assert f("⏺ API Error: 529 Overloaded. This is a server-side issue") is False
+    # 차례가 뒤집히면 안 잡는다(다른 글이다).
+    assert f("attempt 7/10 … Retrying in 14s") is False
+    # 사용자가 친 글·소스 줄은 _claude_body 가 걸러 낸다.
+    assert f("> Retrying in 3s · attempt 2/10 이라고 나오는데 왜?") is False
+    assert f("") is False
+    assert f(None) is False
+
+
+# ── pytmux-475: auto mode 패널의 yes/no 자동 «예» 확정 판정 ───────────────────
+# ★ 이 픽스처는 **실측**이다 — captures/playground.local/20260615_171414_0_0
+# .pytmux_p1.log.gz 를 `scripts/extract_frame.py … "Do you want to proceed"` 로
+# 렌더한 프레임 그대로다. 화면 아래에 **권한모드 footer 가 없다**는 것이 이 판정
+# 설계의 근거라, 그 사실을 지어낸 문장이 아니라 실물로 고정한다.
+# ⚠ 상자 안의 **명령 줄만** 중립 경로로 바꿨다(미러 위생 — 실 홈 경로는 공개 미러로
+# 나가는 텍스트다). 판정이 보는 것은 물음 줄·옵션 줄·상자 footer 셋이라 이 치환은
+# 재는 것을 안 건드린다.
+_AUTO_YES_REAL = (
+    " Bash command\n"
+    "\n"
+    "   cd ~/proj/scripts/pyt\n"
+    "   mux; grep -rn \"usage.account\\b\"\n"
+    "   Find account aliasing/elision\n"
+    "\n"
+    " Compound command contains cd with output\n"
+    " redirection - manual approval required to\n"
+    " prevent path resolution bypass\n"
+    "\n"
+    " Do you want to proceed?\n"
+    " ❯ 1. Yes\n"
+    "   2. No\n"
+    "\n"
+    " Esc to cancel · Tab to amend · ctrl+e to explain\n"
+)
+
+
+async def test_auto_yes_real_frame_has_no_permission_footer():
+    """설계의 전제를 실물로 고정한다: **권한 확인 상자가 뜬 프레임에는 권한모드
+    footer 가 없다.**
+
+    그래서 `_scan_auto_yes` 는 「지금 auto 인가」를 그 자리에서 못 재고, footer 가
+    보이던 프레임에 앵커드로 재 둔 값(`pane._perm_seen`)을 쓴다. 이 단언이 언젠가
+    깨지면(= Claude 가 상자 아래에도 footer 를 그리게 되면) 그 우회를 걷어내고
+    이슈가 원래 적었던 대로 `claude_perm_mode(txt, anchored=True)` 를 직접 봐도
+    된다 — 그 판단의 근거가 여기 한 줄이다."""
+    assert claude_perm_mode(_AUTO_YES_REAL, anchored=True) is None
+    assert claude_state(_AUTO_YES_REAL) is None
+
+
+async def test_auto_yes_ready_requires_plain_yes_already_selected():
+    """`claude_auto_yes_ready` 는 SEC-1 을 잇는다 — **이미 선택돼 있는 맨 `Yes`** 일
+    때만 True. 선택을 옮기는 키는 아무도 안 보내므로, 셀렉터가 다른 데 있으면 그
+    화면은 사람에게 남아야 한다."""
+    from pytmuxlib.claude import claude_auto_yes_ready as f
+    assert f(_AUTO_YES_REAL) is True
+    # 구 CLI 의 '>' 셀렉터도 같은 화면이면 True.
+    assert f("Do you want to proceed?\n> 1. Yes\n  2. No\n\nEsc to cancel") is True
+    # 테두리 있는 상자도(줄 앞 │) 같다.
+    assert f("│ Do you want to proceed?\n│ ❯ 1. Yes\n│   2. No\n│ Esc to cancel") \
+        is True
+    # 셀렉터가 거절지에 있으면 False.
+    assert f("Do you want to proceed?\n  1. Yes\n❯ 2. No\n\nEsc to cancel") is False
+
+
+async def test_auto_yes_ready_leaves_scope_widening_yes_to_a_human():
+    """`Yes, and don't ask again …` · `Yes, allow all edits during this session` 처럼
+    **권한 범위를 넓히는** 긍정은 자동 확정 대상이 아니다.
+
+    한 번의 Enter 가 그 세션 내내(또는 영영) 되묻지 않게 만드는 것은, SEC-1 이 막는
+    「미지의 선택 확정」과 같은 종류의 위험이다. 실측 3건의 기본 셀렉터는 전부
+    `❯ 1. Yes` 라 이 좁히기로 실사용에서 잃는 것이 없다."""
+    from pytmuxlib.claude import claude_auto_yes_ready as f
+    for widened in ("Yes, and don't ask again for: p4 status *",
+                    "Yes, allow all edits during this session (shift+tab)",
+                    "Yes, allow reading from /tmp during this session"):
+        txt = ("Do you want to proceed?\n"
+               "  1. Yes\n"
+               f"❯ 2. {widened}\n"
+               "  3. No\n"
+               "\nEsc to cancel · Tab to amend\n")
+        assert f(txt) is False, widened
+    # 같은 화면이라도 셀렉터가 맨 Yes 로 돌아오면 True(옵션 존재 자체는 무해).
+    assert f("Do you want to proceed?\n"
+             "❯ 1. Yes\n"
+             "  2. Yes, and don't ask again for: p4 status *\n"
+             "  3. No\n"
+             "\nEsc to cancel · Tab to amend\n") is True
+
+
+async def test_auto_yes_ready_requires_a_box_that_is_still_waiting():
+    """③ 「지금 응답을 기다리는 상자」만 True — 잔상·부분 화면은 False.
+
+    미해결 신호를 **둘** 요구한다: 상자 자기 footer(`Esc to cancel`)와 번호 붙은
+    거절지. 그리고 판정 구간은 **마지막** 물음 이후라, 앞서 답한 상자는 안 본다
+    (claude_managed_settings_yes ①과 같은 좁히기 — 그게 없으면 재주입 방지 래치가
+    영영 안 풀린다)."""
+    from pytmuxlib.claude import claude_auto_yes_ready as f
+    live = "Do you want to proceed?\n❯ 1. Yes\n  2. No\n\nEsc to cancel\n"
+    assert f(live) is True
+    # 상자 footer 가 없으면(=이미 답해 사라짐) False.
+    assert f("Do you want to proceed?\n❯ 1. Yes\n  2. No\n") is False
+    # 거절지가 없으면 False.
+    assert f("Do you want to proceed?\n❯ 1. Yes\n\nEsc to cancel\n") is False
+    # 답한 상자 **뒤에** 새 물음이 이어 그려지면, 마지막 구간만 보므로 False.
+    assert f(live + "\n⏺ 완료\n Do you want to keep going?\n") is False
+    # 그 새 물음이 진짜 상자면 True(잔상 + 살아 있는 상자).
+    assert f(live + "\n⏺ 완료\n" + live) is True
+    # 머리글만·셀렉터만 있는 화면도 False.
+    assert f("❯ 1. Yes\n  2. No\nEsc to cancel\n") is False
+    assert f("Do you want to proceed?\n") is False
+    assert f("? for shortcuts") is False
+    assert f("") is False
+    assert f(None) is False

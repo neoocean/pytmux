@@ -79,6 +79,11 @@ COMMANDS = [
                           "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
+    ("claude-detail", "Claude 플랜 전문·거부 사유 판 — 마지막 플랜과 마지막 막힌 호출을 "
+                      "읽는다(별칭 plan-detail · GUI 는 esc v)", "Claude"),
+    ("claude-auto-yes", "auto mode 인 패널이 yes/no 를 물으면 «맨 Yes» 를 자동 확정 "
+                        "on/off — 이미 선택돼 있는 것만 Enter 로 확정한다 "
+                        "(claude-auto-yes on|off|toggle, 기본 off)", "Claude"),
     ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
                     "on/off (auto-launch on|off|toggle, 기본 on)", "Claude"),
     ("claude-token-debug", "Claude 토큰 회계 진단 로그(<sock>.tokendbg.jsonl) on/off — §10-D 과소집계 "
@@ -86,7 +91,7 @@ COMMANDS = [
                     "Claude"),
 ]
 NOARG = {
-    "claude-rules", "claude-settings",
+    "claude-rules", "claude-settings", "claude-detail", "plan-detail",
     "claude-token-log", "claude-token-machines", "token-machines",
     "claude-warn-history", "claude-warns", "warn-history",
     "claude-token-period", "token-period",
@@ -141,6 +146,7 @@ COMMAND_OPTIONS = {
     "claude-resume-verify": [{"key": "state", "label": "재개확인",
                               "choices": _VERIFY_CHOICES}],
     "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
+    "claude-auto-yes": [{"key": "state", "label": "자동예", "choices": _ONOFF}],
     "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
     "claude-token-debug": [{"key": "state", "label": "토큰진단로그",
                             "choices": _ONOFF}],
@@ -174,6 +180,8 @@ i18n.register({
         "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
         "cmd.claude-resume-verify": "Out-of-band check before auto-resume — off | weak (suppress when the session used almost nothing in the last 5h) | strict (claude-resume-verify off|weak|strict|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
+        "cmd.claude-detail": "Claude plan / denied-call panel — the last plan and the last blocked call (alias plan-detail; GUI: esc v)",
+        "cmd.claude-auto-yes": "In auto mode, auto-confirm a yes/no prompt whose selector already sits on the plain Yes on/off (claude-auto-yes on|off|toggle, default off)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.claude-token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now | resync",
         "cmd.claude-token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
@@ -222,12 +230,21 @@ i18n.register({
         # F3 벡터 3: 정책 차단 래치는 투명해야 하고(조용한 중단 금지) 자기치유한다.
         "ccmsg.rc_policy_blocked": "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})",
         "ccmsg.rc_policy_cleared": "원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다",
+        # pytmux-477: 재시도가 **도는 중**임을 비활성 탭에 있는 사람에게도 알린다
+        # (배지는 활성 패널의 것이라 다른 탭을 보고 있으면 아무것도 안 보인다).
+        "ccmsg.retry_injected":
+            "전송 에러 자동 재시도: '{msg}' 주입({n}회째 · 패널 {pane})",
         "ccmsg.model_apply": "/model {arg} 적용 요청",
         "ccmsg.perm_switching": "권한모드 → {target} 전환 중…",
         "ccmsg.usage_no_data": "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행",
         "ccmsg.usage_title": "Claude 사용 한도 (/usage)",
         # Tier C 한도 판(pytmux-20) — 읽는 판이라 키가 스크롤·닫기뿐이다.
-        "cusage.hint": "↑↓ 스크롤 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        # ⛔ **「스크롤」이 아니라 「이동」이다**(pytmux-478 ⑴). 이 판은 `kind:"table"` —
+        # ↑↓ 는 **커서를 옮긴다**(`press_list`). 글 판이던 시절의 낱말이 판이 표로 바뀐
+        # 뒤(pytmux-184 ⑴ · 네이티브 막대)에도 그대로 남아, 화면이 자기가 하는 일을
+        # 사용자에게 틀리게 말하고 있었다. 정본이 같은 부류의 판에 쓰는 낱말과 맞춘다
+        # (`pscreen.tklog_hint` = `↑↓ 이동`).
+        "cusage.hint": "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "ccmsg.no_warn": "표시할 Claude 경고가 없습니다(이미 해소됨).",
         "ccmsg.rc_title": "원격 제어(Remote Control)",
         "ccmsg.rc_body":
@@ -257,6 +274,8 @@ i18n.register({
             "back (claude {ver} · {when} · {strikes} strikes)",
         "ccmsg.rc_policy_blocked": "Org policy message seen — stopping auto /rc injection (pane {pane})",
         "ccmsg.rc_policy_cleared": "Remote control is actually on — clearing the policy-block latch",
+        "ccmsg.retry_injected":
+            "Transmission-error auto-retry: injected '{msg}' (#{n} · pane {pane})",
         "ccmsg.resume_unverified": "Auto-resume suppressed: only {used} tokens used in "
                                    "the last 5h (<{need}) — limit banner looks forged "
                                    "(pane {pane}, claude-resume-verify {mode})",
@@ -265,7 +284,7 @@ i18n.register({
         "ccmsg.usage_no_data":
             "No /usage limit data — run /usage in a Claude panel first",
         "ccmsg.usage_title": "Claude usage limit (/usage)",
-        "cusage.hint": "↑↓ scroll · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "cusage.hint": "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "ccmsg.no_warn": "No Claude warning to show (already cleared).",
         "ccmsg.rc_title": "Remote Control",
         "ccmsg.rc_body":
@@ -299,6 +318,7 @@ i18n.register({
     "en": {
         "자동재개": "Auto-resume", "클리어모드": "Clear mode",
         "오토모드": "Auto mode", "자동셋업": "Auto setup",
+        "자동예": "Auto-yes",
         "자동재시도": "Auto-retry",
         "깨짐완화": "Anti-corruption",
         "재개확인": "Resume check",
@@ -531,6 +551,7 @@ SAVER_ROWS = [
     ("claude_auto_redraw", "화면 깨짐 자동 완화(끔/완료마다/깨짐감지)", "cycle"),
     ("claude_resume_verify", "자동재개 대역외 확인(끔/약하게/엄격)", "cycle"),
     ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
+    ("claude_auto_yes", "auto 모드에서 yes/no 자동 «예»", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
     ("repeat_alert", "반복 루프 경고(회)", "cycle"),
@@ -560,6 +581,7 @@ def saver_display(app, key):
         "autoresume": st.autoresume,
         "auto_token_on_exit": st.auto_token_on_exit,
         "claude_auto_mode": st.claude_auto_mode,
+        "claude_auto_yes": st.claude_auto_yes,
         "prompt_clear": st.prompt_clear,
     }
     if key in bools:
@@ -605,6 +627,9 @@ def saver_action(app, key):
     elif key == "claude_auto_mode":
         app.send_cmd("set_claude_auto_mode", value=None)
         st.claude_auto_mode = not st.claude_auto_mode
+    elif key == "claude_auto_yes":
+        app.send_cmd("set_claude_auto_yes", value=None)
+        st.claude_auto_yes = not st.claude_auto_yes
     elif key == "prompt_clear":
         app.send_cmd("set_prompt_clear", value=None)
         st.prompt_clear = not st.prompt_clear
@@ -977,6 +1002,7 @@ class _ClaudeCodePlugin:
         "claude-auto-redraw": "claude_auto_redraw",
         "claude-resume-verify": "claude_resume_verify",
         "claude-auto-mode": "claude_auto_mode",
+        "claude-auto-yes": "claude_auto_yes",
         "auto-retry": "claude_auto_retry",
         "auto-launch": "auto_launch",
         "claude-token-debug": "token_debug",
@@ -1051,6 +1077,9 @@ class _ClaudeCodePlugin:
                    str),
                   # 권한모드 자동 오토모드 전환(§10): idle+비-auto 면 shift+tab 순환 주입. 기본 OFF.
                   ("claude_auto_mode", False, bool),
+                  # pytmux-475: auto mode 패널의 yes/no 확인 자동 «예» 확정. 기본 OFF —
+                  # 이 기능은 auto mode 를 더 공격적으로 만든다(켠 사람에게만 발효).
+                  ("claude_auto_yes", False, bool),
                   # 새 Claude 세션 자동 셋업(요청): None→Claude 첫 idle 에 /rc 1회+auto 유도. 기본 ON.
                   ("claude_auto_launch", True, bool),
                   # Claude Code 시작 규칙(#27): 새 세션/‑clear 후 프롬프트에 주입할 규칙 텍스트.
@@ -1202,8 +1231,11 @@ class _ClaudeCodePlugin:
         msg["claude_resume_verify"] = getattr(
             server, "claude_resume_verify", "off")
         msg["claude_auto_mode"] = server.claude_auto_mode
+        msg["claude_auto_yes"] = server.claude_auto_yes
         # 무장된 자동재개 카운트다운(없으면 None): {kind, eta(초)}.
         msg["claude_pending"] = server._pending_action(ap)
+        # pytmux-477: 전송 에러 재시도가 도는 중인가({n, eta, self}) — 없으면 None.
+        msg["claude_retry"] = server._retry_action(ap)
         # C4: 토글로만 바뀌는 정적 옵션은 full(신규 attach·_broadcast_session)일 때만
         # 싣는다 — set_* 핸들러가 _broadcast_session(full=True)으로 회신하므로 변경·
         # 접속 시 항상 도달하고, 주기(full=False) status 에선 빠져도 클라가 직전 값 유지.
@@ -1346,6 +1378,9 @@ class _ClaudeCodePlugin:
         if action == "set_claude_auto_mode":
             server.set_claude_auto_mode(msg.get("value"))
             return "send_full"
+        if action == "set_claude_auto_yes":
+            server.set_claude_auto_yes(msg.get("value"))
+            return "send_full"
         if action == "set_claude_auto_launch":
             # 종전에는 이 액션을 **외부 CLI 만** 부를 수 있었다(_CLI_TOGGLES → server_control).
             # 팔레트의 `auto-launch` 는 어느 클라에서도 여기 못 닿아 죽은 줄이었다(pytmux-35).
@@ -1390,6 +1425,8 @@ class _ClaudeCodePlugin:
     _CLI_TOGGLES = {
         "claude-auto-mode": "set_claude_auto_mode",
         "auto-mode": "set_claude_auto_mode",
+        "claude-auto-yes": "set_claude_auto_yes",
+        "auto-yes": "set_claude_auto_yes",
         "claude-auto-launch": "set_claude_auto_launch",
         "auto-launch": "set_claude_auto_launch",
         "claude-token-debug": "set_token_debug",
@@ -1914,6 +1951,12 @@ class _ClaudeCodePlugin:
             self._open_rules(app)
         elif c == "claude-settings":
             self._open_saver(app)
+        elif c in ("claude-detail", "plan-detail"):
+            # ★ **정본이 스펙을 청한다**(pytmux-468 걸음 4). 이 판의 글은 서버가 짓고
+            #   (`screenspec._detail_spec` → `detail.detail_lines`) 회신을 코어의 Tier C
+            #   렌더러(`_open_plugin_text`)가 그린다 — 그래서 두 클라가 **같은 글자**를
+            #   보고, 같은 판을 위해 Textual 화면을 하나 더 쓰지 않는다.
+            app.send_cmd("plugin_open", name="claude-detail")
         elif c == "claude-token-log":
             # token-usage 는 token-log 로 통합(2026-06-12) — 별칭으로만 남는다.
             app.open_token_log()

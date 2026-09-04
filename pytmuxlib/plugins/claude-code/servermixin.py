@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import os
 import time
@@ -29,6 +30,8 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_feedback_prompt, fmt_long_turn_badge,
                      fmt_unknown_update,
                      claude_input_box,
+                     claude_auto_yes_ready,
+                     claude_self_retry,
                      claude_managed_settings_yes,
                      claude_model_badge,
                      claude_prompt, claude_prompt_marks, claude_perm_mode,
@@ -39,6 +42,11 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      parse_reset_delay, parse_usage, screen_tail_key,
                      track_repeat)
 from pytmuxlib.model import Pane, Session, Tab
+
+
+def _secs(v) -> str:
+    """계측용 초 표기 — 없으면 «못 잼». 0.0 과 None 을 눈으로 안 헷갈리게 한다."""
+    return "못 잼" if v is None else "%.1fs" % v
 
 #: 엔드포인트별 임시 토큰 DB(`claude-tokens-<id>.db`)의 수명(일). 이보다 오래되고
 #: **행이 하나도 없는** 것만 거둔다(`_sweep_stale_token_dbs` — pytmux-435 ④).
@@ -166,6 +174,11 @@ _FEEDBACK_DISMISS_KEY = b"\x1b"
 # 딱 한 번만 쏜다 — 두 번째 Enter 는 승인 뒤 뜬 Claude 컴포저에 빈 프롬프트를
 # 제출하는 꼴이라(재주입 금지) /rc 메뉴 Esc 와 같은 디바운스 규율을 따른다.
 _MANAGED_SETTINGS_ACCEPT_KEY = b"\r"
+# auto mode 패널의 권한 확인(yes/no) 자동 «예» 확정 키(pytmux-475). 위 관리설정
+# 승인과 **같은 규율·같은 키**다 — 화면에 이미 선택돼 있는 맨 `Yes` 를 Enter 로
+# 확정할 뿐, 선택을 옮기는 키는 안 보낸다. _auto_yes_active 로 상자 인스턴스당 딱
+# 한 번(재주입은 확정 뒤 컴포저에 빈 프롬프트를 제출한다).
+_AUTO_YES_ACCEPT_KEY = b"\r"
 # M17(T7) 경고 임계는 opt(server.py: claude_long_turn_sec 기본 600 / claude_repeat_alert
 # 기본 3, 0=끔). 스캔의 warn 블록이 self.* 를 읽는다.
 
@@ -495,9 +508,28 @@ class ServerClaudeMixin:
         text = screen_text(pane.screen)
         if not claude_api_error(text) or claude_state(text) == "busy":
             return
+        # ☠ **`busy` 가드만으로는 안 막힌다**(pytmux-477 ⑸ · 실측). Claude 가 스스로
+        #    재시도 중인 프레임은 `claude_api_error()==True` 인데 `claude_state()` 가
+        #    `busy` 가 아니라 **None** 이다(배너가 남아 있고 footer 는 없다). 그 화면에
+        #    `계속` 을 넣으면 회복 중에 끼어드는 것이고, 제보 스크린샷의 `계속` 네 번이
+        #    바로 그 자국이다. **미룬다** — 예약은 다시 걸어(다음 케이던스) 자체 재시도가
+        #    끝내 실패해도 영영 멈춰 있지 않게 한다.
+        if claude_self_retry(text):
+            self._maybe_schedule_retry(pane)
+            return
         try:
             pane.pty.write((self._RETRY_MSG + "\r").encode("utf-8"))
             pane._retry_attempts = getattr(pane, "_retry_attempts", 0) + 1
+            pane._retry_last = time.time()
+            note = getattr(self, "_notice_msg", None)
+            if note is not None:
+                # ⛔ **비활성 탭에 있는 사람에게 닿는 유일한 자리**다(제보: 탭 3 에서
+                #    늦게 알았다). 배지는 활성 패널의 것이라 다른 탭을 보고 있으면
+                #    아무것도 안 보인다.
+                note("ccmsg.retry_injected",
+                     "전송 에러 자동 재시도: '{msg}' 주입({n}회째 · 패널 {pane})",
+                     severity="warn", msg=self._RETRY_MSG,
+                     n=pane._retry_attempts, pane=pane.id)
         except OSError:
             pass
 
@@ -1167,6 +1199,27 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.claude_auto_mode
 
+    def set_claude_auto_yes(self, value=None):
+        """auto mode 패널의 권한 확인(yes/no)을 자동으로 «예» 확정하는 모드 토글
+        (pytmux-475). value 미지정 시 반전. opts.json 영속(기본 OFF).
+
+        끄면 모든 패널의 상자 래치와 앵커드 관측을 비운다 — 다시 켤 때 «지금 떠 있는
+        상자»가 아니라 **다음 상자**부터 발효한다(켜는 순간 눈앞의 선택이 확정되는
+        놀라움을 안 만든다). 켤 때는 정적 화면으로 스캔이 게이팅된 패널을 한 번
+        재스캔시켜, 그다음 상자를 놓치지 않게 한다(set_claude_auto_mode 선례)."""
+        self.claude_auto_yes = (not self.claude_auto_yes) if value is None \
+            else bool(value)
+        for p in self._all_panes():
+            if self.claude_auto_yes:
+                # 지금 떠 있는 상자에는 안 쏜다 — 무장된 채로 다음 프레임을 맞는다.
+                p._auto_yes_active = True
+                p._scan_seq = -1
+            else:
+                p._auto_yes_active = False
+                p._perm_seen = None
+        self._save_opts()
+        return self.claude_auto_yes
+
     def set_claude_auto_launch(self, value=None):
         """새 Claude 세션 시작 시 /rc(원격 제어 켜기)+권한모드 auto 를 1회 자동 적용
         하는 모드 토글. value 미지정 시 반전. opts.json 영속. 끌 때 진행 중인 1회
@@ -1575,6 +1628,50 @@ class ServerClaudeMixin:
         else:
             p._managed_ok_active = False
 
+    def _scan_auto_yes(self, p, txt) -> None:
+        """auto mode 패널의 권한 확인(yes/no) 자동 «예» 확정 phase(pytmux-475).
+
+        Claude Code 는 auto mode on 이어도 분류기가 위험하다고 본 동작은 사람에게
+        묻는다 — 그 상자에서 패널이 서고, 자리를 비운 사이 진행이 통째로 멎는다.
+        `claude_auto_yes` 가 켜져 있고 **넷이 모두 참일 때만** Enter 를 보낸다:
+          ① 설정이 켜져 있다(기본 끔 — 이 기능은 auto mode 를 더 공격적으로 만든다).
+          ② 이 패널이 Claude 다(`_hdr_claude` 디바운스) **그리고** 마지막으로 앵커드
+             관측한 권한모드가 auto 다(`p._perm_seen`).
+          ③ 지금 응답을 기다리는 상자가 있다(잔상이 아니다 — claude_auto_yes_ready).
+          ④ 셀렉터가 «맨 Yes» 에 이미 놓여 있다(같은 판정 안 ③).
+
+        ⛔ **②를 `claude_perm_mode(txt, anchored=True)` 로 그 자리에서 못 잰다** —
+        실측(캡처 3건)으로 권한 확인 상자가 뜬 프레임에는 권한모드 footer 가 아예
+        없다(`claude_state`도 None 이다). 그래서 그 값은 **footer 가 보이던 프레임에
+        앵커드로 재 둔 것**을 쓴다. 값의 출처가 언제나 footer tail 이므로 본문에 위조
+        footer 를 그려 판정을 흔드는 길(F3 벡터 2)은 여전히 막혀 있다. `_perm_mode`
+        (팝업 표시용)를 안 쓰는 이유도 실측이다: 그 값은 `p._claude is None` 인 프레임
+        에서 비워지는데, 상자가 뜬 프레임이 바로 그 프레임이다.
+
+        ⛔ 설정이 꺼져 있으면 **아무것도 안 잰다** — 앵커드 관측조차 안 한다(안 켠
+        사람에게 비용 0).
+        """
+        if not getattr(self, "claude_auto_yes", False):
+            p._auto_yes_active = False
+            return
+        pm = claude_perm_mode(txt, anchored=True)
+        if pm is not None:
+            # 앵커드 관측만이 이 값을 세운다(F3 벡터 2). 확정 세션 종료·새 셸에서 비운다.
+            p._perm_seen = pm
+        if not (p._hdr_claude and p._perm_seen == "auto"):
+            p._auto_yes_active = False
+            return
+        if claude_auto_yes_ready(txt):
+            if not p._auto_yes_active:
+                p._auto_yes_active = True
+                if p.pty is not None:
+                    try:
+                        p.pty.write(_AUTO_YES_ACCEPT_KEY)
+                    except OSError:
+                        pass
+        else:
+            p._auto_yes_active = False
+
     def _scan_usage_capture(self, txt) -> bool:
         """패널에 뜬 실측 /usage 한도를 권위값(self._usage)으로 캡처하는 phase.
 
@@ -1705,14 +1802,25 @@ class ServerClaudeMixin:
         # 5h 사용량 배너("usage limit reached")는 claude_api_error 에 안 잡히고,
         # "rate limit exceeded" 처럼 둘 다 걸리는 경우만 autoresume 가 이미 재개를
         # 무장(_resume_pending)했으면 양보해 중복 주입을 막는다(reset 시각으로 다룸).
-        if p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
+        # ⓐ Claude 가 **스스로 재시도 중**이면 그 화면은 「에러로 멈췄다」가 아니라
+        #    「아직 안 끝났다」다(pytmux-477 ④). 예약을 걷지도 **카운터를 리셋하지도**
+        #    않는다 — 리셋하면 그 뒤 진짜로 굳었을 때 백오프가 1분부터 다시 시작해
+        #    회복 중인 Claude 를 더 자주 두드린다.
+        if p._hdr_claude and claude_self_retry(txt):
+            if not p._self_retry:
+                p._self_retry = True
+            self._maybe_schedule_retry(p)
+        elif p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
+            p._self_retry = False
             self._maybe_schedule_retry(p)
         else:
+            p._self_retry = False
             # 에러 아님(해소·busy/idle 복귀·autoresume 양보·non-Claude) → 무장
             # 예약 취소 + 연속 재시도 카운터 리셋(다음 새 에러는 다시 1분부터, #9 H3).
             if p._retry_handle is not None:
                 self._cancel_retry(p)
             p._retry_attempts = 0
+            p._retry_last = 0.0
 
     def _scan_idle_actions(self, p, txt, new_cl) -> bool:
         """idle 프레임의 자동개입 phase — 보류 리네임 주입·시작 규칙·auto-launch(/rc→
@@ -2133,6 +2241,10 @@ class ServerClaudeMixin:
                 # 조직 관리 설정 승인 화면(부팅 차단) 자동 통과 phase — Claude 로
                 # 인식되기 **전**(footer 없음) 화면이라 new_cl 게이트 밖에 둔다.
                 self._scan_managed_settings(p, txt)
+                # auto mode 패널의 권한 확인 자동 «예» 확정 phase(pytmux-475) —
+                # 그 상자가 뜬 프레임은 footer 가 없어 claude_state 가 None 이다.
+                # new_cl 게이트 안에 두면 영영 안 돈다.
+                self._scan_auto_yes(p, txt)
                 # `/rc` 화면 신호 phase(메뉴 dismiss·정책 차단·active sticky) —
                 # 로드맵 #1 God-분할로 _scan_rc_signals 추출(동작 불변).
                 self._scan_rc_signals(p, txt)
@@ -2169,6 +2281,9 @@ class ServerClaudeMixin:
                         # 기동엔 정상 재무장. 재시작 transient 한 프레임은 miss 임계(30)에
                         # 못 미쳐 여기 안 오므로 _rc_done 이 살아남는다.
                         p._rc_done = False
+                        # pytmux-475: 다음 claude 는 다른 권한모드로 뜰 수 있다 —
+                        # 앵커드 관측을 비워 새 세션이 제 footer 로 다시 무장하게 한다.
+                        p._perm_seen = None
                         # §10-F: 세션 종료 확정 → 토큰 사용량(/usage 한도) 자동 표시(요청
                         # 2026-06-18, 기본 ON). 이 _hdr_claude True→False 전이는 30프레임
                         # 디바운스로 깜빡임(ssh/ConPTY 조각 도착)을 흡수한 **진짜** 종료
@@ -2485,9 +2600,16 @@ class ServerClaudeMixin:
             from . import usageprobe
             loop = asyncio.get_event_loop()
             cwd = self._probe_cwd()   # 신뢰된 폴더(Claude 패널 cwd) — 위 docstring
+            # ⛔ 바깥 캡은 **안쪽 예산의 합보다 커야 한다**(pytmux-382). 안 그러면
+            # 안쪽이 아직 기다리는 중에 밖이 잘라, 「무엇에서 오래 걸렸나」가 통째로
+            # 사라지고 아래 계측도 빈손이 된다. 35초였을 때 안쪽 합이 이미 20초였고
+            # 실측 전체가 27.4초라 여유가 거의 없었다.
+            timings: dict = {}
             u = await asyncio.wait_for(
-                loop.run_in_executor(None, usageprobe.query_usage, "claude", cwd),
-                timeout=35)
+                loop.run_in_executor(
+                    None, functools.partial(usageprobe.query_usage, "claude", cwd,
+                                            timings=timings)),
+                timeout=usageprobe.BOOT_TIMEOUT + usageprobe.PANEL_TIMEOUT + 25)
         except Exception:
             # #28: 프로브 실패(타임아웃·spawn 불가)는 표시상 '미확인' 폴백으로
             # 충분하지만, 진단 단서는 남긴다 — 10분 주기 반복이라 첫 실패만 기록.
@@ -2497,6 +2619,7 @@ class ServerClaudeMixin:
             u = None
         finally:
             self._usage_busy = False
+            self._note_usage_probe(timings)
         if u:
             self._usage_probe_err = False             # 회복 — 재발 시 다시 1회 기록
             self._usage = u
@@ -2639,6 +2762,34 @@ class ServerClaudeMixin:
             return None
         return {"kind": "resume", "eta": eta}
 
+    def _retry_action(self, pane):
+        """재시도가 **도는 중**임을 표면에 낼 값(없으면 None) — `{n, eta, self}`.
+
+        # 왜 이 자리가 필요했나 (pytmux-477)
+
+        재시도는 2026-06-15 부터 **무기한** 돌고 있었는데 **그 사실을 말하는 표면이
+        하나도 없었다** — 배지 넷(model·usage·pending·warn) 어디에도 없고 알림에도
+        `retry` 문자열이 0건이었다. 짝인 자동재개에는 카운트다운이 있다. 그래서 제보는
+        「멈춰 있다」로 읽혔고, 스크린샷은 **돌고 있었다**를 찍고 있었다.
+
+        `n` 은 지금까지 주입한 횟수, `eta` 는 다음 주입까지 남은 초(무장돼 있을 때),
+        `self` 는 **Claude 가 스스로 재시도 중**이라 우리가 미루고 있다는 뜻이다.
+        """
+        if pane is None or self.loop is None:
+            return None
+        n = int(getattr(pane, "_retry_attempts", 0) or 0)
+        selfr = bool(getattr(pane, "_self_retry", False))
+        h = getattr(pane, "_retry_handle", None)
+        if h is None and not (n or selfr):
+            return None
+        eta = None
+        if h is not None:
+            try:
+                eta = max(0, int(round(h.when() - self.loop.time())))
+            except (AttributeError, RuntimeError, TypeError):
+                eta = None
+        return {"n": n, "eta": eta, "self": selfr}
+
     # ---- 토큰 사용량 영속 저장(#7, SQLite) — S5 토큰 모듈화 T2 에서 코어 server.py
     # 에서 이리로 이전. 코어는 더 이상 토큰 DB를 모른다(usagedb/usagelog
     # import 도 코어에서 제거). 런타임 상태(_tokens_db 등)는
@@ -2656,6 +2807,10 @@ class ServerClaudeMixin:
         # 프로브)가 error.log 를 도배하지 않게 '첫 실패만' 기록하는 플래그.
         self._tokens_db_err = False
         self._usage_probe_err = False
+        # pytmux-382 계측: 마지막 프로브 회차의 소요시간·성공 여부(메모리 전용) 와,
+        # 「느림」 상태 래치(상태가 바뀔 때만 한 줄 남긴다 — _note_usage_probe).
+        self._usage_probe_last = {}
+        self._usage_probe_slow = False
         # S6 T3: 마지막 실측(/usage) 수신 시각 — 표시층 stale 표기·T4 게이트 신선도
         # 판단용. _usage(값)는 코어 잔류 초기화(§1.4)지만 ts 는 플러그인 소유.
         self._usage_ts = None
@@ -3132,6 +3287,42 @@ class ServerClaudeMixin:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:
             pass
+
+    def _note_usage_probe(self, timings: dict) -> None:
+        """프로브 한 회차가 **얼마나 걸렸고 성공했나**를 남긴다(pytmux-382).
+
+        왜 있나: 이 프로브는 진짜 `claude` 를 띄워 그 TUI 를 VT 파싱하므로 한 회차가
+        수십 초짜리 CPU 다. 그런데 종전엔 **소요시간도 성공 여부도 아무 데도 안 적었다**
+        — office1 에서 「아무도 아무 일을 안 하는데 서버가 코어를 먹는다」를 가리는 데
+        py-spy 로 라이브 프로세스를 뜨는 수밖에 없었다. 그 한 줄이 있었으면 한 번에
+        끝날 일이었다.
+
+        ⛔ **매 회차 로그를 쌓지 않는다** — 10분마다 도는 것이고 `error.log` 에는 회전이
+        없다. «상태가 바뀔 때만» 한 줄 남긴다(느려졌다 / 다시 빨라졌다). 값 자체는
+        메모리에 늘 들고 있어(`_usage_probe_last`) 나중에 서버측 진단이 그대로 읽는다.
+
+        ⚠ 트레이스백을 안 남긴다 — `_log_error(where, detail)` 의 진단 갈래다(예외
+        컨텍스트가 없으면 트레이스백 자리가 "NoneType: None" 이라 서버-예외 가드가
+        안 센다). 이건 크래시가 아니라 **계측**이다.
+        """
+        if not isinstance(timings, dict) or not timings:
+            return
+        from . import usageprobe          # 지연 import — refresh_usage 와 같은 규약
+        timings["at"] = time.time()
+        self._usage_probe_last = timings
+        boot = timings.get("boot")
+        budget = getattr(usageprobe, "BOOT_TIMEOUT", 0.0) or 0.0
+        slow = bool(budget) and boot is not None and \
+            boot >= budget * getattr(usageprobe, "SLOW_FRACTION", 0.6)
+        if slow == bool(getattr(self, "_usage_probe_slow", False)):
+            return                              # 상태 불변 — 로그를 안 쌓는다
+        self._usage_probe_slow = slow
+        self._log_error("usage_probe_timing",
+                        "부팅 %s · 패널 %s · 전체 %s · 성공 %s (예산 %.1f/%.1f) — %s"
+                        % (_secs(boot), _secs(timings.get("panel")),
+                           _secs(timings.get("total")), timings.get("ok"),
+                           budget, getattr(usageprobe, "PANEL_TIMEOUT", 0.0),
+                           "느려졌다" if slow else "다시 여유가 생겼다"))
 
     def _record_usage_snapshot(self, usage, source: str):
         """실측 `/usage` 한도 스냅샷을 SQLite limits 테이블에 적는다(S6 T1,

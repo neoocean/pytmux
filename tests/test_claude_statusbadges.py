@@ -118,6 +118,49 @@ def test_the_english_locale_is_actually_reachable():
 # 이 칸은 오래 비어 있었고 그 이유가 적혀 있었다: *"`do` 를 실어 두면 선언은 있고 배선이
 # 없는 칸이 하나 더 생긴다."* 한도 판(`usage-panel`)이 Tier C 화면을 내면서 조건이 섰다.
 
+def test_a_running_retry_is_visible():
+    """⛔ **pytmux-477 의 요점**: 전송 에러 재시도는 2026-06-15 부터 **무기한** 돌고
+    있었는데 그 사실을 말하는 표면이 **하나도 없었다** — 이 규칙이 내는 배지는 넷
+    (model·usage·pending·warn)이고 알림에도 `retry` 문자열이 0건이었다. 짝인 자동재개에는
+    카운트다운이 있는데 이쪽만 안 보였고, 그래서 제보는 「멈춰 있다」로 읽혔다."""
+    mod = _mod()
+    kinds = [b["kind"] for b in mod.badges({"claude_active": True})]
+    assert "retry" not in kinds, f"안 도는데 배지가 뜬다: {kinds}"
+    got = mod.badges({"claude_active": True,
+                      "claude_retry": {"n": 2, "eta": 41, "self": False}})
+    row = next(b for b in got if b["kind"] == "retry")
+    assert "2" in row["text"] and "41" in row["text"], row
+    # 되번역 재료가 실려야 클라가 제 로케일로 다시 그린다(형제 배지와 같은 규약).
+    assert row["i18n"]["text"], row
+
+
+def test_holding_for_claude_says_so_instead_of_our_countdown():
+    """Claude 가 **스스로 재시도 중**이라 우리가 미루는 동안에는 우리 카운트다운을
+    보이면 안 된다 — 곧 주입할 것처럼 읽힌다. 그 상태는 제 말로 말한다."""
+    mod = _mod()
+    ours = next(b for b in mod.badges(
+        {"claude_active": True, "claude_retry": {"n": 2, "eta": 41, "self": False}})
+        if b["kind"] == "retry")
+    holding = next(b for b in mod.badges(
+        {"claude_active": True, "claude_retry": {"n": 2, "eta": None, "self": True}})
+        if b["kind"] == "retry")
+    assert holding["text"] != ours["text"], holding
+    assert "41" not in holding["text"], holding
+
+
+def test_the_retry_badge_is_reachable_in_english_too():
+    """한글 누출 회귀 — 형제 배지들과 같은 자리를 지킨다."""
+    import re
+    hangul = re.compile(r"[가-힣]")
+    fields = {"claude_active": True,
+              "claude_retry": {"n": 1, "eta": 7, "self": False}}
+    for lang in ("ko", "en"):
+        got = dict(_texts(fields, lang))
+        assert "retry" in got, (lang, got)
+        if lang == "en":
+            assert not hangul.search(got["retry"]), got
+
+
 def test_only_the_badge_with_a_screen_is_clickable():
     """`do` 는 **그 화면이 실제로 있는 표식에만** 실린다.
 

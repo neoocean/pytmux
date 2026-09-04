@@ -345,3 +345,48 @@ def _parse_exit(rest):
     except ValueError:
         return None
     return code if _EXIT_MIN <= code <= _EXIT_MAX else None
+
+
+def row_span(wire, index, live_bottom):
+    """와이어 블록 목록에서 `index` 번째가 차지하는 **절대 행 범위**(양끝 포함).
+
+    ⛔ **이 판정은 한 자리여야 한다.** 강조를 그리는 곳과 복사할 범위를 정하는 곳이
+    각자 세면 화면에 밝은 것과 클립보드에 담기는 것이 조용히 어긋난다 — 네이티브
+    클라도 같은 이유로 한 함수를 쓴다(`proto::blocks::row_span`, 이것과 같은 규칙).
+
+    끝을 어디서 얻나는 세 갈래다:
+
+    - 블록이 `end` 를 들고 있으면 그것(`OSC 133;D` 가 왔다).
+    - 없으면 **다음 블록의 시작 한 줄 앞**. `D` 만 오고 `A` 가 아직 안 온 블록이
+      그 모양이다.
+    - 그것도 없으면(마지막 블록) **지금 살아 있는 마지막 줄**. 아직 자라는 중이라
+      물어볼 데가 없고, 물어볼 수 있는 것은 "지금까지 어디까지 찼나"뿐이다.
+
+    ⚠ 한 줄짜리 블록(프롬프트에서 그냥 Enter)에서 **범위가 뒤집히면 안 된다** —
+    뒤집힌 범위는 엉뚱한 데를 복사한다. 그래서 끝은 시작보다 앞설 수 없다.
+    """
+    try:
+        block = wire[index]
+    except (IndexError, TypeError, KeyError):
+        return None
+    start = _wire_row(block.get("start"))
+    if start is None:
+        return None
+    end = _wire_row(block.get("end"))
+    if end is None:
+        nxt = wire[index + 1] if index + 1 < len(wire) else None
+        nxt_start = _wire_row(nxt.get("start")) if isinstance(nxt, dict) else None
+        end = (nxt_start - 1) if nxt_start is not None else live_bottom
+    return (start, max(start, end))
+
+
+def _wire_row(value):
+    """와이어 정수 → 행 번호. 정수가 아니면 None, 음수는 0 으로 접는다.
+
+    상류가 신뢰할 수 없는 값을 실을 수 있다(원격 링크 너머의 서버는 이 버전이 아닐 수
+    있고, 블록의 글자는 애초에 **패널 안 아무 프로그램**이 보낸 OSC 다). 여기서 접지
+    않으면 `range()` 가 TypeError 로 클라를 죽인다.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return max(0, value)

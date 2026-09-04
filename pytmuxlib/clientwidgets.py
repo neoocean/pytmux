@@ -1495,6 +1495,10 @@ class StatusBar(Widget):
         # 흡수/배지/클릭에서 getattr 로만 읽는다(없으면 미캡처로 동작).
         self.prefix_off = False  # 중첩: outer prefix 해제 표시
         self.cmd_mode = False  # ESC 명령 모드 표시
+        # pytmux-467(449 ⑷): prefix 를 누른 뒤 **다음 키를 기다리는 중** 표시.
+        # 종전에는 그 상태가 화면에 아무 자국도 안 남아, 잘못 눌렀는지 아닌지를 사람이
+        # 알 길이 없었다 — GUI 는 `[prefix]` 칩으로 이미 냈고 이 줄이 그 갈림을 없앤다.
+        self.prefix_mode = False
         self.message = None    # display-message 임시 메시지
         # §10-8 알림 등급(ok/info/warn/error) — 메시지 줄의 색·기호를 정한다.
         self.message_sev = clientnotices.DEFAULT_SEVERITY
@@ -1840,6 +1844,14 @@ class StatusBar(Widget):
             segs.append(Segment(_t, Style(color="black", bgcolor=tc("accent"),
                                           bold=True)))
             acc += _cw(_t)
+        if self.prefix_mode:
+            # 색이 esc 배지(accent=호박)와 **달라야** 한다 — 둘 다 「지금 모달이다」인데
+            # 한 색이면 배지가 어느 모드인지 못 말한다. GUI 의 그 칩도 파랑 계열이라
+            # (`theme::INVERT_BG` #7aa2f7) 두 클라가 같은 뜻에 같은 계열을 쓴다.
+            _p = i18n.t("ui.prefix_mode_badge")
+            segs.append(Segment(_p, Style(color="white", bgcolor=tc("primary"),
+                                          bold=True)))
+            acc += _cw(_p)
         if self.zoomed:
             segs.append(Segment("Z ", Style(color="black", bgcolor=tc("warning"),
                                              bold=True)))

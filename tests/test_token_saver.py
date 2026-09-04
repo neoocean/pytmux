@@ -592,3 +592,90 @@ async def test_model_families_externalized():
     finally:
         del os.environ["PYTMUX_CLAUDE_MODEL_FAMILIES"]
     assert _build_model_re().search("Opus 4.8").group(1).lower() == "opus"
+
+
+async def test_usage_probe_timing_is_recorded_and_logged_only_on_change():
+    """프로브 회차의 **소요시간·성공 여부**가 남고, 로그는 «상태가 바뀔 때만» 쌓인다
+    (pytmux-382).
+
+    왜: 이 프로브는 진짜 claude 를 띄우는 수십 초짜리 CPU 인데 종전엔 아무 흔적이
+    없어, office1 에서 「아무도 아무 일을 안 하는데 서버가 코어를 먹는다」를 가리는 데
+    라이브 프로세스를 py-spy 로 떠야 했다.
+
+    ⛔ 그렇다고 매 회차 적으면 안 된다 — 10분마다 도는 것이고 `error.log` 에는 회전이
+    없다. 그래서 「느려졌다 / 다시 여유가 생겼다」 전이에서만 한 줄이다.
+    """
+    import importlib
+
+    from harness import running_server
+
+    up = importlib.import_module("pytmuxlib.plugins.claude-code.usageprobe")
+    async with running_server() as (srv, task, sock):
+        logged = []
+        srv._log_error = lambda where, detail="": logged.append((where, detail))
+        srv._pane_cwd = lambda pane: "/x"
+        orig = up.query_usage
+
+        def make(boot, ok=True):
+            def fake(cmd, cwd, timings=None, **kw):
+                if timings is not None:
+                    timings.update(boot=boot, panel=1.0, total=(boot or 0) + 1.0,
+                                   ok=ok)
+                return {"session": {"pct": 1, "reset": None}} if ok else None
+            return fake
+
+        try:
+            fast = 0.1 * up.BOOT_TIMEOUT
+            slow = 0.9 * up.BOOT_TIMEOUT
+
+            up.query_usage = make(fast)
+            await srv.refresh_usage()
+            assert srv._usage_probe_last.get("boot") == fast, srv._usage_probe_last
+            assert srv._usage_probe_last.get("at"), "언제 잰 것인지가 없다"
+            assert logged == [], "여유가 있는데 로그를 남겼다: %r" % logged
+
+            await srv.refresh_usage()          # 같은 상태 두 번
+            assert logged == [], "상태가 그대로인데 또 남겼다(회전 없는 로그가 쌓인다)"
+
+            up.query_usage = make(slow)
+            await srv.refresh_usage()
+            assert len(logged) == 1, "느려졌는데 안 남겼다: %r" % logged
+            where, detail = logged[0]
+            assert where == "usage_probe_timing", where
+            assert "느려졌다" in detail and "%.1fs" % slow in detail, detail
+
+            await srv.refresh_usage()          # 느린 상태 유지 → 추가 로그 없음
+            assert len(logged) == 1, "느린 상태가 유지되는데 매번 남겼다: %r" % logged
+
+            up.query_usage = make(fast)
+            await srv.refresh_usage()
+            assert len(logged) == 2 and "다시 여유" in logged[1][1], logged
+        finally:
+            up.query_usage = orig
+
+
+async def test_usage_probe_timing_survives_an_empty_probe():
+    """⛔ **실패한 회차야말로 알고 싶은 것**이다 — 그때도 계측이 남아야 한다."""
+    import importlib
+
+    from harness import running_server
+
+    up = importlib.import_module("pytmuxlib.plugins.claude-code.usageprobe")
+    async with running_server() as (srv, task, sock):
+        srv._log_error = lambda where, detail="": None
+        srv._pane_cwd = lambda pane: "/x"
+        orig = up.query_usage
+
+        def empty(cmd, cwd, timings=None, **kw):
+            if timings is not None:
+                timings.update(boot=None, panel=None, total=up.BOOT_TIMEOUT, ok=False)
+            return None
+
+        up.query_usage = empty
+        try:
+            assert await srv.refresh_usage() is None
+        finally:
+            up.query_usage = orig
+        last = srv._usage_probe_last
+        assert last.get("ok") is False and last.get("total"), \
+            "빈손 회차가 계측에 안 남았다 — 비싼데 안 보이는 그 상태 그대로다: %r" % last

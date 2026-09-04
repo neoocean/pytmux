@@ -189,9 +189,30 @@ def _open_session(argv, cwd, env, cols, rows):
     return _PosixSession(argv, cwd, env, cols, rows)
 
 
+#: 부팅 신호(`shortcuts`/`shift+tab`/`for agents`)를 기다리는 예산(초).
+#
+# ☠ **12.0 이었다 — 여유가 10% 뿐이었다**(pytmux-382 · 2026-09-03 office1 실측).
+# 그 상자(Windows · 조직 관리 설정이 걸린 계정)에서 부팅 신호까지 **10.2 · 10.2 ·
+# 11.4초**가 걸린다. 그것도 «전용 프로세스»에서 잰 값이고, 제품은 같은 일을 **서버의
+# executor 스레드**에서 한다 — 이벤트 루프·ConPTY 리더 스레드 셋과 같은 GIL 을 나눠
+# 쓰므로 그보다 느리다. 여유 0.6초는 그 차이를 못 버틴다.
+#
+# ⛔ 그리고 **초과하면 값이 아니라 침묵이 남는다**: `wait_for` 가 False 면 `query_usage`
+# 는 그 예산을 전부 태운 뒤 `None` 을 돌려주고, 호출부는 첫 실패만 로그에 남긴다
+# (`_usage_probe_err` 래치). 곧 «비싼데 아무 말 없는» 실패다 — 그래서 예산은
+# **여유를 배수로** 잡고(아래), 대신 느려지면 그 사실이 보이게 계측을 달았다.
+BOOT_TIMEOUT = 25.0
+#: `/usage` 를 보낸 뒤 `% used` 가 뜰 때까지의 예산(초). 같은 실측에서 5.0~5.7초.
+PANEL_TIMEOUT = 12.0
+#: 「느리다」의 문턱 — 부팅이 예산의 이 비율을 넘게 쓰면 호출부가 한 줄 남긴다.
+SLOW_FRACTION = 0.6
+
+
 def query_usage(cmd: str = "claude", cwd: str | None = None,
                 cols: int = 95, rows: int = 45,
-                boot_timeout: float = 12.0, panel_timeout: float = 8.0):
+                boot_timeout: float = BOOT_TIMEOUT,
+                panel_timeout: float = PANEL_TIMEOUT,
+                timings: dict | None = None):
     """숨은 `claude` 를 띄워 `/usage` 패널을 스크랩·파싱한다. 결과 dict(parse_usage,
     추가로 그림자 세션 계정 `account`: 일치 확인용·없으면 None) 또는 None. 입력 주입은
     `/usage`+Enter (계정 미식별 시에만 Esc+`/status` 1회 추가 — 아래) 뿐이고
@@ -209,6 +230,18 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     의 Model 라인에서 활성 모델을 잡아 model 폴백을 제공한다(서버 _scan_claude 가
     라이브 배지 우선·없으면 이 값으로 채움). /usage 패널은 'Sonnet only' 같은 한도
     카테고리 라벨이 모델로 오인돼 출처에서 제외한다. 못 잡으면 None."""
+    t_start = time.monotonic()
+    if timings is not None:
+        # ⛔ **먼저 «실패» 로 채운다** — 아래 어느 갈래로 빠져나가도(예외·조기 return)
+        # 호출부가 「돌긴 돌았다」를 알 수 있어야 한다. 성공 갈래만 채우면 정작 알고
+        # 싶은 실패 회차가 빈손으로 남는다.
+        timings.update(boot=None, panel=None, total=None, ok=False)
+
+    def _stamp(**kw):
+        if timings is not None:
+            timings.update(kw)
+            timings["total"] = time.monotonic() - t_start
+
     try:
         from pytmuxlib.nativescreen import NativeScreen
         from pytmuxlib.vtparse import VTTokenizer
@@ -294,7 +327,9 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
         # cycle"·"← for agents"). 어느 쪽도 입력 박스가 떴다는 신뢰 신호다.
         if not wait_for(("shortcuts", "shift+tab", "for agents"), boot_timeout,
                         accept_managed=True):
+            _stamp(boot=None)           # 부팅 신호를 못 봤다 = 예산을 다 태웠다
             return None
+        _stamp(boot=time.monotonic() - t_start)
         # 부팅 화면에 계정/조직 표시가 있으면 먼저 캡처(/usage 가 화면을 덮기 전).
         # 별칭(acct, 로그·DB 영속용)과 전체 이메일(acct_full, 사용자 본인 화면 표시용)을
         # 같은 텍스트에서 함께 잡는다 — footer 와 동일한 프라이버시 분리(별칭=디스크,
@@ -303,7 +338,9 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
         acct_full = claude_account_full(disp())
         model = claude_model(disp())   # 부팅/welcome 화면 배지(있으면)
         sess.write(b"/usage\r")
-        wait_for("% used", panel_timeout)
+        t_boot = time.monotonic()
+        _stamp(panel=None if not wait_for("% used", panel_timeout)
+               else time.monotonic() - t_boot)
         pump(0.4)
         screen = disp()
         usage = parse_usage(screen)
@@ -336,6 +373,7 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
             # 전체 이메일(없으면 별칭 폴백). DB 영속 컬럼엔 없으므로 디스크엔 안 남고,
             # 라이브 status 로만 흘러 팝업/오버레이가 전체를 표시한다.
             usage["account_full"] = acct_full or acct
+            _stamp(ok=True)
         return usage
     except Exception:
         return None

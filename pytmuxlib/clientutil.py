@@ -1333,6 +1333,8 @@ ESC_MODE_KEYS = [
     ("e_p", "p", "상하 분할", "Split top/bottom"),
     ("e_P", "P", "탭 고정(핀) 토글", "Toggle tab pin"),
     ("e_e", "e", "활성 패널에 ESC 전달", "Send ESC to active pane"),
+    ("e_b", "b", "블록 고르기(명령 + 그 출력 · ↑↓ 이동 · Ctrl+C 복사)",
+     "Pick a block (command + its output · ↑↓ move · Ctrl+C copy)"),
     ("e_f", "f", "모든 탭·패널 검색(결과 목록에서 그 자리로)",
      "Search all tabs/panes (jump from the result list)"),
     ("e_jump", "Ctrl+↑ / Ctrl+↓", "이전 / 다음 입력 프롬프트로 점프(Claude 패널·스크롤 모드로)",

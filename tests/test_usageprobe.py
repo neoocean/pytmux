@@ -366,3 +366,67 @@ async def test_probe_never_arms_the_fullscreen_boot_canary():
     assert "CLAUDE_CODE_NO_FLICKER" not in captured, (
         "CLAUDE_CODE_NO_FLICKER 로 대신하면 안 된다 — canary 는 피하지만 자식이 fullscreen 으로 "
         "떠서 이 스크래퍼가 가정한 단일 버퍼가 깨진다")
+
+
+async def test_query_usage_reports_how_long_each_stage_took():
+    """프로브는 **얼마나 걸렸고 성공했나**를 밖으로 말한다(pytmux-382).
+
+    왜 값이 있나: 이 프로브는 진짜 `claude` 를 띄워 그 TUI 를 VT 파싱하므로 한 회차가
+    수십 초짜리 CPU 다. 그런데 종전엔 소요시간도 성공 여부도 아무 데도 안 남아서,
+    「아무도 아무 일을 안 하는데 서버가 코어를 먹는다」를 가리는 데 라이브 프로세스를
+    py-spy 로 뜨는 수밖에 없었다.
+    """
+    boot = b"\x1b[2J\x1b[H Welcome to Claude\r\n ? for shortcuts\r\n"
+    sess = _FakeSession(boot, _panel_bytes())
+    undo, t = [], {}
+    _patch(undo, sess)
+    try:
+        u = usageprobe.query_usage(cmd="claude", boot_timeout=2.0,
+                                   panel_timeout=2.0, timings=t)
+    finally:
+        for f in undo:
+            f()
+    assert u is not None
+    assert t.get("ok") is True, "성공했는데 ok 가 안 섰다: %r" % t
+    for k in ("boot", "panel", "total"):
+        assert isinstance(t.get(k), float), "%s 를 안 쟀다: %r" % (k, t)
+    assert t["total"] >= t["boot"], t
+
+
+async def test_timings_say_it_ran_even_when_the_probe_comes_back_empty():
+    """⛔ **정작 알고 싶은 것은 실패한 회차다** — 그때도 「돌긴 돌았다」가 남아야 한다.
+
+    부팅 신호가 안 뜨면 프로브는 예산을 전부 태우고 조용히 None 을 돌려준다(호출부는
+    첫 실패만 로그에 남긴다). 그 회차가 계측에서 빈손이면 «비싼데 안 보이는» 그 상태가
+    그대로다.
+    """
+    sess = _FakeSession("\x1b[2J\x1b[H (부팅 신호가 없는 화면)\r\n".encode("utf-8"), None)
+    undo, t = [], {}
+    _patch(undo, sess)
+    try:
+        u = usageprobe.query_usage(cmd="claude", boot_timeout=0.4,
+                                   panel_timeout=0.4, timings=t)
+    finally:
+        for f in undo:
+            f()
+    assert u is None, "부팅 신호가 없는데 성공했다"
+    assert t.get("ok") is False, "실패인데 ok 가 False 가 아니다: %r" % t
+    assert t.get("boot") is None, "못 본 것을 잰 것처럼 적었다: %r" % t
+    assert isinstance(t.get("total"), float) and t["total"] > 0, \
+        "실패 회차가 «돌긴 돌았다»를 안 남겼다: %r" % t
+
+
+async def test_boot_budget_has_real_headroom():
+    """부팅 예산은 **여유가 배수**여야 한다(pytmux-382 · office1 실측).
+
+    그 상자에서 부팅 신호까지 10.2~11.4초가 걸렸다. 종전 예산 12.0초는 여유가 10%
+    뿐이었고, 그 측정은 «전용 프로세스»의 것이라 서버의 executor 스레드(같은 GIL 을
+    이벤트 루프·ConPTY 리더 셋과 나눠 쓴다)에서는 더 느리다. 초과하면 값이 아니라
+    **침묵**이 남으므로(예산을 다 태우고 None) 여유를 숫자로 못 박는다.
+    """
+    slowest_measured = 11.4
+    assert usageprobe.BOOT_TIMEOUT >= slowest_measured * 2, (
+        "부팅 예산 %.1fs 는 실측 최악(%.1fs)의 두 배가 안 된다 — 느린 상자에서 초과한다"
+        % (usageprobe.BOOT_TIMEOUT, slowest_measured))
+    assert usageprobe.PANEL_TIMEOUT >= 5.7 * 2, \
+        "패널 예산도 같은 규율이어야 한다: %.1fs" % usageprobe.PANEL_TIMEOUT

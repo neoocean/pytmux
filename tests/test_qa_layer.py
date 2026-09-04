@@ -1274,3 +1274,85 @@ async def test_residue_does_not_count_a_process_we_already_reaped():
                 child.wait(timeout=5)
             except Exception:
                 pass
+
+
+def test_the_ledger_is_not_reported_for_a_scenario_that_died_halfway():
+    """⛔ **없는 커버리지 구멍을 신고하면 원장이 아니다**(pytmux-482 · 2026-09-04).
+
+    2026-09-03 회차는 `selectt` 에서 시한을 넘겨 시나리오가 중단됐는데, 원장은 그때까지
+    적힌 것만 보고 «control 14/49 · 미커버 35» 를 신고했다 — 그 35 는 결함이 아니라
+    **안 돈 것**이다(한가한 상자에서 같은 시나리오는 **49/49** 를 낸다).
+
+    `qa/run.py` 에는 *"원장을 소유한 시나리오가 안 돈 런에서는 원장을 내지 않는다"* 는
+    가드가 이미 있었는데, 그것이 막는 것은 「**안 돈**」이고 그 사이로 「**돌다 죽은**」이
+    샜다. 이 시험은 그 갈래가 다시 열리지 않게 소스로 못박는다 — 실제로 죽는 런을
+    만들려면 부하가 필요해 값으로 재기 어렵고, 그때 조용히 되돌아오는 것이 이 부류다.
+    """
+    import ast
+    import os
+    src_path = os.path.join(os.path.dirname(__file__), "..", "qa", "run.py")
+    with open(src_path, encoding="utf-8") as fh:
+        src = fh.read()
+    tree = ast.parse(src, filename=src_path)
+
+    # ⓐ 중단된 이름을 모으는 자리가 있다.
+    assert "aborted" in src, "중단된 시나리오를 모으는 자리가 사라졌다"
+    # ⓑ 원장이 보는 집합에서 그것을 **뺀다**. 문자열이 아니라 **식**으로 확인한다 —
+    #    주석에 그렇게 적어 두고 코드가 안 그러는 것이 이 부류의 실패다.
+    subtracted = any(
+        isinstance(n, ast.BinOp) and isinstance(n.op, ast.Sub)
+        and isinstance(n.right, ast.Name) and n.right.id == "aborted"
+        for n in ast.walk(tree))
+    assert subtracted, (
+        "원장이 보는 `ran` 에서 중단된 시나리오를 안 뺀다 — 그러면 거기까지만 돈 런이 "
+        "«미커버»를 신고한다(pytmux-482)")
+    # ⓒ 중단되는 갈래 **둘 다**(환경 실패·예외) 그 집합에 넣는다. 하나만 넣으면 나머지
+    #    하나로 죽은 런이 여전히 거짓 구멍을 신고한다.
+    assert src.count("aborted.add(") >= 2, (
+        "중단 갈래 둘(환경 실패·시나리오 예외) 중 하나만 세고 있다")
+
+
+def test_every_qa_budget_is_load_tolerant_and_overridable():
+    """⛔ **예산을 하나만 고치면 그 뿌리의 다음 그림자가 그대로 온다**(pytmux-479).
+
+    2026-09-03 회차는 부하 하나로 넷을 냈다(480·481 = 제어 라인 시한 · 482 = 그 크래시가
+    남긴 거짓 커버리지 구멍 · 479 = **데몬 기동 시한**). 앞 CL 이 제어 라인만 올리고 이
+    자리를 빠뜨렸다 — 같은 실수가 다음에 또 나지 않게 **예산 전수**를 여기서 센다.
+
+    재는 것 셋: ⓐ 부하를 견딜 만큼 크다 ⓑ 무거운 상자에서 **올릴 길**이 있다
+    ⓒ 그 값을 **재서 남긴다**(예산만 올리고 계측을 안 달면 다음 회차가 처음부터 다시 잰다)."""
+    import importlib
+    sess = importlib.import_module("qa.session")
+    budgets = (
+        ("CLI_TIMEOUT", 60.0, "PYTMUX_QA_CLI_TIMEOUT", "slowest_cli"),
+        ("START_TIMEOUT", 30.0, "PYTMUX_QA_START_TIMEOUT", "start_secs"),
+    )
+    src = open(sess.__file__, encoding="utf-8").read()
+    for name, floor, env, measured in budgets:
+        value = getattr(sess, name, None)
+        assert isinstance(value, float), f"{name} 이 없다 — 예산이 코드에 박혀 있다"
+        assert value >= floor, (
+            f"{name} 이 부하를 못 견딘다: {value}초 (2026-09-03 에 실제로 깨진 값들: "
+            "제어 라인 20초 · 데몬 기동 12초)")
+        assert env in src, f"{name} 을 무거운 상자에서 올릴 길이 없다"
+        assert measured in src, f"{name} 을 올리면서 «얼마나 걸렸나»를 안 남긴다"
+
+
+def test_a_slow_control_line_is_named_not_just_timed_out():
+    """예산을 올리면서 **계측을 함께 단다**(pytmux-480·481 · pytmux-382 가 간 길).
+
+    예산만 올리면 다음에 또 걸렸을 때 「부하였나 진짜였나」를 처음부터 다시 재야 한다.
+    그래서 세션이 **가장 오래 걸린 제어 라인**을 들고 있고, 시한 메시지가 그 값을 말한다.
+    """
+    import importlib
+    sess = importlib.import_module("qa.session")
+    assert sess.CLI_TIMEOUT >= 60.0, (
+        f"제어 라인 예산이 부하를 못 견딘다: {sess.CLI_TIMEOUT}초 "
+        "(20초는 2026-09-03 에 실제로 깨졌다)")
+    src = open(sess.__file__, encoding="utf-8").read()
+    assert "slowest_cli" in src, "가장 느렸던 제어 라인을 안 들고 있다"
+    assert "PYTMUX_QA_CLI_TIMEOUT" in src, "무거운 상자에서 올릴 길이 없다"
+    # 시한 초과가 **환경 실패**로 적혀야 한다 — `scenario_crashed`(S2)로 새면 그 회차의
+    # 원장이 거짓 구멍을 신고한다(위 시험과 같은 뿌리).
+    assert "EnvBroken(" in src.split("except subprocess.TimeoutExpired:")[1][:600], \
+        "시한 초과가 환경 실패로 안 적힌다"

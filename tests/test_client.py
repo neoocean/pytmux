@@ -4233,6 +4233,59 @@ async def test_cmd_mode_badge_no_hangul_leak_in_en():
     await _with_app(body, cfg={"lang": "en"})
 
 
+async def test_prefix_mode_badge_shows_and_clears():
+    """pytmux-467(449 ⑷): prefix 를 누르면 상태줄에 `[prefix]` 표식이 뜨고, **다음 키를
+    받으면 내려간다.**
+
+    ⛔ 뜨는 것만 재면 안 된다 — 안 내려가는 표식은 평상시 입력에도 계속 떠 있어
+    「지금 모달이다」라는 거짓말이 된다. 나가는 자리가 둘이라(`_handle_prefix` ·
+    세션 이름 편집) 그 한 자리(`_clear_prefix_badge`)를 실제로 눌러 잰다.
+
+    색까지는 안 잰다(그림은 각 클라의 것) — 다만 **esc 배지와 다른 색**이어야 한다는
+    것은 `clientwidgets` 의 그 줄이 `primary`/`accent` 로 갈라 적는다."""
+    def shown():
+        return "[prefix]" in "".join(s.text for s in _app[0].status.render_line(0))
+
+    _app = [None]
+
+    async def body(app, pilot, srv):
+        _app[0] = app
+        assert app.status.prefix_mode is False, "기본은 안 떠 있다"
+        assert not shown()
+
+        await pilot.press("ctrl+b")
+        await wait_until(pilot, lambda: app.mode == "prefix")
+        assert app.status.prefix_mode is True
+        await wait_until(pilot, shown)
+        assert shown(), "prefix 표식이 렌더돼야 한다"
+
+        # 다음 키를 받으면 모드가 풀리고 표식도 함께 내려간다.
+        await pilot.press("z")                      # prefix z = zoom(아무 키라도 된다)
+        await wait_until(pilot, lambda: app.mode == "normal")
+        assert app.status.prefix_mode is False, "모드는 풀렸는데 표식이 남았다"
+        await wait_until(pilot, lambda: not shown())
+        assert not shown(), "표식이 안 내려갔다"
+    await _with_app(body)
+
+
+async def test_prefix_and_esc_badges_do_not_share_a_color():
+    """두 모달 표식이 **같은 색이면 배지가 어느 모드인지 못 말한다**(pytmux-467).
+
+    textual-dark 에서 `warning` 과 `accent` 가 같은 값이라 색이 조용히 겹친 전례가
+    있어(zoomed/cmd_mode) 값으로 잰다."""
+    async def body(app, pilot, srv):
+        app.status.cmd_mode = True
+        app.status.prefix_mode = True
+        app.status.refresh()
+        await wait_until(pilot, lambda: any(
+            "[prefix]" in s.text for s in app.status.render_line(0)))
+        segs = list(app.status.render_line(0))
+        cmd_bg = next(s.style.bgcolor for s in segs if "CMD(" in s.text)
+        pre_bg = next(s.style.bgcolor for s in segs if "[prefix]" in s.text)
+        assert cmd_bg != pre_bg, f"두 모달 표식이 같은 색이다: {cmd_bg}"
+    await _with_app(body)
+
+
 async def test_layout_save_load_client():
     async def body(app, pilot, srv):
         sess = next(iter(srv.sessions.values()))
@@ -8480,4 +8533,48 @@ async def test_token_footer_click_opens_the_token_popup():
         app.open_token_log = lambda *a, **k: opened.append(1)
         app.view.on_mouse_down(_FakeMouse(zx0, zy, 1))
         assert opened, "존은 만들었는데 누르면 아무 일도 안 난다"
+    await _with_app(body)
+
+
+async def test_the_canonical_client_draws_a_tier_c_text_panel():
+    """★ **정본의 Tier C(글 판) 렌더러**(pytmux-468 걸음 2 · 449 ⑵).
+
+    서버는 화면 스펙을 여럿 짓는데(`plugins/*/screenspec.py`) 그것을 그리는 것은 **GUI
+    뿐**이었다 — 그래서 「스펙 한 벌이면 두 클라가 같은 것을 그린다」는 **정본 쪽 절반이
+    비어 있었고**, 같은 판을 정본에도 내려면 매번 Textual 화면을 손으로 하나 더 써야 했다.
+
+    이 시험은 그 자리가 실제로 **그리는지**를 잰다 — 서버가 보낸 `plugin_screen` 한 장을
+    먹이고 화면에 그 글이 뜨는지 본다."""
+    async def body(app, pilot, srv):
+        app._dispatch({"t": "plugin_screen", "id": "claude-detail", "kind": "text",
+                       "title": "플랜 · 거부", "hint": "↑↓ 스크롤 · Esc 닫기",
+                       "text": "플랜 [ok]\n  1. 먼저 잰다\n  2. 그다음 고친다",
+                       "note": "", "rows": [], "keys": {}})
+        from textual.widgets import Label
+        scr = await wait_mounted(pilot, "InfoScreen", child="#info")
+        await wait_until(pilot, lambda: any(
+            "플랜" in str(lbl.render()) for lbl in scr.query(Label)))
+        shown = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "플랜 [ok]" in shown, f"서버가 보낸 글이 안 뜬다: {shown!r}"
+        assert "2. 그다음 고친다" in shown, shown
+        # 힌트도 붙는다 — 안 붙이면 무엇을 눌러 닫는지 화면이 안 말한다.
+        assert "Esc" in shown, f"꼬리 힌트가 없다: {shown!r}"
+    await _with_app(body)
+
+
+async def test_a_panel_kind_the_canonical_client_cannot_draw_is_not_dropped_silently():
+    """⛔ **조용한 누락이 이 저장소의 상습 결함이다**(설계 §8-5).
+
+    목록·표 판은 아직 정본에서 각자 화면이라 이 렌더러가 안 받는다. 그때 **아무 일도
+    안 하면** 사용자는 명령이 먹지 않았다고 읽는다 — 그 사실을 말해야 한다."""
+    async def body(app, pilot, srv):
+        app._dispatch({"t": "plugin_screen", "id": "claude-token-log", "kind": "table",
+                       "title": "토큰", "hint": "", "text": "", "note": "",
+                       "rows": [{"key": "a", "cols": ["1"]}], "keys": {}})
+        await wait_until(pilot, lambda: bool(app.status.message))
+        msg = str(app.status.message or "")
+        assert "claude-token-log" in msg and "table" in msg, (
+            f"못 그리는 판을 조용히 버렸다(또는 무엇인지 안 말한다): {msg!r}")
+        # ⛔ 그리고 **화면은 안 뜬다** — 빈 상자를 띄우면 고장과 구별되지 않는다.
+        assert app.screen_stack[-1].__class__.__name__ != "InfoScreen", "빈 판이 떴다"
     await _with_app(body)

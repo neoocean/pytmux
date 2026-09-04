@@ -189,6 +189,9 @@ def bake(args) -> tuple[int, str]:
     os.makedirs(run_dir, exist_ok=True)
 
     findings: list[Finding] = []
+    #: 끝까지 못 돈 시나리오(환경 실패·예외). 이 이름들의 원장은 **안 낸다** — 적힌 것은
+    #: 「안 지났다」가 아니라 「거기까지만 돌았다」이기 때문이다(pytmux-482).
+    aborted: set[str] = set()
     skipped: list[Skipped] = []
     steps: list[tuple[str, str, str]] = []
     #: 커버리지 원장 — 런 전체가 한 벌이다(시나리오를 가로질러 센다).
@@ -213,6 +216,7 @@ def bake(args) -> tuple[int, str]:
                         expected="격리 슬롯 위에 데몬이 뜨고 조작을 받는다",
                         actual=str(e)))
                     steps.append((mod.NAME, "env-up", f"환경 실패 — {e}"))
+                    aborted.add(mod.NAME)
                     continue
                 except Exception as e:                     # noqa: BLE001
                     # 시나리오가 도중에 터졌다. ⛔ **여기서 죽지 않는다** — 죽으면 앞서
@@ -225,6 +229,7 @@ def bake(args) -> tuple[int, str]:
                         expected="시나리오가 끝까지 돌고 판정만 남긴다",
                         actual=f"{type(e).__name__}: {e}"))
                     steps.append((mod.NAME, "—", f"예외로 중단 — {type(e).__name__}: {e}"))
+                    aborted.add(mod.NAME)
                     continue
                 findings += ctx.findings
                 skipped += ctx.skipped
@@ -239,7 +244,12 @@ def bake(args) -> tuple[int, str]:
     #   보이지 않는 부류다(미커버는 조용하다 · 원칙 ⓑ).
     #   ⛔ 원장을 소유한 시나리오가 안 돈 런에서는 원장을 내지 않는다 — 그 런이 안 지난
     #      것은 제품의 결함이 아니라 **그 런의 범위**다(부분 런이 매번 붉어지면 꺼진다).
-    ran = {m.NAME for m in mods}
+    #   ⛔⛔ **끝까지 못 돈 시나리오의 원장도 안 낸다**(pytmux-482 · 2026-09-04). 위 줄이
+    #      막는 것은 「안 돈」 런이고, 그 사이로 **「돌다 죽은」 런**이 샜다: 2026-09-03 회차는
+    #      `selectt` 에서 시한을 넘겨 중단됐는데 원장은 그때까지 적힌 것만 보고 «14/49 ·
+    #      미커버 35» 를 신고했다 — 그 35 는 **결함이 아니라 안 돈 것**이고, 한가한 상자에서
+    #      같은 시나리오는 **49/49** 를 낸다. 없는 구멍을 신고하는 원장은 원장이 아니다.
+    ran = {m.NAME for m in mods} - aborted
     ledger_rows = None
     if LEDGER_SCENARIO in ran:
         ledger_rows, lfindings, lskips = ledger.audit(ran)

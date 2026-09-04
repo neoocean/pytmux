@@ -272,6 +272,9 @@ async def _opts_namespace_body(reg, _S):
         # F3 옵션A(2026-07-25): 자동재개 대역외 확인 3-state. 이 골든이 새 옵션의
         # **배선 누락을 잡는 자리**다(serialize 에 안 실리면 영속이 안 된다).
         "claude_resume_verify",
+        # pytmux-475: auto mode 패널의 yes/no 자동 «예» 확정(기본 끔). 같은 이유로
+        # 이 골든에 선다 — serialize 에 안 실리면 설정이 재시작을 못 넘긴다.
+        "claude_auto_yes",
         "claude_auto_launch", "claude_rules", "claude_long_turn_sec",
         "claude_repeat_alert",
         # 2026-07-23 토큰 동기화(P2): 전송 설정도 plugin_opts 소유다 — 코어는
