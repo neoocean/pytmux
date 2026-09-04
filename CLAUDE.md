@@ -85,8 +85,9 @@ GUI 의 것으로 얹는다(TUI 식 텍스트 위젯을 흉내내지 않는다).
   스위트 · 미러 위생/드리프트를 순서대로 돌고 요약 한 줄을 낸다. 빠른 되먹임만 원하면
   `--fast`, 무엇을 도는지만 보려면 `--list`. **한 스텝이 넘어져도 나머지를 돈다**(한 번
   돌려 고칠 것을 전부 본다). 개별 게이트는 아래·`client/CLAUDE.md`.
-  ★ **git 훅을 설정했으면 `git push` 직전에 자동으로 실행되므로**(pytmux-153) 수동으로
-  또 돌릴 필요는 없다. 다만 `commit` 하기 전에 미리 실패를 보고 싶으면 이 명령을 직접 치면 된다.
+  ⚠ **git 훅(pytmux-153)이 `push` 직전에 도는 것은 `publish_check.py --pre-push`(미러
+  드리프트)뿐이다** — `check_all.py` 도 `check_mirror --scan` 도 테스트도 훅은 안 돈다(2026-09-04
+  검수 실측 · `.githooks/pre-push`). 그러니 이 명령은 **커밋 전에 직접** 친다.
   - **Windows**: 셸 게이트 셋은 **Git Bash** 로 돈다. `bash` 를 PATH 에서 그냥 집으면
     `…\WindowsApps\bash.exe`(Store 앱 별칭 = WSL 런처)가 잡혀 `Class not registered` 로
     죽는데, 그건 게이트가 **아무것도 안 재고 빨간 줄만 남기는** 상태다(2026-08-01 실측:
@@ -130,6 +131,12 @@ GUI 의 것으로 얹는다(TUI 식 텍스트 위젯을 흉내내지 않는다).
     떨어진다 — 내 변경과 무관한 **환경 실패**다(이유가 전부 같은 한 줄이면 의심할 것).
     `Remove-Item Env:\NO_COLOR`(pwsh) / `unset NO_COLOR`(sh) 후 다시 돌린다.
     Windows 는 그 밖에 심링크 권한(`WinError 1314`)으로 감사 배터리 2건이 상시 실패한다.
+  - **`token_sync: … HTTP 530` 한 줄로 여러 건이 떨어지면 그것도 환경 실패다**(2026-09-04 실측 ·
+    test_ptyshot·test_client_color_depth 7건): 실 서버를 띄우는 시험은 `PYTMUX_TOKENS_DB` 가 없으면
+    **플러그인 디렉터리의 등록된 실 토큰 DB** 를 써서 실 동기화 서버에 붙고, 그 서버는 이 맥의 Docker
+    위라 Docker 가 내려가면 Cloudflare 530 → `SyncError` 트레이스백 → 서버 예외 가드가 무관한 시험을
+    떨군다(pytmux-474 는 「못 닿음」만 조용히 처리한다). 판정은 `ls ~/.docker/run/docker.sock`,
+    회계는 `--report` 로 복원하고 그 run 은 `--ingest` 하지 않는다.
   - **명시 SKIP**: 플랫폼 부적합 등으로 건너뛸 땐 조용한 `return` 대신
     `from run import skip` 후 `skip("사유")` — 요약이 `N skipped` + 사유별로 리포트해
     커버리지 갭이 보인다(신규/수정 테스트부터 점진 채택). 타임아웃(행)은 1회 재시도한다
@@ -148,6 +155,13 @@ GUI 의 것으로 얹는다(TUI 식 텍스트 위젯을 흉내내지 않는다).
     예외 없는 진단 로그(`_log_error(where, detail)`)는 세지 않는다.
   - **표시 기능은 호출부까지 단언**: 값을 만드는 헬퍼만 테스트하면 그 값을 붙이는 호출을
     지워도 통과한다(실측 2회 — 공허 통과). 뮤테이션에 **'호출 제거'** 를 포함할 것.
+  - **부하(load ≳10)에서 합본 게이트의 Rust 스위트는 380초 → 30분+ 로 늘어난다**(2026-09-04
+    실측 — Docker VM·트래커 node 스위트가 같은 상자에 있다). 「멈췄나」는 죽이지 말고
+    `ps -eo etime,command | grep target/debug/deps` 로 테스트 이진 이름이 바뀌는지 본다.
+    **게이트가 도는 동안**: Rust 소스는 컴파일이 끝난 뒤(이진이 돌기 시작한 뒤) 고쳐도 결과에
+    안 섞이지만 그 결과는 내 편집을 안 잰 것이고, 내가 따로 `cargo test` 를 치면 build-dir 락에
+    선다. **파이썬 소스는 파이썬 스위트가 끝날 때까지 손대지 않는다**(아래 배치 규칙과 같은
+    이유). 그동안은 트리 밖 일(설계·트래커·Docker)을 한다.
   - **머신 부하가 높으면**(load ≳10) 러너가 요약 없이 절단된다 — 전체 스위트를 고집하지
     말고 **모듈 배치 + 백그라운드 실행 + 알림 대기**로 돌리고 죽은 모듈만 재실행한다.
     절단돼 요약을 못 봤을 때 회계는 `python3 tests/run.py --report` 로 복원한다(결과가
@@ -267,6 +281,12 @@ python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르�
   - MCP HTTP — `http://100.79.188.26:18787/` 에 JSON-RPC 를 친다(`method: "tools/call"` ·
     `{"name":"doc_get","arguments":{"id":"pytmux/<slug>"}}`). **DB 자격증명이 필요 없고**
     어느 박스에서나 뜬다. 이슈는 칸 이름이 다르다 — `issue_get {"gid":"pytmux/pytmux-113"}`.
+  - ⚠ **셋(웹·MCP HTTP·CLI) 다 그 맥(100.79.188.26)의 Docker Desktop 위다**(2026-09-04 실측). Docker 가
+    내려가면 셋이 한꺼번에 죽고 **p4 서버(`ssl::1666` · 같은 맥의 `docker/p4d` 스택)도 함께 죽어**
+    `Connect to server failed` 가 난다 — 자격증명·재진입을 뒤지지 말고 `ls ~/.docker/run/docker.sock`
+    부터 본다. ⛔ ssh 세션에서는 Docker 를 못 띄운다(`open -a Docker` 가 launchd 도메인 오류 ·
+    `docker desktop start` 는 행) — 콘솔 사용자가 띄워야 하고, 그동안은 본문을 파일로 완성해 두고
+    등록 명령만 남긴다. 오프라인 큐는 없다.
   - ⛔ 셸 `node ../issue/bin/issue.mjs doc-get …` 은 **`ISSUE_PG` 가 선 머신에서만** 뜬다.
     postgres 이관(2026-08-15) 뒤로 그 값이 없는 박스에서는 `DB 주소(DSN)가 없다` 로 죽는다
     (2026-08-19 실측 · 이 Windows 박스). 예전에 여기 「웹이 안 떠도 이쪽은 뜬다」고 적혀
