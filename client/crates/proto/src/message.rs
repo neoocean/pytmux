@@ -239,6 +239,13 @@ pub enum ServerMessage {
     /// (정본 `_want_search_all` 과 같은 게이트, 여는 판단은 뷰의 몫이다).
     #[serde(rename = "search_results")]
     SearchResults(crate::session::SearchResults),
+    /// `debug_stats` 회신 — 서버가 제 프로세스를 잰 한 장(pytmux-382). 요청한 클라만
+    /// 받는다(서버 `debug_stats` 는 HANDLED). `debug-stats` 판의 서버 절반이 이것이다.
+    #[serde(rename = "debug_stats")]
+    DebugStats {
+        #[serde(default)]
+        stats: crate::diag::ServerStats,
+    },
     #[serde(rename = "ok")]
     Ok(serde_json::Value),
     #[serde(rename = "pong")]
@@ -269,6 +276,7 @@ impl ServerMessage {
             Self::PluginScreenClose { .. } => "plugin_screen_close",
             Self::PluginCells(_) => "plugin_cells",
             Self::SearchResults(_) => "search_results",
+            Self::DebugStats { .. } => "debug_stats",
             Self::Blocks { .. } => "blocks",
             Self::Selection { .. } => "selection",
             Self::Claude { .. } => "claude",

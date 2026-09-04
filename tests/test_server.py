@@ -2050,6 +2050,8 @@ async def test_command_table_disposition_golden():
         # (request_buffers 와 같은 결), `search_goto` 는 탭·패널·스크롤을 한꺼번에
         # 바꾸므로 FULL(select_window 와 같은 결).
         "search_all": HANDLED, "search_goto": FULL,
+        # pytmux-382: 서버가 제 프로세스를 잰 표를 **요청 클라에게만** 회신 — search_all 과 같은 결.
+        "debug_stats": HANDLED,
         # 버퍼/붙여넣기/캡처
         "set_buffer": HANDLED, "paste_buffer": HANDLED, "paste": HANDLED,
         "request_buffers": HANDLED, "clear_history": HANDLED,

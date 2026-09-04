@@ -6795,6 +6795,76 @@ fn a_text_panel_that_fits_does_not_move_when_you_press_down() {
 }
 
 #[test]
+fn opening_debug_stats_asks_the_server_for_its_half() {
+    // pytmux-382 — 서버 절반은 **물어야 온다**. 판을 여는 것이 곧 `debug_stats` 명령이다.
+    // 이 오라클이 없으면 「판은 뜨는데 서버 줄이 영영 안 온다」가 조용히 통과한다
+    // (호출부 오라클 — 값 만드는 함수만 재면 '호출 제거' 변이에 공허 통과한다).
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    assert!(view.apply_action_for_test(Action::ShowDebugStats));
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::DebugStats))),
+        "판을 열었는데 서버에 안 물었다: {out:?}"
+    );
+    assert_eq!(view.screens.top(), Some(Screen::DebugStats));
+}
+
+#[test]
+fn the_debug_stats_reply_lands_in_the_view_and_the_panel_shows_it() {
+    // 회신이 오기 전에는 「아직 답하지 않았다」 한 줄이고(0 이나 빈 표가 아니다), 오면
+    // 서버 줄이 클라 줄 **아래**에 붙는다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.apply_action_for_test(Action::ShowDebugStats);
+    let before = view.debug_stats_lines();
+    assert!(
+        before.iter().any(|l| l.contains("서버가 아직 답하지 않았다")),
+        "회신 전인데 기다린다는 말이 없다: {before:?}"
+    );
+    assert!(!before.iter().any(|l| l.contains("pid 4242")));
+    let reply: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "debug_stats",
+        "stats": {"pid": 4242, "python": "3.13.0", "uptime_s": 90000.0, "clients": 2,
+                  "sessions": 1, "windows": 3, "panes": 4, "fds": 77,
+                  "usage_probe": {"boot": 14.0, "panel": 10.1, "total": 37.0, "ok": true}}
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(reply))).unwrap();
+    view.pump_headless();
+    let after = view.debug_stats_lines();
+    let joined = after.join("\n");
+    assert!(joined.contains("pid 4242"), "{joined}");
+    assert!(joined.contains("1d 1h"), "기동 뒤 시간이 안 적혔다: {joined}");
+    assert!(joined.contains("boot 14.0s"), "프로브 회차가 안 적혔다: {joined}");
+    assert!(!joined.contains("서버가 아직 답하지 않았다"), "{joined}");
+    // 클라 절반이 먼저다 — 서버 줄은 그 아래.
+    let mine = after.iter().position(|l| l.starts_with("pid ")).unwrap();
+    let theirs = after.iter().position(|l| l.contains("pid 4242")).unwrap();
+    assert!(mine < theirs, "{after:?}");
+}
+
+#[test]
+fn reopening_debug_stats_forgets_the_old_reply() {
+    // 지난 회신을 두면 「지금」이 아니라 「그때」를 본다 — 열 때마다 비우고 다시 묻는다.
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.apply_action_for_test(Action::ShowDebugStats);
+    let reply: ServerMessage =
+        serde_json::from_value(serde_json::json!({"t": "debug_stats", "stats": {"pid": 9}})).unwrap();
+    tx.send(LinkEvent::Message(Box::new(reply))).unwrap();
+    view.pump_headless();
+    assert!(view.server_stats.is_some());
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.apply_action_for_test(Action::ShowDebugStats);
+    assert!(view.server_stats.is_none(), "다시 열었는데 옛 회신이 남아 있다");
+}
+
+#[test]
 fn a_text_panel_that_fits_does_not_advertise_scrolling() {
     // pytmux-478 ⑵ — 다 들어가는 판이 꼬리줄에서 「↑↓ 스크롤」이라고 말하면, 사용자는
     // 눌러 보고 **아무 일도 안 일어나는 것**을 본다. 할 수 없는 조작을 광고하는 것이다.

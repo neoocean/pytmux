@@ -456,6 +456,11 @@ pub struct SessionView {
     /// 통째로 멈춘다(정본도 워커로 뺀다). 붙여넣기는 그 결과가 온 **뒤에야** 뜻이 생긴다:
     /// 어느 경로를 붙일지가 성공 여부로 갈리기 때문이다.
     paste_result: std::sync::Arc<std::sync::Mutex<Option<RemoteImage>>>,
+    /// `debug-stats` 판의 **서버 절반**(pytmux-382) — `debug_stats` 회신이 온 뒤에야 있다.
+    ///
+    /// 판을 열 때 비우고 명령을 보낸다. 회신이 안 오면(구서버 · 끊김) 판은 「서버가 아직
+    /// 답하지 않았다」로 남는다 — 0 이나 빈 표를 그리지 않는다(`proto::diag` 의 규율).
+    server_stats: Option<proto::diag::ServerStats>,
     /// 사용자 설정(패리티 G5·G6b). **한 번 읽어 들고 있는다** — 설정 화면에서 바꾸면
     /// 여기를 고치고 파일에 쓴다(그래야 이번 판에 바로 먹는다).
     config: base::Config,
@@ -820,6 +825,7 @@ impl SessionView {
             config,
             shell_result: Default::default(),
             paste_result: Default::default(),
+            server_stats: None,
             pending: Vec::new(),
             pinger: proto::rtt::Pinger::default(),
             screens: Screens::new(),
@@ -1823,6 +1829,10 @@ impl SessionView {
             // 커서 판(pytmux-375). 값은 설정 화면과 **같은 다섯**이고 새로 지은 것은
             // 화면이다 — 왜 화면이 따로 서는지는 `render_cursor` 가 적는다.
             Action::ShowDebugStats => {
+                // 서버 절반은 **물어야 온다**(pytmux-382). 판을 열 때마다 새로 묻는다 —
+                // 지난 회신을 그대로 두면 「지금」이 아니라 「그때」를 보게 된다.
+                self.server_stats = None;
+                self.pending.push(Outgoing::Command(Command::DebugStats));
                 self.screens.open(Screen::DebugStats);
                 return true;
             }
@@ -3697,6 +3707,12 @@ impl SessionView {
                 LinkEvent::Message(msg) => match *msg {
                     ServerMessage::Claude { pane, tail } => {
                         self.remote.apply(pane, &tail);
+                    }
+                    // `debug-stats` 판의 서버 절반(pytmux-382) — 화면 상태가 아니라 **이 뷰가
+                    // 물은 것의 답**이라 상태 누적기 밖에서 받는다(위 트랜스크립트와 같은 결).
+                    ServerMessage::DebugStats { stats } => {
+                        self.server_stats = Some(stats);
+                        dirty = true;
                     }
                     // pong 은 시계를 든 쪽의 일이다(G9u — TUI 와 같은 규칙). 다시 그릴
                     // 일은 정보 팝업이 떠 있을 때뿐이다.
@@ -7462,6 +7478,26 @@ impl SessionView {
     /// ⛔ 그래서 **0 으로 적지 않고 「못 쟀다」로 남긴다**: 0 은 「캐시가 비었다」로
     /// 읽히고, 그건 우리가 모르는 사실이다(`base::diag` 의 그 규율).
     /// 대신 우리가 실제로 하는 그리기 일의 크기는 [`Self::painted_cells`] 가 잰다.
+    /// `debug-stats` 판의 줄 전부 — 클라 절반 아래에 **서버 절반**(pytmux-382).
+    ///
+    /// 서버 절반은 회신이 와야 있다. 안 왔으면 그 사실을 한 줄로 말한다 — 빈 표나 0 은
+    /// 「서버가 한가하다」로 읽히고, 그건 우리가 모르는 사실이다.
+    fn debug_stats_lines(&self) -> Vec<String> {
+        let mut lines = self.runtime_stats().lines();
+        lines.push(String::new());
+        match &self.server_stats {
+            Some(stats) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| d.as_secs_f64());
+                lines.extend(stats.lines(now));
+            }
+            None => lines.push(format!("― {} ― {}", t("서버 쪽"), t("서버가 아직 답하지 않았다"))),
+        }
+        lines
+    }
+
     fn runtime_stats(&self) -> base::diag::RuntimeStats {
         let layout = self.state.layout();
         base::diag::RuntimeStats {
@@ -9447,8 +9483,7 @@ impl SessionView {
             // 읽는 판 — 줄은 `base::diag` 가 짓고 값은 `runtime_stats()` 가 모은다
             // (pytmux-457). 정본이 이 표를 `InfoScreen` 에 띄우는 것과 같은 손이다.
             Screen::DebugStats => self
-                .runtime_stats()
-                .lines()
+                .debug_stats_lines()
                 .into_iter()
                 .skip(self.screens.scroll())
                 .fold(column, |c, row| c.with_child(self.text(row, 13., palette::FG))),

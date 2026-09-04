@@ -166,6 +166,21 @@ class ServerCmdMixin:
                          line=_int(msg.get("line"), 0),
                          query=str(msg.get("query", "")))
 
+    @_cmd("debug_stats", HANDLED)
+    async def _cmd_debug_stats(self, client, sess, msg):
+        """서버가 **제 프로세스를 잰** 한 장을 요청 클라에게만 돌려준다(pytmux-382).
+
+        HANDLED 인 이유: 세션 상태를 하나도 안 바꾼다(읽기만 한다) — `search_all` 과
+        같은 결이고, 회신을 브로드캐스트하지 않는 이유도 같다(남의 판에 남이 물은 표가
+        뜨면 안 된다).
+
+        ⛔ 값은 `serverdiag.collect_stats` 가 **숫자만** 만든다. 문장은 각 클라가 제
+        로케일로 짓는다(정본 `clientdiag.render_server` · Rust `proto::diag`). 서버가
+        지은 글은 서버 로케일로 굳어 영어 사용자에게 한국어로 뜬다(pytmux-419 부류)."""
+        from . import serverdiag
+        await self._send_to(client, {"t": "debug_stats",
+                                     "stats": serverdiag.collect_stats(self)})
+
     # ── 버퍼 / 붙여넣기 / 캡처 ────────────────────────────────────────────
     @_cmd("set_buffer", HANDLED)
     async def _cmd_set_buffer(self, client, sess, msg):

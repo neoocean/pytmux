@@ -471,7 +471,9 @@ class _ChooseScreensMixin:
         # 몇 줄로 그려지는지 모르므로 두 토막을 따로 싣고, 붙일지는 판이 제 뷰포트를 재서
         # 정한다 — 다 들어가는 판에서 「↑↓ 스크롤」은 **할 수 없는 조작을 광고하는 것**이다.
         self.push_screen(InfoScreen(lines, title=title,
-                                    scroll_hint=str(msg.get("scroll_hint") or "")))
+                                    scroll_hint=str(msg.get("scroll_hint") or ""),
+                                    # 꼬리줄이 없으면 토막은 제 줄로(검수 T-4).
+                                    scroll_hint_own_line=not hint))
 
     def _open_search_results(self, msg):
         """결과 판을 열고, 고른 줄의 자리로 서버에 점프를 시킨다.
@@ -729,6 +731,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             self._tree_purpose = "choose"  # tree 응답 용도(choose|usage)
             self._want_buffers = False  # choose-buffer 응답 대기
             self._want_search_all = False  # 전역 검색 결과 응답 대기(pytmux-27 ①)
+            self._debug_server_stats = None  # `debug_stats` 회신(pytmux-382) — 판이 읽는다
             self._want_layouts = None  # 레이아웃 목록 응답 대기(모드: "new"/"over")
             self._want_token_log = False  # 토큰 로그 집계 팝업 응답 대기(#7)
             # 시계/달력 오버레이 상태(clock_panes/calendar_panes)와 토글
@@ -1492,6 +1495,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self._want_search_all:
                     self._want_search_all = False
                     self._open_search_results(msg)
+            elif t == "debug_stats":
+                # `debug-stats` 판의 서버 절반(pytmux-382) — 판이 `tick_cb` 로 읽어 붙인다.
+                self._debug_server_stats = msg.get("stats") if isinstance(msg.get("stats"), dict) else None
             elif t == "plugin_screen":
                 # ★ **정본의 Tier C(글 판) 렌더러**(pytmux-468 걸음 2 · 449 ⑵).
                 #

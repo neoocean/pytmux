@@ -385,6 +385,10 @@ pub enum Command {
         route: Vec<String>,
         query: String,
     },
+    /// 서버가 **제 프로세스를 잰** 한 장을 달라(`debug_stats` · pytmux-382). 회신은
+    /// `debug_stats`(disposition `HANDLED` — 요청 클라에게만 온다). `debug-stats` 판이
+    /// 열릴 때 한 번 보내고, 판은 회신이 올 때까지 「서버가 아직 답하지 않았다」로 있는다.
+    DebugStats,
     /// 출력 캡처(REC) 토글(`set_capture` — rec 서버 플러그인 소유). 값을 안 실으면
     /// 반전이다(파이썬 `[c]` 와 같다). 플러그인이 없으면 서버가 조용히 무시한다.
     SetCapture,
@@ -532,6 +536,7 @@ impl Command {
             Command::Search { .. } => "search",
             Command::SearchAll { .. } => "search_all",
             Command::SearchGoto { .. } => "search_goto",
+            Command::DebugStats => "debug_stats",
             Command::SetCapture => "set_capture",
         }
     }
@@ -663,6 +668,7 @@ impl Command {
             Command::SearchAll { query } => json!({ "query": query }),
             // `wid` 는 **있을 때만** 싣는다(`SelectWindow` 와 같은 규칙 — 구서버 호환).
             // `route` 는 로컬 히트면 빈 배열 그대로 보낸다(서버가 빈 배열=로컬로 읽는다).
+            Command::DebugStats => json!({}),
             Command::SearchGoto { wid, win, pane, line, route, query } => {
                 let mut value = json!({
                     "win": win, "pane": pane, "line": line, "route": route, "query": query,
@@ -856,6 +862,7 @@ impl Command {
                 route: vec![],
                 query: "에러".into(),
             },
+            Command::DebugStats,
             // ★ 아래 셋은 **오래 빠져 있었다** — `VARIANT_COUNT` 가 안 따라 올라가서
             // (67) 색인 67·68 이 검사 범위 밖으로 나갔고, 그래서 "all() 에 넣는 것까지
             // 강제한다"던 가드가 조용히 이 셋을 안 봤다(실측 2026-08-02i · P7).
@@ -1333,6 +1340,7 @@ mod tests {
             Command::SetCapture => 64,
             Command::SearchAll { .. } => 71,
             Command::SearchGoto { .. } => 72,
+            Command::DebugStats => 73,
             // 플러그인 액션은 **이름이 곧 명령**이라 변형 하나에 여러 이름이 실린다 —
             // 자리는 하나면 충분하다(이 표는 "변형을 빠짐없이 훑었나"를 재는 것이다).
             Command::PluginToggle { .. } => 65,
@@ -1342,7 +1350,7 @@ mod tests {
     }
 
     /// `variant_index` 가 돌려주는 값의 가짓수. 변형을 늘리면 여기도 늘려야 한다.
-    const VARIANT_COUNT: usize = 73;
+    const VARIANT_COUNT: usize = 74;
 
     #[test]
     fn all_covers_every_variant() {

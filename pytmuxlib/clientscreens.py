@@ -1205,9 +1205,10 @@ class PluginManagerScreen(ModalScreen):
     def on_mount(self):
         self.query_one("#plgsearch", Input).can_focus = False
         self.query_one("#plgsearch", Input).value = self._query
-        # 비동기이므로 별도 호출
-        import asyncio
-        asyncio.create_task(self._rebuild_and_focus())
+        # 비동기이므로 별도 호출 — ⛔ 반환된 태스크를 **든다**(검수 2026-09-05 T-3 · pytmux-410
+        # 부류): 안 들면 `await lv.clear()` 사이에서 GC 가 거둘 수 있고, 증상은 「관리자 판이
+        # 빈 목록으로 뜬다」가 간헐적이다. Textual 의 워커는 앱이 수명을 든다.
+        self.run_worker(self._rebuild_and_focus(), exclusive=True)
         self.app._plugin_screen = self   # status 회신 시 라벨 확정용
 
     async def _rebuild_and_focus(self):
@@ -1631,7 +1632,7 @@ class InfoScreen(ModalScreen):
 
     def __init__(self, lines, title="info", hide_key=None, hide_cb=None,
                  max_width=None, wrap_hang=True, center=False, tick_cb=None,
-                 scroll_hint=""):
+                 scroll_hint="", scroll_hint_own_line=False):
         super().__init__()
         self._lines = lines
         self._title = title
@@ -1662,6 +1663,9 @@ class InfoScreen(ModalScreen):
         # ⚠ **뒤에 붙인다.** 그래야 토막이 나타나고 사라져도 꼬리줄의 나머지가 자리를
         #    안 옮긴다(가운데에 끼우면 `Esc 닫기` 가 판마다 좌우로 움직인다).
         self._scroll_hint = scroll_hint or ""
+        # 꼬리줄이 **없는** 판(`hint` 가 빈 스펙)이면 토막을 제 줄로 놓는다 — 안 그러면
+        # 「마지막 줄 = 꼬리줄」 가정이 본문 마지막 줄에 토막을 이어 붙인다(검수 2026-09-05 T-4).
+        self._scroll_hint_own_line = bool(scroll_hint_own_line)
         self._scroll_hint_on = False
 
     def compose(self) -> ComposeResult:
@@ -1780,7 +1784,7 @@ class InfoScreen(ModalScreen):
         # 꼬리줄은 마지막 줄이다(`_open_plugin_text` 가 그렇게 붙인다). 꼬리줄이 아예
         # 없는 판(힌트가 빈 스펙)에는 그 토막만 한 줄로 놓는다.
         tail = (self._lines[-1] if self._lines else "").strip()
-        if tail:
+        if tail and not self._scroll_hint_own_line:
             self._lines = list(self._lines[:-1]) + [f"{tail} · {self._scroll_hint}"]
         else:
             self._lines = list(self._lines) + [self._scroll_hint]

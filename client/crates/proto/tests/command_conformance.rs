@@ -139,6 +139,10 @@ fn only_the_two_known_commands_skip_the_full_resync() {
             // Tier D — 클라만 아는 사실을 올린다. 회신이 없고 답은 다음 셀 프레임이다.
             ("client_fact", "handled"),
             ("copy_range", "handled"),
+            // 회신이 **표**다(`{"t":"debug_stats"}` — pytmux-382). 서버가 제 프로세스를
+            // 잰 숫자를 요청 클라에게만 돌려주고 세션 상태는 안 바꾼다(`search_all` 과
+            // 같은 결) — 재동기할 캔버스가 없다.
+            ("debug_stats", "handled"),
             // 패널을 실제로 죽였을 때만 broadcast 에 맡기고 HANDLED 를 반환한다.
             // 죽일 패널이 없으면 no-op 이라 FULL 로 떨어진다.
             ("kill_pane", "dynamic"),

@@ -8,6 +8,7 @@
     "copy_range": "handled",
     "cycle_layout": "full",
     "cycle_pane": "full",
+    "debug_stats": "handled",
     "detach_others": "handled",
     "join_pane": "full",
     "jump_prompt": "full",
@@ -126,6 +127,7 @@
     ],
     "cycle_layout": [],
     "cycle_pane": [],
+    "debug_stats": [],
     "detach_others": [],
     "join_pane": [
       "orient",
