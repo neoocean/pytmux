@@ -1845,3 +1845,35 @@ async def test_a_panel_hint_does_not_promise_a_move_the_panel_cannot_make():
             # 글 판은 반대다 — 거기서 ↑↓ 는 정말 스크롤이다.
             assert any(w in hint for w in scroll_words), (
                 f"{spec['id']} 은 글 판인데 힌트가 «스크롤» 이라 안 한다: {hint!r}")
+
+
+async def test_every_hub_panel_carries_the_tab_strip_and_only_itself_is_active():
+    """pytmux-130 ⑴ — 정본 토큰 팝업의 **탭 띠**를 자료(`tabs`)로 낸다. 사용자 지시(2026-09-04)가
+    465 ⑥ 의 「이 계획에서는 안 연다」를 뒤집었다.
+
+    ⛔ 잇는 줄(`goto:*`)은 **그대로다** — 띠를 모르는 클라의 길이고, 위 전수 시험이 그것을
+    센다. 띠는 그 위에 얹는 자료다(`scroll_hint` 와 같은 점진 채택).
+    """
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    expect_keys = [k for k, _l, _s in ss._HUB + ss._HUB_ACTIONS]
+    for _key, _label, sid in ss._HUB:
+        spec = ss.open_spec(srv, None, sid if sid != "claude-usage-panel" else "limits")
+        tabs = spec.get("tabs")
+        assert tabs, f"{sid} 에 띠가 없다"
+        assert [t["key"] for t in tabs] == expect_keys, (sid, [t["key"] for t in tabs])
+        active = [t["key"] for t in tabs if t["active"]]
+        assert len(active) == 1 and active[0] == ss._goto_of(sid), (sid, active)
+        actions = [t["key"] for t in tabs if t["action"]]
+        assert actions == [ss._GOTO_SETTINGS], actions
+        # 글은 자료가 아니라 우리가 적은 말 — 재료(i18n)가 실려야 클라 로케일로 뜬다.
+        assert all(t["label"] and t["i18n"].get("label") for t in tabs), tabs
+        # 띠의 낱말은 잇는 줄의 「… →」가 아니다 — 정본 #tktabs 의 짧은 이름이다.
+        assert not any("→" in t["label"] for t in tabs), tabs
+        # 잇는 줄은 그대로 남아 있다(점진 채택 — 띠를 모르는 클라의 길).
+        assert any(str(r["key"]).startswith("goto:") for r in spec["rows"]), sid
+    # 대조군 — 액션 판(시나리오 설정)에는 띠가 없다(정본에도 탭 전환이 없다).
+    panel = ss.open_spec(srv, None, "claude-settings")
+    assert not panel.get("tabs"), panel.get("tabs")
+

@@ -149,6 +149,11 @@ pub struct PluginInfo {
 /// 옮겨 담는 코드는 필드가 늘 때 한쪽만 늘어난다. 파싱은 여기, 뜻은 저기.
 pub use base::plugins::{PluginCommand, PluginMenuItem, PluginSetting, PluginSurface};
 
+/// 격자 한 변의 상한(칸). 실제 창은 수백 칸이다 — 이 위는 서버 결함이지 화면이 아니다(G-1).
+pub const MAX_GRID: u16 = 1024;
+/// 쌓이는 플러그인 판의 상한(G-4).
+pub const MAX_PLUGIN_SCREENS: usize = 16;
+
 /// 플러그인이 준 **화면 한 판**(설계 Tier C · P4).
 ///
 /// # 왜 스펙인가
@@ -188,6 +193,11 @@ pub struct PluginScreen {
     /// 비어 있으면 종전대로 [`hint`](Self::hint) 만 늘 붙는다(점진 채택).
     #[serde(default)]
     pub scroll_hint: String,
+    /// 정본 토큰 팝업의 **탭 띠**(`#tktabs`)를 자료로(pytmux-130 ⑴). 비어 있으면 띠가
+    /// 없는 판이다. 있으면 그리는 쪽이 띠를 그리고 **꼬리의 `goto:*` 줄은 숨긴다** —
+    /// 그 줄은 띠를 모르는 클라의 길이라 서버가 빼지 않는다(점진 채택).
+    #[serde(default)]
+    pub tabs: Vec<PluginTab>,
     #[serde(default)]
     pub rows: Vec<PluginRow>,
     #[serde(default)]
@@ -250,6 +260,23 @@ impl PluginScreen {
     /// 안내줄 — 이 클라의 로케일로.
     pub fn say_hint(&self) -> String {
         i18n_say(&self.i18n, "hint", &self.hint)
+    }
+
+    /// 꼬리의 잇는 줄(`goto:*`)을 **숨겨야 하나** — 띠가 있을 때만(pytmux-130 ⑴).
+    ///
+    /// 서버는 그 줄을 늘 싣고(`_hub_rows` — 띠를 모르는 클라의 길), 띠를 그리는 클라가
+    /// 여기서 걷어낸다. 잇는 줄은 **끝에** 붙어 오므로 앞쪽 줄의 번호는 그대로다.
+    pub fn visible_rows(&self) -> usize {
+        if self.tabs.is_empty() {
+            return self.rows.len();
+        }
+        self.rows.iter().take_while(|r| !r.key.starts_with("goto:")).count()
+    }
+
+    /// 탭 하나가 가리키는 잇는 줄의 번호 — 그 줄을 고르는 것이 탭을 누르는 것이다.
+    pub fn tab_row(&self, tab: usize) -> Option<usize> {
+        let key = &self.tabs.get(tab)?.key;
+        self.rows.iter().position(|r| &r.key == key)
     }
 
     /// 스크롤될 때만 붙는 토막 — 이 클라의 로케일로.
@@ -559,6 +586,31 @@ pub fn i18n_say(map: &I18nMap, field: &str, fallback: &str) -> String {
             base::i18n::tf(&p.fmt, &args)
         }
         _ => base::i18n::t(fallback).to_owned(),
+    }
+}
+
+/// 탭 띠의 칸 하나(pytmux-130 ⑴ · 서버 `screenspec._hub_tabs`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct PluginTab {
+    /// 잇는 줄과 **같은 열쇠**(`goto:*`) — 누르면 그 줄을 고른 것과 같은 길이다.
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    /// 지금 보고 있는 판.
+    #[serde(default)]
+    pub active: bool,
+    /// 뷰가 아니라 **액션**(정본 띠 끝의 초록 배지 — `시나리오`).
+    #[serde(default)]
+    pub action: bool,
+    #[serde(default)]
+    pub i18n: I18nMap,
+}
+
+impl PluginTab {
+    /// 띠의 낱말 — 이 클라의 로케일로(자료가 아니라 우리가 적은 말이다).
+    pub fn say_label(&self) -> String {
+        i18n_say(&self.i18n, "label", &self.label)
     }
 }
 
@@ -1459,6 +1511,12 @@ impl SessionState {
             ServerMessage::Layout(layout) => {
                 // 새 배치에 없는 패널의 화면은 버린다 — 안 그러면 죽은 패널의 스냅샷이
                 // 영원히 남아 메모리와 혼란을 함께 키운다.
+                // ⛔ 서버 값을 그대로 격자 크기로 쓰지 않는다(검수 2026-09-05 G-1). u16 두
+                //    값이 65535 면 `Canvas::new` 가 수백 GB 를 잡으려다 프레임 펌프에서
+                //    죽는다 — 서버 버그 한 통이 그대로 클라 사망이 되는 경계다.
+                let mut layout = layout;
+                layout.cols = layout.cols.min(MAX_GRID);
+                layout.rows = layout.rows.min(MAX_GRID);
                 let alive: Vec<i64> = layout.panes.iter().map(|p| p.id).collect();
                 self.screens.retain(|id, _| alive.contains(id));
                 self.blocks.retain(|id, _| alive.contains(id));
@@ -1488,7 +1546,14 @@ impl SessionState {
                     Some(top) if top.id == screen.id && top.kind == screen.kind => {
                         *top = screen;
                     }
-                    _ => self.plugin_screens.push(screen),
+                    _ => {
+                        // 상한(검수 2026-09-05 G-4) — 닫기 없이 id 를 바꿔 미는 플러그인이
+                        // 세션 수명 동안 쌓지 못하게. 가장 오래된 것을 버린다.
+                        if self.plugin_screens.len() >= MAX_PLUGIN_SCREENS {
+                            self.plugin_screens.remove(0);
+                        }
+                        self.plugin_screens.push(screen)
+                    }
                 }
                 true
             }

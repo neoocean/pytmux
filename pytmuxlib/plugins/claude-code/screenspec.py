@@ -122,6 +122,11 @@ i18n.register({
         "pscreen.spec_off_mark": "○",
         "pscreen.rc_hint": "r 원격 제어 토글(/rc) · Esc 닫기",
         "pscreen.rc_scroll_hint": "↑↓ 스크롤",
+        # 탭 띠(pytmux-130 ⑴) — 정본 `#tktabs` 의 낱말 그대로.
+        "pscreen.tab_period": "기간", "pscreen.tab_sessions": "세션",
+        "pscreen.tab_machines": "머신", "pscreen.tab_limits": "한도",
+        "pscreen.tab_warns": "경고", "pscreen.tab_daily": "일별",
+        "pscreen.tab_model": "모델", "pscreen.tab_settings": "시나리오",
     },
     "en": {
         "pscreen.spec_settings_title": "Claude settings",
@@ -171,12 +176,16 @@ i18n.register({
         "pscreen.spec_off_mark": "○",
         "pscreen.rc_hint": "r toggle remote control (/rc) · Esc close",
         "pscreen.rc_scroll_hint": "↑↓ scroll",
+        "pscreen.tab_period": "Period", "pscreen.tab_sessions": "Session",
+        "pscreen.tab_machines": "Machine", "pscreen.tab_limits": "Limit",
+        "pscreen.tab_warns": "Warn", "pscreen.tab_daily": "Daily",
+        "pscreen.tab_model": "Model", "pscreen.tab_settings": "Scenario",
     },
 })
 
 
 def _spec(sid, kind, title, hint, rows=(), text="", note="", keys=None, selected=0,
-          carried=None, head="", scroll_hint=""):
+          carried=None, head="", scroll_hint="", tabs=None):
     """스펙 한 판 — 칸을 빠뜨리지 않게 한 곳에서 짓는다.
 
     `rows`·`text` 를 늘 싣는 이유: 클라 파서가 `default` 로 채우긴 하지만, 빠진 칸은
@@ -201,10 +210,18 @@ def _spec(sid, kind, title, hint, rows=(), text="", note="", keys=None, selected
     ⚠ **뒤에 붙인다.** 그래야 토막이 나타나고 사라져도 꼬리줄의 나머지가 **자리를 안
     옮긴다** — 가운데에 끼우면 판을 볼 때마다 `Esc 닫기` 가 좌우로 움직인다.
 
-    빈 문자열이면 종전과 같다(칸을 모르는 판은 힌트를 통째로 늘 붙인다 — 점진 채택)."""
+    빈 문자열이면 종전과 같다(칸을 모르는 판은 힌트를 통째로 늘 붙인다 — 점진 채택).
+
+    `tabs` 는 정본 토큰 팝업의 **탭 띠**(`#tktabs`)를 자료로 낸 것이다(pytmux-130 ⑴).
+    `_HUB` 의 판이면 안 줘도 여기서 `_hub_tabs(sid)` 로 채운다 — 판마다 손으로 적으면
+    새 판이 생길 때 어떤 판에서는 띠가 빠진다(잇는 줄이 `_HUB` 한 표에서 나오는 것과 같은
+    이유). 띠를 모르는 클라는 이 칸을 버리고 종전처럼 꼬리의 `goto:` 줄을 본다."""
+    if tabs is None and any(sid == h[2] for h in _HUB):
+        tabs = _hub_tabs(sid)
     return {
         "t": "plugin_screen", "id": sid, "kind": kind,
         "title": title, "hint": hint, "scroll_hint": scroll_hint, "head": head,
+        "tabs": list(tabs or ()),
         "rows": list(rows), "text": text, "note": note,
         "selected": max(0, int(selected)),
         "keys": dict(keys or {}),
@@ -855,6 +872,48 @@ def _hub_rows(current_sid):
         rows.append({"key": key, "label": text, "i18n": {"label": spec},
                      "cols": [], "depth": 0, "expand": ""})
     return rows
+
+
+#: 띠에 적는 **짧은** 이름 — 잇는 줄의 「… →」 문구가 아니라 정본 `#tktabs` 의 낱말이다
+#: (`기간`·`세션`·`머신`·`한도`·`경고`·`시나리오` — 정본에 없는 두 판은 같은 결로 지었다).
+_TAB_LABELS = {
+    "claude-token-period": "pscreen.tab_period",
+    "claude-token-sessions": "pscreen.tab_sessions",
+    "claude-token-machines": "pscreen.tab_machines",
+    "claude-usage-panel": "pscreen.tab_limits",
+    "claude-warn-history": "pscreen.tab_warns",
+    "claude-token-log": "pscreen.tab_daily",
+    "model": "pscreen.tab_model",
+    "claude-settings": "pscreen.tab_settings",
+}
+
+
+def _hub_tabs(current_sid):
+    """정본 토큰 팝업의 **탭 띠**(`#tktabs`)를 자료로 — GUI 가 그린다(pytmux-130 · 사용자
+    지시 2026-09-04 가 465 ⑥ 의 「이 계획에서는 안 연다」를 뒤집었다).
+
+    `_HUB` 전부(지금 판은 `active`)와 `_HUB_ACTIONS`(초록 배지 — `action`)를 **순서
+    그대로** 싣는다. 열쇠는 `_hub_rows` 의 잇는 줄과 **같은 문자열**(`goto:*`)이라 탭을
+    누르는 것은 그 줄을 고르는 것과 같은 길이다(`_hub_open`) — 갈래를 새로 적을 자리가
+    없다.
+
+    ⛔ **잇는 줄(`_hub_rows`)은 그대로 둔다.** 그 줄은 ⑴ 이 칸을 모르는 클라(구버전)의
+    길이고 ⑵ `tests/test_plugin_screen.py` 가 전수로 재는 자리다. 띠를 그리는 클라가
+    그 꼬리 줄을 **숨기는** 것이지 서버가 빼는 것이 아니다(점진 채택 · `scroll_hint` 와
+    같은 규약).
+
+    ★ 글까지 재료로 싣는다(`_hub_rows` 와 같은 이유 — 이 라벨은 자료가 아니라 우리가
+    적은 말이라, 재료가 없으면 서버 로케일로 굳는다)."""
+    tabs = []
+    for key, label_key, sid in _HUB:
+        text, spec = i18n.phrase(_TAB_LABELS.get(sid, label_key))
+        tabs.append({"key": key, "label": text, "i18n": {"label": spec},
+                     "active": sid == current_sid, "action": False})
+    for key, label_key, sid in _HUB_ACTIONS:
+        text, spec = i18n.phrase(_TAB_LABELS.get(sid, label_key))
+        tabs.append({"key": key, "label": text, "i18n": {"label": spec},
+                     "active": sid == current_sid, "action": True})
+    return tabs
 
 
 #: 접힘·펼침을 드는 두 자리 — 기간 트리와 경고 이력(pytmux-419 ④).

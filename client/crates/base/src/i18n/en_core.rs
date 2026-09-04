@@ -654,4 +654,7 @@ pub static EN: &[(&str, &str)] = &[
     ("전", "ago"),
     ("서버가 아직 답하지 않았다", "The server has not answered yet"),
     ("서버가 이 물음을 모른다(구서버)", "This server does not know the question (old server)"),
+    // ── session_view.rs — 붙여넣은 그림의 썸네일(pytmux-472) ──
+    ("그림 읽는 중…", "Loading image…"),
+    ("그림을 못 읽었다", "Could not read the image"),
 ];

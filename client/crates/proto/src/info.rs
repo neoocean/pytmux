@@ -129,6 +129,12 @@ pub fn open_capture_dir(path: &str) -> bool {
     let Some(dir) = std::path::Path::new(path).parent() else {
         return false;
     };
+    // `-` 로 시작하는 경로를 첫 인자로 주면 `open`/`xdg-open` 이 플래그로 읽는다(검수
+    // 2026-09-05 G-6). 캡처 경로는 우리가 짓는 절대경로라 실제로는 못 오지만, 오면 안 연다
+    // (`--` 는 세 오프너가 다 받지 않는다 — 막는 쪽이 맞다).
+    if dir.to_string_lossy().starts_with('-') {
+        return false;
+    }
     #[cfg(target_os = "macos")]
     let opener = "open";
     #[cfg(target_os = "windows")]

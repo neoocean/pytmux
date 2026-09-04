@@ -6864,6 +6864,218 @@ fn reopening_debug_stats_forgets_the_old_reply() {
     assert!(view.server_stats.is_none(), "다시 열었는데 옛 회신이 남아 있다");
 }
 
+/// pytmux-130 ⑴ — 탭 띠가 실린 목록 판. 자료 둘 + 꼬리의 잇는 줄 둘(서버 `_hub_rows`).
+fn tabbed_spec() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-period", "kind": "list", "title": "기간별",
+        "hint": "Esc 닫기", "keys": {"enter": "apply"},
+        "rows": [
+            {"key": "2026-09", "label": "9월 자료", "cols": [], "depth": 0, "expand": ""},
+            {"key": "2026-08", "label": "8월 자료", "cols": [], "depth": 0, "expand": ""},
+            {"key": "goto:sessions", "label": "세션별 →", "cols": [], "depth": 0, "expand": ""},
+            {"key": "goto:settings", "label": "시나리오 설정 →", "cols": [], "depth": 0, "expand": ""}
+        ],
+        "tabs": [
+            {"key": "goto:period", "label": "기간", "active": true, "action": false},
+            {"key": "goto:sessions", "label": "세션", "active": false, "action": false},
+            {"key": "goto:settings", "label": "시나리오", "active": false, "action": true}
+        ],
+        "text": "", "note": ""
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_tabbed_panel_draws_the_strip_and_hides_the_trailing_link_rows() {
+    // 정본 토큰 팝업의 탭 띠(`#tktabs`)가 우리 판 위에 선다. 같은 뜻인 꼬리의 잇는 줄은
+    // 안 그린다 — 둘 다 보이면 어느 쪽을 눌러야 하나가 된다.
+    let painted = painted_after(vec![layout_one_pane(), tabbed_spec()], &[]);
+    for label in ["기간", "세션", "시나리오"] {
+        assert!(painted.iter().any(|t| t == label), "띠에 {label} 이 없다: {painted:?}");
+    }
+    assert!(painted.iter().any(|t| t == "9월 자료"), "자료 줄이 사라졌다: {painted:?}");
+    assert!(
+        !painted.iter().any(|t| t.contains("세션별 →") || t.contains("시나리오 설정 →")),
+        "띠가 있는데 잇는 줄도 그렸다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_panel_without_tabs_still_draws_its_link_rows() {
+    // 점진 채택 — 띠를 안 싣는 판(구서버 · 다른 플러그인)은 종전처럼 잇는 줄이 길이다.
+    let mut spec = tabbed_spec();
+    if let ServerMessage::PluginScreen(ref mut s) = spec {
+        s.tabs.clear();
+    }
+    let painted = painted_after(vec![layout_one_pane(), spec], &[]);
+    assert!(painted.iter().any(|t| t == "세션별 →"), "잇는 줄이 사라졌다: {painted:?}");
+}
+
+#[test]
+fn clicking_a_tab_chooses_its_link_row() {
+    // 탭은 잇는 줄의 다른 얼굴이다 — 누르면 그 줄을 고른 것과 **같은 명령**이 나간다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(tabbed_spec()))).unwrap();
+    view.pump_headless();
+    assert!(view.plugin_tab_clicked(1), "탭을 눌렀는데 아무 일도 안 났다");
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::PluginAction { act, input, .. })
+            if act == "apply" && input.as_deref() == Some("goto:sessions"))),
+        "세션 탭이 잇는 줄을 안 골랐다: {out:?}"
+    );
+    // 활성 탭(자기 자신)은 잇는 줄이 없다 — 아무 일도 안 난다(정본도 그렇다).
+    assert!(!view.plugin_tab_clicked(0));
+}
+
+#[test]
+fn end_then_enter_on_a_tabbed_panel_picks_the_last_visible_row_not_a_hidden_link() {
+    // 안 그리는 줄에 커서가 서면 `End`·`Enter` 가 보이지 않는 줄을 고른다 — 그 자리를 막는다.
+    let out = sent_after(
+        vec![layout_one_pane(), tabbed_spec()],
+        &[(Key::End, Mods::NONE), (Key::Enter, Mods::NONE)],
+    );
+    let picked: Vec<_> = out
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::Command(Command::PluginAction { input, .. }) => input.clone(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(picked, vec!["2026-08".to_owned()], "{out:?}");
+}
+
+#[test]
+fn a_tab_drag_lights_the_tab_under_the_pointer_as_the_drop_target() {
+    // pytmux-471 — 「배선이었나 합성 마우스였나」의 **배선 절반**을 기계로 가른다.
+    // 진짜 이벤트(누름 → 버튼 든 채 이동)를 요소 트리에 흘려 드롭 대상이 서는지 본다.
+    use warpui::platform::WindowStyle;
+    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
+    use warpui_core::event::{Event, ModifiersState};
+    let (over, lit_before, lit_after) = warpui::App::test((), move |mut app| async move {
+        let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+        let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+        for msg in three_tabs() {
+            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+        }
+        view.pump_headless();
+        let (window_id, handle) = app.add_window(WindowStyle::NotStealFocus, move |_| view);
+        let mut presenter = Presenter::new(window_id);
+        let mut updated = EntityIdSet::default();
+        updated.insert(app.root_view_id(window_id).unwrap());
+        let invalidation = WindowInvalidation {
+            updated,
+            ..Default::default()
+        };
+        app.update(move |ctx| {
+            presenter.invalidate(invalidation.clone(), ctx);
+            let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            let at = |needle: &str| {
+                let t = scene
+                    .painted_texts()
+                    .find(|t| t.text.contains(needle))
+                    .unwrap_or_else(|| panic!("탭 {needle} 이 안 그려졌다"));
+                // ⚠ 시험 글꼴은 글자 폭이 0 — 가로는 여백만큼만 갈린다(하네스 머리말).
+                vec2f(t.bounds.origin().x() + 1., t.bounds.origin().y() + t.bounds.height() / 2.)
+            };
+            let (a, b) = (at("하나"), at("둘"));
+            let lit = |scene: &warpui_core::Scene| {
+                scene
+                    .layers()
+                    .flat_map(|l| l.rects.iter())
+                    .filter(|r| matches!(r.border.color, warpui::elements::Fill::Solid(c) if c == theme::FOCUS))
+                    .count()
+            };
+            let lit_before = lit(&scene);
+            presenter.dispatch_event(
+                Event::LeftMouseDown { position: a, modifiers: ModifiersState::default(), click_count: 1, is_first_mouse: false },
+                ctx,
+            );
+            // ⚠ 헤드리스 프레젠터는 요소가 쏜 **액션**(`dispatch_typed_action`)을 뷰까지
+            //   안 나른다(상류 비공개 — 메모리 「클릭 주입 하네스는 거짓 오라클」). 그래서
+            //   누름의 뜻(`TabPress` → `tab_drag`)은 뷰에 직접 세우고, 여기서 재는 것은
+            //   **버튼 든 채 이동이 hover 를 갱신하나**(상류 07-31 수정) + 그것을 읽는
+            //   `handle_mouse_drag` 의 배선이다.
+            let pressed = handle.read(&*ctx, |v, _| v.tab_drag);
+            if pressed.is_none() {
+                handle.update(ctx, |v, _| v.tab_drag = Some(0));
+            }
+            presenter.dispatch_event(
+                Event::LeftMouseDragged { position: b, modifiers: ModifiersState::default() },
+                ctx,
+            );
+            let over = handle.update(ctx, |v, _| {
+                v.handle_mouse_drag(None);
+                v.tab_drag_over
+            });
+            presenter.invalidate(invalidation, ctx);
+            let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            (over, lit_before, lit(&scene))
+        })
+    });
+    assert_eq!(over, Some(1), "버튼 든 채 둘째 탭 위로 갔는데 드롭 대상이 안 섰다 — 배선이다");
+    assert!(
+        lit_after > lit_before,
+        "드롭 대상은 섰는데 강조 테두리가 안 늘었다(전 {lit_before} · 후 {lit_after})"
+    );
+}
+
+/// 8×8 진짜 PNG 한 장(pytmux-472 오라클용).
+fn tiny_png() -> String {
+    let path = std::env::temp_dir().join(format!("pytmux-gui-test-thumb-{}.png", std::process::id()));
+    image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 40, 40, 255]))
+        .save(&path)
+        .expect("시험용 PNG 를 못 썼다");
+    path.to_string_lossy().into_owned()
+}
+
+#[test]
+fn a_pasted_image_shows_a_thumbnail_in_the_corner_for_a_while() {
+    // pytmux-472 — 자리 결정 ⓑ: 캔버스 우하단의 뜬 그림. 양성 오라클 — **면이 는다**
+    // (그림이 아직 안 읽혔으면 그 자리의 글이 선다 — 빈 상자는 「안 붙었다」로 읽힌다).
+    let path = tiny_png();
+    let (images, texts, before) = painted_scene_setup(
+        vec![layout_one_pane()],
+        &[],
+        move |v| v.note_pasted_thumb(&path),
+        |scene| {
+            (
+                scene.layers().flat_map(|l| l.images.iter()).count(),
+                scene.painted_texts().map(|t| t.text.clone()).collect::<Vec<_>>(),
+                0usize,
+            )
+        },
+    );
+    let _ = before;
+    assert!(
+        images >= 1 || texts.iter().any(|t| t.contains("그림 읽는 중")),
+        "붙여넣은 그림이 어디에도 안 보인다(그림 {images} · 글 {texts:?})"
+    );
+}
+
+#[test]
+fn the_thumbnail_goes_away_after_its_ttl_and_never_pushes_the_notice() {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.state.note_error("이미지 원격 전송 실패(scp 오류)".to_owned());
+    view.pasted_thumb = Some(PastedThumb {
+        path: "/nonexistent.png".to_owned(),
+        since: Instant::now() - THUMB_TTL - Duration::from_secs(1),
+    });
+    assert!(view.pasted_thumb_element().is_none(), "수명이 지난 썸네일이 아직 그려진다");
+    assert!(view.tick_thumb(), "지난 썸네일을 걷었으면 다시 그려야 한다");
+    assert!(view.pasted_thumb.is_none());
+    assert!(!view.tick_thumb(), "걷은 뒤에는 조용해야 한다");
+    // 경고는 그대로다 — 썸네일은 알림 자리를 밀어내지 않는다.
+    assert!(
+        view.state.notices().any(|n| n.text.contains("scp 오류")),
+        "썸네일이 알림을 밀어냈다"
+    );
+}
+
 #[test]
 fn a_text_panel_that_fits_does_not_advertise_scrolling() {
     // pytmux-478 ⑵ — 다 들어가는 판이 꼬리줄에서 「↑↓ 스크롤」이라고 말하면, 사용자는

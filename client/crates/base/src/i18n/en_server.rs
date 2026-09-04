@@ -145,6 +145,15 @@ pub static EN: &[(&str, &str)] = &[
     ("Esc 닫기", "Esc close"),
     ("Esc 목록으로", "Esc back to the list"),
     ("↑↓ 스크롤", "↑↓ scroll"),
+    // pytmux-130 ⑴ — 토큰 팝업 탭 띠의 낱말(정본 `#tktabs` 그대로 · `screenspec._TAB_LABELS`).
+    // 「세션」은 en_proto 가 이미 든다(중복 키 금지).
+    ("기간", "Period"),
+    ("머신", "Machine"),
+    ("한도", "Limit"),
+    ("경고", "Warn"),
+    ("일별", "Daily"),
+    ("모델", "Model"),
+    ("시나리오", "Scenario"),
     ("c 비우기 · Esc 닫기", "c clear · Esc close"),
     ("default — 매번 확인 (일반 모드)", "default — confirm each time (normal)"),
     ("plan — 플랜 모드 (계획만, 실행 안 함)", "plan — plan mode (plan only, no run)"),

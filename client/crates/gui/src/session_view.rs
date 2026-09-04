@@ -39,8 +39,8 @@ use proto::{LinkEvent, Selection, ServerLink, ServerMessage, SessionState};
 use warpui::color::ColorU;
 use warpui::elements::{
     Align, Border, Clipped, ConstrainedBox, Container, CrossAxisAlignment, DispatchEventResult,
-    Empty, EventHandler, Expanded, Flex, Hoverable, MainAxisSize, MouseStateHandle, ParentElement,
-    Point, Rect, Stack, Text,
+    Empty, EventHandler, Expanded, Flex, Hoverable, Image, MainAxisSize, MouseStateHandle,
+    ParentElement, Point, Rect, Stack, Text,
 };
 use warpui::fonts::{FamilyId, Properties, Style as FontStyle, Weight};
 use warpui::geometry::vector::{Vector2F, vec2f};
@@ -514,6 +514,17 @@ pub struct SessionView {
     /// ⛔ 이것이 `Some` 인 동안에는 **모든 키가 편집칸의 것**이다. 한 갈래라도 빠뜨리면
     /// 그 키가 패널로 새서 편집 중에 셸이 글자를 받는다(`session_edit_key` 참조).
     session_edit: Option<base::SessionEdit>,
+    /// 방금 붙여넣은 그림의 **썸네일**(pytmux-472 · 갈림 ⓑ 픽셀 그림 — 정본은 격자 안에
+    /// 살아 그림을 못 그린다). 캔버스 우하단에 [`THUMB_TTL`] 동안 떠 있다가 사라진다.
+    ///
+    /// ⛔ 알림 수명에 얹을 수 없어 시계가 따로다: info 알림은 상태줄에 안 뜨고 이력에만
+    ///    남는다(`note_notice`). 그래서 이 상태와 [`Self::tick_thumb`] 이 필요하다.
+    /// 실패한 붙여넣기(원격 전송 실패)의 **경고 문구는 그대로다** — 이 그림은 겹쳐 뜨는
+    /// 것이지 알림 자리를 밀어내지 않는다.
+    pasted_thumb: Option<PastedThumb>,
+    /// 플러그인 판의 **탭 띠** 칸들의 마우스 상태(pytmux-130 ⑴) — 줄 풀(`panel_click_states`)
+    /// 과 번호가 겹치면 안 되므로 따로 든다.
+    plugin_tab_click_states: std::cell::RefCell<Vec<MouseStateHandle>>,
     /// 드래그 중인 탭(리스트 위치) — 판정은 core `drag_drop`(G9w · TUI 와 한 벌).
     tab_drag: Option<usize>,
     /// 드래그 중 가리키는 드롭 대상 탭(강조용).
@@ -831,6 +842,8 @@ impl SessionView {
             screens: Screens::new(),
             chrome: Default::default(),
             chrome_click_states: Default::default(),
+            pasted_thumb: None,
+            plugin_tab_click_states: Default::default(),
             panel_click_states: Default::default(),
             titlebar_click_states: Default::default(),
             status_click_states: Default::default(),
@@ -2593,6 +2606,9 @@ impl SessionView {
             return true;
         };
         if let Some(path) = clip::save_image(&image.data, &image.mime_type) {
+            // 붙였다는 되먹임을 **그림으로**(pytmux-472). 원격이든 로컬이든 파일은 이
+            // 상자에 생겼으니 그것을 보인다 — 전송 결과와 무관하다(실패 경고는 따로 남는다).
+            self.note_pasted_thumb(&path);
             // ★ **원격 탭이면 그 경로가 저쪽에 없다.** 파일은 이 상자에 생겼다 — 그대로
             //   붙이면 원격 앱이 "그런 파일 없음"이라 말하고, 사용자는 붙여넣기가 깨진 줄
             //   안다. 정본과 같이 `scp` 로 먼저 옮긴다(`_do_paste_clipboard`).
@@ -3696,6 +3712,7 @@ impl SessionView {
         // 시계는 서버 메시지가 없어도 흐른다 — 퍼올리기와 같은 자리에서 재운다
         // (GUI 에는 TUI 의 프레임 루프에 해당하는 자리가 여기뿐이다).
         let mut dirty = self.tick_clock() || shell || pasted;
+        dirty |= self.tick_thumb();
         // 입력기 배지는 서버 메시지와 무관하게 바뀐다 — 시계와 같은 자리에서 잰다.
         dirty |= self.tick_ime();
         let mut arrived = 0usize;
@@ -6048,6 +6065,15 @@ impl SessionView {
         //     에 맞춰 자르고 고정폭으로 그려야 아래 격자와 자리가 맞는다. 그리고 판은
         //     제 기하를 `panel_grid()` 가 따로 세는데(거기서 `head`·`foot` 줄을 이미
         //     뺀다) 이 공통 줄은 그 셈 **밖**이라, 그리는 순간 판이 한 줄만큼 넘친다.
+        // ★ **탭 띠**(pytmux-130 ⑴ · 사용자 지시 2026-09-04). 정본 토큰 팝업은 이 판들을
+        //   한 팝업의 탭으로 묶는다(`#tktabs`). 서버가 그 띠를 자료(`tabs`)로 실어 주고
+        //   우리는 **우리 위젯**으로 그린다 — 정본의 글자 탭을 흉내내지 않는다(pytmux-185).
+        //   띠가 있으면 꼬리의 잇는 줄(`goto:*`)은 안 그린다(`visible_rows`) — 같은 뜻이
+        //   두 번 보이면 어느 쪽을 눌러야 하나가 된다.
+        if !spec.tabs.is_empty() {
+            budget = budget.saturating_sub(1);
+            column = column.with_child(self.plugin_tab_strip(spec));
+        }
         if !spec.head.is_empty() && spec.kind != "panel" {
             budget = budget.saturating_sub(1);
             column = column.with_child(self.hint_text(spec.say_head(), self.ui_font, 12., palette::DIM));
@@ -6059,9 +6085,9 @@ impl SessionView {
         }
         match spec.kind.as_str() {
             "list" => {
-                let selected = self.screens.selected().min(spec.rows.len().saturating_sub(1));
+                let selected = self.screens.selected().min(spec.visible_rows().saturating_sub(1));
                 let start = (selected + 1).saturating_sub(budget);
-                for (row, item) in spec.rows.iter().enumerate().skip(start).take(budget) {
+                for (row, item) in spec.rows.iter().take(spec.visible_rows()).enumerate().skip(start).take(budget) {
                     // 부가 칸(`cols`)은 뒤에 흐리게 — 정본 목록 화면과 같은 짜임이다.
                     // ★ 줄마다 **뜻이 있으면 그 색**으로(pytmux-11·12 A). 정본은 디렉터리를
                     //   붉게, 숨은 파일을 보라로, 고른 줄을 노랗게 칠한다 — 제보가 *"컬러
@@ -6160,9 +6186,9 @@ impl SessionView {
             // 정본과 같다 — 목록은 고르는 화면이고 표는 읽으며 고르는 화면이라, 칸의
             // 세로줄이 맞아야 읽힌다.
             "table" => {
-                let selected = self.screens.selected().min(spec.rows.len().saturating_sub(1));
+                let selected = self.screens.selected().min(spec.visible_rows().saturating_sub(1));
                 let start = (selected + 1).saturating_sub(budget);
-                for (row, item) in spec.rows.iter().enumerate().skip(start).take(budget) {
+                for (row, item) in spec.rows.iter().take(spec.visible_rows()).enumerate().skip(start).take(budget) {
                     // 목록과 **같은 규칙**으로 색을 푼다(pytmux-12 A) — mdir 이 이 갈래다.
                     let fg = proto::rowtag::color(&item.tag)
                         .map_or(palette::FG, |c| to_gui_color(&c));
@@ -6274,7 +6300,7 @@ impl SessionView {
             "panel" => {
                 let (per_col, cols) = self.panel_grid();
                 let per = per_col * cols;
-                let selected = self.screens.selected().min(spec.rows.len().saturating_sub(1));
+                let selected = self.screens.selected().min(spec.visible_rows().saturating_sub(1));
                 // 스크롤은 **판 단위**다 — 정본 Mdir 의 도스 감각 그대로(부드러운 스크롤이
                 // 없다). 한 줄씩 밀면 열 경계가 매 줄 바뀌어 눈이 자리를 잃는다.
                 let start = if per > 0 { selected / per * per } else { 0 };
@@ -6343,9 +6369,9 @@ impl SessionView {
             // 하나로 두고, 무엇을 물을지는 플러그인이 다음 스펙(`prompt`)으로 정한다 —
             // 값 편집 규칙을 스펙에 담기 시작하면 스펙이 화면마다 늘어난다(설계 §10).
             "form" => {
-                let selected = self.screens.selected().min(spec.rows.len().saturating_sub(1));
+                let selected = self.screens.selected().min(spec.visible_rows().saturating_sub(1));
                 let start = (selected + 1).saturating_sub(budget);
-                for (row, item) in spec.rows.iter().enumerate().skip(start).take(budget) {
+                for (row, item) in spec.rows.iter().take(spec.visible_rows()).enumerate().skip(start).take(budget) {
                     // 값도 **플러그인이 적은 말**이라 우리 로케일로 읽는다(목록·표와 같은
                     // 규칙 — `PluginRow::say_cols`). 여기만 `cols` 를 날로 쓰던 동안
                     // 설정 판의 `끔`·`완료마다` 가 영어 사용자에게 한국어로 떴다.
@@ -6498,6 +6524,115 @@ impl SessionView {
     ///
     /// 자리(번호)가 아니라 그 줄의 `key` 를 싣는 이유: 목록은 서버가 다시 만들 수 있고,
     /// 그 사이 줄이 늘거나 줄면 자리는 **다른 줄**을 가리킨다.
+    /// 탭 띠 한 칸의 마우스 상태(`plugin_tab_click_states` 풀).
+    fn plugin_tab_mouse_state(&self, i: usize) -> MouseStateHandle {
+        let mut states = self.plugin_tab_click_states.borrow_mut();
+        while states.len() <= i {
+            states.push(Default::default());
+        }
+        states[i].clone()
+    }
+
+    /// 플러그인 판 위의 **탭 띠**(pytmux-130 ⑴) — 정본 `#tktabs` 와 같은 뜻을 칩으로.
+    ///
+    /// 활성 탭은 포커스와 같은 테두리, 액션(정본의 초록 배지 — `시나리오`)은 초록 글자.
+    /// 누르면 [`ViewAction::PluginTab`] — 그 탭의 잇는 줄을 고른 것과 같은 길이다.
+    fn plugin_tab_strip(&self, spec: &proto::session::PluginScreen) -> Box<dyn Element> {
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(6.);
+        for (i, tab) in spec.tabs.iter().enumerate() {
+            let fg = if tab.action { palette::GREEN } else { palette::FG };
+            let mut chip = Container::new(self.text(tab.say_label(), 12., fg))
+                .with_horizontal_padding(6.)
+                .with_vertical_padding(2.);
+            if tab.active {
+                chip = chip
+                    .with_background_color(palette::SELECTED_BG)
+                    .with_border(Border::all(1.5).with_border_color(theme::FOCUS));
+            } else {
+                chip = chip.with_border(Border::all(1.).with_border_color(theme::BORDER));
+            }
+            let chip = chip.finish();
+            row = row.with_child(
+                Hoverable::new(self.plugin_tab_mouse_state(i), |_| chip)
+                    .on_click(move |evt, _, _| {
+                        evt.dispatch_typed_action(ViewAction::PluginTab(i));
+                    })
+                    .finish(),
+            );
+        }
+        Container::new(row.finish()).with_vertical_padding(2.).finish()
+    }
+
+    /// 탭 띠를 눌렀다 — 그 탭이 가리키는 잇는 줄을 **고른 것과 같다**(pytmux-130 ⑴).
+    ///
+    /// 갈래를 새로 적지 않는다: 잇는 줄은 서버 `_hub_rows` 가 싣고 `_hub_open` 이 연다 —
+    /// 탭은 그 줄의 다른 얼굴일 뿐이다. 활성 탭(자기 자신)은 잇는 줄이 없어 아무 일도
+    /// 안 난다(정본도 그렇다).
+    pub(crate) fn plugin_tab_clicked(&mut self, i: usize) -> bool {
+        if !self.config.mouse {
+            return false;
+        }
+        let Some(row) = self.state.plugin_screen().and_then(|spec| spec.tab_row(i)) else {
+            return false;
+        };
+        self.plugin_view_chosen(row);
+        true
+    }
+
+    /// 붙여넣은 그림을 잠깐 보인다(pytmux-472). 같은 자리에 새 그림이 오면 시계도 새로.
+    fn note_pasted_thumb(&mut self, path: &str) {
+        self.pasted_thumb = Some(PastedThumb { path: path.to_owned(), since: Instant::now() });
+    }
+
+    /// 썸네일의 수명 — 지났으면 걷고 다시 그린다(`tick_clock` 과 같은 자리에서 부른다).
+    fn tick_thumb(&mut self) -> bool {
+        match &self.pasted_thumb {
+            Some(t) if t.since.elapsed() >= THUMB_TTL => {
+                self.pasted_thumb = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 지금 떠 있는 썸네일 — 캔버스 **우하단**에 얹는 요소(pytmux-472 자리 결정 ⓑ).
+    ///
+    /// 자리 결정의 근거: ⓐ 상태줄 옆 칩은 상태줄 높이를 그림이 늘리고, ⓒ Summary 판은
+    /// 일부러 열어야 보여 「붙였다」의 되먹임이 아니다. 그림은 앱이 아직 못 읽었을 때
+    /// 글로 말한다(`before_load`) — 빈 상자는 「안 붙었다」로 읽힌다.
+    fn pasted_thumb_element(&self) -> Option<Box<dyn Element>> {
+        let thumb = self.pasted_thumb.as_ref()?;
+        if thumb.since.elapsed() >= THUMB_TTL {
+            return None;
+        }
+        let image = Image::new(
+            warpui_core::assets::asset_cache::AssetSource::LocalFile {
+                path: thumb.path.clone(),
+                content_version: None,
+            },
+            warpui::elements::CacheOption::BySize,
+        )
+        .contain()
+        .before_load(self.text(t("그림 읽는 중…"), 12., palette::DIM))
+        .on_load_failure(self.text(t("그림을 못 읽었다"), 12., palette::DIM))
+        .finish();
+        let boxed = Container::new(
+            ConstrainedBox::new(image).with_width(THUMB_W).with_height(THUMB_H).finish(),
+        )
+        .with_uniform_padding(4.)
+        .with_background_color(palette::BG)
+        .with_border(Border::all(1.).with_border_color(theme::BORDER))
+        .finish();
+        Some(
+            Container::new(Align::new(boxed).bottom_right().finish())
+                .with_uniform_padding(THUMB_MARGIN)
+                .finish(),
+        )
+    }
+
     fn plugin_view_chosen(&mut self, row: usize) {
         let Some(spec) = self.state.plugin_screen() else {
             return;
@@ -7446,7 +7581,9 @@ impl SessionView {
         if self.screens.top() != Some(Screen::PluginView) {
             return;
         }
-        let Some(rows) = self.state.plugin_screen().map(|spec| spec.rows.len()) else {
+        // 띠가 있으면 꼬리의 잇는 줄은 **커서가 못 간다**(안 그리는 줄에 커서가 서면
+        // `End`·`Enter` 가 보이지 않는 줄을 고른다 — pytmux-130 ⑴).
+        let Some(rows) = self.state.plugin_screen().map(|spec| spec.visible_rows()) else {
             return;
         };
         if rows == 0 {
@@ -10919,6 +11056,10 @@ impl View for SessionView {
         for overlay in self.calendar_overlays() {
             body = body.with_child(overlay);
         }
+        // 붙여넣은 그림의 썸네일(pytmux-472) — 캔버스 위·판 아래(달력과 같은 순서).
+        if let Some(thumb) = self.pasted_thumb_element() {
+            body = body.with_child(thumb);
+        }
         if let Some(screen) = self.screens.top() {
             if screen.dims_behind() {
                 body = body
@@ -11146,6 +11287,9 @@ enum TypedTo {
 pub enum ViewAction {
     /// 아직 판정 전의 키.
     RawKey(Key, Mods),
+    /// 플러그인 판의 탭 띠 `i` 번째를 눌렀다(pytmux-130 ⑴) — 그 탭의 잇는 줄을 고른 것과
+    /// 같은 길이다(`plugin_tab_clicked`).
+    PluginTab(usize),
     /// 크롬(탭·`[+]`·`[x]`·하단 배지)을 클릭했다 — 자리는 Hoverable(레이아웃)이 재고,
     /// 뜻은 core 가 정한다(`chrome::click` — 68332 빚).
     ChromeClick(base::chrome::ClickTarget),
@@ -11237,6 +11381,7 @@ impl TypedActionView for SessionView {
             }
             ViewAction::WindowButton(button) => self.press_window_button(*button),
             ViewAction::PanelClick(target) => self.panel_click(*target),
+            ViewAction::PluginTab(i) => self.plugin_tab_clicked(*i),
             ViewAction::Wheel { up, at } => self.handle_wheel(*up, *at),
             ViewAction::MouseMove(at) => self.handle_mouse_move(*at),
             ViewAction::MouseDown(at, shift) => self.handle_mouse_down(*at, *shift),
@@ -11633,6 +11778,18 @@ impl Element for PanelBox {
         self.child.debug_text_content()
     }
 }
+
+/// 방금 붙여넣은 그림(pytmux-472) — 이 상자의 파일 경로와 뜬 시각.
+struct PastedThumb {
+    path: String,
+    since: Instant,
+}
+
+/// 썸네일이 떠 있는 시간. 알림처럼 「봤다」를 확인할 길이 없으니 시계로 걷는다.
+const THUMB_TTL: std::time::Duration = std::time::Duration::from_secs(6);
+const THUMB_W: f32 = 160.;
+const THUMB_H: f32 = 120.;
+const THUMB_MARGIN: f32 = 12.;
 
 /// 스레드에서 돌린 `scp` 한 번의 결과 — 원격 탭에 붙일 **그림의 경로**(pytmux-159).
 ///
