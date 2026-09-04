@@ -36,7 +36,7 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 
 | 항목 | 수 |
 |---|---:|
-| 서드파티 크레이트 | 449 |
+| 서드파티 크레이트 | 448 |
 | 라이선스 전문(중복 제거) | 210 |
 | 이진에 박힌 서드파티 자산 | 1 |
 | 전문을 안 싣는 크레이트 | 28 |
@@ -45,7 +45,7 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 
 | 라이선스 | 크레이트 | 의무 |
 |---|---:|---|
-| `MIT` | 394 | 고지 재현 |
+| `MIT` | 393 | 고지 재현 |
 | `Unicode-3.0` | 19 | 고지 재현 |
 | `Apache-2.0` | 15 | 고지 + NOTICE 재현 + 변경 고지 |
 | `BSD-3-Clause` | 10 | 고지 재현 + 이름 사용 금지 |
@@ -61,7 +61,7 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 
 | SPDX | 크레이트 |
 |---|---:|
-| `MIT OR Apache-2.0` | 191 |
+| `MIT OR Apache-2.0` | 190 |
 | `MIT` | 91 |
 | `Apache-2.0 OR MIT` | 39 |
 | `MIT/Apache-2.0` | 33 |
@@ -98,7 +98,7 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 |---|---|---|---|
 | Roboto (Regular) | `OFL-1.1` | 이미지 캐시의 SVG 렌더가 쓰는 기본 산세리프 — `warpui_core/src/image_cache.rs` | [L210](#l210) |
 
-## 2. 서드파티 크레이트 (449)
+## 2. 서드파티 크레이트 (448)
 
 | 크레이트 | 버전 | 출처 | 선언 SPDX | 고른 것 | 전문 |
 |---|---|---|---|---|---|
@@ -456,7 +456,6 @@ python3 client/scripts/third_party_notices.py --check     # 낡았나 (라이선
 | `unicode-script` | 0.5.5 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L179](#l179) |
 | `unicode-segmentation` | 1.11.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L178](#l178) [L086](#l086) |
 | `unicode-vo` | 0.1.0 | `crates.io` | `MIT/Apache-2.0` | `MIT` | [L151](#l151) |
-| `unicode-width` | 0.1.14 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L178](#l178) [L086](#l086) |
 | `unicode-width` | 0.2.1 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L178](#l178) [L086](#l086) |
 | `url` | 2.5.4 | `crates.io` | `MIT OR Apache-2.0` | `MIT` | [L044](#l044) |
 | `urlencoding` | 2.1.3 | `crates.io` | `MIT` | `MIT` | [L180](#l180) |
@@ -4996,7 +4995,7 @@ DEALINGS IN THE SOFTWARE.
 
 *파일*: LICENSE-MIT
 
-*적용*: `heck v0.5.0`, `unicode-bidi v0.3.15`, `unicode-properties v0.1.3`, `unicode-segmentation v1.11.0`, `unicode-width v0.1.14`, `unicode-width v0.2.1`
+*적용*: `heck v0.5.0`, `unicode-bidi v0.3.15`, `unicode-properties v0.1.3`, `unicode-segmentation v1.11.0`, `unicode-width v0.2.1`
 
 ````text
 Copyright (c) 2015 The Rust Project Developers
@@ -8447,7 +8446,7 @@ written authorization of the copyright holder.
 
 *파일*: COPYRIGHT
 
-*적용*: `unicode-properties v0.1.3`, `unicode-segmentation v1.11.0`, `unicode-width v0.1.14`, `unicode-width v0.2.1`
+*적용*: `unicode-properties v0.1.3`, `unicode-segmentation v1.11.0`, `unicode-width v0.2.1`
 
 ````text
 Licensed under the Apache License, Version 2.0
