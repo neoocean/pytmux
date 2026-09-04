@@ -368,7 +368,8 @@ pub static EN: &[(&str, &str)] = &[
     ),
     // "(없음)" 은 en_proto 에 이미 있다(첫 등장 파일 규칙 — 중복 키는 게이트가 잡는다).
     // ── screens.rs — Screen::title ──
-    ("플랜 · 거부", "Plan · rejections"),
+    // pytmux-468: 서버가 내는 판 제목과 **같은 글자**라야 한다(정본 카탈로그가 정본).
+    ("플랜 · 거부", "Plan · denied"),
     ("탭 전환", "Switch tab"),
     ("트리 (개요)", "Tree (overview)"),
     ("입력", "Input"),

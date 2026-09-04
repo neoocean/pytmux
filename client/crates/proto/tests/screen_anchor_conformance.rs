@@ -46,7 +46,6 @@ fn fixture() -> Fx {
 fn all_screens() -> Vec<Screen> {
     let all = vec![
         Screen::Keys,
-        Screen::ClaudeDetail,
         Screen::Tabs,
         Screen::Tree,
         Screen::Buffers,

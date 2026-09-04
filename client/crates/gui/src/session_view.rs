@@ -19,7 +19,7 @@
 use std::time::{Duration, Instant};
 
 use claude::discover::{Watcher, projects_dir};
-use claude::source::{DetailKind, RemoteTranscripts, Source, detail_lines};
+use claude::source::{RemoteTranscripts, Source};
 use claude::{Item as ClaudeItem, ToolState};
 use base::keys::{Key, KeyOutcome, ModeState, Mods, ScrollAmount};
 use base::screens::{Anchor, Prompt, Screen, ScreenKey, Screens};
@@ -1711,7 +1711,21 @@ impl SessionView {
                 return true;
             }
             Action::ToggleClaudeDetail => {
-                self.screens.open(Screen::ClaudeDetail);
+                // ★ **서버가 지은 판을 청한다**(pytmux-468 걸음 4 · 449 ⑵).
+                //
+                //   종전에는 `crates/claude` 가 원문을 **여기서** 파싱하고
+                //   `render_detail` 이 그렸다. 그러면 같은 판을 정본에도 내려면 파이썬에
+                //   **둘째 파서**가 생기고, 2026-07-28 결정이 걱정한 것이 정확히 그것이다
+                //   (「파서가 둘이면 같은 대화가 탭마다 달라 보인다」).
+                //
+                //   지금은 글을 서버가 짓고(`screenspec._detail_spec` →
+                //   `detail.detail_lines`) 두 클라가 **같은 글자**를 그린다. 그 둘이
+                //   안 갈리는지는 `tests/test_claude_detail.py` 가 러스트와 같은
+                //   픽스처로 잰다.
+                self.pending.push(Outgoing::Command(Command::PluginOpen {
+                    name: "claude-detail".into(),
+                    args: Vec::new(),
+                }));
                 return true;
             }
             Action::ShowKeys => {
@@ -9167,42 +9181,6 @@ impl SessionView {
     ///
     /// **덮되 크기는 안 건드린다.** 이 화면이 열려도 서버에 알린 캔버스 크기는 그대로라
     /// 닫는 순간 원래 화면이 그대로 돌아온다 — 크기를 바꿨다면 새 크기를 알리고 다시
-    /// 받아야 하고, 그 왕복 동안 화면이 출렁인다(TUI 와 같은 규칙).
-    ///
-    /// 무엇을 보일지는 [`detail_lines`] 가 정한다. 여기서 정하는 것은 색과 **높이 예산**
-    /// 뿐이다 — 캔버스가 쓰던 높이를 넘으면 아래 요약 구역이 화면 밖으로 밀려, 이 화면을
-    /// 여는 것만으로 다른 것이 사라지는 셈이 된다. **잘랐으면 잘랐다고 말한다.**
-    fn render_detail(&self, column: Flex) -> Flex {
-        let lines = detail_lines(&self.claude);
-        if lines.is_empty() {
-            return column
-                .with_child(self.text(t("보여 줄 플랜도 거부도 없다"), 13., palette::DIM));
-        }
-        let (cols, _) = self
-            .state
-            .composite()
-            .map_or((80, 12), |c| c.size());
-        let budget = self.panel_budget();
-        let cut = lines.len() > budget;
-        let mut column = column;
-        for (text, kind) in lines.into_iter().take(budget.saturating_sub(cut as usize)) {
-            let color = match kind {
-                DetailKind::PlanHead => palette::BLUE,
-                DetailKind::DeniedHead => theme::TURN,
-                DetailKind::Body | DetailKind::Blank => palette::FG,
-            };
-            column = column.with_child(self.text(
-                footer::elide(&text, cols as usize),
-                13.,
-                color,
-            ));
-        }
-        if cut {
-            column = column.with_child(self.text(t("… (잘림)"), 12., palette::DIM));
-        }
-        column
-    }
-
     /// 캔버스 좌표계를 재는 자리표. 렌더가 여기에 **한 글자의 실제 사각형**을 남기고,
     /// 마우스 핸들러가 그것으로 픽셀 → 셀을 푼다.
     ///
@@ -9432,7 +9410,6 @@ impl SessionView {
         column = match screen {
             Screen::Compose => self.render_compose(column),
             Screen::InfoTabs => self.render_info_tabs(column),
-            Screen::ClaudeDetail => self.render_detail(column),
             Screen::Keys => self.render_keys(column),
             Screen::Tabs => self.render_tab_list(column),
             Screen::Tree => self.render_tree_list(column),

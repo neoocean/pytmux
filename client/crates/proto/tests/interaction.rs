@@ -29,7 +29,7 @@
 //!
 //! ⚠ **그래도 이 축이 남는다.** 저쪽은 「정본이 이름을 적은 키」와 「표 밖의 키 하나」를
 //! 재고, 이쪽은 **화면 전수**에 대해 그 결과를 사람이 읽을 표로 세우고 갈림의 근거를
-//! 요구한다. 정본에 짝이 없는 판 넷(`ClaudeDetail`·`PluginView`·`Summary`·`Cursor`)은
+//! 요구한다. 정본에 짝이 없는 판 셋(`PluginView`·`Summary`·`Cursor`)은
 //! 저쪽이 잴 것이 없어 여기서만 판정된다.
 //!
 //! ☠ **이 표를 처음 채우면서 정본 소스를 손으로 읽어 대조했더니, 「같다」로 적으려던 여덟
@@ -140,12 +140,6 @@ static CONTRACTS: &[Contract] = &[
          Home→맨 위, End→맨 아래를 처리하고 그 밖의 키는 여전히 닫는다(pytmux-273 ①)"),
         "읽는 판(키 도움말). 「아무 키나 닫기」는 정본 `InfoScreen` 과 같고, **`Home`·`End`도 \
          이제 커서를 옮긴다**(고쳐졌다 — 종전엔 이 둘도 판을 닫았다)",
-    ),
-    c(
-        Screen::ClaudeDetail,
-        Closes,
-        Allowed(Ground::NativeOnly),
-        "Claude 플랜 전문·거부 사유 — 정본에 짝이 없는 판이다",
     ),
     c(
         Screen::Tabs,
@@ -393,7 +387,11 @@ static CONTRACTS: &[Contract] = &[
 /// 지금 점수. **양방향 래칫**이다 — 늘어도 줄어도 여기를 고쳐야 한다(`parity.rs` 규칙 2).
 ///
 /// `(같다, 허용된 갈림, 결함, 못 쟀다)`.
-static SCORE: (usize, usize, usize, usize) = (24, 3, 0, 0);
+// 24→24 · 허용 3→2: `ClaudeDetail` 줄이 사라졌다(pytmux-468 걸음 4). 그 판은 「정본에
+// 짝이 없는 우리 것」이라 `Allowed(NativeOnly)` 였는데, 정본이 그것을 갖게 되면서
+// (`:claude-detail`) 우리 쪽 전용 화면을 걷었다 — 남은 것은 `esc v` 라는 **지름길**이고
+// 그건 화면이 아니라 키라 이 축이 아니라 갈림 대장이 센다.
+static SCORE: (usize, usize, usize, usize) = (24, 2, 0, 0);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4). **지금은 0 이다**(pytmux-454).
 ///

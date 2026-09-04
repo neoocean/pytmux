@@ -91,7 +91,8 @@ const fn p(name: &'static str, cat: &'static str, class: Class, why: &'static st
     Row { axis: Axis::Palette, name, class, why, cat }
 }
 
-/// ⑴ 블록 표면 · ⑵ ClaudeDetail · ⑶ `esc q` 를 든 이슈([[pytmux-449]]).
+/// ⑴ 블록 표면 · ⑶ `esc q` 를 든 이슈([[pytmux-449]]). (⑵ ClaudeDetail 은
+/// pytmux-468 로 정본에도 났고 우리 쪽 전용 판은 걷었다 — 남은 줄은 esc `v` 하나다.)
 const DECIDE: &str = "pytmux-449";
 
 /// **GUI 에만 있는 표면 전수.** 축·이름순.
@@ -230,13 +231,6 @@ pub static LEDGER: &[Row] = &[
     // ── 화면 ──────────────────────────────────────────────────────────────────
     r(
         Axis::Screen,
-        "ClaudeDetail",
-        Class::Todo(DECIDE),
-        "Claude 의 플랜 전문·거부 사유. 정본 `claude-code` 플러그인의 화면은 다섯이고 그 \
-         판은 없다 — Textual 모달로 못 할 이유가 없다",
-    ),
-    r(
-        Axis::Screen,
         "Cursor",
         Class::Pixels,
         "위 커서 다섯 줄과 **같은 근거**다 — 정본은 커서를 스스로 안 그리므로 그 판이 \
@@ -290,8 +284,9 @@ pub static LEDGER: &[Row] = &[
     r(
         Axis::EscKey,
         "v",
-        Class::Todo(DECIDE),
-        "Claude 플랜/거부 전문 판을 연다 — 위 화면 `ClaudeDetail` 과 **같은 줄**이다",
+        Class::SameFeature("command_cats:claude-detail"),
+        "Claude 플랜/거부 전문 판을 연다 — 위 화면 `ClaudeDetail` 과 **같은 줄**이다. \
+         기능은 정본에도 있고(`:claude-detail`) 글자 하나가 우리 쪽 지름길일 뿐이다",
     ),
 ];
 

@@ -36,7 +36,6 @@ pub fn opened(screen: Screen) -> Screens {
         // 목록형(`form`·`list`)으로 연다 — pytmux-181 이 신고한 그 판이다.
         Screen::PluginView => screens.open_plugin_view(true),
         Screen::Keys
-        | Screen::ClaudeDetail
         | Screen::Tree
         | Screen::Buffers
         | Screen::Version

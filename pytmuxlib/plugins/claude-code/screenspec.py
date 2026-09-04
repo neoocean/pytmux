@@ -43,6 +43,9 @@ from pytmuxlib import i18n
 PC_QUEUE = ("prompt-clear-queue", "pc-queue")
 RULES = ("claude-rules", "rules", "startup-rules")
 SETTINGS = ("claude-settings",)
+# 플랜 전문·거부 사유(pytmux-468 · 449 ⑵). GUI 는 이 판을 `esc v` 로 먼저 갖고 있었고,
+# 사람 결정(2026-09-04 ⓐ)으로 **서버가 그 글을 지어** 두 클라가 한 벌을 그린다.
+DETAIL = ("claude-detail", "plan-detail")
 MODEL = ("model", "model-config", "claude-model")
 TOKEN_LOG = ("claude-token-log", "token-usage")
 # 머신별 총계(pytmux-371 ③ · 정본 토큰 팝업의 `[머신]` 탭). 동기화를 켜면 계정 Σ 가
@@ -72,6 +75,10 @@ RC = ("claude-remote-control",)
 i18n.register({
     "ko": {
         "pscreen.spec_settings_title": "Claude 설정",
+        # pytmux-468: 플랜 전문·거부 사유 판.
+        "pscreen.spec_detail_title": "플랜 · 거부",
+        "pscreen.spec_detail_hint": "↑↓ 스크롤 · Esc 닫기",
+        "pscreen.spec_detail_empty": "보여 줄 플랜도 거부도 없다",
         "pscreen.spec_settings_hint": "↑↓ 이동 · Enter 바꾸기 · Esc 닫기",
         "pscreen.spec_rules_title": "Claude 시작 규칙 — 새 세션·/clear 뒤 자동 주입",
         "pscreen.spec_rules_empty": "(지금은 비어 있습니다. 빈 채로 저장하면 지웁니다.)",
@@ -117,6 +124,9 @@ i18n.register({
     },
     "en": {
         "pscreen.spec_settings_title": "Claude settings",
+        "pscreen.spec_detail_title": "Plan · denied",
+        "pscreen.spec_detail_hint": "↑↓ scroll · Esc close",
+        "pscreen.spec_detail_empty": "No plan or denial to show",
         "pscreen.spec_settings_hint": "↑↓ move · Enter change · Esc close",
         "pscreen.spec_rules_title": "Claude start rules — injected after a new session/clear",
         "pscreen.spec_rules_empty": "(empty for now. Saving it empty clears the rules.)",
@@ -250,6 +260,42 @@ def _rules_spec(server):
                  text=cur,
                  note=cur or i18n.t("pscreen.spec_rules_empty"),
                  keys={"enter": "save"})
+
+
+# ── claude-detail — 플랜 전문·거부 사유(pytmux-468 · 449 ⑵) ────────────────
+def _detail_spec(server, sess):
+    """`text` 판. 지금 패널의 트랜스크립트에서 **마지막 플랜과 마지막 거부**를 낸다.
+
+    # 왜 서버가 짓나
+
+    2026-07-28 결정은 *"원문을 보내고 클라가 판다"* 였고 근거가 「파서가 둘이면 같은
+    대화가 탭마다 달라 보인다」였다. 2026-09-04 사람 결정이 그것을 ⓐ 로 바꿨다 — 이
+    판이 쓰는 것은 **항목 전부가 아니라 둘**이라 슬라이스 파서로 족하고, 갈림은
+    `tests/test_claude_detail.py` 가 러스트와 **같은 픽스처**로 못박는다.
+
+    ⚠ 파일을 통째로 읽지 않는다 — 이 판이 보는 것은 **마지막** 플랜·거부라 꼬리면 된다
+    (`clienttail.read_tail` 이 상한을 아는 그 자리를 쓴다).
+    """
+    from . import clienttail, detail as _detail
+    pane = _active_pane(sess)
+    text = ""
+    if pane is not None:
+        # ⛔ **경로가 진짜 문자열일 때만 읽는다.** 이 함수는 표시용이라 어떤 입력에도
+        #    죽으면 안 되고, 실제로 픽스처 생성기가 **MagicMock 서버**로 화면을 전수로
+        #    훑는다(`gen_plugin_client_cmds.py`) — 그때 `_xc_resolve_path` 는 Mock 을
+        #    돌려주고, 그것을 `open()` 에 넘기면 생성기가 통째로 깨진다(실측).
+        try:
+            path = server._xc_resolve_path(pane)
+            text = clienttail.read_tail(path) or "" if isinstance(path, str) else ""
+        except Exception:                       # noqa: BLE001
+            text = ""                            # best-effort — 표시가 본 흐름을 안 막는다
+    lines = _detail.detail_lines(text) if text else []
+    body = "\n".join(t for t, _kind in lines)
+    return _spec("claude-detail", "text",
+                 i18n.t("pscreen.spec_detail_title"),
+                 i18n.t("pscreen.spec_detail_hint"),
+                 text=body,
+                 note="" if body else i18n.t("pscreen.spec_detail_empty"))
 
 
 # ── claude-settings — 정본 설정 팝업의 줄들 ────────────────────────────────
@@ -1174,6 +1220,8 @@ def open_spec(server, sess, name, args=(), state=None):
         return _rules_spec(server)
     if name in SETTINGS:
         return _settings_spec(server, sess)
+    if name in DETAIL:
+        return _detail_spec(server, sess)
     if name in MODEL:
         return _model_spec(server, sess)
     if name in TOKEN_LOG:

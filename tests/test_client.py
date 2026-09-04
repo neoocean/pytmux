@@ -8534,3 +8534,47 @@ async def test_token_footer_click_opens_the_token_popup():
         app.view.on_mouse_down(_FakeMouse(zx0, zy, 1))
         assert opened, "존은 만들었는데 누르면 아무 일도 안 난다"
     await _with_app(body)
+
+
+async def test_the_canonical_client_draws_a_tier_c_text_panel():
+    """★ **정본의 Tier C(글 판) 렌더러**(pytmux-468 걸음 2 · 449 ⑵).
+
+    서버는 화면 스펙을 여럿 짓는데(`plugins/*/screenspec.py`) 그것을 그리는 것은 **GUI
+    뿐**이었다 — 그래서 「스펙 한 벌이면 두 클라가 같은 것을 그린다」는 **정본 쪽 절반이
+    비어 있었고**, 같은 판을 정본에도 내려면 매번 Textual 화면을 손으로 하나 더 써야 했다.
+
+    이 시험은 그 자리가 실제로 **그리는지**를 잰다 — 서버가 보낸 `plugin_screen` 한 장을
+    먹이고 화면에 그 글이 뜨는지 본다."""
+    async def body(app, pilot, srv):
+        app._dispatch({"t": "plugin_screen", "id": "claude-detail", "kind": "text",
+                       "title": "플랜 · 거부", "hint": "↑↓ 스크롤 · Esc 닫기",
+                       "text": "플랜 [ok]\n  1. 먼저 잰다\n  2. 그다음 고친다",
+                       "note": "", "rows": [], "keys": {}})
+        from textual.widgets import Label
+        scr = await wait_mounted(pilot, "InfoScreen", child="#info")
+        await wait_until(pilot, lambda: any(
+            "플랜" in str(lbl.render()) for lbl in scr.query(Label)))
+        shown = " ".join(str(lbl.render()) for lbl in scr.query(Label))
+        assert "플랜 [ok]" in shown, f"서버가 보낸 글이 안 뜬다: {shown!r}"
+        assert "2. 그다음 고친다" in shown, shown
+        # 힌트도 붙는다 — 안 붙이면 무엇을 눌러 닫는지 화면이 안 말한다.
+        assert "Esc" in shown, f"꼬리 힌트가 없다: {shown!r}"
+    await _with_app(body)
+
+
+async def test_a_panel_kind_the_canonical_client_cannot_draw_is_not_dropped_silently():
+    """⛔ **조용한 누락이 이 저장소의 상습 결함이다**(설계 §8-5).
+
+    목록·표 판은 아직 정본에서 각자 화면이라 이 렌더러가 안 받는다. 그때 **아무 일도
+    안 하면** 사용자는 명령이 먹지 않았다고 읽는다 — 그 사실을 말해야 한다."""
+    async def body(app, pilot, srv):
+        app._dispatch({"t": "plugin_screen", "id": "claude-token-log", "kind": "table",
+                       "title": "토큰", "hint": "", "text": "", "note": "",
+                       "rows": [{"key": "a", "cols": ["1"]}], "keys": {}})
+        await wait_until(pilot, lambda: bool(app.status.message))
+        msg = str(app.status.message or "")
+        assert "claude-token-log" in msg and "table" in msg, (
+            f"못 그리는 판을 조용히 버렸다(또는 무엇인지 안 말한다): {msg!r}")
+        # ⛔ 그리고 **화면은 안 뜬다** — 빈 상자를 띄우면 고장과 구별되지 않는다.
+        assert app.screen_stack[-1].__class__.__name__ != "InfoScreen", "빈 판이 떴다"
+    await _with_app(body)

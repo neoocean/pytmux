@@ -431,6 +431,44 @@ class _ChooseScreensMixin:
         같은 프롬프트에 얹으면 Enter 한 번의 뜻이 두 개가 된다."""
         self.open_prompt("search_all", i18n.t("search.all_prompt"))
 
+    def _open_plugin_text(self, msg):
+        """서버가 지은 **글 판**(Tier C `kind:"text"`)을 정본에서 그린다(pytmux-468).
+
+        # 왜 정본에 이 자리가 필요했나
+
+        서버는 화면 스펙을 여럿 짓는데(`plugins/*/screenspec.py`) 그것을 그리는 것은
+        **GUI 뿐**이었다. 그래서 「스펙 한 벌이면 두 클라가 같은 것을 그린다」는 절반만
+        참이었고, 같은 판을 정본에도 내려면 매번 Textual 화면을 손으로 하나 더 써야 했다
+        — 그 비용이 2026-07-28 결정(«파서는 클라 하나»)의 근거이기도 했다.
+
+        # 무엇을 그리나
+
+        `InfoScreen` 이 곧 이 판의 그림이다(제목 · 줄들 · 아무 키나 닫기 · ↑↓ 스크롤) —
+        정본이 `show-options`·`version`·`restart-check` 에 이미 쓰는 그 판이다.
+
+        ⛔ **모르는 `kind` 를 조용히 버리지 않는다** — 목록·표는 아직 각자 화면이라 여기서
+        안 받고, 대신 그 사실을 알림 한 줄로 말한다. 조용한 누락이 이 저장소의 상습
+        결함이다(설계 §8-5 · 서버 쪽 `plugin_open` 회신이 같은 규율을 지킨다).
+        """
+        from .clientscreens import InfoScreen
+        kind = str(msg.get("kind") or "")
+        title = str(msg.get("title") or "")
+        if kind != "text":
+            self.display_message(
+                i18n.t("pscreen.kind_not_drawn",
+                       "이 판은 아직 정본에서 못 그린다: {id} ({kind})")
+                .replace("{id}", str(msg.get("id") or "?")).replace("{kind}", kind or "?"),
+                severity="warn")
+            return
+        body = str(msg.get("text") or "")
+        lines = body.splitlines() or [str(msg.get("note") or "")]
+        # 힌트는 **마지막 줄**로 붙인다 — `InfoScreen` 에는 꼬리줄 칸이 따로 없고,
+        # 그 판의 관례가 「아무 키나 닫기」라 안 붙이면 무엇을 누를지 화면이 안 말한다.
+        hint = str(msg.get("hint") or "")
+        if hint:
+            lines = list(lines) + ["", hint]
+        self.push_screen(InfoScreen(lines, title=title))
+
     def _open_search_results(self, msg):
         """결과 판을 열고, 고른 줄의 자리로 서버에 점프를 시킨다.
 
@@ -1444,6 +1482,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self._want_search_all:
                     self._want_search_all = False
                     self._open_search_results(msg)
+            elif t == "plugin_screen":
+                # ★ **정본의 Tier C(글 판) 렌더러**(pytmux-468 걸음 2 · 449 ⑵).
+                #
+                # 종전에 이 갈래가 **없었다**: 서버는 화면 스펙을 여섯이나 짓는데
+                # (`claude-code/screenspec.py`) 그것을 그리는 것은 GUI 뿐이었고, 정본은
+                # 화면마다 손으로 쓴 Textual 스크린을 갖고 있었다. 그래서 *"Tier C 스펙
+                # 한 벌이면 두 클라가 같은 것을 그린다"* 는 **정본 쪽 절반이 비어 있었다.**
+                #
+                # 지금은 `kind:"text"` 한 모양을 받는다 — 그 판의 글을 **서버가 짓고**
+                # (파서·문구가 한 벌) 정본은 `InfoScreen` 으로 읽는다. 목록·표는 아직
+                # 각자 화면이라 여기서 안 받는다(⛔ 조용히 버리지 않는다 — 아래).
+                self._open_plugin_text(msg)
             elif t == "pong":
                 self._on_pong()   # 네트워크 RTT 표본(§10)
             elif t == "notice":

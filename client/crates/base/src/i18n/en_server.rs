@@ -233,6 +233,14 @@ pub static EN: &[(&str, &str)] = &[
     ("자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})", "Auto-resume suppressed: injected too recently (pane {pane})"),
     ("자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — 리밋 배너가 위조로 의심됨(패널 {pane}, claude-resume-verify {mode})", "Auto-resume suppressed: only {used} tokens used in the last 5h (<{need}) — limit banner looks forged (pane {pane}, claude-resume-verify {mode})"),
     ("자동재개: '{msg}' 주입(패널 {pane})", "Auto-resume: injected '{msg}' (pane {pane})"),
+    // pytmux-477 — 재시도가 도는 중임을 말하는 표면 셋(배지 둘 + 알림 하나).
+    (" ↻ 재시도 {n}회 · {eta}s ", " ↻ retry ×{n} · {eta}s "),
+    (" ↻ 재시도 {n}회 ", " ↻ retry ×{n} "),
+    (" ↻ Claude 재시도 중 — 대기 ", " ↻ Claude retrying — holding "),
+    ("전송 에러 자동 재시도: '{msg}' 주입({n}회째 · 패널 {pane})",
+     "Transmission-error auto-retry: injected '{msg}' (#{n} · pane {pane})"),
+    // pytmux-468 — 플랜 전문·거부 사유 판(Tier C `claude-detail`).
+    ("↑↓ 스크롤 · Esc 닫기", "↑↓ scroll · Esc close"),
     ("조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})", "Org policy message seen — stopping auto /rc injection (pane {pane})"),
     ("지금", "now"),
     ("지금 자리: {path}", "Now at: {path}"),

@@ -134,7 +134,9 @@ pub static EN: &[(&str, &str)] = &[
         "The server sent no plugin list (an old server, or before the first full status)",
     ),
     // `막힌 호출` = "Denied call"(en_claude.rs)에 맞춘다 — 같은 판의 두 낱말이다.
-    ("보여 줄 플랜도 거부도 없다", "No plan or denied call to show"),
+    // pytmux-468: 서버가 짓는 판의 문구와 **같은 글자**라야 한다(그 판을 두 클라가
+    // 같이 그린다) — 정본 카탈로그가 정본이고 여기는 그것을 따른다.
+    ("보여 줄 플랜도 거부도 없다", "No plan or denial to show"),
     ("… (잘림)", "… (truncated)"),
     // ── session_view.rs · 아직 못 그리는 화면 모양(설계 §8-5) ──
     // 이 파일 맨 위의 플러그인 한 줄과 **같은 문형**으로 둔다 — 두 막다른 길이 다른

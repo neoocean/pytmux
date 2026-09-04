@@ -79,6 +79,8 @@ COMMANDS = [
                           "Claude"),
     ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
                          "(claude-auto-mode on|off|toggle)", "Claude"),
+    ("claude-detail", "Claude 플랜 전문·거부 사유 판 — 마지막 플랜과 마지막 막힌 호출을 "
+                      "읽는다(별칭 plan-detail · GUI 는 esc v)", "Claude"),
     ("claude-auto-yes", "auto mode 인 패널이 yes/no 를 물으면 «맨 Yes» 를 자동 확정 "
                         "on/off — 이미 선택돼 있는 것만 Enter 로 확정한다 "
                         "(claude-auto-yes on|off|toggle, 기본 off)", "Claude"),
@@ -89,7 +91,7 @@ COMMANDS = [
                     "Claude"),
 ]
 NOARG = {
-    "claude-rules", "claude-settings",
+    "claude-rules", "claude-settings", "claude-detail", "plan-detail",
     "claude-token-log", "claude-token-machines", "token-machines",
     "claude-warn-history", "claude-warns", "warn-history",
     "claude-token-period", "token-period",
@@ -178,6 +180,7 @@ i18n.register({
         "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
         "cmd.claude-resume-verify": "Out-of-band check before auto-resume — off | weak (suppress when the session used almost nothing in the last 5h) | strict (claude-resume-verify off|weak|strict|toggle, default off)",
         "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
+        "cmd.claude-detail": "Claude plan / denied-call panel — the last plan and the last blocked call (alias plan-detail; GUI: esc v)",
         "cmd.claude-auto-yes": "In auto mode, auto-confirm a yes/no prompt whose selector already sits on the plain Yes on/off (claude-auto-yes on|off|toggle, default off)",
         "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.claude-token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now | resync",
@@ -1948,6 +1951,12 @@ class _ClaudeCodePlugin:
             self._open_rules(app)
         elif c == "claude-settings":
             self._open_saver(app)
+        elif c in ("claude-detail", "plan-detail"):
+            # ★ **정본이 스펙을 청한다**(pytmux-468 걸음 4). 이 판의 글은 서버가 짓고
+            #   (`screenspec._detail_spec` → `detail.detail_lines`) 회신을 코어의 Tier C
+            #   렌더러(`_open_plugin_text`)가 그린다 — 그래서 두 클라가 **같은 글자**를
+            #   보고, 같은 판을 위해 Textual 화면을 하나 더 쓰지 않는다.
+            app.send_cmd("plugin_open", name="claude-detail")
         elif c == "claude-token-log":
             # token-usage 는 token-log 로 통합(2026-06-12) — 별칭으로만 남는다.
             app.open_token_log()

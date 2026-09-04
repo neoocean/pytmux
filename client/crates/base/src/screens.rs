@@ -64,7 +64,6 @@ pub enum Screen {
     /// 키 도움말 — prefix·esc·스크롤 모드의 표를 그대로 보인다.
     Keys,
     /// Claude 의 플랜 전문·거부 사유.
-    ClaudeDetail,
     /// 탭 스위처 — 열려 있는 탭을 **고르기만** 하다가 `Enter` 로 전환한다.
     ///
     /// 파이썬 클라와 같은 동선이다(`esc Tab` · Tab 다음 · Shift+Tab 이전 · Enter 확정 ·
@@ -216,37 +215,35 @@ impl Screen {
         const fn exhaustive(screen: Screen) -> usize {
             match screen {
                 Screen::Keys => 0,
-                Screen::ClaudeDetail => 1,
-                Screen::Tabs => 2,
-                Screen::Tree => 3,
-                Screen::Buffers => 4,
-                Screen::Prompt => 5,
-                Screen::Confirm => 6,
-                Screen::Commands => 7,
-                Screen::Version => 8,
-                Screen::ShellOutput => 9,
-                Screen::RestartCheck => 10,
-                Screen::Autoresume => 24,
-                Screen::MergeRemote => 11,
-                Screen::Layouts => 12,
-                Screen::Notices => 13,
-                Screen::Menu => 14,
-                Screen::Plugins => 15,
-                Screen::PluginView => 16,
-                Screen::Options => 17,
-                Screen::Hooks => 18,
-                Screen::InfoTabs => 19,
-                Screen::Compose => 20,
-                Screen::Settings => 21,
-                Screen::Summary => 22,
-                Screen::SearchResults => 23,
-                Screen::Cursor => 25,
-                Screen::DebugStats => 26,
+                Screen::Tabs => 1,
+                Screen::Tree => 2,
+                Screen::Buffers => 3,
+                Screen::Prompt => 4,
+                Screen::Confirm => 5,
+                Screen::Commands => 6,
+                Screen::Version => 7,
+                Screen::ShellOutput => 8,
+                Screen::RestartCheck => 9,
+                Screen::Autoresume => 23,
+                Screen::MergeRemote => 10,
+                Screen::Layouts => 11,
+                Screen::Notices => 12,
+                Screen::Menu => 13,
+                Screen::Plugins => 14,
+                Screen::PluginView => 15,
+                Screen::Options => 16,
+                Screen::Hooks => 17,
+                Screen::InfoTabs => 18,
+                Screen::Compose => 19,
+                Screen::Settings => 20,
+                Screen::Summary => 21,
+                Screen::SearchResults => 22,
+                Screen::Cursor => 24,
+                Screen::DebugStats => 25,
             }
         }
         const ALL: &[Screen] = &[
             Screen::Keys,
-            Screen::ClaudeDetail,
             Screen::Tabs,
             Screen::Tree,
             Screen::Buffers,
@@ -285,7 +282,6 @@ impl Screen {
     pub fn title(self) -> &'static str {
         crate::i18n::t(match self {
             Screen::Keys => "키 도움말",
-            Screen::ClaudeDetail => "플랜 · 거부",
             Screen::Tabs => "탭 전환",
             Screen::Tree => "트리 (개요)",
             Screen::Buffers => "버퍼 선택",
@@ -372,8 +368,7 @@ impl Screen {
             // 런타임 계측도 **읽는 판**이고, 정본이 범용 `InfoScreen` 으로 띄우므로
             // 자리도 그 클래스 기본(`align: center top`)이다 — 앵커 픽스처가 그것을
             // 정본에서 뽑아 대조한다(pytmux-457).
-            | Screen::DebugStats
-            | Screen::ClaudeDetail => Anchor::Top,
+            | Screen::DebugStats => Anchor::Top,
             // 읽는 판인데 **짧아서** 가운데인 예외 — 정본도 이 둘만 `center=True` 다
             // (위 「예외」 · §10-21ⓐ3·ⓓ3). 재시작 점검은 그 위에 **고르는 판**이기도
             // 하다(단추가 있다) — 가운데가 두 번 맞는 자리다.
@@ -528,8 +523,6 @@ impl Screen {
             Screen::InfoTabs => "InfoTabsScreen",
             Screen::Compose => "ComposePromptScreen",
             Screen::Settings => "SettingsScreen",
-            // 정본에 짝이 없다 — Claude 플랜 전문·거부 사유는 네이티브가 만든 판이다.
-            Screen::ClaudeDetail => return None,
             Screen::SearchResults => "SearchResultsScreen",
         })
     }
@@ -541,7 +534,7 @@ impl Screen {
     /// `Enter` 가 확정이었다).
     pub fn hint(self) -> &'static str {
         crate::i18n::t(match self {
-            Screen::Keys | Screen::ClaudeDetail => "(아무 키나 닫기 · ↑↓ 스크롤)",
+            Screen::Keys => "(아무 키나 닫기 · ↑↓ 스크롤)",
             Screen::Tabs => "(Tab/↑↓ 고르기 · Enter 전환 · Esc 취소)",
             Screen::Tree => "(↑↓ 고르기 · Enter 이동 · Esc 취소)",
             Screen::Buffers => "(↑↓ 고르기 · Enter 붙여넣기 · Esc 취소)",

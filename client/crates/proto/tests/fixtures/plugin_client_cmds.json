@@ -11,6 +11,7 @@
     "claude-auto-mode",
     "claude-auto-redraw",
     "claude-auto-yes",
+    "claude-detail",
     "claude-resume",
     "claude-resume-verify",
     "claude-rules",
@@ -44,6 +45,7 @@
     "usage-view"
   ],
   "with_screen": [
+    "claude-detail",
     "claude-resume",
     "claude-rules",
     "claude-settings",

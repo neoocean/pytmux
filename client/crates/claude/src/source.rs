@@ -75,69 +75,10 @@ impl RemoteTranscripts {
     }
 }
 
-/// 전용 화면 한 줄이 어떤 부류인가. **구체적인 색은 뷰가 정한다.**
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DetailKind {
-    /// `플랜 [상태]` 머리줄.
-    PlanHead,
-    /// `막힌 호출` 머리줄.
-    DeniedHead,
-    /// 본문(전문·사유).
-    Body,
-    /// 사이를 띄우는 빈 줄.
-    Blank,
-}
-
-/// 전용 화면(플랜 전문·거부 사유)에 들어갈 줄들.
-///
-/// # 왜 여기인가
-///
-/// 요약 구역은 한 줄짜리라 **여러 줄이 들어갈 자리가 없다**(구역이 커지면 서버 캔버스가
-/// 밀린다 — P5 결정 ③). 그래서 전문은 캔버스를 덮는 화면이 맡는데, "무엇을 보여 줄
-/// 것인가"(마지막 플랜 · 마지막 거부)와 그 줄의 짜임은 두 뷰가 같아야 한다.
-///
-/// **자르지 않는다.** 몇 줄까지 그릴지는 캔버스 높이를 아는 뷰의 몫이다(그 높이를 넘으면
-/// 이 화면을 여는 것만으로 아래 요약이 화면 밖으로 밀린다).
-pub fn detail_lines(items: &[crate::Item]) -> Vec<(String, DetailKind)> {
-    use crate::{ItemKind, ToolState};
-
-    let plan = items
-        .iter()
-        .rev()
-        .find(|i| matches!(i.kind, ItemKind::Plan { .. }));
-    let denied = items
-        .iter()
-        .rev()
-        .find(|i| i.state() == Some(ToolState::Denied));
-
-    let mut lines = Vec::new();
-    if let Some(item) = plan {
-        lines.push((tf("플랜 [{state}]", &[("state", item.badge())]), DetailKind::PlanHead));
-        match &item.detail {
-            Some(body) => lines.extend(
-                body.lines()
-                    .map(|l| (format!("  {l}"), DetailKind::Body)),
-            ),
-            // 전문이 없으면 요약이라도 보인다 — 빈 화면은 "없는 것"과 "못 읽은 것"이
-            // 구분되지 않는다.
-            None => lines.push((format!("  {}", item.title), DetailKind::Body)),
-        }
-    }
-    if let Some(item) = denied {
-        if !lines.is_empty() {
-            lines.push((String::new(), DetailKind::Blank));
-        }
-        lines.push((t("막힌 호출").to_owned(), DetailKind::DeniedHead));
-        let name = item.name().unwrap_or("");
-        lines.push((format!("  {} {name} {}", item.badge(), item.title), DetailKind::Body));
-        if let Some(reason) = &item.detail {
-            // ⚠ 사유는 사용자 유래 값 — 마지막(유일한) 자리로 끼운다. 앞 두 칸은
-            // 언어가 아니라 들여쓰기라 번역 밖에 둔다.
-            lines.push((format!("  {}", tf("사유: {reason}", &[("reason", reason)])), DetailKind::Body));
-        }
-    }
-    lines
-}
+// (`DetailKind`·`detail_lines` 는 2026-09-04 에 걷었다 — pytmux-468 걸음 4.
+//  플랜 전문·거부 사유 판의 글은 이제 **서버가 짓고**(`claude-code/detail.py` →
+//  Tier C `claude-detail` 스펙) 두 클라가 그 한 벌을 그린다. 여기 남겨 두면 그것이
+//  2026-07-28 결정이 걱정한 «파서 두 벌» 이다 — 같은 대화가 탭마다 달라 보이는 길.)
 
 #[cfg(test)]
 mod tests {
@@ -178,50 +119,6 @@ mod tests {
             before,
             "꼬리가 겹쳐 들어와 항목이 쌓였다"
         );
-    }
-
-    #[test]
-    fn the_detail_screen_shows_the_latest_plan_and_the_latest_denial() {
-        use crate::{Item, ItemKind, ToolState};
-        let plan = |t: &str| Item {
-            kind: ItemKind::Plan { state: ToolState::Running },
-            title: t.into(),
-            detail: Some("1단계\n2단계".into()),
-        };
-        let denied = |t: &str| Item {
-            kind: ItemKind::Tool { name: "Bash".into(), state: ToolState::Denied },
-            title: t.into(),
-            detail: Some("사용자가 막았다".into()),
-        };
-        let items = vec![plan("옛 플랜"), denied("옛 거부"), plan("새 플랜"), denied("새 거부")];
-        let text: Vec<String> = detail_lines(&items).into_iter().map(|(t, _)| t).collect();
-        let joined = text.join("\n");
-
-        // **마지막 것**이라야 한다 — 옛것을 보이면 사용자는 방금 막힌 호출을 못 찾는다.
-        assert!(joined.contains("새 플랜") || joined.contains("1단계"), "{joined}");
-        assert!(joined.contains("새 거부"), "{joined}");
-        assert!(!joined.contains("옛 거부"), "옛 항목이 남았다: {joined}");
-        assert!(joined.contains("사유:"), "거부 사유가 빠졌다: {joined}");
-    }
-
-    #[test]
-    fn nothing_to_show_produces_no_lines_at_all() {
-        // 빈 목록이라야 뷰가 "보여 줄 것이 없다"고 말할 수 있다. 여기서 안내 문구를
-        // 지어 넣으면 두 뷰가 서로 다른 문장을 갖게 된다.
-        assert!(detail_lines(&[]).is_empty());
-    }
-
-    #[test]
-    fn a_plan_without_a_body_still_says_something() {
-        use crate::{Item, ItemKind, ToolState};
-        let items = vec![Item {
-            kind: ItemKind::Plan { state: ToolState::Ok },
-            title: "세 단계로 간다".into(),
-            detail: None,
-        }];
-        let lines = detail_lines(&items);
-        assert!(lines.len() >= 2, "전문이 없다고 빈 화면이 되면 안 된다: {lines:?}");
-        assert!(lines.iter().any(|(t, _)| t.contains("세 단계로 간다")));
     }
 
     #[test]

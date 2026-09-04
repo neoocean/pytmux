@@ -6,9 +6,13 @@
 파서는 하나로 남는다"* 였고, 그 근거가 **"파서가 둘이면 같은 대화가 탭에 따라 달라 보인다"**
 였다. 2026-09-04 결정이 그것을 ⓐ(서버가 짓는다)로 바꾸면서 파이썬에 슬라이스 파서가 생겼다.
 
-⇒ **그 걱정을 값으로 막는 자리가 여기다.** 러스트가 쓰는 **같은 픽스처**를 파이썬에 먹여
-러스트 `claude::source::detail_lines` 의 출력과 **글자까지** 견준다. 기준값은 그 크레이트를
-실제로 돌려 뜬 것이고(2026-09-04 · `cargo test -p claude`), 갈리면 여기서 운다.
+⇒ **그 걱정을 값으로 막은 자리가 여기다.** 러스트가 쓰던 **같은 픽스처**를 파이썬에 먹여
+러스트 `claude::source::detail_lines` 가 내던 글과 **글자까지** 견줬고, 여덟 줄이 전부
+일치했다(2026-09-04 · `cargo test -p claude`).
+
+★ **그 확인 뒤 러스트 쪽을 걷었다**(걸음 4 · 같은 CL) — 판의 글을 서버가 짓게 되면서
+그쪽이 「파서 두 벌」이 됐기 때문이다. 그래서 아래 표는 지금 **살아 있는 대조가 아니라
+골든**이고, 이 시험이 지키는 것은 *"그때 맞춘 글자에서 파이썬이 멀어지지 않는가"* 다.
 """
 
 import importlib
@@ -19,8 +23,14 @@ import harness  # noqa: F401  (경로 설정)
 _FIXTURE = os.path.join(os.path.dirname(__file__), "..", "client", "crates",
                         "claude", "tests", "fixtures", "session.jsonl")
 
-# ★ 러스트가 그 픽스처에서 실제로 낸 것(기준값). 손으로 지은 글이 아니다 —
-#   `claude::source::detail_lines(Transcript::parse(session.jsonl))` 의 출력을 그대로 옮겼다.
+# ★ 러스트가 그 픽스처에서 실제로 낸 것(기준값). 손으로 지은 글이 **아니다** —
+#   `claude::source::detail_lines(Transcript::parse(session.jsonl))` 를 돌려 뜬 출력을
+#   그대로 옮겼다(2026-09-04 · `cargo test -p claude`).
+#
+#   ⚠ **그 러스트 구현은 이 값을 뜬 직후 걷었다**(pytmux-468 걸음 4 · CL 이 같다).
+#   판의 글을 서버가 짓게 되면서 그쪽이 「파서 두 벌」이 됐기 때문이다. 그래서 이 표는
+#   지금 **살아 있는 대조**가 아니라 «걷을 때 그것이 내던 글»의 골든이다 — 출처를 여기
+#   적어 두는 이유가 그것이다(골든의 값은 어디서 왔는지 말할 수 있을 때만 있다).
 _RUST_TRUTH = [
     ("플랜 [ok]", "plan_head"),
     ("  1. 실패하는 테스트를 고친다", "body"),
@@ -43,13 +53,14 @@ def _fixture_text():
         return fp.read()
 
 
-async def test_the_two_parsers_say_the_same_words():
-    """⛔ **이 슬라이스가 서는 자리**. 두 파서가 한 글자라도 갈리면 같은 대화가 탭에 따라
-    달라 보인다 — 2026-07-28 이 ⓐ 를 안 고른 이유가 그것이었다."""
+async def test_the_words_still_match_what_rust_used_to_say():
+    """⛔ **이 슬라이스가 서는 자리**. 파이썬 판이 이 글자에서 멀어지면, 그 판을 러스트가
+    그리던 시절을 아는 사용자에게 **같은 대화가 달라 보인다** — 2026-07-28 이 ⓐ 를 안 고른
+    이유가 그것이었고, 그 걱정을 이 표가 값으로 붙들고 있다."""
     got = _mod().detail_lines(_fixture_text())
     assert got == _RUST_TRUTH, (
-        "파이썬 판이 러스트와 다른 글자를 낸다 — 어느 쪽이 옳은지 정하고 **둘 다** 고칠 것:"
-        f"\n  파이썬: {got}\n  러스트: {_RUST_TRUTH}")
+        "파이썬 판이 러스트가 내던 글자에서 멀어졌다 — 바꿀 값이면 이 골든도 같은 CL 에서 "
+        f"옮길 것(그 근거를 설명에 남긴다):\n  지금: {got}\n  골든: {_RUST_TRUTH}")
 
 
 async def test_the_fixture_is_the_one_rust_uses():

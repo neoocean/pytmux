@@ -91,8 +91,8 @@ fn opening_the_same_screen_again_closes_it() {
 fn a_second_screen_stacks_and_the_top_one_closes_first() {
     let mut screens = Screens::new();
     screens.open(Screen::Keys);
-    screens.open(Screen::ClaudeDetail);
-    assert_eq!(screens.top(), Some(Screen::ClaudeDetail));
+    screens.open(Screen::Notices);
+    assert_eq!(screens.top(), Some(Screen::Notices));
     screens.press(Key::Escape, Mods::NONE);
     assert_eq!(screens.top(), Some(Screen::Keys), "아래 화면까지 함께 닫혔다");
 }
@@ -103,7 +103,7 @@ fn switching_screens_starts_at_the_top_of_the_new_one() {
     let mut screens = Screens::new();
     screens.open(Screen::Keys);
     screens.press(Key::PageDown, Mods::NONE);
-    screens.open(Screen::ClaudeDetail);
+    screens.open(Screen::Notices);
     assert_eq!(screens.scroll(), 0);
 }
 
@@ -122,7 +122,7 @@ fn a_modifier_combo_closes_instead_of_being_swallowed() {
 fn every_screen_says_its_name_and_its_keys() {
     // 안내가 틀리면 도움말이 없느니만 못하다 — 목록 화면에 "아무 키나 닫기"라고 적혀
     // 있으면 사용자는 Enter 가 확정이라는 것을 모른다(2026-07-29 에 실제로 그랬다).
-    for screen in [Screen::Keys, Screen::ClaudeDetail, Screen::Tabs] {
+    for screen in [Screen::Keys, Screen::Notices, Screen::Tabs] {
         assert!(!screen.title().is_empty(), "{screen:?} 에 제목이 없다");
         assert!(!screen.hint().is_empty(), "{screen:?} 에 키 안내가 없다");
     }
