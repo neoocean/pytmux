@@ -47,7 +47,11 @@ pub fn hostname() -> String {
     }
     #[cfg(unix)]
     {
-        let mut buf = [0i8; 256];
+        // ⚠ `c_char` 의 부호는 **플랫폼이 정한다** — macOS·x86_64 리눅스는 `i8`, aarch64
+        //   리눅스는 `u8` 이다. 종전의 `[0i8; 256]` 은 앞 둘에서만 맞아 리눅스 arm64 에서
+        //   proto 가 아예 안 컴파일됐다(pytmux-464 · 2026-09-04 Docker aarch64 실측 —
+        //   CI 는 x86_64 러너라 한 번도 못 잡았다).
+        let mut buf = [0 as libc::c_char; 256];
         // SAFETY: 버퍼 길이를 그대로 넘기고, 결과는 NUL 까지만 읽는다.
         let rc = unsafe { libc::gethostname(buf.as_mut_ptr(), buf.len()) };
         if rc != 0 {
