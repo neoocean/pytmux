@@ -10,8 +10,6 @@
 
 use std::collections::HashMap;
 
-use base::i18n::{t, tf};
-
 use crate::Transcript;
 
 /// 지금 보이는 패널의 Claude 항목을 어디서 가져오나.

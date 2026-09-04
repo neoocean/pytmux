@@ -7372,6 +7372,24 @@ impl SessionView {
     ///
     /// ⚠ 목록형(`is_list`)은 자리를 `selected` 가 들고 `settle_settings_cursor` 계열이
     /// 접는다 — 여기서는 글 판만 본다.
+    /// 지금 뜬 글 판이 **넘치나** — 그래서 `↑↓` 가 실제로 할 일이 있나(pytmux-478 ⑵).
+    ///
+    /// 재는 것은 [`settle_plugin_scroll`](Self::settle_plugin_scroll) 과 **같은 두 값**
+    /// (판 예산 · 스펙의 줄 수)이다. 두 자리가 각자 세면 「자를 자리」와 「그렇다고 말하는
+    /// 자리」가 어긋나 꼬리줄이 거짓말을 한다.
+    ///
+    /// 목록형은 `false` — 저쪽 `↑↓` 는 스크롤이 아니라 **커서**이고, 그 판의 꼬리줄은
+    /// 이미 「이동」이라고 말한다(pytmux-478 ⑴ 이 고친 그 낱말).
+    fn plugin_view_scrolls(&self) -> bool {
+        let budget = self.panel_budget();
+        self.state
+            .plugin_screen()
+            .is_some_and(|spec| {
+                spec.kind == "text"
+                    && Self::join_sections(&spec.say_sections()).lines().count() > budget
+            })
+    }
+
     fn settle_plugin_scroll(&mut self) {
         if self.screens.top() != Some(Screen::PluginView) {
             return;
@@ -9384,7 +9402,15 @@ impl SessionView {
         // 안내도 같다 — 그 판에서 무슨 키가 무엇을 하는지는 플러그인이 안다
         // (`ncd` 의 `c`, 달력의 `‹` 처럼 판마다 다르다).
         let spec_hint = (screen == Screen::PluginView)
-            .then(|| self.state.plugin_screen().map(|s| s.say_hint()))
+            .then(|| {
+                self.state
+                    .plugin_screen()
+                    // ★ 「↑↓ 스크롤」은 **스크롤될 때만** 붙는다(pytmux-478 ⑵). 다 들어가는
+                    //   판에서 그 말은 할 수 없는 조작을 광고하는 것이고, 누른 사용자는
+                    //   아무 일도 안 일어나는 것을 본다. 붙이는 규칙은 proto 한 자리다
+                    //   (`PluginScreen::hint_line`) — 정본도 같은 규칙을 쓴다.
+                    .map(|s| s.hint_line(self.plugin_view_scrolls()))
+            })
             .flatten()
             .filter(|h| !h.is_empty())
             // ★ 팔레트에서 고른 명령이 **인자를 받으면 그 문구를 여기 싣는다**

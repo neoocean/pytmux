@@ -1630,7 +1630,8 @@ class InfoScreen(ModalScreen):
     _NAV_KEYS = ("up", "down", "pageup", "pagedown", "home", "end")
 
     def __init__(self, lines, title="info", hide_key=None, hide_cb=None,
-                 max_width=None, wrap_hang=True, center=False, tick_cb=None):
+                 max_width=None, wrap_hang=True, center=False, tick_cb=None,
+                 scroll_hint=""):
         super().__init__()
         self._lines = lines
         self._title = title
@@ -1652,6 +1653,16 @@ class InfoScreen(ModalScreen):
         # §10-A #8: nav 에서 건너뛸(구분선/빈) 표시 줄 인덱스 — 마지막 항목서 ↓ 시
         # 구분선을 건너뛰어 footer 로 바로 점프.
         self._skip = set()
+        # pytmux-478 ⑵: **스크롤될 때만** 꼬리줄 끝에 붙는 토막(`↑↓ 스크롤`).
+        #
+        # ⛔ 이걸 서버가 못 정한다: 스크롤이 필요한지는 **뷰포트**가 정하고 서버는 이
+        #    판이 누구 화면에서 몇 줄로 그려지는지 모른다. 그래서 다 들어가는 판에서도
+        #    「↑↓ 스크롤」이 뜨고 있었다 — **할 수 없는 조작을 광고**하는 꼴이다.
+        #
+        # ⚠ **뒤에 붙인다.** 그래야 토막이 나타나고 사라져도 꼬리줄의 나머지가 자리를
+        #    안 옮긴다(가운데에 끼우면 `Esc 닫기` 가 판마다 좌우로 움직인다).
+        self._scroll_hint = scroll_hint or ""
+        self._scroll_hint_on = False
 
     def compose(self) -> ComposeResult:
         # markup=False: 임의 텍스트의 대괄호가 마크업으로 사라지지 않게.
@@ -1688,6 +1699,7 @@ class InfoScreen(ModalScreen):
             self.call_after_refresh(self._rewrap)
             return
         self._skip = self._compute_skip(self._lines)
+        self.call_after_refresh(self._settle_scroll_hint)
 
     def _wrap_lines(self, lines):
         """현재 박스 폭으로 줄들을 행잉-인덴트 하드 줄바꿈해 **표시 줄** 목록을 만든다
@@ -1738,6 +1750,41 @@ class InfoScreen(ModalScreen):
         # 새 ListItem 기준으로 깜빡임-방지 캐시를 재설정(in-place 갱신 비교 기준).
         self._disp_cache = {id(item): d
                             for item, d in zip(lv.children, disp)}
+        # 줄바꿈까지 끝난 **표시 줄**이 자리에 앉은 뒤라야 「스크롤되나」를 잴 수 있다.
+        self.call_after_refresh(self._settle_scroll_hint)
+
+    def _settle_scroll_hint(self):
+        """다 안 들어가면 꼬리줄 끝에 `scroll_hint` 를 붙인다(pytmux-478 ⑵).
+
+        ⛔ **여기서 재는 것이 답이다.** 줄 수를 세어 짐작하면 줄바꿈·박스 폭·터미널
+        높이가 다 변수라 틀린다 — `max_scroll_y` 는 그 전부가 반영된 뒤의 사실이다.
+
+        ⚠ **한 번 붙이면 안 뗀다.** 토막이 한 줄을 더하므로, 아슬아슬하게 들어가던 판은
+        붙이는 순간 실제로 스크롤된다 — 그 상태에서 다시 재서 떼면 두 상태를 오간다.
+        늘 「붙이는 방향」으로만 가면 그 진동이 원천봉쇄되고, 붙은 뒤의 문구는 **참**이다.
+        """
+        if not self._scroll_hint or self._scroll_hint_on:
+            return
+        try:
+            # ⛔ **스크롤하는 것은 목록이 아니라 박스다.** `#info` 는 `height: auto` 라
+            #    내용만큼 자라고(그래서 `ListView.max_scroll_y` 는 늘 0이다), 넘치는 것을
+            #    받아 내는 쪽은 `max-height: 95%` 가 걸린 `#infobox` 다 — 실측으로 200줄
+            #    판에서 목록은 0, 박스는 186 이었다. 목록에 물으면 **넘치는 판에서도
+            #    영영 안 붙는다**(그 반쪽 수정을 여기서 한 번 밟았다).
+            box = self.query_one("#infobox")
+        except Exception:
+            return
+        if box.max_scroll_y <= 0:
+            return
+        self._scroll_hint_on = True
+        # 꼬리줄은 마지막 줄이다(`_open_plugin_text` 가 그렇게 붙인다). 꼬리줄이 아예
+        # 없는 판(힌트가 빈 스펙)에는 그 토막만 한 줄로 놓는다.
+        tail = (self._lines[-1] if self._lines else "").strip()
+        if tail:
+            self._lines = list(self._lines[:-1]) + [f"{tail} · {self._scroll_hint}"]
+        else:
+            self._lines = list(self._lines) + [self._scroll_hint]
+        self.run_worker(self._rewrap())
 
     def _skip_over(self, lv, step):
         """현재 선택이 건너뛸 줄(구분선/빈)이면 step 방향의 가장 가까운 실제 줄로

@@ -467,7 +467,11 @@ class _ChooseScreensMixin:
         hint = str(msg.get("hint") or "")
         if hint:
             lines = list(lines) + ["", hint]
-        self.push_screen(InfoScreen(lines, title=title))
+        # `scroll_hint` 는 **스크롤될 때만** 붙는 토막이다(pytmux-478 ⑵). 서버는 이 판이
+        # 몇 줄로 그려지는지 모르므로 두 토막을 따로 싣고, 붙일지는 판이 제 뷰포트를 재서
+        # 정한다 — 다 들어가는 판에서 「↑↓ 스크롤」은 **할 수 없는 조작을 광고하는 것**이다.
+        self.push_screen(InfoScreen(lines, title=title,
+                                    scroll_hint=str(msg.get("scroll_hint") or "")))
 
     def _open_search_results(self, msg):
         """결과 판을 열고, 고른 줄의 자리로 서버에 점프를 시킨다.

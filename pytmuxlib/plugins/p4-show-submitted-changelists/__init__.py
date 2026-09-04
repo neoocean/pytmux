@@ -44,7 +44,8 @@ i18n.register({
         "p4cl.detail_nav": "↑↓ 스크롤 · PgUp/PgDn · Home/End · Esc 닫기",
         # 스펙(Tier C)의 상세 화면은 Esc 가 **목록으로** 돌아간다(스펙 스택) —
         # 정본 팝업의 `detail_nav`(Esc = 닫기)와 뜻이 달라 키를 따로 둔다.
-        "p4cl.detail_back": "↑↓ 스크롤 · Esc 목록으로",
+        "p4cl.detail_back": "Esc 목록으로",
+        "p4cl.detail_scroll": "↑↓ 스크롤",
         "p4cl.loading": "불러오는 중…",
         "p4cl.error": "오류: {err}",
         "p4cl.no_detail": "(내용 없음)",
@@ -55,7 +56,8 @@ i18n.register({
         "p4cl.nav": "↑↓ move · Enter details · Esc close",
         "p4cl.empty": "(no submitted changelists)",
         "p4cl.detail_nav": "↑↓ scroll · PgUp/PgDn · Home/End · Esc close",
-        "p4cl.detail_back": "↑↓ scroll · Esc back to the list",
+        "p4cl.detail_back": "Esc back to the list",
+        "p4cl.detail_scroll": "↑↓ scroll",
         "p4cl.loading": "Loading…",
         "p4cl.error": "Error: {err}",
         "p4cl.no_detail": "(empty)",
@@ -230,6 +232,9 @@ class _P4ChangesPlugin:
             "t": "plugin_screen", "id": "p4changes", "kind": "text",
             "title": f"CL {change}",
             "hint": i18n.t("p4cl.detail_back"),
+            # 스크롤될 때만 붙는 토막(pytmux-478 ⑵). CL 설명은 한 줄짜리도 흔하고,
+            # 그때 「↑↓ 스크롤」은 **할 수 없는 조작을 광고하는 것**이다.
+            "scroll_hint": i18n.t("p4cl.detail_scroll"),
             "text": text,
             # §10-21ⓛ2: **구역으로 나눠** 준다 — 설명과 파일 목록 사이에 선이 서게.
             # 경계를 아는 쪽은 이 플러그인뿐이다(`Affected files ...` 는 p4 가 적은 글).

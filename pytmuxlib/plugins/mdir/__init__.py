@@ -51,7 +51,8 @@ i18n.register({
         "mdir.mask_ask": "파일 마스크 (예: *.txt *.md · 빈 값이면 해제)",
         "mdir.empty": "빈 디렉터리입니다",
         # 뷰어
-        "mdir.view_hint": "(↑↓ 스크롤 · Esc 닫기)",
+        "mdir.view_hint": "Esc 닫기",
+        "mdir.view_scroll_hint": "↑↓ 스크롤",
         "mdir.cant_read": "못 읽습니다: {err}",
         "mdir.binary": "이진 파일이라 안 보입니다",
         "mdir.truncated": "앞부분만 보입니다(뒤는 잘렸습니다)",
@@ -103,7 +104,8 @@ i18n.register({
         "mdir.too_many": "Too many entries — showing only some",
         "mdir.mask_ask": "File mask (e.g. *.txt *.md · empty clears)",
         "mdir.empty": "Empty directory",
-        "mdir.view_hint": "(↑↓ scroll · Esc close)",
+        "mdir.view_hint": "Esc close",
+        "mdir.view_scroll_hint": "↑↓ scroll",
         "mdir.cant_read": "Cannot read: {err}",
         "mdir.binary": "Binary file — not shown",
         "mdir.truncated": "Only the beginning is shown (the rest is cut)",
@@ -730,7 +732,11 @@ class _MdirPlugin:
             "t": "plugin_screen", "id": "mdir", "kind": "text",
             # 제목은 **파일 이름**이라 번역 대상이 아니다(자료).
             "title": os.path.basename(picked) or picked,
-            "hint": i18n.t("mdir.view_hint"), "rows": [],
+            "hint": i18n.t("mdir.view_hint"),
+            # 스크롤될 때만 붙는 토막(pytmux-478 ⑵) — 짧은 파일에서는 안 뜬다.
+            # ⚠ 종전 문구의 괄호를 함께 걷었다: 꼬리줄 하나가 통째로 괄호에 싸여 있던
+            #    것은 이 판뿐이었고, 토막이 붙고 떨어지면 그 괄호가 말이 안 된다.
+            "scroll_hint": i18n.t("mdir.view_scroll_hint"), "rows": [],
             "text": m.get("text") or "", "selected": 0, "keys": {},
             "note": i18n.t("mdir.truncated") if m.get("truncated") else "",
         }

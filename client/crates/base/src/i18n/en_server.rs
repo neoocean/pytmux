@@ -113,6 +113,9 @@ pub static EN: &[(&str, &str)] = &[
     //    ⛔ 옛 판을 지우지 마라 — pytmux-125 가 그 F-키를 되살리면 곧 다시 필요하다.
     ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · Esc 닫기)", "(Enter open · . up · t tag · u tag all · c copy · m move · d delete · r rename · k new directory · v view · h hidden · p cd panel · Esc close)"),
     ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · F10 트리 · Esc 닫기)", "(Enter open · . up · t tag · u tag all · c copy · m move · d delete · r rename · k new directory · v view · h hidden · p cd panel · F10 tree · Esc close)"),
+    // ⚠ **옛 판을 지우지 않는다**(이 표의 규율 — 위 mdir F-키 주석). pytmux-478 ⑵ 가
+    //    이 셋을 갈랐지만, 갈리기 전 문구를 보내는 서버(구버전·원격 링크 너머)가
+    //    있으면 그때는 이 줄이 답이다.
     ("(↑↓ 스크롤 · Esc 닫기)", "(↑↓ scroll · Esc close)"),
     ("(규칙이 없습니다 — a 로 지금 패널의 디렉토리를 추가합니다)", "(no rules — press a to add this pane's directory)"),
     ("(내용 없음)", "(empty)"),
@@ -137,9 +140,15 @@ pub static EN: &[(&str, &str)] = &[
     ("accept — 편집·기본 FS 만 자동 수락 (⏵⏵ accept edits)", "accept — auto-accept edits·basic FS only (⏵⏵ accept edits)"),
     ("auto — 모든 동작 자동 수락, 안전검사 (⏵⏵ auto mode)", "auto — auto-accept all, safety checks (⏵⏵ auto mode)"),
     ("bypass — 권한 우회, 확인 없음 ⚠️ (Bypass Permission Mode)", "bypass — skip permissions, no confirm ⚠️ (Bypass Permission Mode)"),
+    // pytmux-478 ⑵ — 꼬리줄이 「늘 붙는 것 / 스크롤될 때만」으로 갈렸다. 갈린 두 토막이
+    // 각자 서버가 보내는 글이라, 각자 영어 얼굴을 가져야 한다.
+    ("Esc 닫기", "Esc close"),
+    ("Esc 목록으로", "Esc back to the list"),
+    ("↑↓ 스크롤", "↑↓ scroll"),
     ("c 비우기 · Esc 닫기", "c clear · Esc close"),
     ("default — 매번 확인 (일반 모드)", "default — confirm each time (normal)"),
     ("plan — 플랜 모드 (계획만, 실행 안 함)", "plan — plan mode (plan only, no run)"),
+    ("r 원격 제어 토글(/rc) · Esc 닫기", "r toggle remote control (/rc) · Esc close"),
     ("r 원격 제어 토글(/rc) · ↑↓ 스크롤 · Esc 닫기", "r toggle remote control (/rc) · ↑↓ scroll · Esc close"),
     ("remote-attach {target} 실패 — {why}", "remote-attach {target} failed — {why}"),
     ("remote-attach {target}: 연결됐지만 원격이 응답 없음 — 원격 서버 점검", "remote-attach {target}: connected but remote is unresponsive — check the remote server"),

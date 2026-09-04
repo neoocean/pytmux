@@ -172,6 +172,22 @@ pub struct PluginScreen {
     pub title: String,
     #[serde(default)]
     pub hint: String,
+    /// 꼬리줄 중 **스크롤될 때만** 붙는 토막(`↑↓ 스크롤` — pytmux-478 ⑵).
+    ///
+    /// # 왜 서버가 이걸 못 정하나
+    ///
+    /// 스크롤이 필요한지는 **뷰포트**가 정하고, 뷰포트를 아는 것은 각 클라뿐이다 —
+    /// 서버는 이 판이 누구 화면에서 몇 줄로 그려지는지 모른다. 그래서 다 들어가는
+    /// 판에서도 「↑↓ 스크롤」이 떴다: **할 수 없는 조작을 광고**하는 꼴이다.
+    /// 서버는 두 토막을 따로 싣기만 하고, 붙일지는 우리가 정한다
+    /// (`settle_plugin_scroll` 이 이미 세운 「자리는 뷰가 잰다」와 같은 규약).
+    ///
+    /// ⚠ 붙일 자리는 **끝**이다. 그래야 토막이 나타나고 사라져도 꼬리줄의 나머지가
+    /// 자리를 안 옮긴다.
+    ///
+    /// 비어 있으면 종전대로 [`hint`](Self::hint) 만 늘 붙는다(점진 채택).
+    #[serde(default)]
+    pub scroll_hint: String,
     #[serde(default)]
     pub rows: Vec<PluginRow>,
     #[serde(default)]
@@ -234,6 +250,25 @@ impl PluginScreen {
     /// 안내줄 — 이 클라의 로케일로.
     pub fn say_hint(&self) -> String {
         i18n_say(&self.i18n, "hint", &self.hint)
+    }
+
+    /// 스크롤될 때만 붙는 토막 — 이 클라의 로케일로.
+    pub fn say_scroll_hint(&self) -> String {
+        i18n_say(&self.i18n, "scroll_hint", &self.scroll_hint)
+    }
+
+    /// 이 판의 꼬리줄 — `scrolls` 면 스크롤 토막까지 붙인 것.
+    ///
+    /// ⛔ **붙이는 규칙이 한 자리라야 한다.** 그리는 쪽에서 각자 이으면 두 판이 다른
+    /// 구분자를 쓰거나 한쪽만 토막을 빠뜨린다 — 정본도 같은 규칙(`· ` 로 끝에)이다.
+    pub fn hint_line(&self, scrolls: bool) -> String {
+        let hint = self.say_hint();
+        let tail = self.say_scroll_hint();
+        match (scrolls && !tail.is_empty(), hint.is_empty()) {
+            (false, _) => hint,
+            (true, true) => tail,
+            (true, false) => format!("{hint} · {tail}"),
+        }
     }
 
     /// 빈/실패 한 줄 — 이 클라의 로케일로.

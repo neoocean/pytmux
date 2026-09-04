@@ -6795,6 +6795,69 @@ fn a_text_panel_that_fits_does_not_move_when_you_press_down() {
 }
 
 #[test]
+fn a_text_panel_that_fits_does_not_advertise_scrolling() {
+    // pytmux-478 ⑵ — 다 들어가는 판이 꼬리줄에서 「↑↓ 스크롤」이라고 말하면, 사용자는
+    // 눌러 보고 **아무 일도 안 일어나는 것**을 본다. 할 수 없는 조작을 광고하는 것이다.
+    //
+    // ⛔ 그 판정은 서버가 못 한다 — 스크롤이 필요한지는 뷰포트가 정하고, 뷰포트를 아는
+    //    것은 이 클라뿐이다. 그래서 서버는 두 토막을 따로 싣고 붙일지는 우리가 정한다.
+    //
+    // ⚠ **양쪽을 다 잰다.** 안 붙이기만 재면 「넘치는 판에서도 안 뜨는」 반쪽 수정이
+    //    통과한다(부정 단언만 있는 오라클의 함정 — 이 저장소가 두 번 겪었다).
+    let spec = |lines: usize| -> ServerMessage {
+        serde_json::from_value(serde_json::json!({
+            "t": "plugin_screen", "id": "mdir", "kind": "text", "title": "파일",
+            "hint": "Esc 닫기", "scroll_hint": "↑↓ 스크롤",
+            "text": (1..=lines).map(|n| format!("줄{n}\n")).collect::<String>(),
+            "note": "", "keys": {}
+        }))
+        .unwrap()
+    };
+    let fits = painted_after(vec![layout_one_pane(), spec(3)], &[]);
+    assert!(
+        fits.iter().any(|t| t.contains("Esc 닫기")),
+        "늘 붙는 토막이 아예 안 그려졌다: {fits:?}"
+    );
+    assert!(
+        !fits.iter().any(|t| t.contains("↑↓ 스크롤")),
+        "다 들어가는 판이 스크롤을 광고한다 — 제보의 그 꼬리줄이다: {fits:?}"
+    );
+
+    let overflows = painted_after(vec![layout_one_pane(), spec(400)], &[]);
+    let hint = overflows
+        .iter()
+        .find(|t| t.contains("Esc 닫기"))
+        .unwrap_or_else(|| panic!("넘치는 판에 꼬리줄이 없다: {overflows:?}"));
+    assert!(
+        hint.contains("↑↓ 스크롤"),
+        "넘치는 판이 스크롤을 안 알린다: {hint:?}"
+    );
+    // ⚠ **뒤에 붙는다.** 가운데에 끼우면 토막이 나타나고 사라질 때마다 `Esc 닫기` 가
+    //    좌우로 움직인다 — 같은 판을 두 번 열었을 뿐인데 꼬리줄이 딴 데 있어 보인다.
+    assert!(
+        hint.starts_with("Esc 닫기"),
+        "늘 붙는 토막이 앞자리를 안 지켰다: {hint:?}"
+    );
+}
+
+#[test]
+fn a_spec_without_the_scroll_piece_keeps_its_whole_hint() {
+    // 점진 채택 — 칸을 모르는 판은 종전대로 힌트를 통째로 늘 붙인다. 스펙을 내는
+    // 플러그인 전부를 한 CL 에 고치지 않아도 되게 하는 자리다(pytmux-478 ⑵ §관문).
+    let spec: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "x", "kind": "text", "title": "판",
+        "hint": "↑↓ 스크롤 · Esc 닫기",
+        "text": "한 줄\n", "note": "", "keys": {}
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), spec], &[]);
+    assert!(
+        painted.iter().any(|t| t == "↑↓ 스크롤 · Esc 닫기"),
+        "칸이 없는 스펙의 꼬리줄이 달라졌다: {painted:?}"
+    );
+}
+
+#[test]
 fn the_list_panel_cursor_comes_back_from_the_end_in_one_press() {
     // 제보(pytmux-432 · 실 GUI 로 잰 것): `:usage-panel` 에서 `End` 를 누른 뒤 `↑` 를
     // **세 번** 눌러도 커서가 마지막 줄에 그대로 있었다.

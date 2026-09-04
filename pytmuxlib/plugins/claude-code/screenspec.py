@@ -120,7 +120,8 @@ i18n.register({
         "pscreen.spec_tklog_col_pct": "5h 최대",
         "pscreen.spec_on_mark": "●",
         "pscreen.spec_off_mark": "○",
-        "pscreen.rc_hint": "r 원격 제어 토글(/rc) · ↑↓ 스크롤 · Esc 닫기",
+        "pscreen.rc_hint": "r 원격 제어 토글(/rc) · Esc 닫기",
+        "pscreen.rc_scroll_hint": "↑↓ 스크롤",
     },
     "en": {
         "pscreen.spec_settings_title": "Claude settings",
@@ -168,13 +169,14 @@ i18n.register({
         "pscreen.spec_tklog_col_pct": "5h peak",
         "pscreen.spec_on_mark": "●",
         "pscreen.spec_off_mark": "○",
-        "pscreen.rc_hint": "r toggle remote control (/rc) · ↑↓ scroll · Esc close",
+        "pscreen.rc_hint": "r toggle remote control (/rc) · Esc close",
+        "pscreen.rc_scroll_hint": "↑↓ scroll",
     },
 })
 
 
 def _spec(sid, kind, title, hint, rows=(), text="", note="", keys=None, selected=0,
-          carried=None, head=""):
+          carried=None, head="", scroll_hint=""):
     """스펙 한 판 — 칸을 빠뜨리지 않게 한 곳에서 짓는다.
 
     `rows`·`text` 를 늘 싣는 이유: 클라 파서가 `default` 로 채우긴 하지만, 빠진 칸은
@@ -185,10 +187,24 @@ def _spec(sid, kind, title, hint, rows=(), text="", note="", keys=None, selected
     다섯이 한 팝업의 탭이라 머리줄을 나눠 쓰는데, GUI 는 판이 여럿이라 **판마다 같은
     줄**을 실어 같은 뜻을 낸다.
     ⛔ `note` 와 다른 것이다: 저것은 실패·빈 목록이라 평상시엔 비고, 이것은 평상시에 늘
-    있는 자료다(그 구분은 `proto::session` 의 `head`/`note` 주석이 못박아 뒀다)."""
+    있는 자료다(그 구분은 `proto::session` 의 `head`/`note` 주석이 못박아 뒀다).
+
+    `scroll_hint` 는 꼬리줄 중 **스크롤될 때만 붙는 토막**이다(pytmux-478 ⑵).
+
+    # 왜 서버가 이걸 못 정하나
+
+    스크롤이 필요한지는 **뷰포트**가 정하고, 뷰포트를 아는 것은 각 클라뿐이다 — 서버는
+    이 판이 누구 화면에서 몇 줄로 그려지는지 모른다. 그래서 서버는 두 토막을 **따로
+    싣기만** 하고 붙일지는 클라가 정한다(`set_plugin_grid`·`settle_plugin_scroll` 이
+    이미 세운 「자리는 뷰가 재고 뜻은 core 가 든다」와 같은 규약).
+
+    ⚠ **뒤에 붙인다.** 그래야 토막이 나타나고 사라져도 꼬리줄의 나머지가 **자리를 안
+    옮긴다** — 가운데에 끼우면 판을 볼 때마다 `Esc 닫기` 가 좌우로 움직인다.
+
+    빈 문자열이면 종전과 같다(칸을 모르는 판은 힌트를 통째로 늘 붙인다 — 점진 채택)."""
     return {
         "t": "plugin_screen", "id": sid, "kind": kind,
-        "title": title, "hint": hint, "head": head,
+        "title": title, "hint": hint, "scroll_hint": scroll_hint, "head": head,
         "rows": list(rows), "text": text, "note": note,
         "selected": max(0, int(selected)),
         "keys": dict(keys or {}),
@@ -496,7 +512,8 @@ def _rc_spec(server, sess, pane_id):
     제어**를 토글한다 — 권한모드 화면이 먼저 밟은 자리 그대로다."""
     return _spec("claude-remote-control", "text",
                  i18n.t("ccmsg.rc_title"), i18n.t("pscreen.rc_hint"),
-                 text=i18n.t("ccmsg.rc_body"), keys={"r": "toggle"})
+                 text=i18n.t("ccmsg.rc_body"), keys={"r": "toggle"},
+                 scroll_hint=i18n.t("pscreen.rc_scroll_hint"))
 
 
 # ── claude-token-log — 일별 집계 한 판 ─────────────────────────────────────
