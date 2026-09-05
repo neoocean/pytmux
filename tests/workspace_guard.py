@@ -19,6 +19,21 @@ git 미러 판으로 조용히 되감긴 사고가 실제로 있었다(84파일,
 """
 import os
 
+#: 직전 [`find_suspects`] 가 **못 잰** 이유(실제로 쟀으면 `None`).
+#:
+#: ☠ 조용한 SKIP 은 「다 봤다」로 읽힌다(검수 2026-09-05 C-7). 종전에는 `p4 info` 가
+#: 실패하면(Docker 가 내려간 날처럼) 그냥 `None` 을 돌려 `run.py` 가 아무 말 없이 지나
+#: 갔다 — 그날 depot 드리프트 가드는 **한 줄도 안 남기고 빠졌고**, 스위트는 종전과
+#: 똑같이 초록이었다. 이제 이유를 여기 남기고 부르는 쪽이 한 줄 찍는다.
+LAST_SKIP = None
+
+
+def _skip(why):
+    """못 쟀다 — 이유를 남기고 `None`."""
+    global LAST_SKIP
+    LAST_SKIP = why
+    return None
+
 
 def _load_publish_check(root):
     import importlib.util
@@ -39,32 +54,39 @@ def find_suspects(root, pc=None):
     `pc`: 시험 주입용(`scripts/publish_check.py`를 이미 로드해 `run`을 갈아끼운 모듈).
     생략하면 실제로 로드하고, 그 전에 `p4` 이진 유무를 먼저 본다.
 
-    문제 없음(또는 잴 수 없음)이면 `None`. **어떤 예외도 삼키고 `None`을 돌려준다** —
+    문제 없음(또는 잴 수 없음)이면 `None`. 그 둘은 다르므로, **못 잰 것**이면 그 이유를
+    모듈 전역 [`LAST_SKIP`] 에 남긴다(잰 경우 `None` 으로 지운다) — 부르는 쪽이 한 줄
+    찍게(검수 2026-09-05 C-7). **어떤 예외도 삼키고 `None`을 돌려준다** —
     이 결함은 이 특정 배치(p4 워크스페이스에 git 미러가 같은 자리)에서만 성립하고,
     p4 이진이 없는 순수 git 클론(대부분의 CI)에서는 애초에 잴 것이 없다. 그리고 이
     가드 자신의 버그가 전체 스위트의 새 단일 장애점이 되면 안 된다 — 이 저장소가
     이미 아는 원칙("거짓 붉음은 거짓 초록의 다른 얼굴")과 같은 결이다.
     """
+    global LAST_SKIP
+    LAST_SKIP = None
     if os.environ.get("PYTMUX_SKIP_WORKSPACE_GUARD"):
-        return None
+        return _skip("PYTMUX_SKIP_WORKSPACE_GUARD 로 껐다")
     try:
         if pc is None:
             # 실경로 사전조건 — 시험이 `pc` 를 직접 주입할 때는 "p4+git 동거냐"를
             # 이미 전제하고 부르므로 건너뛴다(실 파일시스템에 없는 가짜 root 로도 시험할 수 있게).
             if not os.path.isdir(os.path.join(root, ".git")):
-                return None
+                return _skip("git 클론이 아니다 — 잴 것이 없다")
             import shutil
             if not shutil.which("p4"):
-                return None
+                return _skip("p4 이진이 없다 — 잴 것이 없다")
             pc = _load_publish_check(root)
 
         rc, _ = pc.run(["p4", "info"])
         if rc:
-            return None   # 오프라인/미로그인 — p4 가 없는 것과 같은 취급
+            # 오프라인/미로그인. ⛔ 「p4 가 없는 것과 같은 취급」이되 **조용하지는
+            # 않다** — 이 상자에서 p4 는 Docker 위에 있고, 그것이 내려간 날 이 가드가
+            # 한 줄도 안 남기고 빠졌다(검수 2026-09-05 C-7).
+            return _skip("p4 서버에 못 닿았다(오프라인·미로그인·Docker 다운)")
 
         rc, opened_txt = pc.run(["p4", "opened", "./..."])
         if rc and "not opened" not in opened_txt:
-            return None
+            return _skip("`p4 opened` 가 실패했다")
         opened = {r for r in (pc.rel_any(ln.split("#")[0])
                               for ln in opened_txt.splitlines()
                               if ln.strip() and "/pytmux/" in ln.replace("\\", "/"))
@@ -91,5 +113,5 @@ def find_suspects(root, pc=None):
         # "git 은 clean(=HEAD 와 바이트 동일)한데 depot 과는 다르다"는 조용한 어긋남뿐.
         suspects = [f for f in tracked_diff if f not in git_dirty]
         return suspects or None
-    except Exception:
-        return None
+    except Exception as exc:
+        return _skip(f"가드가 예외로 멈췄다: {exc!r}")

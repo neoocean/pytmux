@@ -226,7 +226,14 @@ def test_the_usage_panel_hands_out_a_screen_spec():
     for glyph in ("█", "░", "▉"):
         assert glyph not in joined, f"서버가 막대를 글자로 그렸다: {glyph}"
     # 계정·신선도처럼 비율이 없는 줄은 **막대 없이** 온다(있으면 0% 막대로 오독된다).
-    assert all("bar" in r or r["cols"] == [] for r in spec["rows"]), spec["rows"]
+    #
+    # ⚠ **고르개 줄은 그 규칙 밖**이다(pytmux-130 · 정본 `[한도]` 탭의 행0·행1 =
+    #   모델·컨텍스트). 그 줄에는 칸이 있고 막대가 없지만 0% 로 오독될 자리가 아니다 —
+    #   자기가 무엇인지를 `w` 로 말하고, 그리는 쪽은 그 이름을 보고 `◀ ▶` 를 그린다.
+    assert all("bar" in r or r["cols"] == [] or r.get("w") == "choose"
+               for r in spec["rows"]), spec["rows"]
+    # 그 두 줄이 **맨 앞**이라는 것은 test_plugin_screen 이 따로 잰다(정본의 행0·행1).
+    assert [r.get("w") for r in spec["rows"][:2]] == ["choose", "choose"], spec["rows"][:2]
     # 내 이름이 아니면 안 받는다(첫 비-None 채택 규약).
     assert plug.plugin_screen(_Srv(), None, {"do": "open", "name": "ncd"}) is None
 

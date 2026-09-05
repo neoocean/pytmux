@@ -55,7 +55,10 @@ def _visible(text: str) -> str:
     읽자고 남기는 줄에서 경로가 제 모습을 잃는 것은 그 줄의 목적을 깎는 것이고, 넣으려던
     글자를 **경로로 찾는 것**도 안 된다(그 오라클이 Windows 에서만 떨어졌다 —
     pytmux-438). 제어문자만 손으로 펴면 둘 다 산다."""
-    out = (text.replace("\r", "\r").replace("\n", "\n").replace("\t", "\t"))
+    # ⛔ 종전엔 `.replace("\r", "\r")` — 두 인자가 **같은 글자**라 항등 함수였다(검수 2026-09-05
+    #    S-7). 그래서 error.log 에 CR·LF 가 그대로 박혔고, 클라가 준 경로에 개행이 있으면 로그
+    #    줄이 쪼개졌다(로그 주입). 펴는 것은 백슬래시 **두 글자**다.
+    out = (text.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t"))
     return f"'{out}'"
 
 

@@ -37,6 +37,8 @@ import os
 import sys
 import time
 
+from . import i18n
+
 # 표에 실을 상위 종류 수. 길면 팝업이 스크롤되고, 짧으면 자라는 놈을 놓친다.
 TOP_TYPES = 12
 
@@ -175,3 +177,113 @@ def render(stats: dict) -> list:
     lines.append("pytmux-382: 여기 값이 «자라다 눕는» 모양이면 상시 세금이지 누적이"
                  " 아니다. 계속 자라면 그것이 새 결함이다.")
     return lines
+
+
+# ── 서버 절반(pytmux-382) ─────────────────────────────────────────────────────
+#
+# `debug_stats` 회신(`serverdiag.collect_stats` 가 만든 숫자 표)을 **이 클라의 로케일로**
+# 줄로 짓는다. 서버는 문장을 짓지 않는다(서버가 지은 글은 서버 로케일로 굳어 영어
+# 사용자에게 한국어로 뜬다 — pytmux-419 부류). Rust 클라의 같은 자리는
+# `proto::diag::ServerStats::lines` — 두 벌이 **같은 줄 순서·같은 라벨**을 낸다.
+
+
+def _fmt_secs(v):
+    return "?" if v is None else f"{float(v):.1f}s"
+
+
+def _uptime(s):
+    """초 → `3d 4h` · `2h 05m` · `12m 30s`(Rust `proto::diag::uptime` 과 같은 모양)."""
+    s = max(0, int(s))
+    d, h, m, sec = s // 86400, (s // 3600) % 24, (s // 60) % 60, s % 60
+    if d > 0:
+        return f"{d}d {h}h"
+    if h > 0:
+        return f"{h}h {m:02d}m"
+    return f"{m}m {sec:02d}s"
+
+
+def render_server(stats: dict, now=None) -> list:
+    """`debug-stats` 판의 **서버 절반** 줄들. `now` 는 epoch 초(프로브 회차의 나이용).
+
+    ⛔ 못 잰 값은 `?` 다 — 0 으로 적으면 「fd 가 0 개」로 읽힌다(Windows)."""
+    from . import i18n
+    t = i18n.t
+    g = stats.get
+
+    def cnt(v):
+        return "?" if v is None else str(v)
+
+    up = g("uptime_s")
+    lines = [
+        f"― {t('diag.server', '서버 쪽')} ―",
+        f"  pid {g('pid', '?')} · python {g('python') or '?'} · "
+        f"{t('diag.up', '기동 뒤')} {'?' if up is None else _uptime(up)}",
+        f"  {t('diag.rss', '상주 메모리')} {_mb(g('rss'))} · fd {cnt(g('fds'))} · "
+        f"{t('diag.threads', '스레드')} {cnt(g('threads'))} · "
+        f"{t('diag.tasks', 'asyncio 태스크')} {cnt(g('tasks'))}",
+    ]
+    idle = [("?" if v is None else f"{float(v):.0f}s") for v in (g("client_idle_s") or [])]
+    seen = f" ({t('diag.last_seen', '마지막 수신')} {' · '.join(idle)})" if idle else ""
+    lines.append(
+        f"  {t('diag.clients', '클라')} {g('clients', 0)}{seen} · "
+        f"{t('diag.remote_links', '원격 링크')} {g('remote_links', 0)} · "
+        f"{t('diag.reconnecting', '재연결 중')} {g('remote_reconnecting', 0)}")
+    lines.append(
+        f"  {t('diag.sessions', '세션')} {g('sessions', 0)} · {t('diag.tabs', '탭')} "
+        f"{g('windows', 0)} · {t('diag.panes', '패널')} {g('panes', 0)} · "
+        f"{t('diag.scrollback', '스크롤백 행')} {cnt(g('scrollback_rows'))}")
+    if g("objects") is not None:
+        lines.append(f"  {t('diag.objects', '산 객체')} {g('objects'):,}")
+    for gen in g("gc") or ():
+        lines.append(
+            f"    gen{gen.get('gen')}: {t('diag.gc_collections', '수거')} "
+            f"{gen.get('collections', 0):,} · {t('diag.gc_collected', '거둔 것')} "
+            f"{gen.get('collected', 0):,} · {t('diag.gc_uncollectable', '못 거둔 것')} "
+            f"{gen.get('uncollectable', 0):,}")
+    for name, n in (g("top") or ())[:6]:
+        lines.append(f"    {n:>8,}  {name}")
+    probe = g("usage_probe")
+    if isinstance(probe, dict):
+        ago = ""
+        at = probe.get("at")
+        if at is not None and now is not None and now >= at:
+            ago = f" · {_uptime(now - at)} {t('diag.ago', '전')}"
+        ok = probe.get("ok")
+        verdict = ("?" if ok is None else
+                   t("diag.ok", "성공") if ok else t("diag.failed", "실패"))
+        lines.append(
+            f"  /usage {t('diag.probe_last', '프로브 마지막 회차')}: "
+            f"boot {_fmt_secs(probe.get('boot'))} · panel {_fmt_secs(probe.get('panel'))} · "
+            f"total {_fmt_secs(probe.get('total'))} · {verdict}{ago}")
+    else:
+        lines.append(f"  /usage {t('diag.probe_never', '프로브가 아직 한 번도 안 돌았다')}")
+    lines.append(f"  error.log {_mb(g('error_log_bytes'))}")
+    return lines
+
+
+i18n.register({
+    "ko": {
+        "diag.server": "서버 쪽", "diag.up": "기동 뒤", "diag.rss": "상주 메모리",
+        "diag.threads": "스레드", "diag.tasks": "asyncio 태스크", "diag.clients": "클라",
+        "diag.last_seen": "마지막 수신", "diag.remote_links": "원격 링크",
+        "diag.reconnecting": "재연결 중", "diag.sessions": "세션", "diag.tabs": "탭",
+        "diag.panes": "패널", "diag.scrollback": "스크롤백 행", "diag.objects": "산 객체",
+        "diag.gc_collections": "수거", "diag.gc_collected": "거둔 것",
+        "diag.gc_uncollectable": "못 거둔 것", "diag.probe_last": "프로브 마지막 회차",
+        "diag.ok": "성공", "diag.failed": "실패", "diag.ago": "전",
+        "diag.probe_never": "프로브가 아직 한 번도 안 돌았다",
+        "diag.waiting": "서버가 아직 답하지 않았다",
+    },
+    "en": {
+        "diag.server": "Server", "diag.up": "up", "diag.rss": "Resident memory",
+        "diag.threads": "threads", "diag.tasks": "asyncio tasks", "diag.clients": "Clients",
+        "diag.last_seen": "last seen", "diag.remote_links": "remote links",
+        "diag.reconnecting": "reconnecting", "diag.sessions": "Sessions", "diag.tabs": "Tabs",
+        "diag.panes": "Panes", "diag.scrollback": "scrollback rows", "diag.objects": "Live objects",
+        "diag.gc_collections": "collections", "diag.gc_collected": "collected",
+        "diag.gc_uncollectable": "uncollectable", "diag.probe_last": "probe last run",
+        "diag.ok": "ok", "diag.failed": "failed", "diag.ago": "ago",
+        "diag.probe_never": "probe has not run yet",
+        "diag.waiting": "The server has not answered yet",
+    },
+})

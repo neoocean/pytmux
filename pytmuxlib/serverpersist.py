@@ -14,6 +14,12 @@ from .model import Pane, Session, Split, Tab, Window
 from .protocol import MIN_H, MIN_W, write_msg
 
 
+#: 앞 주인에게 「물러나라」고 부탁할 때의 recv 시한(초).
+#: 이 자리는 bind **앞**이라 시한이 없으면 답 못 하는 상대에게 영원히 매달린다
+#: (검수 2026-09-05 S-1). 왕복 실측은 0.00~0.02s 이고 attach 예산은 4.0s 다.
+_EVICT_ASK_TIMEOUT = 2.0
+
+
 class ServerPersistMixin:
     # ---- 레이아웃 영속(저장/복원) ----
     @property
@@ -261,12 +267,19 @@ class ServerPersistMixin:
         # ⚠ `launcher` 는 **함수 안에서** 문다 — 모듈 머리에서 물면 서버 쪽 모듈이
         # CLI 진입 모듈을 거쳐 가는 고리가 생긴다(그 모듈은 반대로 서버를 지연
         # import 하는 쪽이다).
+        # ⛔ **시한을 준다**(검수 2026-09-05 S-1). 이 자리는 bind **앞**이라, 답이 없는
+        # 상대에게 무한정 매달리면 새 서버가 listen 도 못 선다 — 그리고 답을 못 하는
+        # 상대야말로 이 거두기가 겨눈 부류다(pytmux-435 의 「RSS 172MB·무응답」).
+        # 값 2.0s 는 주석의 왕복 실측(0.00~0.02s)의 100배이자, attach 예산 4.0초의
+        # 절반이다 — 정상 응답자를 시한으로 놓칠 여지가 없고, 무응답자에게 예산을
+        # 통째로 내주지도 않는다.
         asked = False
         with contextlib.suppress(Exception):
             from .launcher import control_request
             asked = bool(control_request(
-                self.sock_path, {"t": "kill-server"}))
+                self.sock_path, {"t": "kill-server"}, timeout=_EVICT_ASK_TIMEOUT))
         self._evict_pid = pid
+        self._evict_asked = asked
         self._log_error(
             "evict_previous_owner",
             f"앞 서버 pid={pid} 에게 물러나라고 부탁했다(응답={asked}) — "
@@ -277,7 +290,8 @@ class ServerPersistMixin:
         """[listen **뒤**] 부탁받은 앞 주인이 정말 죽었나 보고, 안 죽으면 pid 로 쏜다.
 
         `"gone"`(물러났다) · `"killed"`(확인 사살했다) · `"alive"`(그래도 살아 있다 —
-        권한 없음 등) · `"nobody"`(부탁한 상대가 없었다)를 돌려준다.
+        권한 없음 등) · `"nobody"`(부탁한 상대가 없었다) · `"unverified"`(안 물러났지만
+        **우리 것임을 확인 못 해** 쏘지 않았다)를 돌려준다.
 
         예산 8초는 위 실측(2.33~3.72s)의 두 배쯤이다. ⑶ 이 필요한 이유는 이 이슈가
         잡은 서버가 **응답을 안 하는** 부류였다는 것이다 — RSS 172MB·누적 CPU 622분
@@ -302,12 +316,53 @@ class ServerPersistMixin:
             # ⚠ `time.sleep` 이 아니다 — 이 자리는 **이벤트 루프 안**이고, 서버는
             #   단일 스레드다. 동기 대기를 걸면 그 8초 동안 클라 프레임이 멎는다.
             await asyncio.sleep(0.1)
+        # ⛔ **쏘기 전에 정체를 본다**(검수 2026-09-05 S-2). 여태 가드는
+        # `pid == os.getpid()` 하나뿐이었다 — pid 파일이 크래시·SIGKILL·재부팅으로
+        # 안 지워진 뒤 그 번호가 재사용되면(`proc.is_alive` 는 EPERM 도 True 다) 8초
+        # 뒤에 **같은 사용자의 무관한 프로세스**를 죽인다. 「이름으로 안 죽인다」는
+        # 지켰지만 「pid 만으로 죽인다」의 전제(= pid 파일은 살아 있는 pytmux 다)를
+        # 아무도 안 봤다.
+        #
+        # 근거는 둘 중 하나면 된다:
+        #   ⓐ 그 상대가 **우리 프로토콜로 답했다**(`asked`) — 이 엔드포인트에
+        #      `kill-server` 를 소화한 자는 pytmux 서버뿐이다.
+        #   ⓑ 명령줄에 `pytmux` 가 있다.
+        # 둘 다 아니면(모르면 포함) **안 쏜다** — 앞 서버 하나가 더 사는 것보다 남의
+        # 프로세스를 죽이는 쪽이 훨씬 비싸다. 그 상태는 로그에 남고, pytmux-435 의
+        # 「쌓인다」는 다음 기동의 `stale` 갈래가 결국 거둔다.
+        ours = True if getattr(self, "_evict_asked", False) \
+            else await self._evict_target_is_ours(pid)
+        if ours is not True:
+            self._log_error(
+                "evict_previous_owner",
+                f"앞 서버 pid={pid} 가 안 물러났지만 «우리 것»임을 확인 못 했다"
+                f"(확인={ours!r}) — 쏘지 않는다(pid 재사용일 수 있다)")
+            return "unverified"
         self._kill_pid_only(pid)
         gone = not proc.is_alive(pid)
         self._log_error(
             "evict_previous_owner",
             f"앞 서버 pid={pid} 가 부탁에 안 물러나 pid 로 내렸다(죽었나={gone})")
         return "killed" if gone else "alive"
+
+    async def _evict_target_is_ours(self, pid: int):
+        """그 pid 가 **pytmux 프로세스**인가 — `True`/`False`/`None`(모른다).
+
+        `proc.command_line` 이 명령줄을 못 읽으면 `None` 이고, 부르는 쪽은 그것을
+        「확인 못 했다」로 받아 안 쏜다. exe 이름이 아니라 **명령줄**을 보는 이유는
+        Windows 서버가 `pythonw.exe` 로 뜨기 때문이다 — 우리 것이라는 표시는 인자에
+        있다(`… pytmux.py server …`).
+
+        조회는 executor 로 돌린다 — POSIX 는 `ps` 한 번(10ms 안)이지만 Windows 는
+        CIM 조회라 수백 ms 고, 이 자리는 **이벤트 루프 안**이다."""
+        try:
+            loop = asyncio.get_running_loop()
+            cmd = await loop.run_in_executor(None, proc.command_line, pid)
+        except Exception:
+            return None
+        if not cmd:
+            return None
+        return "pytmux" in cmd.lower()
 
     @staticmethod
     def _kill_pid_only(pid: int) -> None:

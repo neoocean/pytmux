@@ -19,6 +19,10 @@
     → test_a_clean_shutdown_takes_its_pidfile_with_it 실패
   · `_kill_pid_only` 를 `proc.terminate` 로 되돌리면
     → test_the_kill_never_widens_to_a_process_group 실패(2026-07-26 사고의 가드)
+  · 부탁의 **시한**(`_EVICT_ASK_TIMEOUT`)을 지우면
+    → test_the_ask_gives_up_on_an_owner_that_never_answers 실패(검수 2026-09-05 S-1)
+  · 쏘기 전 **정체 확인**을 지우면
+    → test_a_pid_we_cannot_identify_is_never_shot 실패(검수 2026-09-05 S-2)
 """
 import ast
 import inspect
@@ -151,15 +155,20 @@ async def test_the_ask_comes_first_and_does_not_wait():
         seen = []
         with harness.patched(
                 launcher,
-                control_request=lambda _s, obj: seen.append(obj) or {"ok": 1}), \
+                control_request=lambda _s, obj, **kw:
+                    seen.append((obj, kw)) or {"ok": 1}), \
                 harness.patched(proc, is_alive=lambda pid: pid == 4242):
             t0 = _time.monotonic()
             assert p._evict_previous_owner() == "asked"
             spent = _time.monotonic() - t0
         assert spent < 1.0, (
             f"bind 앞에서 {spent:.2f}s 를 태웠다 — attach 의 4.0초 예산을 먹는다")
-        assert seen and seen[0].get("t") == "kill-server", (
+        assert seen and seen[0][0].get("t") == "kill-server", (
             "말로 부탁하지 않았다(그 길만이 질서 있는 종료를 돈다)", seen)
+        # 그 부탁에는 **시한**이 걸려 있어야 한다(검수 2026-09-05 S-1) — 없으면 답
+        # 못 하는 상대 앞에서 bind 가 영영 안 선다.
+        assert seen[0][1].get("timeout"), (
+            "부탁에 시한이 없다 — 무응답 앞 서버가 새 서버를 bind 앞에 세운다", seen)
         assert p._evict_pid == 4242, "끝을 볼 상대를 안 남겼다"
         assert p.killed == [], "부탁하기도 전에 쐈다"
 
@@ -189,14 +198,124 @@ async def test_a_wedged_owner_is_shot_by_pid():
     """이 이슈가 실제로 잡은 부류 — **응답을 안 하는** 서버(CPU 를 태우며 도는 중).
 
     말로 부탁하는 길만 있으면 그 서버는 영생한다. 그래서 확인 사살이 필요하다.
+    ⚠ 이제 그 앞에 **정체 확인**이 선다(검수 2026-09-05 S-2) — 여기서는 명령줄이
+    우리 것이라고 답하게 두고, 「확인되면 여전히 쏜다」를 잰다.
     """
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         p = _probe(d)
         p._evict_pid = 4243
-        with harness.patched(proc, is_alive=lambda pid: pid == 4243):
+        with harness.patched(proc, is_alive=lambda pid: pid == 4243,
+                             command_line=lambda pid: "python3 /x/pytmux.py server"):
             assert await p._finish_eviction(grace=0.2) == "alive"
         assert p.killed == [4243], ("겨냥이 틀렸다", p.killed)
+
+
+async def test_a_pid_we_cannot_identify_is_never_shot():
+    """☠ 검수 2026-09-05 S-2 — **정체를 확인 못 한 pid 는 안 쏜다.**
+
+    가드가 `pid == os.getpid()` 하나뿐이면, 크래시·재부팅으로 안 지워진 pid 파일의
+    번호가 재사용된 순간 8초 뒤에 **같은 사용자의 무관한 프로세스**가 죽는다
+    (`proc.is_alive` 는 EPERM 도 True 라 「살아 있다」만으로는 아무것도 못 가린다).
+
+    여기서는 진짜 자식(`sleep`)을 하나 띄워 그 pid 를 겨냥하게 하고, 그것이 **살아
+    남는지**를 본다 — 이 시험만은 `_kill_pid_only` 를 가짜로 두지 않는다."""
+    import subprocess
+    import sys
+    import tempfile
+
+    class _Real(_Probe):
+        """`_kill_pid_only` 를 **진짜로** 쓰는 껍데기 — 여기서는 그것이 안 불려야 한다."""
+
+    with tempfile.TemporaryDirectory() as d:
+        victim = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            p = _Real(os.path.join(d, "own.sock"))
+            p._evict_pid = victim.pid
+            p._evict_asked = False            # 답을 못 받았다(= 무응답 부류)
+            verdict = await p._finish_eviction(grace=0.2)
+            assert verdict == "unverified", (verdict, p.logs)
+            assert victim.poll() is None, \
+                "★ 정체를 확인 못 한 무관한 프로세스를 죽였다"
+            assert any("확인 못 했다" in det for _, det in p.logs), p.logs
+        finally:
+            victim.kill()
+            victim.wait()
+
+
+async def test_an_answering_owner_needs_no_command_line():
+    """대조군 — `kill-server` 에 **답한** 상대는 그 자체가 정체 증명이다.
+
+    그 엔드포인트에서 우리 프로토콜의 `kill-server` 를 소화하는 자는 pytmux 서버뿐
+    이므로, 명령줄을 못 읽는 상자(권한·도구 부재)에서도 거두기가 산다."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = _probe(d)
+        p._evict_pid = 4244
+        p._evict_asked = True
+        with harness.patched(proc, is_alive=lambda pid: pid == 4244,
+                             command_line=lambda pid: None):
+            assert await p._finish_eviction(grace=0.2) == "alive"
+        assert p.killed == [4244], p.killed
+
+
+async def test_the_ask_gives_up_on_an_owner_that_never_answers():
+    """☠ 검수 2026-09-05 S-1 — 부탁이 **시한 없이** 매달리면 새 서버가 bind 를 못 한다.
+
+    `ipc.control_socket` 은 connect 뒤 `settimeout(None)` 으로 되돌리고 `_recvn` 은
+    블로킹 recv 다. 앞 서버가 accept 는 하는데 답을 못 하는 상태 — 곧 pytmux-435 가
+    잰 「RSS 172MB·무응답」 부류 — 면 새 서버는 listen 도 못 선 채 영원히 대기하고,
+    attach 는 4초 예산에 「기동 실패」를 찍으며, 웨지된 옛 서버는 그대로 산다.
+
+    여기서는 **accept 만 하는 인형**을 그 엔드포인트에 세우고, 부탁이 시한 안에
+    끝나는지 잰다."""
+    import socket
+    import tempfile
+    import threading
+    import time as _time
+
+    from pytmuxlib import serverpersist as sp
+
+    if os.name == "nt":
+        from run import skip
+        skip("AF_UNIX 인형이 필요하다(Windows 는 TCP 경로라 따로 잰다)")
+
+    with tempfile.TemporaryDirectory() as d:
+        p = _probe(d)
+        dummy = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        dummy.bind(p.sock_path)
+        dummy.listen(4)
+        held = []
+        stop = threading.Event()
+
+        def _accept_and_say_nothing():
+            dummy.settimeout(0.2)
+            while not stop.is_set():
+                try:
+                    held.append(dummy.accept()[0])   # 받아만 두고 답하지 않는다
+                except OSError:
+                    pass
+
+        th = threading.Thread(target=_accept_and_say_nothing, daemon=True)
+        th.start()
+        try:
+            with open(ipc.server_pidfile(p.sock_path), "w", encoding="ascii") as f:
+                f.write("4242\n")
+            with harness.patched(proc, is_alive=lambda pid: pid == 4242):
+                t0 = _time.monotonic()
+                assert p._evict_previous_owner() == "asked"
+                spent = _time.monotonic() - t0
+            assert spent < sp._EVICT_ASK_TIMEOUT + 2.0, (
+                f"무응답 앞 서버 앞에서 {spent:.2f}s 를 태웠다 — 시한이 안 걸렸다")
+            assert p._evict_asked is False, \
+                "답을 못 받았는데 «답했다»로 적혔다 — 그 값이 확인 사살의 근거다"
+        finally:
+            stop.set()
+            th.join(2.0)
+            for c in held:
+                c.close()
+            dummy.close()
 
 
 async def test_nobody_to_finish_when_nobody_was_asked():

@@ -1075,6 +1075,66 @@ async def test_the_cap_counts_what_it_reaps_not_what_it_looks_at():
         shutil.rmtree(d, ignore_errors=True)
 
 
+async def test_the_stale_db_sweep_does_not_run_on_the_event_loop():
+    """☠ 검수 2026-09-05 S-5 — 첫 `_tokens_db_conn()` 이 스윕으로 **루프를 잡으면** 안 된다.
+
+    실측(2026-09-05 · 이 맥 · 따뜻한 캐시): 묵고 행 있는 형제 DB **1000개 = 272 ms**.
+    그 자리는 재개 검증 등 루프 스레드 위의 동기 호출이라, 그 동안 **모든 클라의
+    프레임이 멎는다**. 상한을 「본 개수」로 되돌리는 것은 답이 아니다 — 그러면
+    [[test_the_cap_counts_what_it_reaps_not_what_it_looks_at]] 가 다시 붉어진다.
+
+    시간이 아니라 **자리**를 잰다(시간 단언은 느린 러너에서 플레이크다): 스윕이 아직
+    안 끝났는데 연결이 돌아오는가 · 스윕이 루프 스레드 밖에서 돌았는가 · 연결이
+    실패해 앞길을 다시 지날 때 스윕을 **또** 걸지 않는가(래치)."""
+    d = tempfile.mkdtemp()
+    try:
+        # `tokens_db_path`·`tokens_log_path` 는 프로퍼티라 인스턴스에 못 얹는다 —
+        # 이 시험만의 하위 클래스로 덮는다.
+        base = type(_sweeper())
+        db_path = os.path.join(d, "claude-tokens-mine.db")
+
+        class _Conn(base):
+            tokens_db_path = db_path
+            tokens_log_path = os.path.join(d, "tokens.jsonl")
+
+            def _migrate_legacy_db(self, path):
+                pass
+
+        s = _Conn()
+        s._tokens_db = None
+        s._tokens_db_err = False
+
+        started, release, done = (threading.Event() for _ in range(3))
+        on_loop_thread = []
+
+        def slow_sweep(mine):
+            on_loop_thread.append(threading.current_thread() is
+                                  threading.main_thread())
+            started.set()
+            release.wait(2)          # 동기로 불렸다면 여기서 2초를 태우고 done 이 선다
+            done.set()
+            return 0
+
+        s._sweep_stale_token_dbs = slow_sweep
+
+        conn = s._tokens_db_conn()
+        assert conn is not None
+        assert not done.is_set(), \
+            "스윕이 끝나고서야 연결이 돌아왔다 — 이벤트 루프를 잡았다"
+        assert started.wait(5), "스윕이 시작조차 안 했다 — 아예 안 걸었다"
+        assert on_loop_thread == [False], \
+            f"스윕이 루프 스레드에서 돌았다: {on_loop_thread}"
+
+        # 래치 — 연결 실패로 캐시가 안 차 앞길을 다시 지나도 스윕은 한 번뿐이다.
+        s._tokens_db = None
+        assert s._tokens_db_conn() is not None
+        release.set()
+        assert done.wait(5)
+        assert len(on_loop_thread) == 1, on_loop_thread
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 async def test_the_cap_still_bounds_the_work():
     """대조군 — 상한은 여전히 **한 회차가 태우는 일**을 묶는다(위 시험이 「상한을
     지웠다」로도 통과하지 않게)."""

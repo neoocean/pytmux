@@ -51,7 +51,8 @@ i18n.register({
         "mdir.mask_ask": "파일 마스크 (예: *.txt *.md · 빈 값이면 해제)",
         "mdir.empty": "빈 디렉터리입니다",
         # 뷰어
-        "mdir.view_hint": "(↑↓ 스크롤 · Esc 닫기)",
+        "mdir.view_hint": "Esc 닫기",
+        "mdir.view_scroll_hint": "↑↓ 스크롤",
         "mdir.cant_read": "못 읽습니다: {err}",
         "mdir.binary": "이진 파일이라 안 보입니다",
         "mdir.truncated": "앞부분만 보입니다(뒤는 잘렸습니다)",
@@ -103,7 +104,8 @@ i18n.register({
         "mdir.too_many": "Too many entries — showing only some",
         "mdir.mask_ask": "File mask (e.g. *.txt *.md · empty clears)",
         "mdir.empty": "Empty directory",
-        "mdir.view_hint": "(↑↓ scroll · Esc close)",
+        "mdir.view_hint": "Esc close",
+        "mdir.view_scroll_hint": "↑↓ scroll",
         "mdir.cant_read": "Cannot read: {err}",
         "mdir.binary": "Binary file — not shown",
         "mdir.truncated": "Only the beginning is shown (the rest is cut)",
@@ -433,6 +435,34 @@ class _MdirPlugin:
         return None
 
     # ---- 선언형 화면 스펙(Tier C · P6 — **되돌릴 수 없는 조작이 있는 첫 시민**) ----
+    def plugin_screen_closed(self, server, sess, req, closed):
+        """ncd 트리가 **디렉터리를 남기고 닫히면** 그 자리로 옮겨간 판을 다시 낸다.
+
+        pytmux-207(`F10` → ncd 트리 → Enter → mdir 이동)의 서버 쪽 절반이다. 종전에는
+        이 잇기가 **코어 안**에 있었다 — `servercmd` 가 `p.name == "mdir"` 로 이 객체를
+        찾아 사설 `_spec` 을 직접 불렀다(검수 2026-09-05 S-8). 이제 코어는 「어떤 화면이
+        무엇을 남기고 닫혔다」만 흘리고, 그 값에 관심을 갖는 것은 여기다 — 정본이
+        `getattr(self.app, "request_nc_list", None)` 로 **이름으로만** 잇는 것과 같은 결.
+
+        ⛔ 내 판이 안 열려 있으면 `None` — 남의 화면이 닫혔다고 mdir 이 튀어나오지
+        않는다. ncd 를 지우면 이 훅은 영영 안 불리고(그 화면이 없으니), mdir 을 지우면
+        훅 자체가 사라진다. 어느 쪽도 남은 쪽을 안 깨뜨린다.
+
+        느린 일(디렉터리 읽기)은 **awaitable 로 돌려준다** — 부르는 쪽이 기다린다.
+        상태(`mine`)를 executor 로 넘기는 것은 종전과 같다: 그 dict 는 **이 클라의
+        것**이고, 넘기는 동안 이 클라의 코루틴은 여기서 멎어 있다.
+        """
+        if closed.get("id") != "ncd" or not closed.get("input"):
+            return None
+        state = req.get("state") or {}
+        mine = state.get("mdir")
+        if not mine:
+            return None                  # 내 판이 안 열려 있다
+        mine["path"] = closed["input"]
+        import asyncio
+        return asyncio.get_event_loop().run_in_executor(
+            None, self._spec, mine, 0, "")
+
     def plugin_screen(self, server, sess, req):
         """네이티브 클라용 파일 관리자 화면.
 
@@ -730,7 +760,11 @@ class _MdirPlugin:
             "t": "plugin_screen", "id": "mdir", "kind": "text",
             # 제목은 **파일 이름**이라 번역 대상이 아니다(자료).
             "title": os.path.basename(picked) or picked,
-            "hint": i18n.t("mdir.view_hint"), "rows": [],
+            "hint": i18n.t("mdir.view_hint"),
+            # 스크롤될 때만 붙는 토막(pytmux-478 ⑵) — 짧은 파일에서는 안 뜬다.
+            # ⚠ 종전 문구의 괄호를 함께 걷었다: 꼬리줄 하나가 통째로 괄호에 싸여 있던
+            #    것은 이 판뿐이었고, 토막이 붙고 떨어지면 그 괄호가 말이 안 된다.
+            "scroll_hint": i18n.t("mdir.view_scroll_hint"), "rows": [],
             "text": m.get("text") or "", "selected": 0, "keys": {},
             "note": i18n.t("mdir.truncated") if m.get("truncated") else "",
         }

@@ -191,8 +191,16 @@ def ensure_server(sock_path: str):
         sys.exit(1)
 
 
-def control_request(sock_path: str, obj: dict):
-    s = ipc.control_socket(sock_path)
+def control_request(sock_path: str, obj: dict, *, timeout: float | None = None):
+    """제어 요청 한 번(연결→보내기→한 프레임 받기→닫기). 답이 없으면 None.
+
+    `timeout` 을 주면 **붙은 뒤의 recv 에도** 그 시한이 걸린다(검수 2026-09-05 S-1).
+    안 주면 종전대로 답이 올 때까지 기다린다 — 사람이 친 CLI 는 그쪽이 맞다. 시한이
+    필요한 것은 **서버가 서버를 부르는** 자리다: 앞 서버가 accept 는 하는데 답을 못 하는
+    상태(pytmux-435 가 잰 「RSS 172MB·무응답」 부류)면, 시한이 없는 recv 는 새 서버를
+    bind 앞에서 **영원히** 세운다.
+    """
+    s = ipc.control_socket(sock_path, io_timeout=timeout)
     if s is None:
         return None
     # 제어 프레임에도 와이어 버전을 실어 서버가 비호환을 거절할 수 있게 한다(#7).
@@ -203,7 +211,11 @@ def control_request(sock_path: str, obj: dict):
         frame["token"] = tok
     frame.update(obj)
     data = json.dumps(frame).encode()
-    s.sendall(len(data).to_bytes(4, "big") + data)
+    try:
+        s.sendall(len(data).to_bytes(4, "big") + data)
+    except OSError:                 # 시한 초과 포함(socket.timeout 은 OSError 다)
+        s.close()
+        return None
     try:
         header = _recvn(s, 4)
         if not header:
@@ -216,6 +228,8 @@ def control_request(sock_path: str, obj: dict):
             return json.loads(payload)  # bytes 직접; 손상·비-JSON 응답은 None
         except (ValueError, UnicodeDecodeError):
             return None
+    except OSError:
+        return None                 # 시한 초과·끊김 — 「답이 없었다」와 같은 뜻이다
     finally:
         s.close()
 

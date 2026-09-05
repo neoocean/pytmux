@@ -854,6 +854,34 @@ _AUTO_YES_NO_RE = re.compile(r"^\d+[.)]\s*No\b", re.I)
 # 실측 3건의 기본 셀렉터는 전부 `❯ 1. Yes` 라 실사용에서 잃는 것이 없다.
 _AUTO_YES_PICK_RE = re.compile(r"^[❯>]\s*\d+[.)]\s*Yes\s*$")
 
+# 상자의 **번호 붙은 선택지** 한 줄(`❯ 1. Yes` · `> 2. No` · `│   3. No`).
+# _auto_yes_body 가 «사용자 입력 줄» 가드에서 이 모양만 예외로 남기는 데 쓴다.
+# (§5.9 ReDoS: 인접한 무제한 `\s*` 는 안 쓴다 — 전부 상한을 둔다.)
+_AUTO_YES_CHOICE_RE = re.compile(r"^[ \t]{0,8}(?:[│|][ \t]{0,4})?[>❯]?[ \t]{0,4}\d{1,3}[.)]\s")
+
+
+def _auto_yes_body(text: str) -> str:
+    """`_claude_body` 와 같은 가드지만 **번호 붙은 선택지 줄은 남긴다**.
+
+    가드가 필요한 이유는 형제(`claude_self_retry`·`claude_api_error`)와 같다 —
+    Claude 가 **소스/diff**(예: 이 파일의 픽스처)나 슬래시 메뉴 도움말을 화면에 띄우면
+    그 안의 `Do you want to proceed?` / `❯ 1. Yes` / `2. No` / `Esc to cancel` 넉 줄이
+    살아 있는 권한 상자로 오인돼 **Enter 가 pty 로 들어간다**(검수 2026-09-05 S-6).
+    diff 줄은 `+`/`-`/행번호 접두를 달고 오므로 `_CODE_LINE_RE` 가 통째로 걷는다.
+
+    다만 `_claude_body` 를 그대로 쓰면 **구 CLI 의 `>` 셀렉터**(`> 1. Yes`)가
+    `_USER_LINE_RE`(사용자 입력 턴)에 걸려 함께 사라진다 — 그래서 그 가드만
+    「번호 붙은 선택지」에는 안 물린다. 그 모양은 컴포저에 사람이 치는 글이 아니라
+    상자 크롬이고, diff 안에서는 접두가 있어 위 `_CODE_LINE_RE` 가 이미 걷는다."""
+    keep = []
+    for ln in (text or "").splitlines():
+        if _CODE_LINE_RE.match(ln) or _SLASH_MENU_RE.match(ln):
+            continue
+        if _USER_LINE_RE.match(ln) and not _AUTO_YES_CHOICE_RE.match(ln):
+            continue
+        keep.append(ln)
+    return "\n".join(keep)
+
 
 def _auto_yes_line(ln: str) -> str:
     """상자 테두리와 앞뒤 공백을 뗀 줄. 셀렉터 글리프는 **남긴다** — 그것이 판정 대상이다."""
@@ -873,8 +901,11 @@ def claude_auto_yes_ready(text: str) -> bool:
     놓여 있거나, 문구가 바뀌면 False — 아무 키도 안 보내고 화면을 사람에게 남긴다.
 
     ⚠ 좁은 폭에서 `Esc to cancel` 이 줄바꿈으로 쪼개지면 못 알아본다. 그때도 하는 일은
-    **아무것도 안 하는 것**이라 안전한 쪽으로 진다."""
-    t = text or ""
+    **아무것도 안 하는 것**이라 안전한 쪽으로 진다.
+
+    판정 **전에** `_auto_yes_body` 로 소스/diff·슬래시 메뉴 줄을 걷는다 — 형제
+    (`claude_self_retry`)와 같은 규약(검수 2026-09-05 S-6)."""
+    t = _auto_yes_body(text)
     m = None
     for m in _AUTO_YES_ASK_RE.finditer(t):   # ① 마지막 인스턴스
         pass

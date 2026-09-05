@@ -538,6 +538,11 @@ def main(argv):
     # `check_all.py` 의 `python_suite_verdict` 가 "절단됐다"로 옳게 잡는다.
     _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     _suspects = workspace_guard.find_suspects(_root)
+    if workspace_guard.LAST_SKIP:
+        # ⛔ **못 잰 것을 조용히 지나지 않는다**(검수 2026-09-05 C-7) — 한 줄이 없으면
+        # 「가드가 봤고 괜찮더라」와 「가드가 아예 안 돌았다」가 화면에서 같아 보인다.
+        print(f"… depot 드리프트 가드 건너뜀: {workspace_guard.LAST_SKIP}",
+              file=sys.stderr)
     if _suspects:
         print("=" * 50, file=sys.stderr)
         print("✗ 워크스페이스 바이트가 depot 과 어긋나 있다 — 시험을 안 돌린다"

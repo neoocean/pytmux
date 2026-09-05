@@ -104,7 +104,8 @@ def step_timeout(step):
 class Step:
     """한 스텝. `check` 가 있으면 rc 대신 그것이 판정한다."""
 
-    def __init__(self, name, argv, cwd, why, check=None, slow=False, needs=None):
+    def __init__(self, name, argv, cwd, why, check=None, slow=False, needs=None,
+                 skip_ok=False):
         self.name = name
         self.argv = argv
         self.cwd = cwd
@@ -112,6 +113,24 @@ class Step:
         self.check = check
         self.slow = slow
         self.needs = needs or (lambda: None)
+        #: 이 스텝의 SKIP 은 **정당한가**(잴 것이 애초에 없는가). 참이면 종료코드를
+        #: 안 바꾼다. 거짓인 SKIP 은 「도구가 없어서 못 쟀다」이고, 그것은 통과가
+        #: 아니다(검수 2026-09-05 C-3 · `qa/run.py` 의 rc 3 과 같은 규율).
+        self.skip_ok = skip_ok
+
+
+def unmeasured_skips(skipped):
+    """건너뛴 것 중 **정당하지 않은** 것들 — 「도구가 없어서 못 쟀다」쪽.
+
+    `skipped` 는 `(이름, 사유, 정당한가)` 목록이다. 정당한 SKIP 은 잴 것이 애초에 없는
+    자리 하나뿐이다(p4 전용 워크스페이스의 미러 드리프트). 나머지는 bash·cargo·client
+    부재라 **못 잰 것**이고, 그것을 rc 0 으로 접으면 「✓ 전부 통과」가 거짓이 된다
+    (검수 2026-09-05 C-3 · `qa/run.py` 의 rc 3 과 같은 규율).
+
+    판정을 순수 함수로 떼어 둔 이유: `main()` 은 서브프로세스를 띄우는 도구라
+    스위트 안에서 통째로 돌릴 수 없고, 그러면 이 규칙이 안 재진다.
+    """
+    return [(n, r) for n, r, ok in skipped if not ok]
 
 
 def python_suite_verdict(out, rc):
@@ -330,6 +349,10 @@ def steps():
             # `미러 위생`(check_mirror.py)이 이미 같은 판정을 스스로 한다.
             needs=lambda: (None if os.path.isdir(os.path.join(ROOT, ".git"))
                            else "git 클론이 아니다 — 미러는 다른 워크스페이스에서 본다"),
+            # ★ **이 SKIP 만 정당하다**(검수 2026-09-05 C-3): p4 전용 워크스페이스에는
+            # 잴 것이 아예 없다. 나머지 여덟(bash·cargo·client 부재)은 「도구가 없어서
+            # 못 쟀다」이고, 그것을 rc 0 으로 접으면 «전부 통과» 한 줄이 거짓이 된다.
+            skip_ok=True,
         ),
     ]
 
@@ -497,7 +520,7 @@ def main():
     for step in todo:
         reason = step.needs()
         if reason:
-            skipped.append((step.name, reason))
+            skipped.append((step.name, reason, step.skip_ok))
             print(f"  … {step.name:<14} SKIP  ({reason})", flush=True)
             continue
         # ★ **시작할 때 찍는다**(pytmux-194). 종전에는 끝나야 한 줄이 났고, 파이프로
@@ -516,10 +539,21 @@ def main():
             failures.append((step.name, verdict, out))
 
     print()
+    # ☠ **SKIP 은 rc 0 이 아니다**(검수 2026-09-05 C-3). 종전에는 Git Bash 를 못 찾으면
+    # 셋이, cargo 를 못 찾으면 여섯이 조용히 빠지고도 「✓ N단계 전부 통과」 + rc 0 이었다
+    # — 스크립트로 이 게이트를 무는 자리(CI·훅)는 그것을 초록으로 읽는다. `qa/run.py` 는
+    # 같은 상황을 이미 rc 3(미검증이 남았다)으로 가르고 있었고, 갈라져 있던 것이 결함이다.
+    unmeasured = unmeasured_skips(skipped)
     if skipped:
         # 조용한 SKIP 은 "다 돌았다"로 읽힌다 — 무엇을 못 쟀는지 반드시 남긴다.
-        print(f"건너뜀 {len(skipped)}: " + " · ".join(f"{n}({r})" for n, r in skipped))
+        print(f"건너뜀 {len(skipped)}: "
+              + " · ".join(f"{n}({r})" for n, r, _ in skipped))
     if not failures:
+        if unmeasured:
+            print(f"⚠ {len(todo) - len(skipped)}단계 통과 · "
+                  f"{len(unmeasured)}단계는 **못 쟀다** — 통과가 아니다(rc 3): "
+                  + " · ".join(n for n, _ in unmeasured))
+            return 3
         print(f"✓ {len(todo) - len(skipped)}단계 전부 통과")
         return 0
     print(f"✗ {len(failures)}단계 실패")

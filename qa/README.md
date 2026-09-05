@@ -7,8 +7,10 @@
 
 ⛔ **읽는 법이 2026-08-15 에 바뀌었다** — 아래 셸 명령은 `ISSUE_PG`(postgres DSN)가 선
 머신에서만 뜨고, 없는 박스에서는 `DB 주소(DSN)가 없다` 로 죽는다. 어디서나 뜨는 길은
-웹 <http://100.79.188.26:8086/d/pytmux/qa-system> 과 MCP HTTP(`http://100.79.188.26:18787/` ·
-`doc_get {"id":"pytmux/qa-system"}`)다. 자세한 것은 루트 `CLAUDE.md` §LLM 작업 팁 ⛔ 문서 절.
+웹 `http://<트래커 호스트>:<웹 포트>/d/pytmux/qa-system` 과 MCP HTTP(같은 호스트 ·
+`doc_get {"id":"pytmux/qa-system"}`)다. **주소는 여기 안 적는다** — p4 전용
+`docs/internal/TRACKER_ENDPOINT.md` 에 있다(검수 2026-09-05 C-1). 자세한 것은 루트
+`CLAUDE.md` §LLM 작업 팁 ⛔ 문서 절.
 
 ```sh
 node ../issue/bin/issue.mjs doc-get pytmux/qa-system      # 설계 SSOT (전문 · ISSUE_PG 필요)

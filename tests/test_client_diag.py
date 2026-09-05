@@ -85,7 +85,10 @@ def test_rss_unit_is_not_off_by_1024():
     1024배 어긋난 채 「메모리가 폭증했다」로 읽힌다."""
     n = clientdiag.rss_bytes()
     if n is None:
-        return
+        # ⛔ 맨 `return` 은 「잰 것 없이 pass」다(검수 2026-09-05 C-4) — Windows(`resource` 없음)
+        #    에서 이 시험이 회계에 초록으로 실렸다. 건너뛰면 건너뛰었다고 말한다.
+        from run import skip
+        skip("이 OS 는 rss 를 못 잰다(resource 모듈 없음)")
     # 이 러너가 1 MB 미만이거나 100 GB 이상일 수는 없다 — 단위가 어긋나면 걸린다.
     assert 1_000_000 < n < 100_000_000_000, (n, sys.platform)
 
@@ -119,4 +122,19 @@ async def test_debug_stats_command_opens_the_popup():
         assert isinstance(app.screen, InfoScreen)
         text = "\n".join(str(x) for x in scr._lines)
         assert "산 객체" in text, text[:400]
+        # ★ 서버 절반(pytmux-382) — 판을 여는 것이 곧 `debug_stats` 를 **묻는 것**이고,
+        #   회신은 판의 매 초 갱신(`tick_cb`)이 아래에 붙인다. 묻는 줄을 지우면 여기서 붉다.
+        from harness import wait_until
+        assert await wait_until(pilot, lambda: getattr(app, "_debug_server_stats", None)), \
+            "debug_stats 회신이 안 왔다 — 판이 서버에 안 물었거나 서버가 답을 안 한다"
+        assert app._debug_server_stats.get("pid") == srv_pid(srv), app._debug_server_stats
+        assert await wait_until(
+            pilot, lambda: any("서버 쪽" in str(x) for x in scr._lines)), \
+            "회신은 왔는데 판이 서버 절반을 안 붙였다: " + "\n".join(map(str, scr._lines))[-400:]
     await _with_app(body)
+
+
+def srv_pid(srv):
+    """인프로세스 서버라 pid 는 이 프로세스다 — 회신의 `pid` 가 그것과 같아야 「그 서버」의 표다."""
+    import os
+    return os.getpid()

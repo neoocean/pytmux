@@ -133,7 +133,9 @@ def test_is_local_endpoint():  # 동기 단위(아래 test_run_sync_units 에서
     assert ipc.is_local_endpoint("tcp:localhost:1234")
     assert ipc.is_local_endpoint("tcp:54321")          # host 생략 → 127.0.0.1
     # 진짜 원격 호스트 = 원격(degraded 유지)
-    assert not ipc.is_local_endpoint("tcp:100.79.188.26:54321")
+    # 문서용 주소(RFC 5737 TEST-NET-2)를 쓴다 — 실제 상자의 주소를 적으면 그 위치가
+    # 공개 미러에 실린다(검수 2026-09-05 C-1). 여기서 재는 것은 「루프백이 아니다」뿐이다.
+    assert not ipc.is_local_endpoint("tcp:198.51.100.7:54321")
     assert not ipc.is_local_endpoint("tcp:10.0.0.5:22")
     assert not ipc.is_local_endpoint("tcp:example.com:1234")
     # 잘못된 엔드포인트는 보수적으로 원격(억제 안 함)

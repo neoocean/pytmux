@@ -138,15 +138,21 @@ def test_the_server_never_bare_creates_a_task():
     부르는 쪽이 참조를 들고 있으므로 안전하고, 실제로 서버 기동 루프가 그렇게 쓴다.
     """
     offenders = []
-    for path in sorted(_ROOT.glob("pytmuxlib/server*.py")):
+    # ★ 넓힌 자리(검수 2026-09-05 S-4): 종전엔 `asyncio.create_task` **문장**만 물어서
+    #   `self.loop.create_task(...)`(serverpty·serverio·serverremote 넷)와 플러그인의 서버
+    #   절반(`servermixin`·`screenspec`)이 게이트 밖이었다 — 같은 결함이 다섯 자리에 살아
+    #   있었다. 이제 **누구의** `create_task` 든 값이 안 쓰이면 문다.
+    paths = sorted(_ROOT.glob("pytmuxlib/server*.py")) + sorted(
+        _ROOT.glob("pytmuxlib/plugins/*/servermixin.py")) + sorted(
+        _ROOT.glob("pytmuxlib/plugins/*/screenspec.py"))
+    for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             # 값이 안 쓰이는 표현식 = 반환된 태스크를 아무도 안 든다.
             if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
                 continue
             fn = node.value.func
-            if (isinstance(fn, ast.Attribute) and fn.attr == "create_task"
-                    and isinstance(fn.value, ast.Name) and fn.value.id == "asyncio"):
+            if isinstance(fn, ast.Attribute) and fn.attr == "create_task":
                 offenders.append(f"{path.name}:{node.lineno}")
     assert not offenders, (
         "맨 asyncio.create_task 가 돌아왔다 — self._spawn(코루틴, '자리') 를 쓸 것: "

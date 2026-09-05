@@ -245,6 +245,9 @@ i18n.register({
         # 사용자에게 틀리게 말하고 있었다. 정본이 같은 부류의 판에 쓰는 낱말과 맞춘다
         # (`pscreen.tklog_hint` = `↑↓ 이동`).
         "cusage.hint": "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        # 정본 `[한도]` 탭의 꼬리줄(pytmux-371 ④) — 맨 위 두 줄이 고르개라 `←→`·Enter 가
+        # 그 판 안의 뜻을 갖는다. 종전 문구(`cusage.hint`)는 그것을 안 말했다.
+        "cusage.hint_mc": "↑↓ 이동(모델·컨텍스트) · ←→ 값 · Enter 적용 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "ccmsg.no_warn": "표시할 Claude 경고가 없습니다(이미 해소됨).",
         "ccmsg.rc_title": "원격 제어(Remote Control)",
         "ccmsg.rc_body":
@@ -285,6 +288,7 @@ i18n.register({
             "No /usage limit data — run /usage in a Claude panel first",
         "ccmsg.usage_title": "Claude usage limit (/usage)",
         "cusage.hint": "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "cusage.hint_mc": "↑↓ move (model·context) · ←→ value · Enter apply · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "ccmsg.no_warn": "No Claude warning to show (already cleared).",
         "ccmsg.rc_title": "Remote Control",
         "ccmsg.rc_body":

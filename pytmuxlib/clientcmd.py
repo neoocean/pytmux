@@ -931,10 +931,22 @@ class _CommandMixin:
             # 한 줄. ⛔ 기본은 `gc.collect()` 를 **안 부른다**(전체 수거가 앱을
             # 수십 ms 멎게 해, 진단이 재려던 증상을 자기가 만든다) — `-c` 로 명시.
             from . import clientdiag
-            self.push_screen(InfoScreen(
-                clientdiag.render(clientdiag.collect_stats(
-                    self, collect=("-c" in args or "--collect" in args))),
-                title="debug-stats"))
+            mine = clientdiag.render(clientdiag.collect_stats(
+                self, collect=("-c" in args or "--collect" in args)))
+            # ★ **서버 절반**(pytmux-382)은 물어야 온다. 회신은 `debug_stats` 메시지로
+            #   `_debug_server_stats` 에 앉고, 판은 매 초(`tick_cb`) 그것을 아래에 붙인다 —
+            #   오기 전에는 「서버가 아직 답하지 않았다」 한 줄이다(0 이나 빈 표가 아니다).
+            self._debug_server_stats = None
+            self.send_cmd("debug_stats")
+
+            def _both():
+                stats = getattr(self, "_debug_server_stats", None)
+                if stats is None:
+                    tail = [f"― {i18n.t('diag.server')} ― {i18n.t('diag.waiting')}"]
+                else:
+                    tail = clientdiag.render_server(stats, now=time.time())
+                return list(mine) + [""] + tail
+            self.push_screen(InfoScreen(_both(), title="debug-stats", tick_cb=_both))
         elif c == "show-hooks":
             self.push_screen(InfoScreen(
                 [f"{k} → {v}" for k, v in self.hooks.items()], title="hooks"))

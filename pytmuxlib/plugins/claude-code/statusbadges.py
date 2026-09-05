@@ -135,9 +135,15 @@ def badges(fields) -> list:
             text, spec = i18n.phrase("claude.retry_self")
         else:
             eta = retry.get("eta")
+            # ⛔ 와이어 값이다 — 원소 타입을 안 보면 `{"n": "abc"}` 한 통에 `int()` 가
+            #    **상태줄 render 안에서** 터진다(검수 2026-09-05 T-2). 숫자가 아니면 0 으로 접는다
+            #    (bool 은 int 의 자식이라 따로 거른다).
+            def _num(v):
+                return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
             text, spec = i18n.phrase(
-                "claude.retry_wait" if isinstance(eta, int) else "claude.retry_n",
-                n=int(retry.get("n", 0) or 0), eta=int(eta or 0))
+                "claude.retry_wait" if isinstance(eta, int) and not isinstance(eta, bool)
+                else "claude.retry_n",
+                n=_num(retry.get("n")), eta=_num(eta))
         out.append(_badge("retry", text, _WARN, spec))
     pending = fields.get("claude_pending")
     if isinstance(pending, dict):

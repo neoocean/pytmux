@@ -959,6 +959,34 @@ async def test_managed_settings_yes_requires_affirmative_selection():
     assert f(None) is False
 
 
+async def test_auto_yes_ready_ignores_a_box_printed_inside_a_diff():
+    """검수 2026-09-05 S-6 의 대조군 — **diff·소스 본문에 그려진 상자**는 안 잡는다.
+
+    `claude_auto_yes_ready` 는 형제(`claude_self_retry`·`claude_api_error`)와 달리
+    화면 전체를 봐서, Claude 가 이 파일 같은 픽스처나 diff 를 띄우면 그 안의 넉 줄이
+    살아 있는 상자로 오인됐다 — 그러면 `servermixin` 이 pty 에 Enter 를 넣어 **컴포저에
+    반쯤 적은 프롬프트가 제출된다**. 이제 `_auto_yes_body` 가드가 걷는다."""
+    from pytmuxlib.claude import claude_auto_yes_ready as f
+    box = ("Do you want to proceed?\n"
+           "❯ 1. Yes\n"
+           "  2. No\n"
+           "\nEsc to cancel · Tab to amend\n")
+    assert f(box) is True                       # 진짜 상자는 그대로 True
+    # ⓐ diff 접두(`+ `/`- `)를 단 같은 넉 줄.
+    diff = "".join("+ " + ln + "\n" for ln in box.splitlines())
+    assert f(diff) is False, diff
+    # ⓑ 행번호 + diff 표식(파일 편집 미리보기).
+    numbered = "".join(f"  {i + 12} + {ln}\n" for i, ln in enumerate(box.splitlines()))
+    assert f(numbered) is False, numbered
+    # ⓒ 사용자가 컴포저에 그 넉 줄을 붙여 넣은 화면(> 턴).
+    typed = "".join("> " + ln + "\n" for ln in box.splitlines())
+    assert f(typed) is False, typed
+    # ⓓ 그래도 구 CLI 의 `>` 셀렉터 상자는 살아 있다(가드가 상자 크롬을 안 걷는다).
+    assert f("Do you want to proceed?\n> 1. Yes\n  2. No\n\nEsc to cancel") is True
+    # ⓔ diff 를 띄운 **아래**에 진짜 상자가 서면 True(가드가 상자를 안 먹는다).
+    assert f(diff + "\n" + box) is True
+
+
 # 실측 잔상(첨부 db01bdc1… · pytmux-151): 승인이 끝나도 Claude 는 화면을 안 지우고
 # 아래로 이어 그린다 — 머리글과 `❯ 1. Yes…` 줄은 남고, `2. No, exit Claude Code` 자리만
 # 다음 프레임("Resume this session with:")이 덮는다.
