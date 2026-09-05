@@ -435,6 +435,34 @@ class _MdirPlugin:
         return None
 
     # ---- 선언형 화면 스펙(Tier C · P6 — **되돌릴 수 없는 조작이 있는 첫 시민**) ----
+    def plugin_screen_closed(self, server, sess, req, closed):
+        """ncd 트리가 **디렉터리를 남기고 닫히면** 그 자리로 옮겨간 판을 다시 낸다.
+
+        pytmux-207(`F10` → ncd 트리 → Enter → mdir 이동)의 서버 쪽 절반이다. 종전에는
+        이 잇기가 **코어 안**에 있었다 — `servercmd` 가 `p.name == "mdir"` 로 이 객체를
+        찾아 사설 `_spec` 을 직접 불렀다(검수 2026-09-05 S-8). 이제 코어는 「어떤 화면이
+        무엇을 남기고 닫혔다」만 흘리고, 그 값에 관심을 갖는 것은 여기다 — 정본이
+        `getattr(self.app, "request_nc_list", None)` 로 **이름으로만** 잇는 것과 같은 결.
+
+        ⛔ 내 판이 안 열려 있으면 `None` — 남의 화면이 닫혔다고 mdir 이 튀어나오지
+        않는다. ncd 를 지우면 이 훅은 영영 안 불리고(그 화면이 없으니), mdir 을 지우면
+        훅 자체가 사라진다. 어느 쪽도 남은 쪽을 안 깨뜨린다.
+
+        느린 일(디렉터리 읽기)은 **awaitable 로 돌려준다** — 부르는 쪽이 기다린다.
+        상태(`mine`)를 executor 로 넘기는 것은 종전과 같다: 그 dict 는 **이 클라의
+        것**이고, 넘기는 동안 이 클라의 코루틴은 여기서 멎어 있다.
+        """
+        if closed.get("id") != "ncd" or not closed.get("input"):
+            return None
+        state = req.get("state") or {}
+        mine = state.get("mdir")
+        if not mine:
+            return None                  # 내 판이 안 열려 있다
+        mine["path"] = closed["input"]
+        import asyncio
+        return asyncio.get_event_loop().run_in_executor(
+            None, self._spec, mine, 0, "")
+
     def plugin_screen(self, server, sess, req):
         """네이티브 클라용 파일 관리자 화면.
 

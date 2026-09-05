@@ -50,6 +50,33 @@ async def test_cargo_verdict_fails_when_nothing_ran():
     assert "foo" in check_all.cargo_verdict(bad, 101)
 
 
+async def test_a_skip_we_could_not_measure_is_not_a_pass():
+    """☠ 검수 2026-09-05 C-3 — **SKIP 은 rc 0 이 아니다.**
+
+    종전에는 Git Bash 를 못 찾으면 셋이, cargo 를 못 찾으면 여섯이 조용히 빠지고도
+    「✓ N단계 전부 통과」 + rc 0 이었다 — 스크립트로 이 게이트를 무는 자리는 그것을
+    초록으로 읽는다. `qa/run.py` 는 같은 상황을 이미 rc 3 으로 가르고 있었고, 갈라져
+    있던 것이 결함이다(한 저장소에 두 술어).
+
+    정당한 SKIP 은 **잴 것이 애초에 없는** 자리 하나뿐이다 — p4 전용 워크스페이스의
+    미러 드리프트. 그것까지 붉게 만들면 매번 상주하는 빨간 줄이 생기고, 상주하는
+    빨간 줄은 곧 아무도 안 본다."""
+    assert check_all.unmeasured_skips([]) == []
+    assert check_all.unmeasured_skips(
+        [("미러 드리프트", "git 클론이 아니다", True)]) == []
+    got = check_all.unmeasured_skips([
+        ("미러 드리프트", "git 클론이 아니다", True),
+        ("계층 게이트", "쓸 만한 bash 가 없다", False),
+        ("Rust 스위트", "cargo 를 못 찾았다", False),
+    ])
+    assert [n for n, _ in got] == ["계층 게이트", "Rust 스위트"], got
+
+    # ★ 그리고 **면제는 하나뿐**이라야 한다 — 새 스텝이 조용히 면제를 달면 이 규칙이
+    #   구멍만 남는다(면제를 늘리는 것은 값을 치르는 결정이라 여기서 보인다).
+    exempt = [s.name for s in check_all.steps() if s.skip_ok]
+    assert exempt == ["미러 드리프트"], exempt
+
+
 async def test_every_step_says_why_it_exists():
     """스텝마다 **왜 도는지**가 붙어 있어야 한다.
 

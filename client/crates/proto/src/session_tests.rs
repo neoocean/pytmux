@@ -960,6 +960,8 @@ fn a_rows_columns_are_read_in_our_own_locale_but_its_name_is_not() {
         bar: None,
         // 시각도 없다 — 카운트다운은 한도 판만 싣는다(pytmux-371 ④).
         until: 0,
+        // 위젯 힌트도 없다 — 고르개는 한도 판의 맨 위 두 줄만이다(pytmux-130).
+        w: String::new(),
     };
     // 그리는 자리가 부르는 것과 **같은 함수**로 잰다 — `label` 을 직접 읽으면 뷰가
     // 그 자리에서 무엇을 하는지는 안 재는 오라클이 된다.

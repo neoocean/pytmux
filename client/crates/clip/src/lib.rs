@@ -71,23 +71,33 @@ const POLL: Duration = Duration::from_millis(25);
 /// # 무엇을 하나
 ///
 /// 이름을 `%SystemRoot%` 아래의 **정해진 자리**로 바꾸고, 그 자리에 파일이 실제로 있을
-/// 때만 쓴다. 없으면(이상한 설치·32비트 리다이렉션·미래의 이름) **이름 그대로** 돌려준다 —
-/// 보안을 위해 기능을 죽이지 않는다. 판정 규칙 자체는 [`system_tool_at`] 이라는 순수
-/// 함수라 **Windows 가 아닌 상자에서도 잰다**(이 저장소의 상습 실패 모드 = 「그 OS 에서만
-/// 재는 규칙」).
+/// 때만 쓴다. 판정 규칙 자체는 [`system_tool_at`] 이라는 순수 함수라 **Windows 가 아닌
+/// 상자에서도 잰다**(이 저장소의 상습 실패 모드 = 「그 OS 에서만 재는 규칙」).
+///
+/// # ⛔ 못 찾으면 `None` 이다 — 이름으로 되돌아가지 않는다 (검수 2026-09-05 G-5)
+///
+/// 종전에는 `%SystemRoot%`/`windir` 이 없거나 지은 경로에 파일이 없으면 **맨 이름**을
+/// 돌려줬다("보안을 위해 기능을 죽이지 않는다"). 그런데 이 함수가 막으려던 것이 바로
+/// 그 맨 이름의 탐색이다 — 폴백은 구멍을 그대로 다시 연다. 환경변수가 빠진 상자는
+/// 드물고, 그때 잃는 것은 «복사 한 번»이지만 폴백이 여는 것은 «남의 코드 실행»이다.
+/// 그래서 fail-closed 로 간다: 부르는 쪽은 `None` 을 「그 도구는 못 쓴다」로 받아
+/// 다음 후보로 가거나 **왜 안 됐는지 말한다**.
+///
+/// **표 밖의 이름**(`pwsh`·`xclip`·`open` …)은 종전대로 그대로 돌려준다 — 우리가 자리를
+/// 못박은 적이 없는 이름까지 막으면 POSIX 도구들이 통째로 죽는다. 비-Windows 도 같다.
 ///
 /// ⚠ `%SystemRoot%` 를 공격자가 쥐고 있다면 이 방어는 무의미하다 — 그러나 그 정도면
 /// 이미 우리 프로세스의 환경을 쥔 것이라 위협 모형 밖이다(그때는 PATH 도 그의 것이다).
-pub fn system_tool(name: &str) -> String {
-    if !cfg!(windows) {
-        return name.to_owned();
+pub fn system_tool(name: &str) -> Option<String> {
+    if !cfg!(windows) || system_tool_tail(name).is_none() {
+        return Some(name.to_owned());
     }
     let root = std::env::var("SystemRoot")
         .or_else(|_| std::env::var("windir"))
         .ok();
     match system_tool_at(root.as_deref(), name) {
-        Some(path) if std::path::Path::new(&path).exists() => path,
-        _ => name.to_owned(),
+        Some(path) if std::path::Path::new(&path).exists() => Some(path),
+        _ => None,
     }
 }
 
@@ -102,20 +112,31 @@ pub fn system_tool_at(system_root: Option<&str>, name: &str) -> Option<String> {
     if root.is_empty() {
         return None;
     }
+    let tail = system_tool_tail(name)?;
+    Some(format!("{root}\\{tail}"))
+}
+
+/// 이름 → `%SystemRoot%` 아래의 **상대 자리**(표에 없으면 `None`).
+///
+/// [`system_tool_at`] 에서 떼어 낸 이유: [`system_tool`] 이 「표에 있는데 못 찾았다」
+/// (= fail-closed)와 「우리가 자리를 못박은 적 없는 이름」(= 그대로 쓴다)을 갈라야
+/// 하는데, 루트까지 엮인 함수로는 그 둘이 같은 `None` 으로 보인다(검수 2026-09-05 G-5).
+pub fn system_tool_tail(name: &str) -> Option<String> {
     // ⛔ 확장자까지 적는다 — 안 적으면 그 자리에서 다시 `.exe` 를 붙이는 규칙이 하나
     //    더 생긴다(std 가 하는 그 일을 우리가 또 하게 된다).
-    let tail = match name.trim_end_matches(".exe").to_ascii_lowercase().as_str() {
+    match name.trim_end_matches(".exe").to_ascii_lowercase().as_str() {
         // 탐색기는 System32 가 아니라 Windows 디렉터리에 산다.
-        "explorer" => "explorer.exe".to_owned(),
-        "clip" => "System32\\clip.exe".to_owned(),
-        "cmd" => "System32\\cmd.exe".to_owned(),
-        "rundll32" => "System32\\rundll32.exe".to_owned(),
+        "explorer" => Some("explorer.exe".to_owned()),
+        "clip" => Some("System32\\clip.exe".to_owned()),
+        "cmd" => Some("System32\\cmd.exe".to_owned()),
+        "rundll32" => Some("System32\\rundll32.exe".to_owned()),
         // Windows PowerShell 5.x. `pwsh`(7.x)는 시스템 자리에 없으므로 표에 안 넣는다 —
         // 이 크레이트가 부르는 것도 5.x 쪽이다(`win_copy`).
-        "powershell" => "System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_owned(),
-        _ => return None,
-    };
-    Some(format!("{root}\\{tail}"))
+        "powershell" => {
+            Some("System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_owned())
+        }
+        _ => None,
+    }
 }
 
 /// 클립보드 이미지 바이트를 **임시 파일로 떨구고 그 경로**를 준다(못 하면 `None`).
@@ -267,7 +288,9 @@ fn feed(argv: &[&str], input: &[u8], limit: Duration) -> Option<bool> {
     // ⛔ 이름을 그대로 넘기지 않는다 — Windows 에서 **이진 옆 폴더**가 시스템 디렉터리보다
     //    먼저 잡힌다([`system_tool`]). 후보 목록은 이름으로 두고(파이썬 클라와 같은
     //    순서를 읽히게) 바꾸는 자리는 **띄우는 여기 한 곳**이다.
-    let mut cmd = Command::new(system_tool(argv[0]));
+    // 못 찾으면 **안 띄운다**(검수 2026-09-05 G-5) — `None` 은 이 함수의 「도구가
+    // 없다」와 같은 뜻이라, 부르는 쪽은 그대로 다음 후보로 간다.
+    let mut cmd = Command::new(system_tool(argv[0])?);
     cmd.args(&argv[1..])
         .stdin(Stdio::piped())
         // 도구가 뱉는 오류 문구가 **대체 화면에 그대로 찍히면** TUI 가 깨진다.
@@ -519,7 +542,11 @@ const SCP_TIMEOUT: Duration = Duration::from_secs(30);
 /// 클립보드와 같다 — 호출부가 **별도 스레드**에서 부르는 것을 전제한다. 상한(15초)은
 /// 파이썬 `_run_shell` 과 같은 값이다.
 pub fn run_shell(cmd: &str) -> (i32, String) {
-    let argv = shell_argv(cmd);
+    let Some(argv) = shell_argv(cmd) else {
+        // 셸의 자리를 못 찾았다 — **이름으로 되돌아가지 않는다**(검수 2026-09-05 G-5).
+        // 이진 옆 폴더의 `cmd.exe` 가 먼저 잡히는 그 구멍을 여기서 다시 열지 않는다.
+        return (1, "셸을 찾지 못했다(COMSPEC 도 %SystemRoot% 도 안 잡힌다)".to_owned());
+    };
     let mut child = match Command::new(&argv[0])
         .args(&argv[1..])
         .stdin(Stdio::null())
@@ -566,15 +593,19 @@ pub fn run_shell(cmd: &str) -> (i32, String) {
 const SHELL_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// OS 별 셸 argv(파이썬 `proc.shell_argv` 와 같다).
-fn shell_argv(cmd: &str) -> Vec<String> {
+fn shell_argv(cmd: &str) -> Option<Vec<String>> {
     if cfg!(windows) {
         // `COMSPEC` 이 있으면 그것(사용자가 고른 셸이고 보통 절대경로다). 없을 때의
         // 폴백은 **이름 `cmd` 가 아니라 절대경로**여야 한다 — 이름이면 이진 옆 폴더의
-        // `cmd.exe` 가 먼저 잡힌다([`system_tool`] · 검수 2026-08-09 B-3).
-        let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| system_tool("cmd"));
-        vec![comspec, "/c".to_owned(), cmd.to_owned()]
+        // `cmd.exe` 가 먼저 잡힌다([`system_tool`] · 검수 2026-08-09 B-3). 그 절대경로
+        // 마저 못 지으면 `None` — 이름으로 되돌아가면 그 구멍이 그대로 열린다.
+        let comspec = match std::env::var("COMSPEC") {
+            Ok(v) => v,
+            Err(_) => system_tool("cmd")?,
+        };
+        Some(vec![comspec, "/c".to_owned(), cmd.to_owned()])
     } else {
-        vec!["/bin/sh".to_owned(), "-c".to_owned(), cmd.to_owned()]
+        Some(vec!["/bin/sh".to_owned(), "-c".to_owned(), cmd.to_owned()])
     }
 }
 

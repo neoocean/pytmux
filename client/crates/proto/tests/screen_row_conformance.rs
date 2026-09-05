@@ -69,6 +69,10 @@ const READS: &[(&str, &str)] = &[
     ("expand", ".expand"),
     ("bar", ".bar"),
     ("until", "countdown("),
+    // 위젯 힌트도 **이름으로** 오고 뜻으로 풀린다(pytmux-130) — 그리는 자리가
+    // `"choose"` 를 직접 비교하지 않고 `is_chooser()` 를 부르는 것이 계약이다
+    // (`coltags` → `col_level(` 과 같은 이유: 표를 두 벌로 안 적는다).
+    ("w", "is_chooser("),
 ];
 
 /// 그리는 갈래 **밖**에서 드는 칸 — 여기 있는 것은 갈래에서 안 찾는다.

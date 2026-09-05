@@ -13,6 +13,7 @@
   · 잘린 본문을 그대로 흘리면          → test_a_truncated_write_is_dropped 실패
   · 서버가 광고 안 한 클라에 보내면     → test_only_advertised_clients_get_it 실패
   · **flush 에서 부르는 줄을 지우면**   → test_flush_calls_the_appender 실패
+  · 걷기를 **활성 창**에만 물리면       → test_a_background_tab_copy_goes_out_at_once 실패
     (값 만드는 함수만 재는 시험은 «호출 제거» 뮤테이션에 공허 통과한다)
   · 클라가 base64 를 안 풀면           → test_client_decodes_and_copies 실패
   · `set-clipboard off` 를 안 보면      → test_off_means_off 실패
@@ -204,6 +205,66 @@ def test_flush_calls_the_appender():
              and isinstance(n.func, ast.Attribute)
              and n.func.attr == "_append_clipboard_frames"]
     assert len(calls) == 1, "flush 가 부르는 자리가 정확히 하나여야 한다"
+
+
+async def test_a_background_tab_copy_goes_out_at_once():
+    """☠ 검수 2026-09-05 S-3 — **뒷탭의 복사도 그 자리에서 나간다.**
+
+    걷기가 활성 창에만 물려 있으면 뒷탭 앱(vim 의 `"+y`)이 OSC 52 로 넣은 값이
+    `_clipboard_pending` 에 앉아 있다가 **몇 분 뒤 탭을 전환하는 순간** 나간다 — 그
+    사이 사용자가 복사해 둔 것을 옛 값이 덮는다. cwd·claude 프레임과 한 줄에 있었던
+    것이 원인인데, 그 둘은 멱등이고 **클립보드는 시점이 곧 뜻**이라 같이 둘 수 없다.
+
+    그래서 실 서버의 flush 루프를 그대로 돌린다 — 활성 탭은 그대로 두고 **뒷탭** 패널에
+    OSC 52 를 먹인 뒤, 탭 전환 없이 `clipboard` 프레임이 오는지 본다."""
+    import asyncio
+    import contextlib
+    import time as _time
+
+    from pytmuxlib import ipc
+    from pytmuxlib.model import Pane, Tab, Window
+    from pytmuxlib.protocol import PROTO_VERSION, read_msg, write_msg
+
+    srv, task, sock = await harness.server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        # 뒷탭 하나를 만든다(PTY 없는 화면만 있는 패널 — 걷기는 화면 밖 일이다).
+        back = Pane(pid=0, fd=-1, cols=80, rows=24)
+        sess.tabs.append(Tab(1, "back", Window(back)))
+        assert sess.active_index == 0 and sess.active_window.active_pane is not back
+
+        reader, writer = await ipc.open_connection(sock)
+        await write_msg(writer, {"t": "hello", "proto": PROTO_VERSION,
+                                 "cols": 80, "rows": 24, "token": srv.auth_token,
+                                 "caps": ["clipboard"]})
+        back.feed(("\x1b]52;c;%s\x07" % _b64("뒷탭에서 복사")).encode("utf-8"))
+
+        got = None
+        end = _time.monotonic() + 5
+        while _time.monotonic() < end:
+            try:
+                m = await asyncio.wait_for(read_msg(reader),
+                                           max(0.01, end - _time.monotonic()))
+            except asyncio.TimeoutError:
+                break
+            if m is None:
+                break
+            for fr in (m.get("frames") or ([m] if m.get("t") else [])):
+                if fr.get("t") == "clipboard":
+                    got = fr
+                    break
+            if got:
+                break
+        assert got is not None, \
+            "뒷탭 패널의 OSC 52 가 탭 전환 전에는 안 나갔다 — 걷기가 활성 창에 묶여 있다"
+        assert got["pane"] == back.id and got["data"] == _b64("뒷탭에서 복사"), got
+    finally:
+        # ⛔ 클라를 **먼저** 닫고 `harness.teardown` 으로 거둔다 — 손으로 `task.cancel()`
+        # 만 하면 붙어 있는 연결 때문에 취소가 안 거둬져, 단언이 떨어졌을 때 깨끗한
+        # 적색 대신 90초 hang 이 난다(이 시험을 처음 쓸 때 그렇게 났다).
+        with contextlib.suppress(Exception):
+            writer.close()
+        await harness.teardown(srv, task, sock)
 
 
 def test_the_cap_is_advertised():

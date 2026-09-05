@@ -533,6 +533,37 @@ class Registry:
                 "key": "msg.plugin_screen_missing", "kw": {"name": name},
                 "text": f"{name}: 이 플러그인은 화면 스펙을 제공하지 않습니다"}
 
+    def plugin_screen_closed(self, server, sess, req, closed) -> list:
+        """한 플러그인 화면이 **값을 남기고 닫혔다** — 다른 화면이 그 값에 반응할 자리.
+
+        # 왜 이 훅이 있나 (검수 2026-09-05 S-8)
+
+        ncd 트리에서 디렉터리를 고르면 mdir 이 그 자리로 옮겨간다(pytmux-207). 그 잇기가
+        **코어 안에** 있었다 — `servercmd` 가 `p.name == "mdir"` 로 플러그인을 찾아
+        그 **사설** `_spec` 을 불렀다. delete-to-disable 의 계약은 「코어는 플러그인을
+        모른다」이고([`_reopen`] 이 같은 델타에서 «이름으로만 잇는다»를 세웠다), 사설
+        메서드를 부르는 것은 그 계약 밖이다. 이제 코어는 **닫혔다는 사실**만 흘리고,
+        그 값에 관심 있는 플러그인이 스스로 집는다.
+
+        `closed` 는 방금 나가는 `plugin_screen_close` 응답 그대로다
+        (`{"t","id","input",…}`) — 어느 화면이 무엇을 남겼는지는 **받는 쪽이** 본다.
+        `req` 에는 이 클라의 `state` 가 실려 있어, 자기 판이 열려 있는지도 스스로 안다.
+
+        돌려줄 것 — 새 화면 스펙(dict) 또는 `None`. 파일시스템처럼 느린 일은
+        **awaitable 을 돌려주면** 부르는 쪽이 기다린다(`plugin_screen` 과 같은 규약).
+        아무도 안 집으면 빈 목록이고, 그때 하는 일도 없다 — ncd 를 지우든 mdir 을
+        지우든 남은 쪽이 그대로 돈다.
+        """
+        out = []
+        for p in self.plugins:
+            fn = getattr(p, "plugin_screen_closed", None)
+            if fn is None:
+                continue
+            got = fn(server, sess, req, closed)
+            if got is not None:
+                out.append(got)
+        return out
+
     def plugin_cells(self, server, sess, req) -> list:
         """Tier B — **셀 기여**(설계 §4.2 · P3).
 

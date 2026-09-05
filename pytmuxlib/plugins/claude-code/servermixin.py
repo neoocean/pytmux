@@ -3026,6 +3026,39 @@ class ServerClaudeMixin:
         except Exception:
             return 0
 
+    def _schedule_stale_db_sweep(self, mine: str) -> None:
+        """스윕을 **이벤트 루프 밖에서 한 번만** 돌린다(검수 2026-09-05 S-5).
+
+        ☠ 종전엔 `_tokens_db_conn()` 이 스윕을 **동기로** 불렀다. 그 함수의 첫 호출은
+        재개 검증(`_scan_claude` 경로)처럼 **루프 스레드** 위의 동기 자리에 있고,
+        스윕은 「거둔 수」만 상한이라 **묵은 파일 전부**를 `sqlite3.connect` + 테이블별
+        `SELECT` 로 연다 — 그 함수의 주석이 스스로 적은 상자(1144개 중 묵은 것 1098개 ·
+        94%가 행 있음)에서는 매 기동 ~1000회 sqlite 오픈이 루프를 잡고, 그 동안 **모든
+        클라의 프레임이 멎는다**. 상한을 「본 개수」로 되돌리는 것은 답이 아니다 —
+        그것이 바로 pytmux-435 ④ 가 걷어낸, 스윕을 영영 0건으로 만드는 모양이다.
+
+        그래서 일을 줄이지 않고 **자리를 옮긴다**: 스윕은 `mine` 을 빼고 남의 파일만
+        읽기전용으로 여닫으므로 executor 스레드에서 안전하다. 결과는 로그 한 줄뿐이라
+        루프로 돌려받을 것도 없다(fire-and-forget).
+
+        래치(`_tokens_db_swept`)를 따로 두는 이유: `_tokens_db_conn` 은 연결에 실패하면
+        `_tokens_db` 를 못 채워 **매 토큰 커밋마다** 이 앞길을 다시 지난다 — 캐시가
+        래치 노릇을 못 하는 갈림이다.
+
+        루프가 없는 자리(시험·동기 호출)에서는 그대로 여기서 돈다."""
+        if getattr(self, "_tokens_db_swept", False):
+            return
+        self._tokens_db_swept = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._sweep_stale_token_dbs(mine)
+            return
+        try:
+            loop.run_in_executor(None, self._sweep_stale_token_dbs, mine)
+        except Exception:
+            pass                                  # 청소가 본 흐름을 막지 않는다
+
     @staticmethod
     def _token_db_is_empty(path: str) -> bool:
         """그 DB 의 **사용자 테이블 전부**가 0행인가. 못 열거나 못 세면 False(= 남긴다).
@@ -3065,7 +3098,9 @@ class ServerClaudeMixin:
             return self._tokens_db
         path = self.tokens_db_path
         self._migrate_legacy_db(path)
-        self._sweep_stale_token_dbs(path)     # 형제 임시 DB 에 수명을 준다(pytmux-435 ④)
+        # 형제 임시 DB 에 수명을 준다(pytmux-435 ④). ⛔ **여기서 동기로 돌지 않는다** —
+        # 루프 스레드를 ~1000회 sqlite 오픈만큼 잡는다(검수 2026-09-05 S-5).
+        self._schedule_stale_db_sweep(path)
         try:
             conn = usagedb.connect(path)
         except Exception:

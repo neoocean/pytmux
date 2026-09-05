@@ -34,6 +34,14 @@ pub static EN: &[(&str, &str)] = &[
         "↑↓ scroll · Esc close · p session · l limit · o machine · s scenario · u /usage",
     ),
     (
+        // ⚠ `[한도]` 판의 꼬리줄이 갈라졌다(pytmux-130) — 그 판의 맨 위 두 줄이
+        //   **모델·컨텍스트 고르개**라 `←→`·`Enter` 가 그 안의 뜻을 갖는다. 위 짧은
+        //   원문은 그것을 안 말하므로 지우지 않고 둘 다 표에 둔다(머리말의 그 규율).
+        "↑↓ 이동(모델·컨텍스트) · ←→ 값 · Enter 적용 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move (model·context) · ←→ value · Enter apply · Esc close · p session · \
+         l limit · o machine · s scenario · u /usage",
+    ),
+    (
         // ⚠ 기간 판이 **계층 트리**가 되면서 버킷 고르개가 사라졌다(pytmux-371 ①) —
         //   꼬리줄도 그 손을 적는다. 없어진 조작을 광고하면 그것도 거짓말이다.
         "↑↓ 이동 · Enter/←→ 펼침·접힘 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
@@ -153,6 +161,9 @@ pub static EN: &[(&str, &str)] = &[
     ("경고", "Warn"),
     ("일별", "Daily"),
     ("모델", "Model"),
+    // `[한도]` 판 고르개 두 줄의 이름(pytmux-130) — `모델` 은 탭 이름과 같은 낱말이라
+    // 위 줄이 이미 덮고, `컨텍스트` 는 이 판에만 있다.
+    ("컨텍스트", "Context"),
     ("시나리오", "Scenario"),
     ("c 비우기 · Esc 닫기", "c clear · Esc close"),
     ("default — 매번 확인 (일반 모드)", "default — confirm each time (normal)"),

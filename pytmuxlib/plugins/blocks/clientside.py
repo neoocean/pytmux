@@ -98,11 +98,21 @@ def _clamp_pick(app):
 
     목록은 상한(500)에서 잘리고 스크롤백 회전으로도 줄어든다 — **읽을 때마다** 접지
     않으면 `↑`/`↓` 가 없는 자리를 가리키고 `Ctrl+C` 가 엉뚱한 글을 담는다.
+
+    ★ **포커스가 다른 패널로 옮겨간 것도 «접을 데가 없는» 것으로 친다**(검수
+    2026-09-05 T-1). 블록 목록은 패널마다 따로다 — 모드를 붙잡고 있으면 `↑`/`↓` 가
+    **안 보이는 패널**의 자리를 옮기고 `Ctrl+C` 는 그 패널의 글을 담는데, 화면에는
+    아무 반응이 없다(`client_render` 가 활성 아닌 패널은 그리기만 건너뛴다). GUI 는
+    이 계약을 이미 갖고 있고(`session_view::drop_block_pick_unless_selecting`),
+    [[pytmux-185]] 는 정본이 **같게 굴 것**을 요구한다.
     """
     pick = getattr(app, _PICK, None)
     if pick is None:
         return
     pane, index = pick
+    if (getattr(app, "layout", None) or {}).get("active") != pane:
+        _leave(app)
+        return
     count = len(blocks_of(app, pane))
     if count == 0:
         _leave(app)

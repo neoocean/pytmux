@@ -107,6 +107,13 @@ const SPAWN_ALLOW: &[(&str, &str, &str)] = &[
         "Command::new(&argv[0])",
         "run_shell — argv[0] 은 $COMSPEC·system_tool(\"cmd\")·/bin/sh 셋뿐이다",
     ),
+    (
+        "proto/src/info.rs",
+        "Command::new(opener)",
+        "opener 는 **바로 위 줄**의 `let Some(opener) = clip::system_tool(…) else \
+         { return false; }` 가 낸 값이다 — 못 찾으면 안 띄운다(fail-closed · \
+         검수 2026-09-05 G-5). 한 줄에 못 담는 이유가 그 fail-closed 자체다.",
+    ),
 ];
 
 #[test]
@@ -191,7 +198,29 @@ fn on_this_box_the_name_passes_through_unchanged() {
     //    (`pbcopy` 가 `C:\...\pbcopy.exe` 가 되는 부류). 여기서 그것을 못 박는다.
     if !cfg!(windows) {
         for name in ["pbcopy", "xclip", "wl-copy", "clip", "powershell"] {
-            assert_eq!(clip::system_tool(name), name);
+            assert_eq!(clip::system_tool(name).as_deref(), Some(name));
         }
+    }
+}
+
+/// ☠ 검수 2026-09-05 G-5 — **못 찾으면 이름으로 되돌아가지 않는다**(fail-closed).
+///
+/// 종전에는 `%SystemRoot%` 가 없거나 그 자리에 파일이 없으면 맨 이름을 돌려줬다.
+/// 그런데 이 함수가 막으려던 것이 바로 **그 맨 이름의 탐색**이다(이진 옆 폴더의
+/// `clip.exe`·`powershell.exe` 가 시스템 것보다 먼저 잡힌다 — 검수 2026-08-09 B-3).
+/// 폴백은 그 구멍을 그대로 다시 연다.
+#[test]
+fn a_tool_we_pinned_is_never_fetched_by_bare_name() {
+    // 표에 있는 이름 = 우리가 자리를 못박은 것. 루트가 없으면 **경로가 없다**.
+    for name in ["clip", "cmd", "powershell", "explorer", "rundll32"] {
+        assert!(clip::system_tool_tail(name).is_some(), "{name} 이 표에서 빠졌다");
+        assert_eq!(clip::system_tool_at(None, name), None, "{name}");
+        assert_eq!(clip::system_tool_at(Some(""), name), None, "{name}");
+    }
+    // 표 **밖**의 이름은 종전대로 그대로 쓴다 — 못박은 적 없는 것까지 막으면 POSIX
+    // 도구(`pbcopy`·`xclip`·`open`)가 통째로 죽는다.
+    for name in ["pbcopy", "xclip", "wl-copy", "open", "xdg-open", "pwsh"] {
+        assert_eq!(clip::system_tool_tail(name), None, "{name}");
+        assert_eq!(clip::system_tool(name).as_deref(), Some(name), "{name}");
     }
 }

@@ -230,6 +230,42 @@ async def test_the_pick_is_dropped_when_the_list_shrinks_under_it():
     await _with_app(body)
 
 
+async def test_moving_the_focus_to_another_pane_ends_the_selection():
+    """☠ 검수 2026-09-05 T-1 — **다른 패널을 고르면 블록 모드가 끝난다.**
+
+    블록 목록은 패널마다 따로다. 모드를 붙잡고 있으면 `↑`/`↓` 는 **안 보이는 패널**의
+    자리를 옮기고 `Ctrl+C` 는 그 패널의 글을 담는데, 화면에는 아무 반응이 없다 —
+    `client_render` 가 활성 아닌 패널은 «그리기만» 건너뛰기 때문이다(배지는 남는다).
+
+    GUI 는 이 계약을 이미 갖고 있다(`session_view::drop_block_pick_unless_selecting`
+    · `moving_the_focus_to_another_pane_ends_the_selection`). [[pytmux-185]] 는
+    정본이 **같게 굴 것**을 요구하므로 이 갈림은 결함이다."""
+    async def body(app, pilot, srv):
+        pane = _seed(app)
+        await pilot.press("escape")
+        await pilot.press("b")
+        assert app._block_pick == (pane, 1) and app.mode == "block"
+        sent = []
+        app.send_command = lambda *a, **kw: sent.append((a, kw))
+        # 서버가 «다른 패널이 활성이다» 를 알려 온다(클릭·분할 뒤 포커스 이동).
+        other = pane + 1
+        app._dispatch({"t": "layout", "active": other, "cols": 60, "rows": 20,
+                       "dividers": [],
+                       "panes": [
+                           {"id": pane, "x": 0, "y": 0, "w": 30, "h": 20,
+                            "title": "sh", "active": False},
+                           {"id": other, "x": 30, "y": 0, "w": 30, "h": 20,
+                            "title": "sh", "active": True}]})
+        assert app.mode == "normal", "포커스가 옮겨갔는데 [block] 배지가 남았다"
+        assert app._block_pick is None, "안 보는 패널의 선택이 남았다"
+        # 그 뒤의 `↑`·`Ctrl+C` 는 블록의 것이 아니다 — 옛 패널의 글을 복사하지 않는다.
+        await pilot.press("up")
+        await pilot.press("ctrl+c")
+        assert not any("copy" in str(a).lower() for a, _ in sent), \
+            f"옛 패널의 블록을 복사했다: {sent}"
+    await _with_app(body)
+
+
 async def test_a_hostile_blocks_frame_cannot_crash_the_client():
     """블록의 값은 애초에 **패널 안 아무 프로그램**이 보낸 OSC 이고, 원격 링크 너머의
     서버는 이 버전이 아닐 수 있다. 여기서 접지 않으면 `range()` 가 TypeError 로 클라를

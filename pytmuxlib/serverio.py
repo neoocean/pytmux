@@ -756,6 +756,23 @@ class ServerIOMixin:
         for c in wanted:
             frames_by_client[c].append(frame)
 
+    @staticmethod
+    def _clipboard_panes(sess):
+        """OSC 52 를 걷을 패널 전부 — **활성 창이 아니라 세션 전체**다(검수 2026-09-05 S-3).
+
+        뒷탭도 돈다: 클립보드는 시점이 뜻이라, 걷기를 활성 창에 묶으면 뒷탭의 복사가
+        탭 전환 순간에 되살아나 **그때의 클립보드를 덮는다**. 트리 밖에 떠 있는 라이브
+        PTY 팝업(`display-popup`)도 앱이 도는 진짜 패널이라 함께 돈다."""
+        for tab in list(getattr(sess, "tabs", ())):
+            win = getattr(tab, "window", None)
+            if win is None:
+                continue
+            for p in win.panes():
+                yield p
+        pu = getattr(sess, "popup", None)
+        if pu and pu.get("pane") is not None:
+            yield pu["pane"]
+
     def _append_claude_frames(self, frames_by_client, clients, pane):
         """Claude 트랜스크립트가 자랐으면 **광고한 클라에게만** 원문 꼬리를 보낸다.
 
@@ -913,6 +930,14 @@ class ServerIOMixin:
                 for p in win.panes():
                     self._append_claude_frames(frames_by_client, clients, p)
                     self._append_cwd_frames(frames_by_client, clients, p)
+                # ⛔ 클립보드는 **활성 창 밖에서도** 걷는다(검수 2026-09-05 S-3).
+                # 위 둘과 한 줄에 있었는데, 그 셋은 뜻이 같지 않다: cwd·claude 는
+                # 멱등이라 탭을 전환할 때 따라잡아도 결과가 같지만 **클립보드는 시점이
+                # 곧 뜻**이다. 뒷탭 앱(vim 의 `"+y`)이 OSC 52 로 넣은 값이 몇 분 뒤
+                # 탭 전환 순간에야 나가면, 그 사이 사용자가 복사해 둔 것을 **옛 값이
+                # 덮는다**. 그래서 세션의 전 패널(+ 라이브 팝업)에서 걷는다 — 창 수는
+                # 적고 `panes()` 는 캐시라 값도 싸다.
+                for p in self._clipboard_panes(sess):
                     self._append_clipboard_frames(frames_by_client, clients, p)
                 # 라이브 PTY 팝업 패널(트리 밖)도 dirty 면 스트리밍한다(동기화 출력
                 # 프레임 도중이면 일반 패널과 동일하게 송신을 미룬다).

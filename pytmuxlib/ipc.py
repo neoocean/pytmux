@@ -850,10 +850,17 @@ def _async_connect_timeout(endpoint: str) -> Optional[float]:
 
 
 def control_socket(endpoint: str, *, portfile: Optional[str] = None,
-                   timeout: float = 2.0) -> Optional[socket.socket]:
+                   timeout: float = 2.0,
+                   io_timeout: Optional[float] = None) -> Optional[socket.socket]:
     """동기 제어 요청용(launcher) 연결된 소켓. 실패 시 None.
 
     Unix=AF_UNIX, TCP=AF_INET. 호출자가 sendall/recv 후 close 한다.
+
+    `timeout` 은 **connect** 의 시한이고, `io_timeout` 은 붙은 뒤의 send/recv 시한이다.
+    기본값 `None` 은 종전 그대로 «영원히 기다린다» — 대화형 CLI 는 답이 늦어도 기다리는
+    편이 맞다. 시한이 필요한 자리는 **서버가 서버를 부르는** 곳이다(검수 2026-09-05 S-1:
+    `serverpersist._evict_previous_owner` 는 bind 앞에 서 있어, 앞 서버가 accept 만 하고
+    답을 안 하면 새 서버가 listen 도 못 선 채 영원히 대기했다).
     """
     kind = parse_endpoint(endpoint)
     if kind[0] == "tcp":
@@ -876,7 +883,7 @@ def control_socket(endpoint: str, *, portfile: Optional[str] = None,
     s.settimeout(timeout)
     try:
         s.connect(target)
-        s.settimeout(None)
+        s.settimeout(io_timeout)      # None = 종전대로 블로킹
         return s
     except OSError:
         s.close()

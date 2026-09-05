@@ -321,6 +321,104 @@ async def test_the_roster_of_letter_key_actions_matches_what_the_panels_actually
     assert set(ss._HUB_KEY_DOS) <= emitted,         ("전수에만 있고 안 나가는 do", set(ss._HUB_KEY_DOS) - emitted)
 
 
+async def test_the_limit_panel_carries_the_model_and_context_choosers():
+    """☠ pytmux-130 — 정본 `[한도]` 탭의 **행0·행1 = 모델·컨텍스트 고르개**.
+
+    정본은 그 둘을 같은 탭 맨 위에 두고 `←→` 로 값을 돌려 `Enter` 로 적용한다
+    (`TokenLogScreen._refresh_limit` 의 행0·행1 · `_mc_apply`). GUI 는 그것을 판 하나로
+    떼어 두었는데, 그러면 이 판의 `Enter` 가 **아무 일도 안 하는** 키가 된다 —
+    [[pytmux-185]] 가 결함으로 세는 갈림이다(있는 것과 «같게 구는» 것은 다른 질문이다).
+
+    ⛔ 서버가 `◀ 값 ▶` 글자를 싣지 않는다 — 화살표는 그리는 쪽의 크롬이고(`w` 힌트가
+    「돌릴 수 있다」를 말한다), 서버는 **지금 값**만 싣는다. 막대를 글자로 안 싣는 것과
+    같은 경계다."""
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
+    srv = _TokenSrv()
+    spec = ss.open_spec(srv, None, "limits")
+    rows = spec["rows"]
+    assert [r["key"] for r in rows[:2]] == [ss._MC_MODEL_KEY, ss._MC_CTX_KEY], \
+        ("고르개 두 줄이 맨 앞이 아니다 — 정본의 행0·행1 이다", [r["key"] for r in rows[:3]])
+    for r in rows[:2]:
+        assert r.get("w") == "choose", ("고르개라고 말하지 않는다", r)
+        assert r["cols"] and "◀" not in r["cols"][0] and "▶" not in r["cols"][0], \
+            ("서버가 화살표 글자를 실었다 — 그것은 그리는 쪽의 크롬이다", r)
+    assert rows[0]["cols"][0] in cc.MODEL_CHOICES, rows[0]
+    assert rows[1]["cols"][0] in [lab for lab, _v in cc.CTX_CHOICES], rows[1]
+    # 꼬리줄이 광고하는 조작이 곧 최소 요건이다(pytmux-371 ④).
+    assert spec["keys"].get("left") and spec["keys"].get("right"), spec["keys"]
+    assert spec["keys"].get("enter") == "apply", spec["keys"]
+
+
+async def test_turning_a_chooser_advances_and_the_client_keeps_its_place():
+    """`←→` 는 그 칸을 한 걸음 돌리고, 그 자리는 **이 클라의 것**이다.
+
+    ⛔ 서버 전역에 두면 같은 서버를 보는 두 사람이 서로의 돌림을 흔든다(경고 판의
+    펼침·기간 판의 접힘이 `state` 에 사는 것과 같은 이유). 그리고 되쓰지 않으면 다음
+    누름이 또 처음 값에서 출발해 **두 칸을 연달아 못 돌린다**(pytmux-419 ④가 접힘에서
+    겪은 그 자리)."""
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
+    srv = _TokenSrv()
+    state = {}
+
+    def turn(do, key):
+        return ss.action(srv, None, {"id": "claude-usage-panel", "do": do,
+                                     "row": 0, "input": key, "state": state})
+
+    first = ss.open_spec(srv, None, "limits", state=state)["rows"][0]["cols"][0]
+    after = turn("next", ss._MC_MODEL_KEY)["rows"][0]["cols"][0]
+    assert after != first, ("→ 가 값을 안 돌렸다", first, after)
+    again = turn("next", ss._MC_MODEL_KEY)["rows"][0]["cols"][0]
+    assert again not in (first, after), \
+        ("두 번째 → 가 또 처음에서 출발했다 — 자리를 안 되썼다", first, after, again)
+    back = turn("prev", ss._MC_MODEL_KEY)["rows"][0]["cols"][0]
+    assert back == after, ("← 가 되짚어 오지 않는다", after, back)
+    # 컨텍스트도 제 칸만 돈다 — 모델 값은 그대로다.
+    spec = turn("next", ss._MC_CTX_KEY)
+    assert spec["rows"][0]["cols"][0] == after, "컨텍스트를 돌렸는데 모델이 움직였다"
+    assert spec["rows"][1]["cols"][0] != cc.CTX_CHOICES[0][0], spec["rows"][1]
+    # 대조군 — 고르개가 아닌 줄에서는 아무것도 안 돈다(판은 그대로 다시 준다).
+    same = turn("next", "세션")
+    assert same["rows"][0]["cols"][0] == after, "엉뚱한 줄의 → 가 값을 돌렸다"
+    assert same["rows"][1]["cols"][0] == spec["rows"][1]["cols"][0], same["rows"][1]
+
+
+async def test_applying_the_chooser_types_the_same_model_command_the_canon_does():
+    """`Enter` = 정본 `_mc_apply` 와 **같은 결과** — 활성 패널에 `/model <인자>` 를 친다.
+
+    ⚠ 정본은 팝업을 **안 닫는다**(연속 조정을 허용하려는 것) — 그 손버릇까지 옮긴다."""
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        pane = sess.active_window.active_pane
+        state = {}
+        # 모델을 한 걸음 돌린 뒤 적용한다 — 「지금 값」이 아니라 「고른 값」이 나가야 한다.
+        ss.action(srv, sess, {"id": "claude-usage-panel", "do": "next",
+                              "row": 0, "input": ss._MC_MODEL_KEY, "state": state})
+        want = ss._mc_arg(srv, sess, state)
+        assert want in cc.MODEL_CHOICES or " " in want, want
+        with _pty_capture(pane) as wrote:
+            spec = ss.action(srv, sess, {"id": "claude-usage-panel", "do": "apply",
+                                         "row": 0, "input": ss._MC_MODEL_KEY,
+                                         "state": state})
+        assert wrote and f"/model {want}".encode() in wrote[0], (want, wrote)
+        assert spec["t"] == "plugin_screen" and spec["id"] == "claude-usage-panel", \
+            ("정본은 적용해도 판을 안 닫는다", spec)
+        # 대조군 — 고르개가 아닌 줄의 Enter 는 아무것도 안 친다.
+        with _pty_capture(pane) as wrote2:
+            ss.action(srv, sess, {"id": "claude-usage-panel", "do": "apply",
+                                  "row": 3, "input": "세션", "state": state})
+        assert not wrote2, ("누를 것이 없는 줄이 /model 을 쳤다", wrote2)
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_the_limit_panel_carries_the_reset_moment_not_a_countdown_string():
     """한도 판이 **시각을 자료로** 싣는다(pytmux-371 ④).
 
@@ -1302,6 +1400,55 @@ async def test_mdir_copy_asks_where_and_the_two_step_overwrite_protocol_survives
         with open(os.path.join(dst, "same.txt")) as f:
             assert f.read() == "new", spec
         assert "복사 1건" in spec["note"], spec["note"]
+
+
+async def test_a_closed_screen_reaches_the_other_plugins_through_a_hook():
+    """☠ 검수 2026-09-05 S-8 — **코어는 플러그인을 모른다.**
+
+    ncd→mdir 연동(pytmux-207)은 `servercmd` 안에서 `p.name == "mdir"` 로 플러그인을
+    찾아 그 **사설** `_spec` 을 불렀다. delete-to-disable 의 계약은 「코어는 플러그인을
+    직접 import 하지도 이름으로 부르지도 않는다」이고([`Registry._reopen`] 이 같은
+    델타에서 «이름으로만 잇는다»를 세웠다), 사설 메서드 호출은 그 계약 밖이다 —
+    mdir 은 그 이름도 그 내부도 못 바꾼다.
+
+    잰다: ⓐ 코어 소스에 플러그인 이름이 없다 ⓑ 코어가 **훅을 부르는 자리**가 있다
+    (호출부 오라클 — 훅만 재면 그 줄을 지워도 통과한다) ⓒ mdir 이 그 훅으로 같은
+    일을 한다."""
+    import ast
+    import inspect as _inspect
+    import os
+    import tempfile
+
+    from pytmuxlib import servercmd
+
+    src = _inspect.getsource(servercmd)
+    for banned in ('"mdir"', "'mdir'", '"ncd"', "'ncd'"):
+        assert banned not in src, \
+            f"코어가 플러그인 이름 {banned} 를 안다 — delete-to-disable 계약 위반"
+    tree = ast.parse(src)
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "plugin_screen_closed"]
+    assert len(calls) == 1, \
+        "코어가 «닫혔다»를 흘리는 자리가 하나여야 한다(지우면 연동이 조용히 죽는다)"
+
+    # ⓒ mdir 쪽 — ncd 가 남긴 경로로 옮겨간 판을 낸다.
+    p = _mdir()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.mkdir(os.path.join(tmp, "sub"))
+        req = {"state": {"mdir": {"path": os.sep, "tags": [], "items": []}}}
+        closed = {"t": "plugin_screen_close", "id": "ncd", "input": tmp}
+        spec = await p.plugin_screen_closed(None, None, req, closed)
+        assert spec["kind"] == "panel" and spec["id"] == "mdir", spec
+        assert req["state"]["mdir"]["path"] == tmp, "상태가 안 옮겨갔다"
+        assert any(r.get("tag") == "dir" and "sub" in r.get("label", "")
+                   for r in spec["rows"]), spec["rows"][:3]
+        # 남의 화면이 닫힌 것에는 안 반응한다.
+        assert p.plugin_screen_closed(
+            None, None, req, dict(closed, id="p4changes")) is None
+        # 내 판이 안 열려 있으면 안 튀어나온다(delete-to-disable 의 다른 쪽).
+        assert p.plugin_screen_closed(
+            None, None, {"state": {}}, closed) is None
 
 
 async def test_mdir_cd_writes_to_the_pane_and_closes_the_screen():

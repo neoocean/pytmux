@@ -6245,6 +6245,16 @@ impl SessionView {
                     if let Some(permille) = item.bar {
                         line = line.with_child(self.ratio_bar(permille));
                     }
+                    // ★ **고르개 줄**(pytmux-130 · 정본 `[한도]` 탭의 행0·행1) — 모델과
+                    //   컨텍스트를 `←→` 로 돌리고 `Enter` 로 적용한다. 서버는 **지금
+                    //   값**만 칸에 싣고 `◀ ▶` 는 여기서 그린다(막대를 글자로 안 싣는
+                    //   것과 같은 경계 — 크롬은 그리는 쪽의 것이다).
+                    //
+                    //   ⚠ 그림이 없으면 「돌릴 수 있다」가 화면 어디에도 안 적힌다 —
+                    //     키만 물리고 화살표를 안 그리면 pytmux-185 가 세는 갈림이다.
+                    if item.is_chooser() {
+                        line = line.with_child(self.text("◀", 13., palette::DIM));
+                    }
                     // 칸은 플러그인이 **적은 말**이라 우리 로케일로 다시 읽는다
                     // (이름은 자료라 그대로 — `PluginRow::say_cols`).
                     //
@@ -6276,6 +6286,9 @@ impl SessionView {
                     //   ⚠ 지난 시각이면 아무것도 안 그린다(`countdown` 이 `None`). `0:00:00`
                     //   이 굳어 있으면 그것이 「지금 리셋된다」로 읽히는데, 실은 실측이
                     //   낡았다는 뜻이고 그 사실은 판의 신선도 줄이 따로 말한다.
+                    if item.is_chooser() {
+                        line = line.with_child(self.text("▶", 13., palette::DIM));
+                    }
                     if let Some(left) = item.countdown(Self::now_secs()) {
                         line = line.with_child(self.text(left, 15., palette::FG));
                     }

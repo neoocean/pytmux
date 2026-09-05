@@ -5711,6 +5711,70 @@ fn limits_spec_with_deadline(until: i64) -> ServerMessage {
     .unwrap()
 }
 
+/// 고르개 줄 — 정본 `[한도]` 탭의 행0·행1(모델·컨텍스트).
+fn limits_spec_with_choosers() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-usage-panel", "kind": "table",
+        "title": "Claude 사용 한도 (/usage)", "hint": "↑↓ · ↔ 값 · Enter 적용",
+        "rows": [
+            {"key": "mc:model", "label": "모델", "cols": ["opus-5"], "w": "choose"},
+            {"key": "mc:ctx", "label": "컨텍스트", "cols": ["기본"], "w": "choose"},
+            {"key": "세션", "label": "세션", "cols": ["42% 사용"], "bar": 420}
+        ],
+        "text": "", "note": "", "selected": 0,
+        "keys": {"enter": "apply", "left": "prev", "right": "next"}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_chooser_row_draws_the_arrows_that_say_it_can_be_turned() {
+    // ☠ pytmux-130 — 정본 `[한도]` 탭의 맨 위 두 줄은 **모델·컨텍스트 고르개**다
+    //    (`←→` 로 값을 돌리고 `Enter` 로 적용). 그 줄을 여느 표 줄과 같이 그리면
+    //    「돌릴 수 있다」가 화면 어디에도 안 적히고, 키만 물리는 것은 pytmux-185 가
+    //    세는 갈림이다(있는 것과 같게 구는 것은 다른 질문이다).
+    //
+    //    ⛔ 화살표는 **우리가 그린다** — 서버가 `◀ 값 ▶` 글자를 실으면 다시 텍스트
+    //       기반 인터페이스가 된다(막대를 글자로 안 싣는 것과 같은 경계).
+    let painted = painted_after(vec![layout_one_pane(), limits_spec_with_choosers()], &[]);
+    assert!(
+        painted.iter().any(|t| t == "◀") && painted.iter().any(|t| t == "▶"),
+        "고르개 줄에 화살표가 안 그려진다: {painted:?}"
+    );
+    // 값 자체는 서버가 준 그대로 — 우리가 지어내지 않는다.
+    assert!(painted.iter().any(|t| t.contains("opus-5")), "{painted:?}");
+}
+
+#[test]
+fn a_plain_row_gets_no_chooser_arrows() {
+    // 대조군 — 힌트가 없는 줄에 화살표를 붙이면 그 화살표가 거짓말이다(눌러도 안 돈다).
+    let painted = painted_after(
+        vec![layout_one_pane(), limits_spec_with_deadline(0)],
+        &[],
+    );
+    assert!(
+        !painted.iter().any(|t| t == "◀" || t == "▶"),
+        "고르개가 아닌 줄에 화살표가 붙었다: {painted:?}"
+    );
+}
+
+#[test]
+fn turning_a_chooser_sends_the_key_of_that_row() {
+    // 정본은 `←→` 로 값을 돌린다. 그 뜻은 **서버가 정하고**(`prev`/`next`) 우리는 어느
+    // 줄에서 눌렀는지를 그 줄의 열쇠로 말한다 — 표를 두 벌로 안 적는 그 규약이다.
+    let sent = sent_after(
+        vec![layout_one_pane(), limits_spec_with_choosers()],
+        &[(Key::Right, Mods::NONE)],
+    );
+    let frames: Vec<serde_json::Value> = sent.iter().map(|o| o.to_frame()).collect();
+    let action = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_action")
+        .unwrap_or_else(|| panic!("`→` 가 액션이 안 됐다: {frames:?}"));
+    assert_eq!(action["do"], "next", "{action:?}");
+    assert_eq!(action["input"], "mc:model", "{action:?}");
+}
+
 #[test]
 fn the_limit_panel_counts_down_to_the_reset_the_server_named() {
     // 정본 `[한도]` 탭은 다음 리셋까지를 **큰 글자 카운트다운**으로 센다. 서버가 그 글자를

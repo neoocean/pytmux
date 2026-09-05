@@ -22,6 +22,23 @@
 
   셋이 다 참인데 사용자가 못 끌면, 원인은 **우리 코드 밖**이다. 그 판정이 이 자의 값이다.
 
+  ★ 그 «밖» 을 두 칸으로 좁힌다(2026-09-04 · pytmux-155 회계가 남긴 두 걸음):
+
+    (4) 커서 클립 — 다른 앱이 `ClipCursor` 로 커서를 자기 창에 가둬 두면 **어떤 앱도**
+        못 끌린다. 2026-08-25 에 실제로 `Switch.exe`(Electron)가 그렇게 해 둔 것이
+        잡혔고, 그때 이 이슈는 그것을 우리 결함으로 한 번 오독했다. 그래서 이제
+        **코드를 읽기 전에 이 한 줄부터** 찍는다.
+    (5) OS 이동 루프 — `WM_SYSCOMMAND(SC_MOVE)` + **게시한** 방향키로 창을 실제로
+        옮겨 본다. 포인터를 안 건드리므로 사용자가 상자를 쓰는 중에도 돌 수 있다
+        (⛔ `SendInput` 하네스는 사용자의 커서를 빼앗아 그때는 금지다).
+        여기서 창이 움직이면 「이 창은 OS 가 못 옮긴다」 부류가 통째로 죽는다 —
+        남는 것은 **마우스 갈래**(진짜로 눌린 버튼을 요구하는 `HTCAPTION` 경로)뿐이다.
+
+  ⚠ (5)는 `drag_window()` 가 쓰는 **바로 그 갈래**는 아니다. `WM_NCLBUTTONDOWN`
+  (HTCAPTION)은 DefWindowProc 이 `SC_MOVE|0x0002`(=마우스 변종)로 바꾸는데, 그 루프는
+  **실제로 눌려 있는 버튼**을 요구해 합성 메시지로는 즉시 끝난다(실측: 그 길로는
+  dx=0). 키보드 변종은 그 요구가 없다 — 그래서 «옮길 수 있는 창인가»만 가른다.
+
 .PARAMETER ProcessId
   `pytmux-gui` 프로세스. ⚠ 그 프로세스는 `RUST_LOG=debug` 로 떠 있어야 한다 —
   진단은 `log::debug!` 라서 기본은 조용하다.
@@ -49,7 +66,11 @@ $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\winlib.ps1"   # 창 찾기 한 벌(Get-AppWindow)
 
 Add-Type -Namespace PtDrag -Name Msg -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+[DllImport("user32.dll")] public static extern bool GetClipCursor(out RECT r);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+[DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
 public static IntPtr Lp(int x, int y) { return (IntPtr)((y << 16) | (x & 0xFFFF)); }
 '@
 
@@ -74,6 +95,51 @@ if ($new.Count -eq 0) {
          "RUST_LOG=debug 인지, 그리고 이 창이 그 pid 의 것인지 볼 것.")
 }
 $new | ForEach-Object { "  " + $_.Line.Substring($_.Line.IndexOf("drag-155")) }
+
+# ── (4) 커서 클립 — 우리 코드를 읽기 전에 볼 한 줄 ──────────────────────────
+$clip = New-Object PtDrag.Msg+RECT
+[void][PtDrag.Msg]::GetClipCursor([ref]$clip)
+$vx = [PtDrag.Msg]::GetSystemMetrics(76); $vy = [PtDrag.Msg]::GetSystemMetrics(77)
+$vw = [PtDrag.Msg]::GetSystemMetrics(78); $vh = [PtDrag.Msg]::GetSystemMetrics(79)
+$clipFull = ($clip.L -le $vx -and $clip.T -le $vy -and
+             $clip.R -ge ($vx + $vw) -and $clip.B -ge ($vy + $vh))
+"  cursor-clip: {0},{1},{2},{3}  virtual: {4},{5} {6}x{7}  full={8}" -f `
+  $clip.L, $clip.T, $clip.R, $clip.B, $vx, $vy, $vw, $vh, $clipFull
+if (-not $clipFull) {
+  "  !! 다른 앱이 커서를 가둬 뒀다 — 이 상태면 **어떤 앱도** 못 끌린다(우리 결함이 아니다)."
+}
+
+# ── (5) OS 이동 루프 — 포인터를 안 건드리고 «옮길 수 있는 창인가» 를 잰다 ────
+$r0 = New-Object PtDrag.Msg+RECT
+[void][PtDrag.Msg]::GetWindowRect($hwnd, [ref]$r0)
+[void][PtDrag.Msg]::PostMessage($hwnd, 0x0112, [IntPtr]0xF010, [IntPtr]0)   # WM_SYSCOMMAND SC_MOVE
+Start-Sleep -Milliseconds 300
+for ($i = 0; $i -lt 20; $i++) {
+  [void][PtDrag.Msg]::PostMessage($hwnd, 0x0100, [IntPtr]0x27, [IntPtr]0)   # VK_RIGHT down
+  [void][PtDrag.Msg]::PostMessage($hwnd, 0x0101, [IntPtr]0x27, [IntPtr]0)   # VK_RIGHT up
+  Start-Sleep -Milliseconds 12
+}
+[void][PtDrag.Msg]::PostMessage($hwnd, 0x0100, [IntPtr]0x0D, [IntPtr]0)     # Enter = 확정
+[void][PtDrag.Msg]::PostMessage($hwnd, 0x0101, [IntPtr]0x0D, [IntPtr]0)
+Start-Sleep -Milliseconds 500
+$r1 = New-Object PtDrag.Msg+RECT
+[void][PtDrag.Msg]::GetWindowRect($hwnd, [ref]$r1)
+$osdx = $r1.L - $r0.L
+# ⛔ 되돌려 놓는다 — 진단이 창을 옮겨 두고 가면 다음 사람이 그것을 증상으로 읽는다.
+[void][PtDrag.Msg]::PostMessage($hwnd, 0x0112, [IntPtr]0xF010, [IntPtr]0)
+Start-Sleep -Milliseconds 300
+for ($i = 0; $i -lt 20; $i++) {
+  [void][PtDrag.Msg]::PostMessage($hwnd, 0x0100, [IntPtr]0x25, [IntPtr]0)   # VK_LEFT
+  [void][PtDrag.Msg]::PostMessage($hwnd, 0x0101, [IntPtr]0x25, [IntPtr]0)
+  Start-Sleep -Milliseconds 12
+}
+[void][PtDrag.Msg]::PostMessage($hwnd, 0x0100, [IntPtr]0x0D, [IntPtr]0)
+[void][PtDrag.Msg]::PostMessage($hwnd, 0x0101, [IntPtr]0x0D, [IntPtr]0)
+Start-Sleep -Milliseconds 400
+"  os-move-loop: dx={0} (SC_MOVE + 게시한 방향키 · 포인터 미사용)" -f $osdx
+if ($osdx -eq 0) {
+  "  !! OS 가 이 창을 키보드로도 못 옮겼다 — 그러면 머리줄 배선보다 **창 자체**를 먼저 본다."
+}
 
 $handled = ($new | Where-Object { $_.Line -match "handled=false" }).Count -gt 0
 $dragged = ($new | Where-Object { $_.Line -match "drag_window\(\).*Ok" }).Count -gt 0

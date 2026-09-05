@@ -29,10 +29,18 @@
 ///   ⚠ 취향이 아니라 **머리말의 규칙을 값에 반영하는 것**이다.
 /// - `Consolas` — Windows 에 늘 있는 것(Vista 이후). Cascadia 가 없는 상자의 보루.
 /// - `DejaVu Sans Mono` · `Liberation Mono` — 리눅스 배포판 대부분.
-/// - `Courier New` — 마지막 보루. 보기 좋진 않지만 거의 모든 곳에 있다.
+/// - `Courier New` — 고유 이름의 마지막 보루. 보기 좋진 않지만 거의 모든 곳에 있다.
+/// - `monospace` — **이름이 아니라 별칭**이다(pytmux-484 ⓐ). 위가 전부 고유 이름이라,
+///   흔한 다른 고정폭(`Noto Sans Mono`·`Ubuntu Mono`·`Source Code Pro`·`Fira Mono`·
+///   `Hack` …)만 깔린 리눅스 상자는 **글꼴이 있는데도** 「하나도 못 찾았다」로 패닉했다
+///   (2026-09-05 Ubuntu 24.04 aarch64 실측). fontconfig 는 이 일반 별칭을 그 상자가
+///   고른 고정폭으로 풀어 주고, font-kit 은 리눅스에서 fontconfig 로 이름을 풀므로
+///   별칭이 그대로 통한다. **맨 끝**이라 고유 이름이 있는 상자의 선택은 안 바뀐다.
 ///
 /// OS 별로 `cfg` 를 나누지 않는 이유: 이 목록은 **가용성 순서**이지 플랫폼 선언이
 /// 아니다. macOS 에 Consolas 를 깐 사람도 있고, 그 경우에도 Menlo 가 먼저 잡히면 된다.
+/// (같은 이유로 `monospace` 도 `cfg` 없이 둔다 — 그 이름이 없는 OS 에서는 로더가 그냥
+/// 실패하고, 실패한 후보는 이 규칙이 이미 건너뛴다.)
 pub const CANDIDATES: &[&str] = &[
     "Menlo",
     "Cascadia Mono",
@@ -41,6 +49,7 @@ pub const CANDIDATES: &[&str] = &[
     "DejaVu Sans Mono",
     "Liberation Mono",
     "Courier New",
+    "monospace",
 ];
 
 /// 보조 글꼴 후보. **고정폭 하나로는 한글이 안 그려진다.**
@@ -253,6 +262,28 @@ mod tests {
             asked,
             vec!["Menlo", "Cascadia Mono", "Cascadia Code", "Consolas", "DejaVu Sans Mono"]
         );
+    }
+
+    #[test]
+    fn a_box_with_only_a_generic_monospace_alias_still_starts() {
+        // ☠ pytmux-484 ⓐ — 후보가 **전부 고유 이름**이면, 흔한 다른 고정폭만 깔린
+        //    리눅스 상자는 글꼴이 있어도 「하나도 못 찾았다」로 시작 즉시 패닉한다
+        //    (2026-09-05 Ubuntu 24.04 aarch64 실측 · `Noto Sans Mono` 만 있는 상자).
+        //    fontconfig 의 일반 별칭 `monospace` 가 그 상자들을 살린다.
+        let mut asked = Vec::new();
+        let picked = pick(CANDIDATES, |n| {
+            asked.push(n.to_owned());
+            if n == "monospace" { Ok(()) } else { Err(()) }
+        });
+        assert!(
+            picked.is_ok(),
+            "고유 이름이 하나도 없는 상자에서 못 골랐다 — 시도한 것: {asked:?}"
+        );
+        assert_eq!(picked.unwrap().0, "monospace");
+        // 그리고 그 별칭은 **맨 끝**이라야 한다 — 앞에 두면 고유 이름이 있는 상자의
+        // 글자 모양이 조용히 바뀐다(이 목록의 순서가 곧 계약이다).
+        assert_eq!(*CANDIDATES.last().unwrap(), "monospace");
+        assert_eq!(asked.len(), CANDIDATES.len());
     }
 
     #[test]

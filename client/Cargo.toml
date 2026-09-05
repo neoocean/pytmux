@@ -190,6 +190,27 @@ winreg = "0.55.0"
 x11rb = "0.13.0"
 zbus = "5.9.0"
 
+# ☠ 리눅스 **디버그 빌드**가 글꼴이 있어도 상류 크레이트 안에서 죽는 것을 막는다
+# (pytmux-484 ⓑ · 2026-09-05 Ubuntu 24.04 aarch64 실측):
+#
+#     thread 'main' panicked at fontconfig-0.8.0/src/lib.rs:502:13:
+#     unsafe precondition(s) violated: slice::from_raw_parts requires the pointer
+#     to be aligned and non-null …
+#
+# `FontSet::iter` 가 `from_raw_parts((*fontset).fonts, nfont)` 를 **빈 집합**
+# (fonts = NULL · nfont = 0)에도 부른다. 후보 이름 하나가 그 상자에 없으면 그 조회의
+# 결과가 빈 집합이라 **매번** 여기를 지나고, 표준 라이브러리의 UB 사전검사(디버그
+# 빌드에서만 켜진다)가 그것을 잡는다. 릴리스 빌드는 검사가 없어 지나가므로 배포
+# 이진은 멀쩡하다 — 다치는 것은 리눅스에서 `cargo run -p gui` 로 개발하는 사람이고,
+# 그는 첫 후보(Menlo)가 없다는 이유만으로 **늘** 이 패닉을 본다.
+#
+# 상류(`fontconfig` 0.8.0 · `warpui` 가 요구하는 판)의 결함이라 우리가 고칠 자리가
+# 아니다. 판을 올리는 길(0.11.0 이 있다)은 MIT 스냅샷 경계 안(`crates/warpui`)을
+# 건드리므로 그쪽은 스냅샷을 갱신할 때 함께 본다(PROVENANCE.md).
+# ⚠ 이 한 줄은 **그 크레이트의 디버그 단언만** 끈다 — 우리 코드의 단언은 그대로다.
+[profile.dev.package.fontconfig]
+debug-assertions = false
+
 # warp 가 쓰던 포크 핀. 모두 MIT/Apache 계열 크레이트의 포크이며, 이 핀이 없으면
 # macOS 폰트/렌더 경로가 upstream 스냅샷과 다르게 동작한다.
 [patch.crates-io]

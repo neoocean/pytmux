@@ -399,35 +399,30 @@ class ServerCmdMixin:
             })
             return
 
-        # ncd 트리에서 디렉터리를 선택했으면(응답에 "input"이 있으면) mdir 도 갱신한다
-        # (pytmux-207: mdir 의 F10 → ncd 트리 → Enter → mdir 이동)
+        # 화면 하나가 **값을 남기고 닫혔으면** 그 사실을 플러그인들에게 흘린다
+        # (pytmux-207 의 ncd→mdir 연동이 그 첫 소비자다: mdir 의 F10 → ncd 트리 →
+        # Enter → mdir 이 그 자리로 옮겨간다).
+        #
+        # ⛔ 종전에는 이 자리가 **코어가 플러그인을 아는** 코드였다(검수 2026-09-05
+        # S-8): 플러그인 이름을 글자로 비교해 찾아낸 뒤 그 **사설** `_spec` 을 직접
+        # 불렀다.
+        # delete-to-disable 의 계약은 「코어는 플러그인을 모른다」이고, 코어가 남의
+        # 사설 메서드를 부르면 그 플러그인은 이름을 바꿀 수도 내부를 고칠 수도 없다.
+        # 이제 코어가 아는 것은 「닫혔다」뿐이고, 관심은 받는 쪽이 갖는다.
         responses = resp if isinstance(resp, list) else [resp]
-        ncd_path = None
-        for r in responses:
-            if (isinstance(r, dict) and r.get("id") == "ncd" and
-                r.get("t") == "plugin_screen_close" and r.get("input")):
-                ncd_path = r.get("input")
-                break
-
-        if ncd_path and getattr(client, "plugin_state", {}).get("mdir"):
-            # ncd 닫기 + mdir 갱신 응답 둘을 차례로 보낸다
-            mdir_plugin = next(
-                (p for p in self.plugins.plugins if getattr(p, "name", "") == "mdir"),
-                None
-            )
-            if mdir_plugin is not None:
-                # mdir 상태를 갱신한다
-                mdir_state = client.plugin_state.get("mdir", {})
-                mdir_state["path"] = ncd_path
-                # mdir 스펙을 만든다 (F10 후 ncd 선택 → 원래 위치로 돌아왔을 때의 스펙)
-                # _spec은 fs 작업을 하므로 executor로 넘긴다
-                import asyncio
+        for r in list(responses):
+            if not (isinstance(r, dict) and r.get("t") == "plugin_screen_close"
+                    and r.get("input")):
+                continue
+            for extra in self.plugins.plugin_screen_closed(self, sess, req, r):
+                # 느린 일(파일시스템)은 awaitable 로 온다 — `plugin_screen` 과 같은 규약.
                 try:
-                    mdir_spec = await asyncio.get_event_loop().run_in_executor(
-                        None, mdir_plugin._spec, mdir_state, 0, "")
-                    responses.append(mdir_spec)
+                    if inspect.isawaitable(extra):
+                        extra = await extra
                 except Exception:
-                    pass  # mdir 스펙 생성 실패해도 ncd 응답은 보낸다
+                    continue      # 뒤따르는 화면이 실패해도 닫힘 응답은 나간다
+                if isinstance(extra, dict):
+                    responses.append(extra)
 
         # 응답을 각각 보낸다
         for r in responses:

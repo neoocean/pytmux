@@ -85,6 +85,9 @@ i18n.register({
         "pscreen.spec_model_title": "Claude 모델·컨텍스트",
         "pscreen.spec_model_hint": "↑↓ 이동 · Enter 적용(/model 주입) · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_model_now": "지금",
+        # 정본 `[한도]` 탭의 맨 위 두 줄(pytmux-130 · `TokenLogScreen._mc_row_text`).
+        "pscreen.spec_mc_model": "모델",
+        "pscreen.spec_mc_ctx": "컨텍스트",
         "pscreen.spec_period_title": "토큰 사용량 · 기간별",
         "pscreen.spec_period_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_sessions_title": "토큰 사용량 · 세션별",
@@ -139,6 +142,8 @@ i18n.register({
         "pscreen.spec_model_title": "Claude model/context",
         "pscreen.spec_model_hint": "↑↓ move · Enter apply (injects /model) · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_model_now": "now",
+        "pscreen.spec_mc_model": "Model",
+        "pscreen.spec_mc_ctx": "Context",
         "pscreen.spec_period_title": "Token usage · by period",
         "pscreen.spec_period_hint": "↑↓ move · Enter/←→ expand·collapse · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_sessions_title": "Token usage · by session",
@@ -651,7 +656,91 @@ def _reset_epoch(reset):
     return int(ts) if ts else 0
 
 
-def _limits_spec(server, selected=0):
+#: [한도] 판 고르개 줄의 열쇠 — 라벨이 아니라 이 값으로 판정한다(라벨은 번역을 탄다).
+_MC_MODEL_KEY = "mc:model"
+_MC_CTX_KEY = "mc:ctx"
+
+
+def _mc_sel(server, sess, state):
+    """[한도] 판의 **잠정** 모델·컨텍스트 선택 `(mi, ci)`.
+
+    ⛔ **적용 전 값이라 서버 전역에 두지 않는다** — 두 사람이 같은 서버를 보면 서로의
+    돌림이 상대 화면을 흔든다. 자리는 `state`(연결에 매달린 보관함 · 설계 P5)이고,
+    경고 판의 펼침·기간 판의 접힘이 사는 그 자리다.
+
+    처음 열 때는 **지금 그 패널이 도는 모델**에서 출발한다(정본 `__init__` 이
+    `_mc_msel` 을 그렇게 맞춘다) — 0 에서 출발하면 첫 `Enter` 가 사용자가 쓰지도 않는
+    모델을 적용한다.
+    """
+    from . import CTX_CHOICES, MODEL_CHOICES
+    saved = state.get("limit_mc") if isinstance(state, dict) else None
+    if isinstance(saved, (list, tuple)) and len(saved) == 2:
+        try:
+            return (int(saved[0]) % len(MODEL_CHOICES),
+                    int(saved[1]) % len(CTX_CHOICES))
+        except (TypeError, ValueError):
+            pass
+    pane = _active_pane(sess)
+    cur = (getattr(pane, "_claude_model", None) or "").lower()
+    mi = 0
+    for i, m in enumerate(MODEL_CHOICES):
+        if m != "default" and cur.startswith(m):
+            mi = i
+            break
+    return mi, 0
+
+
+def _mc_remember(state, mi, ci):
+    """고른 자리를 **서버가 든 그 dict 에 되쓴다**(`_remember_folds` 와 같은 자리·이유).
+
+    안 되쓰면 다음 `←→` 가 또 처음 값에서 출발해, 두 칸을 연달아 못 돌린다."""
+    if isinstance(state, dict):
+        state["limit_mc"] = [int(mi), int(ci)]
+
+
+def _mc_rows(server, sess, state):
+    """정본 `[한도]` 탭의 **맨 위 두 줄** — 모델·컨텍스트 고르개(pytmux-130).
+
+    정본은 이 자리를 `◀ ▶ 값` 글자로 그리는데(격자라 그 길뿐이다), 여기서는 **지금
+    값만** 싣고 화살표는 클라의 크롬이다(`PluginRow::is_chooser` · 막대를 글자로 안 싣는
+    것과 같은 경계). 「돌릴 수 있다」는 `w` 힌트가 말한다.
+
+    ⚠ 두 줄이 **맨 앞**이라야 한다 — 정본의 행0·행1 이고, 그 자리는 `↑↓` 손버릇의
+    일부다(판을 열면 커서가 모델에 선다).
+    """
+    from . import CTX_CHOICES, MODEL_CHOICES
+    mi, ci = _mc_sel(server, sess, state)
+    return [
+        {"key": _MC_MODEL_KEY, "label": i18n.t("pscreen.spec_mc_model"),
+         "cols": [MODEL_CHOICES[mi]], "w": "choose"},
+        {"key": _MC_CTX_KEY, "label": i18n.t("pscreen.spec_mc_ctx"),
+         "cols": [CTX_CHOICES[ci][0]], "w": "choose"},
+    ]
+
+
+def _mc_turn(server, sess, state, key, step):
+    """고르개 한 칸을 돌린다. 그 줄이 고르개가 아니면 아무 일도 안 한다(`False`)."""
+    from . import CTX_CHOICES, MODEL_CHOICES
+    mi, ci = _mc_sel(server, sess, state)
+    if key == _MC_MODEL_KEY:
+        mi = (mi + step) % len(MODEL_CHOICES)
+    elif key == _MC_CTX_KEY:
+        ci = (ci + step) % len(CTX_CHOICES)
+    else:
+        return False
+    _mc_remember(state, mi, ci)
+    return True
+
+
+def _mc_arg(server, sess, state):
+    """지금 고른 것을 `/model` 인자 한 줄로 — `_model_apply` 가 받는 그 모양."""
+    from . import CTX_CHOICES, MODEL_CHOICES
+    mi, ci = _mc_sel(server, sess, state)
+    model, ctx = MODEL_CHOICES[mi], CTX_CHOICES[ci][1]
+    return model if ctx == "default" else f"{model} {ctx}"
+
+
+def _limits_spec(server, sess=None, selected=0, state=None):
     """한도 판을 **자료로** 준다 — 막대는 비율(천분율)이고 글자가 아니다.
 
     # 왜 글자 막대를 안 싣나
@@ -668,7 +757,12 @@ def _limits_spec(server, selected=0):
     vals = usage_values(
         getattr(server, "_usage", None),
         age_sec=(max(0, int(_t.time() - uts)) if uts is not None else None))
-    rows = []
+    # ★ 정본 `[한도]` 탭의 **행0·행1** — 모델·컨텍스트 고르개(pytmux-130). 정본은 이
+    #   둘을 같은 탭 맨 위에 두고 `←→` 로 돌려 `Enter` 로 적용한다. GUI 가 그것을 판
+    #   하나로 떼어 두었더니 이 판의 `Enter` 가 **아무 일도 안 하는** 키였다 —
+    #   [[pytmux-185]] 가 결함으로 세는 갈림이다.
+    rows = list(_mc_rows(server, sess, state))
+    mc_n = len(rows)
     for r in (vals or {}).get("rows", ()):
         pct = max(0, min(100, int(r["pct"])))
         cols = [f"{pct}% {i18n.t('usage.used')}"]
@@ -694,14 +788,18 @@ def _limits_spec(server, selected=0):
     #   (사용자 결정 ⓒ — 정본의 판 구성을 흔들지 않고 한 자리에서 셋에 닿는다).
     # ⚠ 사유(`note`)는 **자료 줄**이 있나로 정한다 — 아래 허브 줄은 늘 붙으므로 `rows` 로
     #   재면 «값이 없는데 사유도 없는» 판이 된다(빈 판과 실패를 못 가르는 그 자리다).
-    has_data = bool(rows)
+    has_data = len(rows) > mc_n
     rows.extend(_hub_rows("claude-usage-panel"))
     return _spec("claude-usage-panel", "table",
-                 i18n.t("ccmsg.usage_title"), i18n.t("cusage.hint"),
+                 i18n.t("ccmsg.usage_title"), i18n.t("cusage.hint_mc"),
                  rows=rows, selected=selected,
                  note=("" if has_data else i18n.t("ccmsg.usage_no_data")),
                  head=_summary_head(server),
-                 keys=_hub_keys("claude-usage-panel", {"enter": "apply"}))
+                 # 정본 `[한도]` 탭의 꼬리줄이 광고하는 조작 그대로 — `↑↓` 는 줄 이동,
+                 # `←→` 가 값, `Enter` 가 적용이다(pytmux-371 ④).
+                 keys=_hub_keys("claude-usage-panel",
+                                {"enter": "apply", "left": "prev",
+                                 "right": "next"}))
 
 
 # 판을 잇는 줄의 열쇠 — 라벨이 아니라 이 값으로 판정한다(라벨은 번역을 탄다).
@@ -980,7 +1078,7 @@ def _hub_open(server, sess, picked, state=None):
         if sid == "claude-settings":
             return _settings_spec(server, sess)
         if sid == "claude-usage-panel":
-            return _limits_spec(server)
+            return _limits_spec(server, sess, state=state)
         if sid == "model":
             return _model_spec(server, sess)
         if sid == "claude-token-machines":
@@ -1309,7 +1407,7 @@ def open_spec(server, sess, name, args=(), state=None):
     if name in MACHINES:
         return _machines_spec(server)
     if name in LIMITS:
-        return _limits_spec(server)
+        return _limits_spec(server, sess, state=state)
     if name in WARNS:
         _reset_folds(state)
         return _warn_spec(server)
@@ -1448,9 +1546,21 @@ def action(server, sess, req):
             return _sessions_spec(server, selected=row)
         return None
     if sid == "claude-usage-panel":
+        state = req.get("state")
+        if do in ("prev", "next"):
+            # 고르개 한 칸(pytmux-130). 다른 줄에서는 아무 일도 안 하되 **판은 다시
+            # 준다** — 안 주면 그 키가 「먹통」으로 보인다(정본도 소비만 하고 판을 둔다).
+            _mc_turn(server, sess, state, str(picked or ""),
+                     1 if do == "next" else -1)
+            return _limits_spec(server, sess, row, state)
         if do == "apply":
+            # 고르개 줄에서의 `Enter` = **적용**(정본 `_mc_apply` 와 같은 길 — 활성
+            # 패널에 `/model <인자>` 를 친다). 정본은 팝업을 **안 닫는다**: 연속 조정을
+            # 허용하려는 것이고, 그 손버릇까지 옮긴다.
+            if str(picked or "") in (_MC_MODEL_KEY, _MC_CTX_KEY):
+                _model_apply(server, sess, _mc_arg(server, sess, state))
             # 다른 줄(막대·계정·신선도)은 누를 것이 없다 — 판을 그대로 둔다.
-            return _limits_spec(server, row)
+            return _limits_spec(server, sess, row, state)
         return None
     if sid == "claude-perm-mode":
         if do == "apply":

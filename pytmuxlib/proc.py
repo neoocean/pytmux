@@ -177,6 +177,48 @@ def is_alive(pid: int) -> bool:
         return False
 
 
+def command_line(pid: int) -> Optional[str]:
+    """그 pid 를 띄운 **명령줄 전체**(못 읽으면 None).
+
+    「pid 하나만 겨냥한다」는 규율(§ CLAUDE.md)의 남은 구멍을 메우려고 낸다 — 겨냥이
+    좁아도 **그 번호가 내가 생각한 그 프로세스인지**는 아무도 안 봤다(검수 2026-09-05
+    S-2). pid 파일이 크래시·재부팅으로 남은 뒤 그 번호가 재사용되면, 「살아 있다」만
+    보고 쏘는 코드는 **같은 사용자의 무관한 프로세스**를 죽인다.
+
+    ⛔ **모르면 None 이다** — 「아마 우리 것」으로 접지 않는다. 부르는 쪽은 None 을
+    「확인 못 했다」로 받아 **안 죽이는 쪽**으로 진다.
+
+    - POSIX: `ps -p <pid> -o args=` (macOS·Linux 공통 · 실측 10ms 안).
+    - Windows: exe 이름만으로는 못 가른다(서버는 `pythonw.exe` 다 — 우리 것이라는
+      표시는 **인자**에 있다). CIM 으로 명령줄을 읽는다. 느리므로(수백 ms) 부르는
+      쪽이 executor 로 돌린다.
+    """
+    if pid <= 0:
+        return None
+    import shutil
+    if IS_WINDOWS:
+        exe = shutil.which("powershell")
+        if not exe:
+            return None
+        ps = ("(Get-CimInstance Win32_Process -Filter 'ProcessId=%d')"
+              ".CommandLine" % pid)
+        argv = [exe, "-NoProfile", "-NonInteractive", "-Command", ps]
+    else:
+        exe = shutil.which("ps")
+        if not exe:
+            return None
+        argv = [exe, "-p", str(pid), "-o", "args="]
+    try:
+        out = subprocess.run(argv, capture_output=True, timeout=10.0,
+                             **no_window_kwargs())
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    text = (out.stdout or b"").decode("utf-8", "replace").strip()
+    return text or None
+
+
 def _win_is_alive(pid: int) -> bool:
     r"""Windows: tasklist 로 pid 존재 확인. **PID 컬럼을 정확히 대조**한다.
 

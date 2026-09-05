@@ -143,7 +143,12 @@ pub fn open_capture_dir(path: &str) -> bool {
     let opener = "xdg-open";
     // ⛔ 이름 그대로 띄우지 않는다 — Windows 에서 **이진 옆 폴더**가 시스템 디렉터리보다
     //    먼저 잡힌다(`clip::system_tool` 의 문서에 std 원문과 함께 적었다).
-    std::process::Command::new(clip::system_tool(opener))
+    //    자리를 못 찾으면 **안 연다**(fail-closed · 검수 2026-09-05 G-5) — 부르는 쪽은
+    //    「못 열었다」로 받아 알린다.
+    let Some(opener) = clip::system_tool(opener) else {
+        return false;
+    };
+    std::process::Command::new(opener)
         .arg(dir)
         .spawn()
         .is_ok()
@@ -168,8 +173,12 @@ pub fn open_link(url: &str) -> bool {
     let opener = "explorer";
     #[cfg(all(unix, not(target_os = "macos")))]
     let opener = "xdg-open";
-    // 스킴을 좁힌 것과 **같은 이유로** 띄우는 프로그램도 좁힌다(`clip::system_tool`).
-    std::process::Command::new(clip::system_tool(opener))
+    // 스킴을 좁힌 것과 **같은 이유로** 띄우는 프로그램도 좁힌다(`clip::system_tool`) —
+    // 자리를 못 찾으면 **안 연다**(fail-closed · 검수 2026-09-05 G-5).
+    let Some(opener) = clip::system_tool(opener) else {
+        return false;
+    };
+    std::process::Command::new(opener)
         .arg(url)
         .spawn()
         .is_ok()

@@ -107,8 +107,15 @@ fi
 
 # AGPL 라이선스 전문이 트리에 다시 들어오지 않았는지도 본다(가장 굵은 신호).
 # 이 스크립트 자신은 그 문자열을 담고 있으므로 스캔에서 뺀다.
+#
+# ⛔ **빌드 산출물은 안 훑는다**(검수 2026-09-05 C-6). `--exclude-dir=target` 하나만
+# 두면 `target-eph-*/`(임시 빌드 디렉터리 — 이 상자 실측 1.8GB)와 `build/`(배포 이진)
+# 까지 바이트째 훑어, 스텝 시한(600s) 안에서 **거짓 빨강**(매달림)을 낼 수 있다.
+# 그 둘은 애초에 이 질문의 대상이 아니다 — AGPL 소스가 «트리에 다시 들어왔나»는
+# 우리가 쓰는 소스에 대한 물음이고, 산출물은 그 소스에서 나온다.
 if grep -rl "GNU AFFERO GENERAL PUBLIC LICENSE" . \
-        --exclude-dir=target --exclude-dir=.git \
+        --exclude-dir=target --exclude-dir='target-*' --exclude-dir=build \
+        --exclude-dir=.git \
         --exclude="$(basename "$0")" 2>/dev/null | grep -q .; then
     echo "FAIL: AGPL 라이선스 전문이 트리에 있다 — AGPL 코드가 딸려 들어왔다는 뜻이다" >&2
     rc=1

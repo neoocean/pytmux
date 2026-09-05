@@ -70,6 +70,13 @@ async def test_scan_catches_leak_shapes_in_text():
         "win_cargo.txt": _leak(r"C:\Users\bob", "\\", r".cargo\registry\src\foo\lib.rs"),
         "linux_cargo.txt": _leak("/home/", "runner", "/.cargo/registry/src/foo/lib.rs"),
         "linux_ws.txt": _leak("/home/", "alice", "/p4/playground/scripts/pytmux"),
+        # ☠ 검수 2026-09-05 C-1 — **사설망 호스트의 위치**(테일스케일/CGNAT). 실제로
+        # `CLAUDE.md`·`qa/README.md` 에 트래커 웹·**무인증** MCP JSON-RPC·p4 서버의
+        # 주소가 들어가 있었고 그 둘은 gitignore 밖이다. 100.x 는 인터넷 라우팅이 안
+        # 되지만 「어디에 무엇이 떠 있는지」는 그 자체로 값이다.
+        "tailscale_web.md": _leak("http://100.", "79.188.26", ":8086/d/pytmux/x"),
+        "tailscale_mcp.md": _leak("http://100.", "127.0.1", ":18787/"),
+        "tailscale_p4.txt": _leak("ssl:100.", "64.9.9", ":1666"),
     }
     for name, text in cases.items():
         assert cm._scan(_write(tmp, name, text)) is not None, name
@@ -109,6 +116,10 @@ async def test_scan_lets_placeholders_through():
         "upstream.rs": r'file://C:\Users\John%20Doe\Desktop\vacation-photo.png',
         "nc.py": r'r"C:\Users\woojin\Documents"',
         "plain.py": "그냥 코드 한 줄 — 경로가 없다",
+        # 문서용 주소(RFC 5737)와 CGNAT **밖**의 100.x 는 안 문다 — 시험이 「루프백이
+        # 아닌 것」을 적을 자리가 남아 있어야 한다(안 남기면 게이트가 소음이 된다).
+        "docaddr.py": "198.51.100.7 · 192.0.2.9 · 203.0.113.4 · 100.1.2.3",
+        "version.txt": "100.128.0.1 · 100.63.255.255 · 진행률 100.0%",
     }
     for name, text in cases.items():
         assert cm._scan(_write(tmp, name, text)) is None, (name, text)

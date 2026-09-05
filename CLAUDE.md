@@ -277,11 +277,17 @@ python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르�
   ⇒ **소스 주석에 남아 있는 옛 경로는 이 규칙으로 읽는다.** 주석 100여 곳을 일괄 치환하지
   않았다 — 규칙 한 줄이 더 싸고, 치환은 코드 파일을 전부 건드려 게이트를 태운다.
   전문을 읽는 곳:
-  - 웹 — <http://100.79.188.26:8086/d/pytmux/<slug>>
-  - MCP HTTP — `http://100.79.188.26:18787/` 에 JSON-RPC 를 친다(`method: "tools/call"` ·
+  - ⛔ **주소는 이 파일에 안 적는다** — 이 파일은 스스로 적듯 «공개 미러가 읽는 표면»이고,
+    트래커 MCP 는 **무인증**이라 위치가 곧 접근이다(검수 2026-09-05 C-1 · 사용자 결정
+    2026-09-05). 실제 호스트·포트 셋(웹 · MCP HTTP · p4)은 **p4 전용** 파일
+    `docs/internal/TRACKER_ENDPOINT.md` 에 있다(`docs/internal/` 은 gitignore 우산 안).
+    `scripts/check_mirror.py` 가 그 주소 모양(테일스케일/CGNAT `100.64/10` 대역)이 미러
+    대상 파일에 다시 들어오면 게시를 막는다 — **다음 주소가 조용히 새지 않게**.
+  - 웹 — `http://<트래커 호스트>:<웹 포트>/d/pytmux/<slug>`
+  - MCP HTTP — `http://<트래커 호스트>:<MCP 포트>/` 에 JSON-RPC 를 친다(`method: "tools/call"` ·
     `{"name":"doc_get","arguments":{"id":"pytmux/<slug>"}}`). **DB 자격증명이 필요 없고**
     어느 박스에서나 뜬다. 이슈는 칸 이름이 다르다 — `issue_get {"gid":"pytmux/pytmux-113"}`.
-  - ⚠ **셋(웹·MCP HTTP·CLI) 다 그 맥(100.79.188.26)의 Docker Desktop 위다**(2026-09-04 실측). Docker 가
+  - ⚠ **셋(웹·MCP HTTP·CLI) 다 그 맥의 Docker Desktop 위다**(2026-09-04 실측). Docker 가
     내려가면 셋이 한꺼번에 죽고 **p4 서버(`ssl::1666` · 같은 맥의 `docker/p4d` 스택)도 함께 죽어**
     `Connect to server failed` 가 난다 — 자격증명·재진입을 뒤지지 말고 `ls ~/.docker/run/docker.sock`
     부터 본다. ⛔ ssh 세션에서는 Docker 를 못 띄운다(`open -a Docker` 가 launchd 도메인 오류 ·

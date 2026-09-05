@@ -127,6 +127,51 @@ def test_env_opt_out_short_circuits():
             os.environ["PYTMUX_SKIP_WORKSPACE_GUARD"] = old
 
 
+def test_a_guard_that_could_not_measure_says_so():
+    """☠ 검수 2026-09-05 C-7 — **못 잰 것을 조용히 지나지 않는다.**
+
+    종전에는 `p4 info` 실패(Docker 가 내려간 날)·p4 부재·예외가 전부 그냥 `None` 이었고,
+    `run.py` 는 아무 말 없이 지나갔다 — 그날 depot 드리프트 가드는 한 줄도 안 남기고
+    빠졌는데 스위트는 종전과 똑같이 초록이었다. 「가드가 봤고 괜찮더라」와 「가드가
+    아예 안 돌았다」가 화면에서 같아 보이면 그것은 가드가 아니다."""
+    # ⓐ 실제로 쟀고 깨끗하다 — 그때는 남길 이유가 없다.
+    clean = _FakePC({
+        "p4 info": (0, "..."),
+        "p4 opened ./...": (0, "...  - file(s) not opened on this client."),
+        "p4 diff -se ./...": (0, ""),
+        "git status --porcelain": (0, ""),
+    })
+    assert workspace_guard.find_suspects(ROOT, pc=clean) is None
+    assert workspace_guard.LAST_SKIP is None, workspace_guard.LAST_SKIP
+
+    # ⓑ p4 서버에 못 닿았다(오프라인·Docker 다운).
+    offline = _FakePC({"p4 info": (1, "Connect to server failed")})
+    assert workspace_guard.find_suspects(ROOT, pc=offline) is None
+    assert workspace_guard.LAST_SKIP and "p4 서버" in workspace_guard.LAST_SKIP, \
+        workspace_guard.LAST_SKIP
+
+    # ⓒ 가드 자신이 터졌다 — 그것도 「못 쟀다」다.
+    class _Broken(_FakePC):
+        def run(self, cmd, cwd=None):
+            raise RuntimeError("p4 가 갑자기 죽었다고 치자")
+
+    assert workspace_guard.find_suspects(ROOT, pc=_Broken({})) is None
+    assert workspace_guard.LAST_SKIP and "예외" in workspace_guard.LAST_SKIP, \
+        workspace_guard.LAST_SKIP
+
+    # ⓓ 그리고 **부르는 쪽이 그 줄을 찍는가**(호출부 오라클 — 전역만 재면 그 줄을
+    #    지워도 통과한다).
+    import ast
+    import os as _os
+    src = open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "run.py"),
+               encoding="utf-8").read()
+    tree = ast.parse(src)
+    reads = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Attribute) and n.attr == "LAST_SKIP"
+             and isinstance(n.value, ast.Name) and n.value.id == "workspace_guard"]
+    assert reads, "run.py 가 「못 쟀다」를 안 읽는다 — 이유가 어디에도 안 남는다"
+
+
 def test_pc_load_failure_degrades_to_none_not_a_crash():
     """가드 자신의 버그(또는 p4 부재)가 전체 스위트의 새 단일 장애점이 되면 안 된다."""
     class _Broken(_FakePC):
