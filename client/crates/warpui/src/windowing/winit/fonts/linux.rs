@@ -68,10 +68,40 @@ impl FontconfigLoader {
             }
         }
         if !family.fonts.is_empty() {
-            Ok(family)
-        } else {
-            Err(Error::FamilyHasNoFonts(family_name.to_string(), errors))
+            return Ok(family);
         }
+        // pytmux-484 ⓐ 재발(2026-09-14 실측 · Docker Ubuntu 24.04 aarch64): `query_fonts`
+        // 는 `FcFontList` 를 **문자 그대로**의 FC_FAMILY 로 건다 — fontconfig 의 5개
+        // 내장 제네릭 별칭("monospace" 등)은 어느 폰트의 FC_FAMILY 에도 그 문자열 자체로
+        // 안 박혀 있고, `FcConfigSubstitute`(=`fc-match` 가 속으로 하는 일)가 있어야만
+        // 실 글꼴로 풀린다. `list_fonts`/`sort_fonts` 는 둘 다 그 치환을 안 부르므로,
+        // `mono_font::CANDIDATES` 끝의 "monospace" 는 **이 폰트가 있는 상자에서도** 늘
+        // 빈 결과였다(고유 이름 일곱이 전부 없는 상자에서 시작 즉시 패닉하는 그 자리).
+        // 아무 이름에나 이 치환을 걸면 없는 폰트도 "성공"으로 오판한다(전부 어떤
+        // 기본값으로 떨어지므로) — 그래서 **제네릭 다섯 이름일 때만** 켠다.
+        if let Some(resolved) = self.resolve_generic_alias(family_name)
+            && resolved != family_name
+        {
+            return self.get_family(&resolved);
+        }
+        Err(Error::FamilyHasNoFonts(family_name.to_string(), errors))
+    }
+
+    /// fontconfig 의 내장 제네릭 별칭(`monospace` 등)을 그 상자가 실제로 쓰는 글꼴
+    /// 이름으로 푼다. 별칭이 아닌 이름은 `None`(치환은 별칭에만 켠다 — 위 `get_family`
+    /// 주석 참조). `Pattern::font_match` 가 `FcDefaultSubstitute`+`FcConfigSubstitute`+
+    /// `FcFontMatch` 를 대신 해 준다(CLI `fc-match` 와 같은 경로).
+    fn resolve_generic_alias(&self, name: &str) -> Option<String> {
+        const GENERIC_ALIASES: &[&str] =
+            &["monospace", "sans-serif", "serif", "fantasy", "cursive"];
+        if !GENERIC_ALIASES.contains(&name) {
+            return None;
+        }
+        let cname = CString::new(name).ok()?;
+        let mut pattern = Pattern::new(&self.fc);
+        pattern.add_string(FC_FAMILY, &cname);
+        let matched = pattern.font_match();
+        matched.get_string(FC_FAMILY).map(str::to_owned)
     }
 
     // Gets handles for all font families present on the device.
@@ -189,6 +219,29 @@ impl FontconfigLoader {
         object_set.add(FC_FONTFORMAT);
 
         Ok(list_fonts(&pattern, Some(&object_set)))
+    }
+}
+
+#[cfg(test)]
+mod generic_alias_tests {
+    use super::*;
+
+    /// pytmux-484 ⓐ 재발 방지: 치환은 **제네릭 다섯 이름에만** 켠다. 아무 이름에나 걸면
+    /// `Menlo` 같은 고유 이름도 그 상자의 기본 글꼴로 "성공"해 버려, `CANDIDATES` 의
+    /// 우선순위(그 OS 가 실제로 쓰는 글꼴을 앞에 둔다)가 조용히 무너진다 — 실 폰트
+    /// 유무와 무관한 **순수 로직**이라 폰트가 하나도 없는 CI 상자에서도 잰다.
+    #[test]
+    fn resolve_generic_alias_only_applies_to_the_five_builtin_names() {
+        let Ok(loader) = FontconfigLoader::new() else {
+            return; // fontconfig 라이브러리 자체가 없는 상자 — 이 시험의 관심사가 아니다
+        };
+        for not_generic in ["Menlo", "Cascadia Mono", "DejaVu Sans Mono", "made-up-name"] {
+            assert_eq!(
+                loader.resolve_generic_alias(not_generic),
+                None,
+                "제네릭이 아닌 `{not_generic}` 에 치환을 걸었다 — 고유 이름 우선순위가 깨진다"
+            );
+        }
     }
 }
 
