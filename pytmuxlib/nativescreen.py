@@ -539,10 +539,17 @@ class _NativeBase:
         if top <= self.cursor.y <= bottom:
             self.dirty.update(range(self.cursor.y, self.lines))
             for y in range(self.cursor.y, bottom + 1):
-                if y + count <= bottom:
-                    if y + count in self.buffer:
-                        self.buffer[y] = self.buffer.pop(y + count)
+                if y + count <= bottom and y + count in self.buffer:
+                    self.buffer[y] = self.buffer.pop(y + count)
                 else:
+                    # ☠ 종전엔 여기가 **없었다**(pytmux-506): 끌어올릴 원본 행이
+                    #    버퍼에 없으면 — `buffer` 는 희소 defaultdict 라 **한 번도
+                    #    안 그린 줄은 키가 없다 — 아무것도 안 해서 `buffer[y]` 가
+                    #    옛 내용 그대로 남았다. 「빈 줄로 덮는다」가 통째로 빠져
+                    #    지운 줄이 화면에 잔상으로 남는다(폭 2 와 무관 · ASCII 로도
+                    #    재현 · tmux 대조: `가나` + `ESC[1M` 은 빈 줄이다).
+                    #    `insert_lines` 는 내림차순이라 대상 행을 먼저 pop 하고
+                    #    지나가므로 같은 손이 없다.
                     self.buffer.pop(y, None)
             self.carriage_return()
 
@@ -551,8 +558,9 @@ class _NativeBase:
         self.dirty.add(self.cursor.y)
         count = count or 1
         line = self.buffer[self.cursor.y]
-        # 밀려나가는 지점의 폭 2 쌍을 먼저 끊는다(pytmux-495).
-        self._break_wide_pair(line, self.cursor.x)
+        # 삽입 지점을 **가로지르는** 폭 2 쌍만 끊는다(pytmux-506). 그 자리에서
+        # **시작하는** 쌍은 통째로 밀려 살아남아야 한다 — tmux 실측.
+        self._break_straddling_pair(line, self.cursor.x)
         for x in range(self.columns, self.cursor.x - 1, -1):
             if x + count < self.columns:
                 line[x + count] = line[x]
@@ -564,8 +572,10 @@ class _NativeBase:
         count = count or 1
         line = self.buffer[self.cursor.y]
         # 이동 경계가 폭 2 쌍 한가운데면 반쪽만 남거나 가짜 뒤칸이 생긴다(pytmux-495).
-        self._break_wide_pair(line, self.cursor.x)
-        self._break_wide_pair(line, self.cursor.x + count)
+        # ⛔ **가로지르는 쌍만** 끊는다(pytmux-506) — 경계에서 시작하는 쌍은 통째로
+        #    당겨져 살아남는다. 종전엔 그것까지 공백으로 부숴 글자를 잃었다.
+        self._break_straddling_pair(line, self.cursor.x)
+        self._break_straddling_pair(line, self.cursor.x + count)
         for x in range(self.cursor.x, self.columns):
             if x + count < self.columns:
                 line[x] = line.pop(x + count, self.default_char)
@@ -600,6 +610,32 @@ class _NativeBase:
         elif x + 1 < self.columns and line[x + 1].data == "":
             line[x] = blank                         # x 는 앞칸
             line[x + 1] = blank
+
+    def _break_straddling_pair(self, line, x: int) -> None:
+        """열 ``x`` 를 **가로지르는** 폭 2 쌍만 끊는다(pytmux-506).
+
+        ⛔ `_break_wide_pair` 와 갈라 쓰는 이유 — 셀을 건드리는 조작은 두 종류다.
+
+        - **덮어쓰는** 조작(draw·EL·ECH·ED): 그 자리의 쌍은 어느 쪽이 걸리든 사라진다
+          → `_break_wide_pair`(앞칸 갈래까지 끊는다).
+        - **미는/당기는** 조작(ICH·DCH, 그리고 IRM 삽입 그리기): 경계에서 **시작하는**
+          쌍은 통째로 옮겨 **온전히 살아남는다** → 여기. 종전에는 `_break_wide_pair`
+          를 그대로 불러 그 쌍까지 공백으로 부숴 **글자를 통째로 잃었다**(제보
+          2026-09-14 「여전히 좌우가 깨진다」 · tmux 3.6 대조 실측:
+          `가나` + `ESC[1G` + `ESC[3@` 가 tmux `   가나` 인데 `   ` 였다).
+
+        끊을 것은 쌍이 경계를 **가로지를** 때뿐 — 즉 ``x`` 가 뒤칸(빈 data)일 때다.
+        그때는 앞칸이 경계 밖에 남아 이동에서 빠지므로 반쪽이 고아가 된다.
+        """
+        if not 0 <= x < self.columns:
+            return
+        if line[x].data != "":
+            return                                  # 앞칸이거나 보통 글자 — 그대로 민다
+        # 여기부터는 `_break_wide_pair` 의 **뒤칸 갈래와 같은 코드**다(앞칸 갈래만 뺐다).
+        blank = self._erase_char()
+        if x and line[x - 1].data != "":
+            line[x - 1] = blank
+        line[x] = blank
 
     def _break_row_edge(self, line, columns: int | None = None) -> None:
         """행 끝에 **뒤칸을 잃은 폭 2 글자**가 남았으면 지운다(pytmux-495).

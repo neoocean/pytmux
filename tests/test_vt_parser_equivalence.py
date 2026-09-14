@@ -207,7 +207,13 @@ def _golden_signatures() -> dict:
 async def test_render_golden_hash_frozen():
     """현재 기본 렌더 파이프라인이 동결된 골든 해시를 재현한다(절대 회귀 게이트).
     PYTMUX_REGEN_GOLDEN=1 이면 골든을 재생성(의도적 렌더 변경 시). 불일치는 어느
-    입력이 드리프트했는지 라벨로 보고한다."""
+    입력이 드리프트했는지 라벨로 보고한다.
+
+    ★ `corpus_*` 셋은 2026-09-14 에 한 번 재생성했다(pytmux-506). 골든이 **버그 쪽
+      값으로 동결돼 있었다** — DL 이 빈 줄을 끌어올릴 때 지운 줄을 안 비우던 손
+      (pyte 에서 물려받았다) 때문에 「혼합 편집」 코퍼스의 4행이 `L06` 으로 남았다.
+      tmux 3.6a 에 같은 바이트열을 먹여 그 행이 **빈 줄**임을 확인하고 옮겼다.
+      드리프트는 그 한 행뿐이고 픽스처·스크롤백 골든은 안 움직였다."""
     cur = _golden_signatures()
     if os.environ.get("PYTMUX_REGEN_GOLDEN"):
         with open(_GOLDEN_PATH, "w", encoding="utf-8") as f:
