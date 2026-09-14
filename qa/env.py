@@ -234,7 +234,19 @@ class HomeSlot:
             time.sleep(step)
 
     def wipe(self) -> None:
-        """슬롯 디렉터리를 지운다(런 산출물은 `qa/out/` 에 따로 있다)."""
+        """슬롯 디렉터리를 지운다(런 산출물은 `qa/out/` 에 따로 있다).
+
+        ⛔ **먼저 거둔다**(pytmux-435 ⑤ · 2026-09-04). `ptyhost_pids()`·`residue()` 는
+        `state_dir` 의 pid 파일을 읽어서 앞 주인을 찾는다 — 이 메서드가 그 파일을 먼저
+        지우면 다음 주인(또는 다음 런)은 앞 주인을 **영영 못 찾는다**. 실측: 시나리오가
+        `Session.stop()`(정상 경로의 `reap()`) 을 못 부르고 죽었을 때(예외·시한초과) 이
+        메서드만 호출돼 `state/` 가 통째로 비었는데 그 슬롯을 쥔 서버는 살아 있었다 —
+        `pxh-17368` 슬롯 하나에 그렇게 남은 서버가 **13개**, 각 누적 CPU 155분이었다.
+        `reap()` 은 `self.spawned`(우리가 띄운 pid, 파일과 무관하게 메모리에 있다)와
+        `ptyhost_pids()`(파일이 아직 있을 때만) 둘 다를 pid 로만 회수하므로, 호출 순서를
+        바꾸는 것만으로 시나리오가 어디서 죽었든 이 슬롯의 서버가 도달 불가로 남지 않는다.
+        """
+        self.reap()
         shutil.rmtree(self.home, ignore_errors=True)
 
 
