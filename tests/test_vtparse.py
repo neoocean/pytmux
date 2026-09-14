@@ -517,3 +517,128 @@ async def test_a_combining_accent_still_composes_the_way_it_always_did():
     line = pane._main.buffer[0]
     assert line[0].data == "é", repr(line[0].data)   # NFC 로 합쳐진다
     assert line[1].data == "x", "악센트가 칸을 먹었다"
+
+
+# ── pytmux-495: 폭 2 문자 쌍의 격자 불변식 ──────────────────────────────────
+# 격자는 폭 2 글자를 「앞칸 = 글자 · 뒤칸 = 빈 data」 두 셀로 들고, 직렬화
+# (`Pane._serialize_row`)는 **빈 data 를 건너뛰어** 그 쌍을 복원한다. 쌍의 한쪽만
+# 덮이면 반쪽이 고아로 남아 그 줄의 렌더 폭이 격자 폭과 달라지고 뒤가 한 칸씩 밀린다 —
+# 제보(2026-09-14)의 「pytmux 안 Claude Code 글자 겹침·중복·깨짐」이 그것이다.
+
+_W = "가나다"          # 폭 2 셋
+
+
+def _row_cells(screen, y, cols):
+    return [screen.buffer[y][x].data for x in range(cols)]
+
+
+def _render_width(screen, y, cols):
+    """`_serialize_row` 와 **같은 규칙**으로 그 행이 실제로 차지하는 칸 수."""
+    from pytmuxlib.cellwidth import char_cells
+    w = 0
+    for data in _row_cells(screen, y, cols):
+        if data == "":
+            continue                     # 뒤칸 — 앞칸이 이미 두 칸을 센다
+        w += char_cells(data[0]) if data else 1
+    return w
+
+
+def _feed(cols, *chunks):
+    s = NativeScreen(cols, 3)
+    t = VTTokenizer(s)
+    for c in chunks:
+        t.feed(c if isinstance(c, bytes) else c.encode("utf-8"))
+    return s
+
+
+async def test_wide_pair_survives_every_cell_mutation():
+    """⛔ 어떤 조작을 해도 **행의 렌더 폭 == 격자 열 수**여야 한다(pytmux-495).
+
+    종전엔 쌍의 한쪽만 덮는 조작마다 폭이 11/13 으로 어긋났다(격자 12).
+    """
+    cases = {
+        "앞칸을 좁은 글자로 덮기": (_W, b"\x1b[1;1HA"),
+        "뒤칸을 좁은 글자로 덮기": (_W, b"\x1b[1;2HB"),
+        "쌍 한가운데부터 EL(0)": (_W, b"\x1b[1;4H\x1b[K"),
+        "쌍 한가운데까지 EL(1)": (_W, b"\x1b[1;4H\x1b[1K"),
+        "쌍 한가운데부터 ECH": (_W, b"\x1b[1;2H\x1b[3X"),
+        "쌍 한가운데에서 DCH": ("가나다라마", b"\x1b[1;2H\x1b[3P"),
+        "쌍 한가운데에서 ICH": (_W, b"\x1b[1;2H\x1b[3@"),
+        "좁은 글자 위에 폭 2 겹쳐쓰기": ("abcdefghijkl", b"\x1b[1;3H", "한글"),
+    }
+    for label, chunks in cases.items():
+        s = _feed(12, *chunks)
+        got = _render_width(s, 0, 12)
+        assert got == 12, (
+            f"{label}: 렌더 폭 {got} != 격자 12 — 고아 반쪽이 남았다 "
+            f"{_row_cells(s, 0, 12)!r}")
+
+
+async def test_wide_char_that_does_not_fit_wraps_instead_of_straddling():
+    """마지막 한 칸에는 폭 2 글자가 앉지 않는다 — 다음 줄로 접는다(pytmux-495).
+
+    종전엔 뒤칸 없이 앉아 그 줄만 한 칸 넘쳤다(홀수 폭 패널에서 상시).
+    """
+    s = _feed(7, _W + "가")
+    assert _render_width(s, 0, 7) == 7, _row_cells(s, 0, 7)
+    assert s.buffer[1][0].data == "가", "넘친 글자가 다음 줄로 안 갔다"
+
+
+async def test_ink_style_repaint_over_hangul_leaves_no_orphan_glyph():
+    """제보 재현 — 한글 줄을 Ink 식으로 다시 그리면 옛 글자가 박혀 남았다.
+
+    Claude Code(Ink)는 커서를 올려 덮어쓰고 `ESC[K` 로 꼬리를 지운다. 한글이 섞이면 그
+    경계가 폭 2 글자 한가운데에 떨어져, 종전엔 `Ran 4 shell commands스` 처럼 옛 줄의
+    반쪽이 남았다(스크린샷의 `미결a사항은r빼고` · `관계름AND절소속` 과 같은 결함).
+    """
+    cols = 62
+    old = "● Good — 읽은 문서: 스킬시스템 팀 설정 통합 제안입니다."
+    new = "Ran 4 shell commands"
+    s = _feed(cols, old, b"\x1b[1;1H", new, b"\x1b[1;22H\x1b[K")
+    shown = "".join(d for d in _row_cells(s, 0, cols) if d != "").rstrip()
+    assert shown == new, f"옛 줄의 고아 글자가 남았다: {shown!r}"
+    assert _render_width(s, 0, cols) == cols
+
+
+async def test_grid_width_invariant_under_random_mutation():
+    """무작위 조작 조합에도 격자 불변식이 버틴다(pytmux-495 속성 시험).
+
+    단위 사례는 내가 떠올린 경계만 덮는다 — ICH→DCH 처럼 **두 조작이 엮일 때만** 나던
+    갈래는 이 시험이 잡았다(격자 밖 열에 셀을 쌓던 손).
+    """
+    import random
+    chars = "가나다라abc한글x 一二"
+    rnd = random.Random(20260914)
+    for _ in range(3000):
+        cols = rnd.randint(4, 24)
+        ops = []
+        for _ in range(rnd.randint(1, 14)):
+            k = rnd.random()
+            if k < .42:
+                ops.append("".join(rnd.choice(chars)
+                                   for _ in range(rnd.randint(1, 12))))
+            elif k < .56:
+                ops.append(f"\x1b[{rnd.randint(1, 3)};{rnd.randint(1, cols)}H")
+            elif k < .66:
+                ops.append(f"\x1b[{rnd.randint(0, 2)}K")
+            elif k < .74:
+                ops.append(f"\x1b[{rnd.randint(1, 8)}X")
+            elif k < .82:
+                ops.append(f"\x1b[{rnd.randint(1, 8)}P")
+            elif k < .90:
+                ops.append(f"\x1b[{rnd.randint(1, 8)}@")
+            else:
+                ops.append(f"\x1b[{rnd.randint(0, 2)}J")
+        s = _feed(cols, *ops)
+        for y in range(3):
+            got = _render_width(s, y, cols)
+            assert got == cols, (
+                f"cols={cols} row={y} 렌더 폭 {got} — 조작 {ops!r} "
+                f"셀 {_row_cells(s, y, cols)!r}")
+
+
+async def test_resize_narrower_does_not_orphan_a_wide_lead():
+    """열을 줄여 뒤칸이 잘려 나가면 앞칸도 함께 지운다(pytmux-495)."""
+    s = _feed(12, _W)
+    s.resize(columns=5)            # '다' 의 뒤칸(5열)이 잘린다
+    assert _render_width(s, 0, 5) == 5, _row_cells(s, 0, 5)

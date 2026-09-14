@@ -76,22 +76,21 @@
          갱신하면 랜딩도 자동 최신(이중 관리 없음). fetch 실패 시 이 폴백이 그대로 남는다. -->
     <div class="cl-news">
       <div class="cl-news-head">
-        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-07-30 <span class="pill">목요일</span></span>
+        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-09-05 <span class="pill">토요일</span></span>
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
-        <li><span class="pill stable">안정</span> <strong>넓은 텍스트를 붙여넣으면 pytmux 가 몇십 초 동안 멈추던 것을 고쳤습니다.</strong>
-          테두리 문자를 걷어내는 검사가 줄 길이의 제곱으로 느려졌습니다 — 공백 10만 자 한 줄 32초 → <strong>0.0035초</strong>. 마우스 복사도 함께 빨라졌습니다.</li>
-        <li><span class="pill stable">복사</span> <strong>Claude Code 의 <code>! …</code> 명령을 긁어 복사하면 줄바꿈·들여쓰기가 섞여 그대로 붙여넣을 수 없던 것을 고쳤습니다.</strong>
-          앱이 <strong>스스로 접은</strong> 자리를 알아보고 펴서 클립보드에 넣습니다 — 로그·코드 줄은 건드리지 않습니다(<code>set copy-unwrap off</code> 로 끔).</li>
-        <li><span class="pill stable">마우스</span> <strong>안에서 돌던 앱이 갑자기 죽은 패널에서 마우스를 움직이면 프롬프트에 <code>35;61;31M…</code> 같은 글자가 박히던 것을 고쳤습니다.</strong>
-          앱이 되돌릴 틈 없이 죽어 켜진 채 남은 "마우스 좌표 요청" 을 pytmux 가 스스로 걷어냅니다 — 휠 스크롤백도 함께 돌아옵니다.</li>
-        <li><span class="pill stable">설정</span> <strong>설정 화면의 <code>exit-empty</code> 줄이 켜짐/꺼짐 대신 <code>미상</code> 으로만 보이던 것을 고쳤습니다.</strong>
-          서버가 보내 주는 현재값 묶음에 이 항목만 빠져 있었습니다 — 이제 실제 값이 그대로 보입니다.</li>
-        <li><span class="pill stable">Claude</span> <strong><code>/model</code> 로 모델을 바꿔도 상태줄 모델 배지가 한동안 옛 모델을 보이던 것을 고쳤습니다.</strong>
-          배지는 같은 이름을 세 프레임 연속 본 뒤 바꾸는데, 화면이 멈춰 있으면 다시 읽지 않아 세다가 얼었습니다 — 이제 바꾼 직후 곧바로 따라옵니다.</li>
-        <li><span class="pill stable">문서</span> <strong>소개 사이트를 최신 배포본에 맞춰 최신화했습니다.</strong>
-          상세 가이드 11장(원격 페더레이션)에 다중홉을, 6장(마우스로 제어)에 남은 마우스 요청 자동 회수를 실었습니다.</li>
+        <li><span class="pill stable">GUI</span> <strong>GUI 의 <span class="inline-code">토큰 사용량</span> 판이 정본과 같은 <span class="inline-code">탭 띠</span>를 갖고, 탭을 드래그해 옮기고, 붙여넣은 이미지에 축소판이 뜹니다.</strong>
+          지금까지 GUI 의 토큰 판은 기간(일·주·월)을 고르는 방식이 정본과 달랐고, 탭을 마우스로 끌어 순서를 바꾸는 동작도 없었습니다. 이제 정본과 같은 탭 띠가 붙고, 드래그로 옮기는 동작은 실제로 손을 뗀 자리를 기계로 재서 판정합니다.
+          <br>붙여넣은 이미지는 지금까지 파일 이름만 보였는데, 이제 작은 축소판이 함께 뜹니다. 한도 판의 모델·컨텍스트를 고르는 줄도 정본과 같은 모양을 갖췄습니다.</li>
+        <li><span class="pill stable">진단</span> <strong><span class="inline-code">:debug-stats</span> 진단 화면을 서버가 마저 완성해, 두 클라이언트가 같은 판 아래에 붙습니다.</strong>
+          지난주 GUI 쪽에만 있던 자체 성능 진단 화면에 이번에 서버 쪽 절반(<span class="inline-code">debug_stats</span> 명령)이 더해져, 파이썬 클라이언트도 같은 자리에서 같은 진단 정보를 볼 수 있습니다.</li>
+        <li><span class="pill stable">안정</span> <strong>자잘하지만 체감되는 결함 셋을 고쳤습니다 — 뒷탭 복사가 클립보드를 덮던 것, auto-yes 가 엉뚱한 상자에 Enter 를 보내던 것, 포커스를 옮겨도 블록 선택 모드가 안 풀리던 것.</strong>
+          백그라운드 탭에서 앱이 <span class="inline-code">OSC 52</span>(클립보드에 넣어라)를 보내면, 탭을 전환하는 바로 그 순간 방금 복사해 둔 내용이 조용히 덮어써지고 있었습니다 — 이제 세션의 모든 패널에서 이 요청을 걷어 처리하되, 탭 전환 경합은 막습니다.
+          <br><span class="inline-code">claude_auto_yes</span>(자동 «예» 확정)는 화면에 뜬 것이 진짜 권한 확인 상자인지 더 엄격히 가려, diff 미리보기 같은 다른 상자에는 더 이상 Enter 가 가지 않습니다.
+          <br>패널 포커스를 옮기면 GUI 에서만 블록 선택 모드가 풀리던 것을 정본과 같게 맞췄습니다.</li>
+        <li><span class="pill stable">Linux</span> <strong>Linux(aarch64) 에서 GUI 가 아예 컴파일되지 않던 문제를 고쳤습니다.</strong>
+          호스트 이름을 읽는 자리의 버퍼 타입이 이 아키텍처에서 컴파일 오류를 냈습니다 — 이제 리눅스 ARM64(예: 라즈베리파이, Apple Silicon 리눅스 VM) 에서도 GUI 를 빌드할 수 있습니다.</li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">

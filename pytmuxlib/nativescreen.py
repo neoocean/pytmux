@@ -236,6 +236,8 @@ class _NativeBase:
             for line in self.buffer.values():
                 for x in range(columns, self.columns):
                     line.pop(x, None)
+            for line in self.buffer.values():
+                self._break_row_edge(line, columns)   # 뒤칸이 잘려 나간 앞칸(pytmux-495)
         self.lines, self.columns = lines, columns
         self.set_margins()
         # model._BCEMixin.resize: 폭 축소 시 autowrap 가드 + 탭스톱 재계산.
@@ -399,19 +401,27 @@ class _NativeBase:
             #     먼저 돌아 군집 한가운데서 줄이 넘어간다.
             if char_width > 0 and _joins_previous_cell(self, char):
                 continue
-            if self.cursor.x == self.columns:
+            # ★ 남은 칸에 **폭만큼** 안 들어가면 넘긴다(pytmux-495). 종전엔 `x ==
+            #   columns` 만 봐서, 마지막 한 칸에 폭 2 글자가 뒤칸 없이 앉았다 — 직렬화가
+            #   그 글자를 그대로 실어 그 줄만 렌더 폭이 한 칸 넘쳤다. `columns - char_width`
+            #   는 종전 값의 일반화다(폭 1 이면 columns-1, 폭 2 면 columns-2).
+            if self.cursor.x == self.columns or (
+                    char_width == 2 and self.cursor.x + 2 > self.columns):
                 if mo.DECAWM in self.mode:
                     self.dirty.add(self.cursor.y)
                     self.carriage_return()
                     self.linefeed()
                 elif char_width > 0:
-                    self.cursor.x -= char_width
+                    self.cursor.x = max(0, self.columns - char_width)
             if mo.IRM in self.mode and char_width > 0:
                 self.insert_characters(char_width)
             line = self.buffer[self.cursor.y]
             if char_width == 1:
+                self._break_wide_pair(line, self.cursor.x)
                 line[self.cursor.x] = self.cursor.attrs._replace(data=char)
             elif char_width == 2:
+                self._break_wide_pair(line, self.cursor.x)
+                self._break_wide_pair(line, self.cursor.x + 1)
                 line[self.cursor.x] = self.cursor.attrs._replace(data=char)
                 if self.cursor.x + 1 < self.columns:
                     line[self.cursor.x + 1] = \
@@ -541,20 +551,27 @@ class _NativeBase:
         self.dirty.add(self.cursor.y)
         count = count or 1
         line = self.buffer[self.cursor.y]
+        # 밀려나가는 지점의 폭 2 쌍을 먼저 끊는다(pytmux-495).
+        self._break_wide_pair(line, self.cursor.x)
         for x in range(self.columns, self.cursor.x - 1, -1):
-            if x + count <= self.columns:
+            if x + count < self.columns:
                 line[x + count] = line[x]
             line.pop(x, None)
+        self._break_row_edge(line)   # 화면 밖으로 뒤칸이 밀려난 앞칸
 
     def delete_characters(self, count=None) -> None:
         self.dirty.add(self.cursor.y)
         count = count or 1
         line = self.buffer[self.cursor.y]
+        # 이동 경계가 폭 2 쌍 한가운데면 반쪽만 남거나 가짜 뒤칸이 생긴다(pytmux-495).
+        self._break_wide_pair(line, self.cursor.x)
+        self._break_wide_pair(line, self.cursor.x + count)
         for x in range(self.cursor.x, self.columns):
-            if x + count <= self.columns:
+            if x + count < self.columns:
                 line[x] = line.pop(x + count, self.default_char)
             else:
                 line.pop(x, None)
+        self._break_row_edge(line)   # 오른쪽이 비면서 뒤칸을 잃은 앞칸
 
     # BCE: 소거 셀 속성은 배경/전경/반전만 보존(글자 장식은 버림) — model._BCEMixin.
     def _erase_char(self) -> Char:
@@ -562,27 +579,68 @@ class _NativeBase:
             data=" ", bold=False, italics=False, underscore=False,
             strikethrough=False, blink=False)
 
+    def _break_wide_pair(self, line, x: int) -> None:
+        """열 ``x`` 를 건드리기 **전에**, 그 자리를 물고 있는 폭 2 문자 쌍을 공백
+        둘로 끊는다(pytmux-495).
+
+        격자는 폭 2 문자를 「앞칸 = 글자 · 뒤칸 = 빈 data」 두 셀로 둔다. 직렬화
+        (`model.Pane._serialize_row`)는 **빈 data 를 건너뛰어** 그 쌍을 복원하므로,
+        「빈 data == 바로 앞칸이 폭 2 문자」가 격자의 불변식이다. 쌍의 **한쪽만** 덮이면
+        반쪽이 고아로 남아 그 줄의 렌더 폭이 격자 폭과 달라지고, 뒤가 한 칸씩 밀린다 —
+        제보(2026-09-14)의 「pytmux 안 Claude Code 글자 겹침」이 그것이다. 실제 단말
+        (xterm·VTE·tmux·conhost)도 이때 쌍의 나머지 반쪽을 공백으로 지운다.
+        """
+        if not 0 <= x < self.columns:
+            return
+        blank = self._erase_char()
+        if line[x].data == "":                      # x 는 뒤칸
+            if x and line[x - 1].data != "":
+                line[x - 1] = blank
+            line[x] = blank
+        elif x + 1 < self.columns and line[x + 1].data == "":
+            line[x] = blank                         # x 는 앞칸
+            line[x + 1] = blank
+
+    def _break_row_edge(self, line, columns: int | None = None) -> None:
+        """행 끝에 **뒤칸을 잃은 폭 2 글자**가 남았으면 지운다(pytmux-495).
+
+        오른쪽으로 밀거나(ICH) 오른쪽을 버리는(DCH·열 축소) 조작은 쌍을 화면 밖으로
+        밀어낸다 — 그때 마지막 칸에 앞칸만 남으면 그 줄이 한 칸 넘친다."""
+        last = (self.columns if columns is None else columns) - 1
+        if last < 0:
+            return
+        data = line[last].data
+        if data and _wcwidth(data[0]) == 2:
+            line[last] = self._erase_char()
+
+    def _erase_span(self, line, lo: int, hi: int, blank) -> None:
+        """``[lo, hi)`` 를 blank 로 지우되, 양 경계에 걸친 폭 2 쌍을 먼저 끊는다."""
+        lo = max(0, lo)
+        hi = min(hi, self.columns)
+        if lo >= hi:
+            return
+        self._break_wide_pair(line, lo)
+        self._break_wide_pair(line, hi - 1)
+        for x in range(lo, hi):
+            line[x] = blank
+
     def erase_characters(self, count=None) -> None:
         self.dirty.add(self.cursor.y)
         count = count or 1
-        blank = self._erase_char()
         line = self.buffer[self.cursor.y]
-        for x in range(self.cursor.x,
-                       min(self.cursor.x + count, self.columns)):
-            line[x] = blank
+        self._erase_span(line, self.cursor.x, self.cursor.x + count,
+                         self._erase_char())
 
     def erase_in_line(self, how=0, private=False) -> None:
         self.dirty.add(self.cursor.y)
-        if how == 0:
-            interval = range(self.cursor.x, self.columns)
-        elif how == 1:
-            interval = range(self.cursor.x + 1)
-        else:
-            interval = range(self.columns)
-        blank = self._erase_char()
         line = self.buffer[self.cursor.y]
-        for x in interval:
-            line[x] = blank
+        blank = self._erase_char()
+        if how == 0:
+            self._erase_span(line, self.cursor.x, self.columns, blank)
+        elif how == 1:
+            self._erase_span(line, 0, self.cursor.x + 1, blank)
+        else:
+            self._erase_span(line, 0, self.columns, blank)
 
     def erase_in_display(self, how=0, *args, **kwargs) -> None:
         if how == 0:

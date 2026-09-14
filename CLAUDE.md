@@ -260,6 +260,8 @@ python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르�
   **자동 생성 미러**다 — ⛔ **그 파일을 손으로 고치지 말 것**(다음 `sync` 가 드리프트로
   신고하고 반영하지 않는다). 고치는 길은 MCP `issue_update`·`issue_create` → `mirror --write`
   → 사람이 P4 제출. 규약은 그 디렉터리 README.
+  ⛔ **그 미러는 2026-09-09 에 은퇴했다**(issue/issue-2134 · 트래커가 유일본) — `docs/internal/qa/issues/` 는 이제
+  없고 위 줄의 `mirror --write` 도 더는 안 쓴다. 읽는 길은 `issue show pytmux-<번호>` 다.
   ★ **기계가 잡은 결함의 유입구는 `python3 scripts/tracker_tests.py --ingest` 다**(위 테스트 절)
   — M2 에서는 그 명령이 **유일한 길**이고, 안 부르면 스위트 실패가 어디에도 안 들어간다.
   HANDOFF §10-21·ARCHIVE §13-4 는 **색인 표**만
@@ -269,7 +271,7 @@ python3 qa/run.py --ingest                             # ⛔ 이걸 안 부르�
   CL 72996). 종전에는 `docs/internal/**/*.md` 가 「제목 + 트래커 링크」인 **링크 스텁 365편**
   이었는데, 진입점 한 편이 같은 말을 하면 그 365편은 잡음이라 지웠다. 함께 트래커로 옮긴
   루트 `MEMORY.md`·`memory/*.md` 6편도 저장소에서 사라졌다(전문은 DB 에 있다 · 왕복 확인).
-  남은 `.md` 는 **진입점 · README · 이슈 미러(`docs/internal/qa/issues/`) · 벤치마크 데이터**뿐이다.
+  남은 `.md` 는 **진입점 · README · 벤치마크 데이터**뿐이다.
   ★ **옛 경로 → 슬러그는 기계적이다**(366/366 실측): `docs/internal/A/B/NAME.md` →
   `pytmux/a-b-name` — `docs/internal/` 을 떼고 `/` 를 `-` 로 바꾸고 전부 소문자.
   예: `docs/internal/LESSONS_2026-07-26.md` → `pytmux/lessons_2026-07-26` ·
