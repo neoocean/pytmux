@@ -1581,9 +1581,11 @@ async def test_remote_same_host_tabs_command_merge():
         await teardown(srvB, taskB, sockB)
 
 
-async def test_remote_autoresume_relays_to_remote_pane():
-    """원격 탭을 보는 중 set_autoresume 는 **원격** 활성 패널에 적용된다(릴레이) —
-    로컬 활성 패널(딴 탭)에 켜지던 '엉뚱한 탭에 AR' 버그 수정(제보 2026-06-15)."""
+async def test_remote_pane_toggle_relays_to_remote_pane():
+    """원격 탭을 보는 중 활성 패널 토글(set_prompt_clear)은 **원격** 활성 패널에 적용된다
+    (릴레이) — 로컬 활성 패널(딴 탭)에 켜지던 '엉뚱한 탭' 버그 수정(제보 2026-06-15).
+    종전에는 같은 경로를 자동재개 토글(set_autoresume)로 쟀다 — 그 기능은 pytmux-526 에서
+    걷었으므로 같은 릴레이 목록의 남은 패널 토글로 잰다."""
     if os.name == "nt":
         skip("POSIX 전용(2-서버 페더레이션 E2E — Windows 는 실 PTY/ssh 경로 미보증)")
     srvA, taskA, sockA = await server_only()
@@ -1605,17 +1607,17 @@ async def test_remote_autoresume_relays_to_remote_pane():
                     if w["name"].startswith("⇄"))
         localp = sessA.active_window.active_pane
         remotep = sessB.active_window.active_pane
-        assert not localp.autoresume and not remotep.autoresume
-        # 원격 탭 진입 → 보기 중 set_autoresume → 릴레이 → 원격 패널만 켜짐
+        assert not localp.prompt_clear_mode and not remotep.prompt_clear_mode
+        # 원격 탭 진입 → 보기 중 set_prompt_clear → 릴레이 → 원격 패널만 켜짐
         await write_msg(writer, {"t": "cmd", "action": "select_window",
                                  "index": gidx})
         await _read_until(reader, lambda m: m.get("t") == "layout",
                           what="remote layout")
-        await write_msg(writer, {"t": "cmd", "action": "set_autoresume",
+        await write_msg(writer, {"t": "cmd", "action": "set_prompt_clear",
                                  "value": True})
-        await wait_for(lambda: remotep.autoresume, timeout=4.0, step=0.05)
-        assert remotep.autoresume, "원격 활성 패널에 AR 적용(릴레이)"
-        assert not localp.autoresume, "로컬 패널은 불변(엉뚱한 탭 AR 금지)"
+        await wait_for(lambda: remotep.prompt_clear_mode, timeout=4.0, step=0.05)
+        assert remotep.prompt_clear_mode, "원격 활성 패널에 적용(릴레이)"
+        assert not localp.prompt_clear_mode, "로컬 패널은 불변(엉뚱한 탭 금지)"
     finally:
         if writer is not None:
             writer.close()

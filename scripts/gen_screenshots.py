@@ -921,20 +921,6 @@ async def namesync(app, pilot):
     await pilot.pause(0.5)
 
 
-async def claude_rules(app, pilot):
-    # 시작 규칙 편집(claude-rules) — RulesEditScreen 에 예시 규칙을 넣어 띄운다.
-    # 저장하면 새 세션/`/clear` 후 첫 프롬프트에 자동 주입되는 '항상 지킬 규칙'.
-    from importlib import import_module
-    # 패키지명에 하이픈이 있어 from-import 가 안 되므로 import_module 로 로드한다.
-    screens = import_module("pytmuxlib.plugins.claude-code.screens")
-    sample = ("- 답변은 한국어로, 핵심부터 간결하게.\n"
-              "- 코드를 고치기 전 관련 파일을 먼저 읽고 기존 스타일을 따른다.\n"
-              "- 테스트를 추가/수정하면 반드시 실행해 통과를 확인한다.\n"
-              "- 커밋 메시지는 한 줄 요약 + 본문(왜).")
-    app.push_screen(screens.RulesEditScreen(sample))
-    await pilot.pause(0.5)
-
-
 async def usage_panel(app, pilot):
     # 사용량 한도 조회(/usage) — 그림자 세션이 가져온 세션 5h·주 전체·주 Sonnet 한도를
     # 막대 그래프 전용 화면(open_usage_panel)으로 띄운다. 예시 한도 값을 주입.
@@ -981,14 +967,13 @@ async def usage_view(app, pilot):
 
 
 # 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
-CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
-                  "22-claude-real"]
+CLAUDE_OUTPUTS = ["11-claude", "13-perm-mode", "22-claude-real"]
 
 
 async def _claude_suite_once():
-    """진짜 `claude` 한 세션을 운전해 §11 세부 컷 4장을 모두 캡처한다.
+    """진짜 `claude` 한 세션을 운전해 §11 세부 컷 3장을 모두 캡처한다.
 
-    프롬프트 1회로 idle(응답완료)·autoresume·권한모드 팝업을 찍고, 프롬프트
+    프롬프트 1회로 idle(응답완료)·권한모드 팝업을 찍고, 프롬프트
     2회째의 busy 상태로 처리중(◐) 컷을 찍는다(환영 배너가 위로 밀려 계정
     이름이 안 보이는 상태). 저장 시 _redact_svg 가 이메일 등 PII 를 마스킹한다."""
     srv, task, sock = await server_only()
@@ -1015,12 +1000,6 @@ async def _claude_suite_once():
             await _wait_claude(pilot, app, "idle")
             await pilot.pause(0.6)
             await shot(pilot, "22-claude-real")            # 실제 실행(응답완료)
-            # ── 자동재개(AR) 토글 → 상태줄 AR 배지
-            app.send_cmd("set_autoresume")
-            await pilot.pause(0.6)
-            await shot(pilot, "12-claude-autoresume")
-            app.send_cmd("set_autoresume")                 # 원복(off)
-            await pilot.pause(0.3)
             # ── 권한모드 선택 팝업(footer 클릭 상당)
             app.open_perm_mode(aid)
             await pilot.pause(0.5)
@@ -1097,7 +1076,6 @@ SCENES = [
     ("45-mdir-archive", "mdir 압축 내부 보기 — Archive 경로줄·계층 탐색(읽기전용)", mdir_archive),
     ("46-mdir-tree", "mdir F10=ncd 트리 연동 — 선택 디렉토리로 mdir 이동", mdir_tree),
     ("47-namesync", "이름 동기화 규칙(:namesync) — 디렉토리→이름 규칙 목록", namesync),
-    ("28-claude-rules", "시작 규칙 편집(claude-rules) — 멀티라인 에디터·Ctrl+S 저장", claude_rules),
     ("29-usage-panel", "사용 한도(/usage) — 세션 5h·주 전체·주 Sonnet 막대 그래프", usage_panel),
     ("30-usage-view", "usage-view 팝업 — 한도 막대(% 우측정렬)+다음 리셋 블록 카운트다운", usage_view),
     ("31-prompt-history", "프롬프트 히스토리 팝업(prompt-history) — 시간순·미리보기 행수", prompt_history),

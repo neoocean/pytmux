@@ -296,7 +296,14 @@ class Pane:
         # 파서(vtparse.VTTokenizer)+native 화면만 쓴다("pyte" 선택은 native 로 수렴).
         # 메인 화면(스크롤백 보관) + 대체 화면(풀스크린 TUI 용, 스크롤백 없음)
         self._main = self._make_main_screen(cols, rows)
-        self._main.set_mode(vtconst.LNM)
+        # ⛔ LNM(DEC 모드 20 · LF→CR+LF)을 **미리 켜 두지 않는다**(pytmux-511). 맨
+        # `\n` 의 뜻은 IND(한 줄 아래 · 열은 그대로)다. Unix 는 pty 회선규율의 ONLCR
+        # 이 커널에서 `\r\n` 으로 바꿔 줘서 맨 `\n` 이 애초에 안 오지만, ConPTY 는
+        # 회선규율이 없고 그 델타 렌더러가 「한 줄 아래 같은 열」을 맨 `\n` 한
+        # 바이트로 쓴다 — LNM 이 켜져 있으면 그 줄이 통째로 두 칸 왼쪽에 그려지고,
+        # ConPTY 의 CUF 건너뛰기가 그것을 영구화한다(pytmux-483·pytmux-510 의
+        # Windows 전용 화면 깨짐). 실기 단말의 기본값은 **reset** 이고, 앱이
+        # `CSI 20 h` 로 직접 청하면 set_mode 일반 경로가 그대로 따른다.
         self._alt = None
         self.alt_active = False
         self.screen = self._main      # 현재 활성 화면(렌더 대상)
@@ -358,9 +365,9 @@ class Pane:
         self.rect = (0, 0, cols, rows)
         self.parent: Split | None = None
         self.title = "shell"
-        # 토큰 리밋 자동 재개(토글). 메시지·예약 보류 등 나머지 자동재개 상태와
         # Claude 거동 필드 전반은 claude-code 플러그인이 pane_init 으로 설치한다(S4).
-        self.autoresume = False
+        # (토큰 리밋 자동재개 토글 `autoresume` 은 pytmux-526 에서 걷었다 — CLI 가 한도
+        #  리셋 뒤 스스로 이어 간다. 옛 재시작 스냅샷의 그 칸은 읽고 버린다.)
         self._activity = False   # 마지막 검사 이후 출력 있었음
         self._bell = False       # 마지막 검사 이후 BEL 수신
         # Claude 스캔 dirty 게이팅(B1): feed 마다 _feed_seq 증가(코어). _scan_claude
@@ -436,8 +443,7 @@ class Pane:
         self.pty = None          # 서버가 reinit 직후 새 PtyProcess 를 주입
         self.host_pane_id = None  # respawn: host 모드면 서버가 새 id 를 다시 설정
         self.cols, self.rows = cols, rows
-        self._main = self._make_main_screen(cols, rows)
-        self._main.set_mode(vtconst.LNM)
+        self._main = self._make_main_screen(cols, rows)   # LNM 은 안 켠다(§__init__)
         self._alt = None
         self.alt_active = False
         self.screen = self._main
@@ -475,14 +481,14 @@ class Pane:
     # 작업 보존 재시작(re-exec)용 직렬화 — docs/internal/RESTART_SCENARIO.md ⓑ/ⓓ.
     # setattr 로 그대로 복원 가능한 JSON 가능 스칼라/딕트 필드 목록. PTY 식별자
     # (child_pid·master_fd)와 크기·화면 스냅샷은 export_state 가 별도로 다룬다.
-    # Claude 거동 필드(_claude·_claude_usage·_scanbuf·_resume_pending·resume_msg·
-    # last_prompt·_claude_session_id·prompt_clear_mode·_rc_done·
+    # Claude 거동 필드(_claude·_claude_usage·
+    # last_prompt·_claude_session_id·prompt_clear_mode·
     # pending_prompts·토큰 누계 _tok_state/_session_tokens)의 직렬화는 claude-code
     # 플러그인이 pane_serialize/pane_restore 훅으로 담당한다(S4/S5 — export_state 가
     # 'plugin_state' 키로 불투명하게 담는다). 여기 남는 건 코어가 직접 쓰는 계정/리네임/
     # 토글 필드뿐이다.
     _RESUME_FIELDS = (
-        "title", "autoresume", "_claude_account", "_claude_account_full",
+        "title", "_claude_account", "_claude_account_full",
         "_claude_account_manual",
         "_pending_rename",   # 재시작 중 보류된 탭→세션 리네임도 idle 경계에서 발동
         "bracketed",
@@ -759,6 +765,7 @@ class Pane:
         from .nativescreen import NativeScrollbackScreen
         screen = NativeScrollbackScreen(cols, rows, history=HISTORY, ratio=0.5)
         screen.write_process_input = self._reply_to_child
+        screen.on_history_cleared = self._on_history_cleared
         return screen
 
     def _make_alt_screen(self, cols: int, rows: int):
@@ -767,6 +774,20 @@ class Pane:
         screen = NativeScreen(cols, rows)
         screen.write_process_input = self._reply_to_child
         return screen
+
+    def _on_history_cleared(self) -> None:
+        """앱이 ED 3(`ESC[3J`)으로 **스크롤백을 지웠다** — 그 좌표계를 쓰는 것을 함께
+        되돌린다(pytmux-510).
+
+        `scroll`(위로 올라간 행수)과 `_match_abs`(검색 매치의 **절대** 행 인덱스)는
+        둘 다 `len(history.top)` 을 원점으로 센다. 그 원점이 사라졌는데 값만 남으면
+        render 가 엉뚱한 창을 잘라 낸다(클램프는 되지만 가리키는 곳이 다르다).
+        `Server.clear_history` 가 사람이 부른 갈래에서 하는 뒷정리와 **같은 것**이다 —
+        같은 일을 두 곳에서 다르게 하지 않는다.
+        """
+        self.scroll = 0
+        self._match_abs = None
+        self.dirty = True
 
     def _reply_to_child(self, data: str) -> None:
         """단말 **질의 응답**(CPR/DSR/DA)을 이 패널의 pty stdin 으로 되돌려준다.
@@ -887,8 +908,7 @@ class Pane:
     def _enter_alt(self) -> None:
         if self.alt_active:
             return
-        self._alt = self._make_alt_screen(self.cols, self.rows)
-        self._alt.set_mode(vtconst.LNM)
+        self._alt = self._make_alt_screen(self.cols, self.rows)   # LNM 은 안 켠다(§__init__)
         # 토크나이저를 alt 화면으로 재지정한다(FSM 상태는 보존).
         self._tok.set_screen(self._alt)
         self.screen = self._alt

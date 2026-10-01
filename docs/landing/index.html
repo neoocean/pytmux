@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>pytmux — 마우스로 쓰는 tmux, Claude Code 통합 터미널 멀티플렉서</title>
-<meta name="description" content="Python/Textual 로 만든 tmux 유사 터미널 멀티플렉서. 마우스·메뉴 1급 지원, 셸 영속, Claude Code 토큰 추적·자동 재개, 원격 페더레이션. macOS/Linux/Windows.">
+<meta name="description" content="Python/Textual 로 만든 tmux 유사 터미널 멀티플렉서. 마우스·메뉴 1급 지원, 셸 영속, Claude Code 토큰 추적·전송 에러 자동 재시도, 원격 페더레이션. macOS/Linux/Windows.">
 <link rel="stylesheet" href="styles.css">
 <!-- Matomo -->
 <script>
@@ -76,21 +76,14 @@
          갱신하면 랜딩도 자동 최신(이중 관리 없음). fetch 실패 시 이 폴백이 그대로 남는다. -->
     <div class="cl-news">
       <div class="cl-news-head">
-        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-09-05 <span class="pill">토요일</span></span>
+        <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-09-14 <span class="pill">월요일</span></span>
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
-        <li><span class="pill stable">GUI</span> <strong>GUI 의 <span class="inline-code">토큰 사용량</span> 판이 정본과 같은 <span class="inline-code">탭 띠</span>를 갖고, 탭을 드래그해 옮기고, 붙여넣은 이미지에 축소판이 뜹니다.</strong>
-          지금까지 GUI 의 토큰 판은 기간(일·주·월)을 고르는 방식이 정본과 달랐고, 탭을 마우스로 끌어 순서를 바꾸는 동작도 없었습니다. 이제 정본과 같은 탭 띠가 붙고, 드래그로 옮기는 동작은 실제로 손을 뗀 자리를 기계로 재서 판정합니다.
-          <br>붙여넣은 이미지는 지금까지 파일 이름만 보였는데, 이제 작은 축소판이 함께 뜹니다. 한도 판의 모델·컨텍스트를 고르는 줄도 정본과 같은 모양을 갖췄습니다.</li>
-        <li><span class="pill stable">진단</span> <strong><span class="inline-code">:debug-stats</span> 진단 화면을 서버가 마저 완성해, 두 클라이언트가 같은 판 아래에 붙습니다.</strong>
-          지난주 GUI 쪽에만 있던 자체 성능 진단 화면에 이번에 서버 쪽 절반(<span class="inline-code">debug_stats</span> 명령)이 더해져, 파이썬 클라이언트도 같은 자리에서 같은 진단 정보를 볼 수 있습니다.</li>
-        <li><span class="pill stable">안정</span> <strong>자잘하지만 체감되는 결함 셋을 고쳤습니다 — 뒷탭 복사가 클립보드를 덮던 것, auto-yes 가 엉뚱한 상자에 Enter 를 보내던 것, 포커스를 옮겨도 블록 선택 모드가 안 풀리던 것.</strong>
-          백그라운드 탭에서 앱이 <span class="inline-code">OSC 52</span>(클립보드에 넣어라)를 보내면, 탭을 전환하는 바로 그 순간 방금 복사해 둔 내용이 조용히 덮어써지고 있었습니다 — 이제 세션의 모든 패널에서 이 요청을 걷어 처리하되, 탭 전환 경합은 막습니다.
-          <br><span class="inline-code">claude_auto_yes</span>(자동 «예» 확정)는 화면에 뜬 것이 진짜 권한 확인 상자인지 더 엄격히 가려, diff 미리보기 같은 다른 상자에는 더 이상 Enter 가 가지 않습니다.
-          <br>패널 포커스를 옮기면 GUI 에서만 블록 선택 모드가 풀리던 것을 정본과 같게 맞췄습니다.</li>
-        <li><span class="pill stable">Linux</span> <strong>Linux(aarch64) 에서 GUI 가 아예 컴파일되지 않던 문제를 고쳤습니다.</strong>
-          호스트 이름을 읽는 자리의 버퍼 타입이 이 아키텍처에서 컴파일 오류를 냈습니다 — 이제 리눅스 ARM64(예: 라즈베리파이, Apple Silicon 리눅스 VM) 에서도 GUI 를 빌드할 수 있습니다.</li>
+        <li><span class="pill stable">화면</span> <strong>한글이 많은 화면에서 Claude Code 출력이 겹치거나 줄이 밀리고 두 벌로 남던 것을 고쳤습니다.</strong>
+          화면 안 격자는 폭이 2칸인 글자(한글 등)를 <strong>앞칸 글자 + 뒤칸 빈칸</strong>의 짝으로 관리하는데, 화면을 지우거나 덮어쓰는 여러 경로 중 일부가 이 짝을 지키지 않고 있었습니다. 짝의 절반만 지워지면 그 줄의 실제 폭이 화면 폭과 어긋나, 뒤따르는 글자가 전부 한 칸씩 밀리고 옛 글자 조각이 섞여 보이거나 같은 줄이 두 벌로 남았습니다.
+          <br>Claude Code(Ink)는 화면을 커서로 다시 올라가 덮어쓰고 줄 끝을 지우는 방식이라 이 어긋남이 자주 한글 글자 한가운데서 일어났습니다 — 그래서 한글이 많은 화면에서 유독 심하게 보였습니다.
+          <br>화면 격자는 서버가 관리하므로, 같은 고침이 <strong>파이썬 클라이언트·GUI 클라이언트 둘 다</strong>에 적용됩니다.</li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">
@@ -228,20 +221,18 @@
 
     <div class="feature">
       <div class="ftext">
-        <h3>상태 표시 + 토큰 리밋 자동 재개</h3>
+        <h3>상태 표시 + 권한 모드</h3>
         <p>실행 중인 탭에 상태 아이콘(<strong>대기 ○ / 처리중 ◐ / 리밋 멈춤 ⊘</strong>)을
-           표시하고, 비활성 탭 작업이 끝나면 탭 배경색으로 알립니다. 사용량 리밋에 걸려
-           멈추면 해제 시각을 읽어 <strong>그때 자동으로 재개</strong>합니다.</p>
+           표시하고, 비활성 탭 작업이 끝나면 탭 배경색으로 알립니다. 전송 오류로 멈추면
+           <strong>"계속"</strong> 을 넣어 이어 갑니다(한도 뒤 이어 가기는 Claude Code 가 스스로 합니다).</p>
         <ul>
-          <li><span class="inline-code">prefix R</span> 자동 재개 토글(상태줄 <span class="inline-code">AR</span>)</li>
           <li>권한모드 footer 클릭 → auto / accept / default / plan 선택</li>
-          <li><span class="inline-code nb">claude-rules</span> 로 시작 규칙 자동 주입</li>
-          <li>진행을 막는 화면(<span class="inline-code nb">/rc</span> 관리 메뉴 · 조직 관리설정 승인)은 <strong>기본 선택 그대로</strong> 자동 통과</li>
+          <li>진행을 막는 화면(조직 관리설정 승인)은 <strong>기본 선택 그대로</strong> 자동 통과</li>
         </ul>
       </div>
       <div class="shot">
-        <img src="image/12-claude-autoresume.svg" alt="Claude 자동 재개 상태줄">
-        <div class="cap">12 · 토큰 리밋 자동 재개</div>
+        <img src="image/13-perm-mode.svg" alt="권한 모드 선택 팝업">
+        <div class="cap">13 · 권한 모드 선택</div>
       </div>
     </div>
 

@@ -536,7 +536,10 @@ async def test_set_ambiguous_width_runtime_toggle():
             app._apply_ambiguous_wide(False)
             assert cellwidth.ambiguous_wide() is False
             await pilot.pause(0.2)
-            # 같은 모드 재적용은 no-op(크래시·중복 통지 없음)
+            # 같은 모드 재적용도 크래시 없이 동작한다(값은 그대로).
+            # ⚠ 종전엔 여기가 「중복 통지 없음」이었다 — 그 no-op 이 pytmux-507 이다.
+            #    서버 통지까지 안 하므로, 서버가 wide 인 채 클라가 narrow 면 사용자가
+            #    그 명령으로 **영영 못 고친다**. 통지를 단언하는 것은 아래 전용 시험이다.
             app._apply_ambiguous_wide(False)
             assert cellwidth.ambiguous_wide() is False
             # **명령 경로(apply_option)** 도 크래시 없이 동작해야 한다 — `set
@@ -551,6 +554,60 @@ async def test_set_ambiguous_width_runtime_toggle():
             # 그러면 finally 의 복원 후 늦게 처리된 통지가 서버 cellwidth 를 다시 켜
             # 전역이 wide 로 새 다음 테스트(test_remote 등)를 오염시킨다(레이스).
             await pilot.pause(0.3)
+            cellwidth.set_ambiguous_wide(False)
+    await _with_app(body)
+
+
+async def test_ambiguous_width_always_notifies_the_server(tmp_path=None):
+    """`:set ambiguous-width` 는 **클라 값이 이미 같아도 서버에 통지한다**(pytmux-507).
+
+    # 왜 이것이 중요한가
+
+    폭 모델은 **클라 프로세스 전역**과 **서버 프로세스 전역** 두 벌이고 둘은 서로를 모른다.
+    종전 `_apply_ambiguous_wide` 는 클라 값이 같으면 첫 줄에서 돌아가 **서버에 아무것도 안
+    알렸다**. 그래서 서버가 wide 인데 클라가 narrow 인 상태에 빠지면
+    `set ambiguous-width narrow` 가 **아무 일도 안 하는 명령**이 된다 — 사용자에게는
+    「바꿨는데 화면이 그대로다」로만 보이고(실측 2026-09-15 · Claude Code 패널이 계속
+    깨진 채였다), 읽기는 **클라 값**이라 어긋남이 화면에 드러나지도 않는다.
+
+    ⇒ 이 명령의 뜻은 「내 값을 바꾼다」가 아니라 **「둘을 이 값으로 맞춘다」**이다.
+
+    되돌리면 실패해야 하는 것: `if cellwidth.ambiguous_wide() == wide: return` 을
+    되살리면 ⑵ 가 통지 0건으로 실패한다.
+    """
+    from pytmuxlib import client as client_mod
+
+    async def body(app, pilot, srv):
+        from pytmuxlib import cellwidth
+        sent = []
+        real = client_mod.write_msg
+
+        async def spy(writer, msg):
+            if isinstance(msg, dict) and msg.get("t") == "set_ambig":
+                sent.append(msg)
+            return await real(writer, msg)
+
+        try:
+            cellwidth.set_ambiguous_wide(False)
+            with harness.patched(client_mod, write_msg=spy):
+                # ⑴ 실제로 바뀌는 전환은 당연히 통지한다(대조군 — 이게 없으면 ⑵ 가
+                #    「통지 경로가 아예 살아 있나」를 못 가른다).
+                app._apply_ambiguous_wide(True)
+                await pilot.pause(0.3)
+                assert [m for m in sent if m["wide"] is True], \
+                    "바뀌는 전환조차 통지가 안 갔다 — 통지 경로 자체가 죽었다"
+                # ⑵ 클라가 **이미** narrow 인데 narrow 를 다시 걸어도 통지가 가야 한다.
+                app._apply_ambiguous_wide(False)
+                await pilot.pause(0.3)
+                assert cellwidth.ambiguous_wide() is False
+                sent.clear()
+                app._apply_ambiguous_wide(False)       # 같은 값 재적용
+                await pilot.pause(0.3)
+                assert [m for m in sent if m["wide"] is False], (
+                    "클라 값이 같다고 서버에 안 알렸다 — 서버가 wide 면 사용자가 "
+                    "이 명령으로 영영 못 고친다(pytmux-507)")
+        finally:
+            await pilot.pause(0.3)     # 늦게 처리될 set_ambig 를 배수한 뒤 복원
             cellwidth.set_ambiguous_wide(False)
     await _with_app(body)
 
@@ -1080,12 +1137,12 @@ async def test_command_list_and_autocomplete():
         catmap = dict(scr._all_cats)
         assert "Claude" in catmap and "모니터" in catmap, list(catmap)
         claude_names = [n for n, _ in catmap["Claude"]]
-        for nm in ("claude-auto-mode", "auto-retry", "auto-resume",
+        for nm in ("claude-auto-yes", "auto-retry", "auto-token-on-exit",
                    "claude-token-log", "prompt-clear"):
             assert nm in claude_names, (nm, claude_names)
         mon_names = [n for n, _ in catmap["모니터"]]
         assert "monitor-activity" in mon_names, mon_names
-        assert "claude-auto-mode" not in mon_names, mon_names
+        assert "claude-auto-yes" not in mon_names, mon_names
     await _with_app(body)
 
 
@@ -6624,44 +6681,6 @@ async def test_open_warn_info_popup_content():
     await _with_app(body)
 
 
-async def test_status_ar_badge_click_opens_autoresume_info():
-    """상태줄 AR(자동재개) 배지가 autoresume 켜졌을 때 클릭존(_ar_zone)으로 등록되고,
-    클릭하면 자동 재개 켜고 끄기 팝업(open_autoresume_info)을 연다(요청)."""
-    async def body(app, pilot, srv):
-        from textual import events
-        app.status.autoresume = True
-        app.status.render_line(0)
-        az = app.status._ar_zone
-        assert az is not None, "AR 배지 클릭존 등록"
-        called = []
-        app.open_autoresume_info = lambda: called.append(True)
-        y = app.status.size.height - 1
-        cx = (az[0] + az[1]) // 2
-        ev = events.MouseDown(app.status, cx, y, 0, 0, 1, False, False, False)
-        app.status.on_mouse_down(ev)
-        assert called == [True], called
-    await _with_app(body)
-
-
-async def test_open_autoresume_info_popup_toggles():
-    """open_autoresume_info: 현재 상태를 보여 주는 InfoScreen 을 띄우고, [a] 키로
-    set_autoresume 를 보내 토글한다(원격제어 팝업과 같은 hide_key 패턴)."""
-    async def body(app, pilot, srv):
-        app.status.autoresume = True
-        sent = []
-        app.send_cmd = lambda c, **kw: sent.append(c)
-        app.open_autoresume_info()
-        await wait_mounted(pilot, "InfoScreen")
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen", scr.__class__.__name__
-        assert any("AR" in ln for ln in scr._lines), scr._lines
-        await pilot.press("a")               # 토글 키 → set_autoresume + 닫힘
-        await wait_until(pilot, lambda: "set_autoresume" in sent)
-        assert "set_autoresume" in sent, sent
-        assert app.screen_stack[-1] is not scr, "[a] 후 팝업 닫힘"
-    await _with_app(body)
-
-
 async def test_status_host_click_opens_server_tab():
     """§10-A #12: 상태줄 서버이름(host) 클릭존이 등록되고, 클릭하면 통합 상태 팝업을
     서버 탭(initial=2)으로 연다."""
@@ -7878,42 +7897,6 @@ async def test_command_list_home_end_tab_click_and_close():
         await pilot.pause(0.2)
         assert not any(s.__class__.__name__ == "CommandListScreen"
                        for s in app.screen_stack)
-    await _with_app(body)
-
-
-async def test_rules_editor_save_cancel_and_spacer():
-    # #27 규칙 에디터: 타이틀↔에디터 한 줄 여백 + 우측 닫기[x] + 하단 저장/취소.
-    # RulesEditScreen 은 claude-code 플러그인으로 이전(패키지명에 하이픈 → importlib).
-    import importlib
-    RulesEditScreen = importlib.import_module(
-        "pytmuxlib.plugins.claude-code.screens").RulesEditScreen
-    async def body(app, pilot, srv):
-        captured = []
-        app.push_screen(RulesEditScreen("hello rules"),
-                        lambda v: captured.append(v))
-        await wait_mounted(pilot, "RulesEditScreen")
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "RulesEditScreen"
-        assert scr.query("#rulesspacer"), "타이틀↔에디터 한 줄 여백"
-        assert scr.query("#rulesclose"), "우측 닫기 버튼"
-        assert scr.query("#rulessave") and scr.query("#rulescancel"), "저장/취소"
-        await pilot.click("#rulessave")                    # 저장 → 텍스트 반환
-        await wait_until(pilot, lambda: captured == ["hello rules"])
-        assert captured == ["hello rules"], captured
-    await _with_app(body)
-
-
-async def test_rules_editor_cancel_returns_none():
-    import importlib
-    RulesEditScreen = importlib.import_module(
-        "pytmuxlib.plugins.claude-code.screens").RulesEditScreen
-    async def body(app, pilot, srv):
-        captured = []
-        app.push_screen(RulesEditScreen("x"), lambda v: captured.append(v))
-        await pilot.pause(0.2)
-        await pilot.click("#rulescancel")                  # 취소 → None
-        await wait_until(pilot, lambda: captured == [None])
-        assert captured == [None], captured
     await _with_app(body)
 
 

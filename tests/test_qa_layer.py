@@ -1276,6 +1276,45 @@ async def test_residue_does_not_count_a_process_we_already_reaped():
                 pass
 
 
+def test_wipe_reaps_before_it_deletes_the_pid_files():
+    """⛔ **`wipe()` 는 지우기 전에 거둬야 한다**(pytmux-435 ⑤ · 2026-09-04).
+
+    `qa/run.py` 의 `finally` 는 시나리오가 `Session.stop()`(정상 경로의 `reap()`)을 못
+    부르고 죽었을 때도 `slot.wipe()` 만 부른다. 그때 `wipe()` 가 지우기만 하고 안
+    거두면 `state/` 의 pid 파일이 먼저 사라진 뒤라 **다음 런도 이 런도** 그 서버를 다시
+    못 찾는다 — 그 눈먼 자리에서 슬롯 하나에 서버 13개가 8월 2일부터 살아 있었다.
+
+    재는 것은 **호출부**다 — `reap()` 을 손으로 안 불러도(시나리오가 죽었을 때처럼)
+    `wipe()` 혼자 살아 있는 프로세스를 거두는가. 헬퍼(`reap()`)가 옳아도 호출부가 그것을
+    빼먹으면 공허 통과다(이 저장소의 되풀이된 함정).
+    """
+    import subprocess
+    with _slot() as slot:
+        # ☠ start_new_session=True 를 빼면 이 시험이 스위트를 통째로 끈다 — 위
+        #   test_residue_does_not_count_a_process_we_already_reaped 의 주석 그대로다.
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        slot.spawned.append(child.pid)
+        try:
+            home = slot.home
+            slot.wipe()                        # ⛔ reap() 을 여기서 손으로 안 부른다
+            assert not os.path.exists(home), "슬롯 디렉터리가 안 지워졌다(대조군)"
+            left = slot.residue(timeout=3.0, step=0.1)
+            assert left == [], (
+                f"wipe() 뒤에도 우리가 띄운 프로세스가 살아 있다 — 지우기 전에 안 거뒀다: {left}")
+        finally:
+            try:
+                child.kill()
+            except OSError:
+                pass
+            try:
+                child.wait(timeout=5)
+            except Exception:
+                pass
+
+
 def test_the_ledger_is_not_reported_for_a_scenario_that_died_halfway():
     """⛔ **없는 커버리지 구멍을 신고하면 원장이 아니다**(pytmux-482 · 2026-09-04).
 

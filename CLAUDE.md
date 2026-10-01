@@ -57,7 +57,18 @@ GUI 의 것으로 얹는다(TUI 식 텍스트 위젯을 흉내내지 않는다).
   것만** 겨냥한다:
   - 격리해서 띄운다 — `PYTMUX_HOME=<스크래치>`(상태·소켓·캡처가 전부 그 아래로 간다)
     또는 `--socket`/`-L <이름>`. 드라이버(`.claude/skills/run-pytmux/driver.py`)는 이미
-    전용 임시 상태 디렉터리로 자기를 격리한다.
+    전용 임시 상태 디렉터리로 자기를 격리한다(스크래치 홈 + 띄우기 전 자가검사).
+    ☠☠ **격리는 `PYTMUX_HOME` 까지 해야 한다 — `LOCALAPPDATA` 만으로는 «격리한 셈»이다**
+    (pytmux-508 · 사고 2026-09-15 09:49): `ipc.default_state_dir()` 는 **`PYTMUX_HOME` 을
+    먼저** 보고 그 값이 있으면 `LOCALAPPDATA` 를 **아예 안 읽는다**. 그 변수를 상시
+    설정해 쓰는 이 박스에서 driver 를 베낀 프로브가 `LOCALAPPDATA` 만 돌려 놓고 서버를
+    띄웠고, 그 서버가 **라이브 상태 디렉터리**에 `default.port`·`default.token` 을 게시해
+    새 주인이 되면서 사용자의 라이브 서버를 **퇴거**시켰다 — 패널과 그 안에서 돌던 작업이
+    전부 사라졌다. ⛔ **띄우기 전에 「무엇을 세웠나」가 아니라 「어디에 쓸 것인가」를
+    묻는다** — `ipc.default_state_dir()` 이 돌려준 경로가 내 스크래치 밖이면 **안 띄운다**
+    (`driver._assert_isolated` · 재는 것은 `tests/test_run_pytmux_driver_isolation.py`).
+    같은 함정을 `tests/harness.py` 는 그 변수를 **지워서**, `qa/env.py` 는 슬롯으로
+    **세워서** 이미 막아 놓았다.
   - 내린다 — `PYTMUX_HOME=<스크래치> python3 pytmux.py kill-server --yes`. 서버가 이미
     죽어 host 만 남았어도 이 명령이 그 엔드포인트의 pty-host 까지 회수한다.
   - 그래도 남으면 **pid 로만** 죽인다 — `<스크래치>/state/*.ptyhost.pid` 와

@@ -22,8 +22,6 @@ async def test_pane_export_import_roundtrip():
     from pytmuxlib.model import Pane
     p = Pane(1234, -1, 80, 24)
     p.title = "editor"
-    p.autoresume = True
-    p.resume_msg = "go on"
     p.last_prompt = "구현해줘"
     p._claude = "busy"
     p._claude_usage = "ctx 42%"
@@ -42,9 +40,19 @@ async def test_pane_export_import_roundtrip():
     q = Pane(1234, -1, 80, 24)
     q.import_state(d)
     assert q.title == "editor"
-    assert q.autoresume is True
-    assert q.resume_msg == "go on"
     assert q.last_prompt == "구현해줘"
+    # pytmux-526·525: 걷기 전 서버가 쓴 스냅샷의 자동재개·auto /rc 칸을 읽어도 죽지 않고
+    # **버린다**(재시작으로 새 판에 올라오는 순간이 바로 그 경우다).
+    old = dict(d)
+    old["autoresume"] = True
+    old["plugin_state"] = dict(d.get("plugin_state") or {},
+                               resume_msg="go on", _resume_pending=True,
+                               _scanbuf="limit reached", _rc_done=True)
+    r = Pane(1234, -1, 80, 24)
+    r.import_state(old)
+    for gone in ("autoresume", "resume_msg", "_resume_pending", "_scanbuf", "_rc_done"):
+        assert not hasattr(r, gone), gone
+    assert r.title == "editor" and r.last_prompt == "구현해줘"
     assert q._claude == "busy"
     assert q._claude_usage == "ctx 42%"
     assert q._session_tokens == 4321
@@ -173,7 +181,6 @@ async def test_restore_resume_state_roundtrip():
         # 활성 패널에 표식 상태를 심어 복원 확인
         ap = sess.active_window.active_pane
         ap.title = "MARKED"
-        ap.autoresume = True
         ap._claude = "idle"
         struct = [(t.name, len(t.window.panes())) for t in sess.tabs]
         pids = sorted(p.child_pid for p in srvA._all_panes())
@@ -196,7 +203,6 @@ async def test_restore_resume_state_roundtrip():
             assert flags & fcntl.FD_CLOEXEC
         apB = sessB.active_window.active_pane
         assert apB.title == "MARKED"
-        assert apB.autoresume is True
         assert apB._claude == "idle"
         # 살아 있는 셸과 입출력 가능(PTY 보존)
         apB.pty.stop_reader()

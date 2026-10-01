@@ -241,16 +241,10 @@ class _Pane:
     id = 1
     _claude_session_id = 7
     _claude_account_manual = True      # 계정 재감지 가지를 안 타게(프로브 예약 무관)
-    _rules_pending = False
-    _rc_pending = False
-    _perm_auto_pending = False
 
 
 class _BoundarySrv:
     _scan_session_boundary = sm.ServerClaudeMixin._scan_session_boundary
-    claude_rules = ""
-    claude_auto_launch = False
-    _rc_policy_blocked = False
     usage_refresh_sec = 0
 
     def __init__(self):

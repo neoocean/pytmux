@@ -297,7 +297,7 @@ ESCAPE = {
     "7": "save_cursor",
     "8": "restore_cursor",
     "D": "index",
-    "E": "linefeed",
+    "E": "newline",     # NEL — LNM 과 무관하게 CR+LF(pytmux-511)
     "H": "set_tab_stop",
     "M": "reverse_index",
     "c": "reset",

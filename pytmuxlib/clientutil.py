@@ -928,7 +928,6 @@ MENU_ITEMS = [
     ("search_all", "모든 탭·패널 검색"),
     ("kill_pane", "패널 삭제 ✕"),
     ("sync", "입력 동기화 토글"),
-    ("autoresume", "토큰리밋 자동재개 토글"),
     ("prompt_clear", "프롬프트 단위 클리어 토글"),
     ("new_window", "새 탭"),
     ("new_claude_window", "새 탭에서 Claude Code 실행"),
@@ -948,7 +947,7 @@ MENU_ITEMS = [
     ("kill_server", "서버 종료 (모든 탭/셸 종료)"),
 ]
 # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
-MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear", "toggle_pin"}
+MENU_TOGGLES = {"zoom", "sync", "prompt_clear", "toggle_pin"}
 
 # §8.1 컨텍스트 메뉴 그룹(서브메뉴)화(요청 2026-06-18): 평면 29항목이 세로로 너무 길어,
 # 묶을 수 있는 항목을 그룹으로 접고 자주/세션 항목만 최상위에 둔다. MENU_ITEMS(평면)는
@@ -972,7 +971,7 @@ MENU_TOPLEVEL = [
     "group:pane", "group:layout", "group:tab",
     "--",
     "search", "search_all", "command", "settings", "mouse_help",
-    "sync", "autoresume", "prompt_clear",
+    "sync", "prompt_clear",
     "--",
     "detach", "kill_server",
 ]
@@ -986,9 +985,9 @@ MENU_GROUP_LABELS = {
 # 권위 — `mouse-help`/`mouse` 명령과 컨텍스트 메뉴 "마우스 제스처 도움말"은 그
 # 별칭/진입점이다(제스처 목록을 두 벌 두지 않는다).
 
-# 토큰 절감 설정 팝업(`token-saver`)의 행/순환 프리셋(SAVER_ROWS/SAVER_CYCLES)과
-# 시작 규칙 편집(`claude-rules`)은 claude-code 플러그인(pytmuxlib/plugins/claude-code)
-# 으로 이전했다 — 디렉토리를 지우면 두 명령·팝업이 조용히 사라진다.
+# 토큰 절감 설정 팝업(`token-saver`)의 행/순환 프리셋(SAVER_ROWS/SAVER_CYCLES)은
+# claude-code 플러그인(pytmuxlib/plugins/claude-code)으로 이전했다 — 디렉토리를 지우면
+# 명령·팝업이 조용히 사라진다.
 
 # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
 # (이름, 설명, 카테고리). 카테고리는 ?/help 목록의 탭 그룹으로 쓰인다.
@@ -1071,9 +1070,9 @@ COMMANDS = [
     ("win-mouse-motion", "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 on(끄면 hover 계열이 안 산다 · pytmux-423) (win-mouse-motion on|off|toggle)", "설정/기타"),
     ("vt-parser", "VT 파서 백엔드 선택 pyte|native (재시작 시 발효 · vt-parser pyte|native)", "설정/기타"),
     ("window-size", "다중 클라 미러링 시 공유 크기 규칙 smallest|latest|largest — latest=마지막 조작 창 크기(window-size smallest|latest|largest)", "설정/기타"),
-    # Claude Code 명령(auto-resume·token-log·
+    # Claude Code 명령(token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
-    # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
+    # auto-compact 등)은 claude-code 플러그인이 등록한다
     # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
     ("version", "클라/서버 버전(p4 CL)·업타임 팝업(별칭 about)", "설정/기타"),
     ("debug-stats", "클라 런타임 계측 팝업 — 산 객체·GC 세대·판 깊이·Timer 수"
@@ -1202,7 +1201,7 @@ COMMAND_OPTIONS = {
                                  ("largest", "largest")]}],
     "lang": [{"key": "lang", "label": "언어",
               "choices": [("한국어", "ko"), ("English", "en")]}],
-    # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch
+    # prompt-clear·auto-doc-clear
     # 의 옵션 스키마는 claude-code 플러그인이 등록한다(command_options).
 }
 
@@ -1306,7 +1305,7 @@ SETTINGS = [
      "cmd": "set status-bg", "backend": "config"},
     {"key": "status-fg", "cat": "상태줄", "type": "str",
      "cmd": "set status-fg", "backend": "config"},
-    # (Claude 전용 화면 링크 token-saver/model/claude-rules/token-log 와 'Claude'
+    # (Claude 전용 화면 링크 token-saver/model/token-log 와 'Claude'
     #  카테고리는 claude-code 플러그인이 settings() 훅으로 기여한다 — SettingsScreen 이
     #  코어 SETTINGS/SETTINGS_CATS 와 병합. delete-to-disable: 부재 시 통째로 사라진다.)
     # 고급/플러그인(링크)
@@ -1373,7 +1372,6 @@ PREFIX_KEYS = [
     ("p_P", "P", "탭 고정(핀) 토글", "Toggle tab pin"),
     ("p_T", "T", "패널 제목 변경", "Rename pane"),
     ("p_t", "t", "시계 토글", "Toggle clock"),
-    ("p_R", "R", "자동재개 토글", "Toggle autoresume"),
     ("p_r", "r", "화면 재그리기(redraw)", "Redraw screen"),
     ("p_colon", ":", "명령 프롬프트", "Command prompt"),
     ("p_np", "n / p", "다음 / 이전 탭", "Next / prev tab"),
@@ -1470,7 +1468,7 @@ COMMAND_NOARG = {
     "merge-remote-tab", "merge-remote",
     "restart-check",
     # Claude Code 무인자 명령(token-log(별칭 token-usage)·claude-usage·usage·
-    # usage-panel·usage-limits·limits·claude-rules·token-saver)은 claude-code 플러그인이 등록.
+    # usage-panel·usage-limits·limits·token-saver)은 claude-code 플러그인이 등록.
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄
 # (____)을 그려 "여기에 인자를 입력" 임을 알린다(사용자 요청). 선택지형(COMMAND_OPTIONS)
@@ -1478,7 +1476,7 @@ COMMAND_NOARG = {
 # 명령(detach-client·kill-* 등)도 제외해 잘못된 밑줄을 막는다.
 COMMAND_FREETEXT = {
     "rename-pane", "rename-tab", "send-keys", "pipe-pane", "paste-buffer",
-    "layout-save", "layout-load", "layout-load-new", "auto-resume-message",
+    "layout-save", "layout-load", "layout-load-new",
     "set", "set-hook", "display-message", "display-popup", "run-shell",
     "if-shell", "bind-key", "unbind-key", "claude-token-account",
     "prompt-clear-message", "prompt-clear-queue", "select-tab", "move-tab",
@@ -1648,7 +1646,6 @@ i18n.register({
         "menu.search_all": "Search all tabs/panes",
         "menu.kill_pane": "Delete pane ✕",
         "menu.sync": "Toggle input sync",
-        "menu.autoresume": "Toggle token-limit auto-resume",
         "menu.prompt_clear": "Toggle per-prompt clear",
         "menu.new_window": "New tab",
         "menu.new_claude_window": "New tab running Claude Code",

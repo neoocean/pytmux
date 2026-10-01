@@ -75,21 +75,14 @@
       <!-- 최근 수정사항 — 랜딩(/)과 동일한 한 덩어리 박스(정적 폴백 + changes 최신 미러). -->
       <div class="cl-news">
         <div class="cl-news-head">
-          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-09-05 <span class="pill">토요일</span></span>
+          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-09-14 <span class="pill">월요일</span></span>
           <a class="cl-news-more" href="/changes">전체 변경 내역 →</a>
         </div>
         <ul id="cl-news-list">
-          <li><span class="pill stable">GUI</span> <strong>GUI 의 <span class="inline-code">토큰 사용량</span> 판이 정본과 같은 <span class="inline-code">탭 띠</span>를 갖고, 탭을 드래그해 옮기고, 붙여넣은 이미지에 축소판이 뜹니다.</strong>
-            지금까지 GUI 의 토큰 판은 기간(일·주·월)을 고르는 방식이 정본과 달랐고, 탭을 마우스로 끌어 순서를 바꾸는 동작도 없었습니다. 이제 정본과 같은 탭 띠가 붙고, 드래그로 옮기는 동작은 실제로 손을 뗀 자리를 기계로 재서 판정합니다.
-            <br>붙여넣은 이미지는 지금까지 파일 이름만 보였는데, 이제 작은 축소판이 함께 뜹니다. 한도 판의 모델·컨텍스트를 고르는 줄도 정본과 같은 모양을 갖췄습니다.</li>
-          <li><span class="pill stable">진단</span> <strong><span class="inline-code">:debug-stats</span> 진단 화면을 서버가 마저 완성해, 두 클라이언트가 같은 판 아래에 붙습니다.</strong>
-            지난주 GUI 쪽에만 있던 자체 성능 진단 화면에 이번에 서버 쪽 절반(<span class="inline-code">debug_stats</span> 명령)이 더해져, 파이썬 클라이언트도 같은 자리에서 같은 진단 정보를 볼 수 있습니다.</li>
-          <li><span class="pill stable">안정</span> <strong>자잘하지만 체감되는 결함 셋을 고쳤습니다 — 뒷탭 복사가 클립보드를 덮던 것, auto-yes 가 엉뚱한 상자에 Enter 를 보내던 것, 포커스를 옮겨도 블록 선택 모드가 안 풀리던 것.</strong>
-            백그라운드 탭에서 앱이 <span class="inline-code">OSC 52</span>(클립보드에 넣어라)를 보내면, 탭을 전환하는 바로 그 순간 방금 복사해 둔 내용이 조용히 덮어써지고 있었습니다 — 이제 세션의 모든 패널에서 이 요청을 걷어 처리하되, 탭 전환 경합은 막습니다.
-            <br><span class="inline-code">claude_auto_yes</span>(자동 «예» 확정)는 화면에 뜬 것이 진짜 권한 확인 상자인지 더 엄격히 가려, diff 미리보기 같은 다른 상자에는 더 이상 Enter 가 가지 않습니다.
-            <br>패널 포커스를 옮기면 GUI 에서만 블록 선택 모드가 풀리던 것을 정본과 같게 맞췄습니다.</li>
-          <li><span class="pill stable">Linux</span> <strong>Linux(aarch64) 에서 GUI 가 아예 컴파일되지 않던 문제를 고쳤습니다.</strong>
-            호스트 이름을 읽는 자리의 버퍼 타입이 이 아키텍처에서 컴파일 오류를 냈습니다 — 이제 리눅스 ARM64(예: 라즈베리파이, Apple Silicon 리눅스 VM) 에서도 GUI 를 빌드할 수 있습니다.</li>
+          <li><span class="pill stable">화면</span> <strong>한글이 많은 화면에서 Claude Code 출력이 겹치거나 줄이 밀리고 두 벌로 남던 것을 고쳤습니다.</strong>
+            화면 안 격자는 폭이 2칸인 글자(한글 등)를 <strong>앞칸 글자 + 뒤칸 빈칸</strong>의 짝으로 관리하는데, 화면을 지우거나 덮어쓰는 여러 경로 중 일부가 이 짝을 지키지 않고 있었습니다. 짝의 절반만 지워지면 그 줄의 실제 폭이 화면 폭과 어긋나, 뒤따르는 글자가 전부 한 칸씩 밀리고 옛 글자 조각이 섞여 보이거나 같은 줄이 두 벌로 남았습니다.
+            <br>Claude Code(Ink)는 화면을 커서로 다시 올라가 덮어쓰고 줄 끝을 지우는 방식이라 이 어긋남이 자주 한글 글자 한가운데서 일어났습니다 — 그래서 한글이 많은 화면에서 유독 심하게 보였습니다.
+            <br>화면 격자는 서버가 관리하므로, 같은 고침이 <strong>파이썬 클라이언트·GUI 클라이언트 둘 다</strong>에 적용됩니다.</li>
         </ul>
       </div>
 
@@ -104,7 +97,7 @@
           <a class="ch-card" href="/guide/scrollback"><span class="ch-num">05</span><b>스크롤백 · 복사</b><span>휠 스크롤백, 검색, vi/emacs 키, 복사·붙여넣기.</span></a>
           <a class="ch-card" href="/guide/mouse"><span class="ch-num">06</span><b>마우스로 제어</b><span>드래그 복사, 클릭·우클릭·휠·경계선·배지 클릭 총정리.</span></a>
           <a class="ch-card" href="/guide/command"><span class="ch-num">07</span><b>메뉴 · 명령 프롬프트</b><span>계층형 메뉴, 명령 프롬프트, 전체 명령 목록, 키 재바인딩.</span></a>
-          <a class="ch-card" href="/guide/claude"><span class="ch-num">08</span><b>Claude Code 연동</b><span>상태 아이콘·자동 재개·권한모드·규칙·프롬프트 이력·화면 안정성.</span></a>
+          <a class="ch-card" href="/guide/claude"><span class="ch-num">08</span><b>Claude Code 연동</b><span>상태 아이콘·권한모드·전송 에러 재시도·프롬프트 이력·화면 안정성.</span></a>
           <a class="ch-card" href="/guide/tokens"><span class="ch-num">09</span><b>토큰 사용량</b><span>기간·세션·한도·경고·/usage·시나리오 사용량 팝업.</span></a>
           <a class="ch-card" href="/guide/sync"><span class="ch-num">10</span><b>여러 머신 토큰 동기화</b><span>공식 서버(또는 자기호스팅)로 여러 컴퓨터의 사용량을 합칩니다 — 아이디 없는 패스키, 코드 한 줄 등록.</span></a>
           <a class="ch-card" href="/guide/remote"><span class="ch-num">11</span><b>원격 페더레이션</b><span>ssh 너머 서버 attach, 분홍 탭, 머지·detach·핀, 다중홉(via), keepalive.</span></a>

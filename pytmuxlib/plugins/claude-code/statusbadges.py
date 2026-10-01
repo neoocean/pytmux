@@ -145,12 +145,6 @@ def badges(fields) -> list:
                 else "claude.retry_n",
                 n=_num(retry.get("n")), eta=_num(eta))
         out.append(_badge("retry", text, _WARN, spec))
-    pending = fields.get("claude_pending")
-    if isinstance(pending, dict):
-        # 라벨을 **포맷 안에** 둔 판을 쓴다 — 인자로 넘기면 클라가 자기 포맷에 서버
-        # 로케일 조각을 끼워 언어가 섞인다(`i18n.phrase` 경고).
-        text, spec = i18n.phrase("claude.countdown_ar", eta=pending.get("eta", 0))
-        out.append(_badge("pending", text, _WARN, spec))
     if fields.get("claude_warn"):
         text, spec = _warn_text(fields)
         out.append(_badge("warn", text, _ERR, spec))

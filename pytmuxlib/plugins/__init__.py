@@ -745,9 +745,10 @@ class Registry:
 
     def server_filter_rows(self, server, pane, rows) -> list:
         """render 된 행 목록(행 = [text, style] 런 목록)을 클라 전송 직전에 플러그인이
-        변형할 기회. claude-disable-feedback 가 Claude 패널의 '/feedback 팁'·세션 종료
-        평가 배너를 공백으로 가린다(요청 2026-06-17·2026-06-18). 플러그인은 변형 시
-        **새 리스트**를 돌려야 한다(render 캐시를
+        변형할 기회. 지금은 소비자가 없다 — 유일한 소비자였던 claude-disable-feedback
+        ('/feedback 팁'·세션 종료 평가 배너 가림)는 Claude Code CLI 설정
+        (`spinnerTipsEnabled`·`feedbackSurveyRate`)이 같은 일을 해서 지웠다(pytmux-523).
+        훅 계약은 남긴다. 플러그인은 변형 시 **새 리스트**를 돌려야 한다(render 캐시를
         공유하므로 in-place 금지). 아무도 변형 안 하면 원본을 그대로 돌려, 핫패스 비용은
         Claude 패널의 짧은 행 스캔뿐이다(delete-to-disable)."""
         for p in self.plugins:
@@ -855,7 +856,7 @@ class Registry:
     def relay_actions(self) -> set:
         """원격 보기(federation) 중 업스트림으로 릴레이해야 하는 cmd 액션 이름 집합을
         플러그인이 기여한다. 코어 serverio 가 코어 화이트리스트(_REMOTE_RELAY_ACTIONS)와
-        **합집합**해 판정한다 — Claude/토큰 액션(set_autoresume·set_prompt_clear·
+        **합집합**해 판정한다 — Claude/토큰 액션(set_prompt_clear·
         request_token_log)은 claude-code 플러그인 소유라 부재 시 자동으로 빠진다."""
         out = set()
         for p in self.plugins:
@@ -1012,7 +1013,7 @@ class Registry:
 
     def client_status(self, app, msg):
         """서버 status 메시지의 플러그인-소유 필드를 클라가 흡수한다(in-place 상태 갱신).
-        claude-code 는 이 훅으로 claude_rules 동기화, 패널별 Claude 상태
+        claude-code 는 이 훅으로 패널별 Claude 상태
         (pane_claude) 갱신, /usage 자동 팝업 시퀀스를 처리한다. 플러그인이 없으면
         no-op → Claude 상태가 클라에 전혀 반영되지 않는다(delete-to-disable)."""
         for p in self.plugins:

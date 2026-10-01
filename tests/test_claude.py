@@ -13,8 +13,7 @@ from pytmuxlib.claude import (claude_awaiting_answer, claude_account,
                               claude_model, claude_model_badge,
                               claude_perm_mode, claude_prompt, claude_state,
                               claude_usage, fmt_long_turn_badge,
-                              parse_reset_delay, parse_usage,
-                              saver_hook_events)
+                              parse_usage, saver_hook_events)
 
 
 async def test_claude_awaiting_answer():
@@ -49,20 +48,14 @@ async def test_screen_text_matches_display():
     assert screen_text(s) == "\n".join(s.display)
 
 
-async def test_parse_reset_delay():
-    now = dt.datetime(2026, 6, 2, 14, 0, 0)
-    assert parse_reset_delay("limit reached, resets at 3:00pm", now) == 3600
-    # §3.2: 차단 동사(reached/exceeded/will reset)가 있어야 리밋으로 본다.
-    assert parse_reset_delay("rate limit reached, resets at 15:30", now) == 5400
-    assert parse_reset_delay("normal output, nothing", now) is None
-    # 바뀐 정밀 규약: 차단 동사 없는 'rate limit' 단독 언급은 리밋 아님(None)
-    assert parse_reset_delay("rate limit, resets at 15:30", now) is None
-    # 사용률 경고(used N% … limit · resets)는 차단이 아니라 None
-    assert parse_reset_delay(
-        "You've used 93% of your session limit · resets 1:40pm", now) is None
-    # 과거 시각이면 익일로
-    d = parse_reset_delay("limit reached resets 9am", now)
-    assert d is not None and d > 3600
+async def test_the_reset_delay_parser_is_gone_with_auto_resume():
+    """pytmux-526: 한도 화면에서 리셋까지의 지연을 읽던 `parse_reset_delay` 는 자동재개
+    전용이라 함께 걷었다(CLI 가 한도 리셋 뒤 스스로 이어 간다). 한도 **상태** 판정
+    (`claude_limit`·`claude_state == "limit"`)과 /usage 표기 파서(`parse_reset_ts`)는
+    남는다 — 배지·`claude-limit` 훅·토큰 팝업이 쓴다."""
+    assert not hasattr(claude_mod, "parse_reset_delay")
+    assert claude_state("Claude usage limit reached. Your limit will reset at 3pm.") == "limit"
+    assert hasattr(claude_mod, "parse_reset_ts")
 
 
 async def test_parse_reset_ts():
@@ -75,7 +68,7 @@ async def test_parse_reset_ts():
         dt.datetime(2026, 6, 12, 18, 59).timestamp()
     assert parse_reset_ts("7pm (Asia/Seoul)", now) == \
         dt.datetime(2026, 6, 12, 19, 0).timestamp()
-    # 지난 시각 → 다음날(parse_reset_delay 와 동일 규약).
+    # 지난 시각 → 다음날.
     assert parse_reset_ts("3am", now) == \
         dt.datetime(2026, 6, 13, 3, 0).timestamp()
     # 24시간제.
@@ -160,7 +153,7 @@ async def test_claude_api_error():
     assert claude_api_error("No response from API · check your network")
     # 맨 "No response from API"(동반 문구 없음)는 산문일 수 있어 안 잡는다(오탐 방지)
     assert not claude_api_error("Claude returned no response from API documentation page.")
-    # 5h 사용량 배너는 전송 에러가 아니다(autoresume 가 reset 시각으로 다룸)
+    # 5h 사용량 배너는 전송 에러가 아니다(한도 뒤 이어 가기는 CLI 몫 — pytmux-526)
     assert not claude_api_error("Claude usage limit reached. resets at 5pm")
     assert not claude_api_error("You've used 93% of your session limit")
     # 사용자 입력(>)·소스/diff 줄의 'rate limit'·'api error' 는 무시(오탐 방지)
@@ -630,18 +623,13 @@ async def test_claude_state_usage_canonical_import():
 
 async def test_saver_hook_events_edges():
     """에스컬레이션 신호 전이 → 훅 이벤트. 상승 에지에서만 1회(§8)."""
-    # 비가역 자동액션 무장: None→{kind} 1회, 유지 미발화, 해제 후 재무장 1회
-    prev2 = {"pending_kind": None, "limit": False}
-    assert [e for e, _ in saver_hook_events(
-        prev2, {"claude_pending": {"kind": "autoresume", "eta": 12}})] \
-        == ["claude-auto-armed"]
-    assert [e for e, _ in saver_hook_events(
-        prev2, {"claude_pending": {"kind": "autoresume", "eta": 8}})] == []
-    assert [e for e, _ in saver_hook_events(prev2, {"claude_pending": None})] == []
-    assert [e for e, _ in saver_hook_events(
-        prev2, {"claude_pending": {"kind": "ctxclear"}})] == ["claude-auto-armed"]
+    # `claude-auto-armed` 는 걷었다(pytmux-526) — 그 재료인 자동재개 예약이 사라졌다.
+    # 옛 서버가 `claude_pending` 을 실어 보내도 아무 이벤트도 안 선다.
+    prev2 = {"limit": False}
+    assert saver_hook_events(
+        prev2, {"claude_pending": {"kind": "resume", "eta": 12}}) == []
     # 활성 패널 limit 진입 1회(상승 에지)
-    prev3 = {"pending_kind": None, "limit": False}
+    prev3 = {"limit": False}
     m = {"active_pane": 5, "panes_claude": [{"id": 5, "claude": "limit"},
                                             {"id": 6, "claude": "idle"}]}
     assert [e for e, _ in saver_hook_events(prev3, m)] == ["claude-limit"]
@@ -649,15 +637,14 @@ async def test_saver_hook_events_edges():
 
 
 async def test_saver_hook_events_env_payload():
-    """이벤트 env 가 PYTMUX_* 컨텍스트(별칭 계정·eta)를 담는다."""
-    prev = {"pending_kind": None, "limit": False}
+    """이벤트 env 가 PYTMUX_* 컨텍스트(별칭 계정)를 담는다."""
+    prev = {"limit": False}
     evs = dict(saver_hook_events(
-        prev, {"claude_account": "wo…@woojinkim.org",
-               "claude_pending": {"kind": "autoresume", "eta": 30}}))
-    armed = evs["claude-auto-armed"]
-    assert armed["PYTMUX_PENDING_KIND"] == "autoresume"
-    assert armed["PYTMUX_PENDING_ETA"] == 30
-    assert armed["PYTMUX_ACCOUNT"] == "wo…@woojinkim.org"
+        prev, {"claude_account": "wo…@woojinkim.org", "active_pane": 1,
+               "panes_claude": [{"id": 1, "claude": "limit"}]}))
+    lim = evs["claude-limit"]
+    assert lim["PYTMUX_HOOK_EVENT"] == "claude-limit"
+    assert lim["PYTMUX_ACCOUNT"] == "wo…@woojinkim.org"
 
 
 async def test_fmt_long_turn_badge_switches_to_hours():

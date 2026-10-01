@@ -16,11 +16,6 @@ from pytmuxlib import i18n
 # "claude.*" 네임스페이스. 모듈 import 시점(플러그인 활성)에 1회 병합한다.
 i18n.register({
     "ko": {
-        "claude.auto_resume": "자동재개",
-        "claude.countdown": " ⏳ {label} {eta}s(입력=취소) ",
-        # ⓑ: 라벨을 인자로 넘기면 클라가 자기 포맷에 **서버 로케일 조각**을 끼운다
-        # (`⏳ 자동재개 30s (input=cancel)`). 라벨을 포맷 안에 넣은 판을 따로 둔다.
-        "claude.countdown_ar": " ⏳ 자동재개 {eta}s(입력=취소) ",
         # pytmux-477: 재시도가 **도는 중**. `retry_wait` 는 다음 주입까지, `retry_n` 은
         # 예약이 안 잡힌 창(막 주입한 직후), `retry_self` 는 Claude 가 스스로 재시도
         # 중이라 우리가 **미루고** 있다는 뜻이다.
@@ -36,9 +31,6 @@ i18n.register({
         "claude.warn_fmt_badge": "⚠ Claude 포맷 미인식 — 추적 중단(버전 업데이트?)",
     },
     "en": {
-        "claude.auto_resume": "auto-resume",
-        "claude.countdown": " ⏳ {label} {eta}s (input=cancel) ",
-        "claude.countdown_ar": " ⏳ auto-resume {eta}s (input=cancel) ",
         "claude.retry_wait": " ↻ retry ×{n} · {eta}s ",
         "claude.retry_n": " ↻ retry ×{n} ",
         "claude.retry_self": " ↻ Claude retrying — holding ",
@@ -80,20 +72,14 @@ def init_defaults(status):
     # Claude 설정(설정 팝업 토글 현재값).
     status.auto_token_on_exit = True  # §10-F 세션 종료 시 토큰 화면 자동 표시(서버 기본 ON)
     status.claude_auto_redraw = "off"  # §10-I 화면 깨짐 자동 완화 3-state(off|idle|corruption)
-    # F3 옵션A 자동재개 대역외 확인 3-state(off|weak|strict). 서버가 권위값을 status 로
-    # 실어 보내고, 설정/선택지 팝업이 이 값에 커서를 올린다.
-    status.claude_resume_verify = "off"
-    status.claude_auto_mode = False
     # pytmux-475: auto mode 패널의 yes/no 확인 자동 «예» 확정(서버 기본 OFF).
     status.claude_auto_yes = False
     # 선택지 팝업(`: auto-retry` 등)이 현재값에 커서를 올리는 데 쓰는 정적 토글들
     # (서버 full status 에서만 도착 → 키 부재 시 직전값 유지). 서버 기본값과 같은 기본.
     status.claude_auto_retry = True    # 전송 에러 시 자동 '계속'(서버 기본 ON)
-    status.auto_launch = True          # 새 세션 자동 셋업(서버 기본 ON)
     status.token_debug = False         # §10-D 토큰 회계 진단 로그(서버 기본 OFF)
     status.claude_long_turn_sec = 600  # M17: 장기 턴 경고 임계(초, 0=끔)
     status.claude_repeat_alert = 3     # M17: 반복 루프 경고 임계(회, 0=끔)
-    status.claude_pending = None   # 무장된 자동재개 {kind, eta초} 카운트다운
     # pytmux-477: 전송 에러 재시도가 도는 중인가 — {n, eta, self}(없으면 None).
     status.claude_retry = None
 
@@ -152,9 +138,6 @@ def absorb(status, msg):
                                         status.auto_token_on_exit)
     status.claude_auto_redraw = msg.get("claude_auto_redraw",
                                          status.claude_auto_redraw)
-    status.claude_resume_verify = msg.get("claude_resume_verify",
-                                          status.claude_resume_verify)
-    status.claude_auto_mode = msg.get("claude_auto_mode", status.claude_auto_mode)
     status.claude_auto_yes = msg.get("claude_auto_yes", status.claude_auto_yes)
     status.claude_long_turn_sec = msg.get(
         "claude_long_turn_sec", status.claude_long_turn_sec)
@@ -163,10 +146,7 @@ def absorb(status, msg):
     # 정적 토글(full status 시만 도착 → 키 부재 시 직전값 유지). 선택지 팝업이 현재값에
     # 커서를 올리는 데 쓴다(command_option_current).
     status.claude_auto_retry = msg.get("claude_auto_retry", status.claude_auto_retry)
-    status.auto_launch = msg.get("auto_launch", status.auto_launch)
     status.token_debug = msg.get("token_debug", status.token_debug)
-    # 카운트다운: 서버가 매 status 에 항상 키를 실어 보낸다(없으면 None).
-    status.claude_pending = msg.get("claude_pending")
     status.claude_retry = msg.get("claude_retry")
 
 
@@ -181,7 +161,6 @@ def _fields_of(status):
         "claude_model": status.claude_model,
         "tok5h_pct": status.tok5h_pct,
         "week_sonnet_pct": status.week_sonnet_pct,
-        "claude_pending": status.claude_pending,
         "claude_retry": status.claude_retry,
         "claude_warn": status.claude_warn,
         "claude_warn_kind": status.claude_warn_kind,
@@ -306,13 +285,6 @@ def render_segs(status, segs, w, w0=None, viewing_remote=False):
         x += 1
         status._usage_zone = (ux0, x)
         acc = x   # P6: uparts 블록이 append 한 폭만큼 누적 전진(x 가 정확히 추적)
-    # 카운트다운 배지: 무장된 자동재개의 남은 초(비가역 동작 발견성).
-    if _rule.get("pending"):
-        _ct = _rule["pending"]["text"]
-        segs.append(Segment(_ct,
-                            Style(color="black", bgcolor=tc("warning"),
-                                  bold=True)))
-        acc += _cw(_ct)
     # M17(T7): 장기턴/반복루프 경고 배지(grade0 — 알림만, 개입 없음). 아이콘은 warn
     # 문자열이 직접 포함한다(장기턴 ⚠ 분:초 / 그 외 ⚠ …).
     # ⚠(U+26A0)는 wcwidth=1 이지만 터미널에선 컬러 이모지(2칸)로 그려진다 — 그래서 ⚠

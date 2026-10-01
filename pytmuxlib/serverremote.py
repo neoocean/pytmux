@@ -154,7 +154,7 @@ _REMOTE_RELAY_ACTIONS = {
     # 이미 위에 있다. 업스트림이 자기 active 탭/패널을 리네임하고 status/layout 으로
     # 되돌아와 병합 탭바·패널 테두리에 반영된다.
     "rename_window",
-    # (Claude 토글 set_autoresume·set_prompt_clear 과 토큰 조회 request_token_log 는
+    # (Claude 토글 set_prompt_clear 과 토큰 조회 request_token_log 는
     #  claude-code 플러그인 소유로 이전 — plugins.relay_actions() 로 기여한다. 코어는
     #  아래 _remote_relay_actions() 에서 이 집합과 합집합한다. delete-to-disable:
     #  플러그인 부재 시 그 액션들은 릴레이 목록에서 자동으로 빠진다.)

@@ -406,8 +406,6 @@ class _InputMixin:
         elif k == "t":
             fn = getattr(self, "toggle_clock", None)  # clock 플러그인 설치
             fn and fn(self.layout.get("active"))
-        elif k == "R":
-            self.send_cmd("set_autoresume")
         elif k == "r":
             # prefix r: 화면 전체 강제 재그리기(§2.12) — 깨진/잔상 화면 회복.
             self._run_command("redraw")

@@ -112,7 +112,9 @@ async def test_differential_against_pyte_bytestream():
         "cursor moves": [b"\x1b[5B\x1b[3Cxyz"],
         "wide cjk": ["가나다ABC".encode()],
         "cr overwrite": [b"AAAA\rBB"],
-        "ins/del line": [b"row\r\n" * 5 + b"\x1b[2;1H\x1b[2L\x1b[1;1H\x1b[1M"],
+        # ⚠ DL 이 **빈 줄을 끌어올리는** 갈래는 여기 두지 않는다 — pyte 가 거기서
+        #   틀린다(아래 test_delete_lines_pulling_an_empty_row_diverges_from_pyte).
+        "ins/del line": [b"row\r\n" * 5 + b"\x1b[2;1H\x1b[2L\x1b[3;1H\x1b[1M"],
         "ins/del char": [b"abcdef\x1b[1;3H\x1b[2@\x1b[1;3H\x1b[2P"],
         "sgr 24bit": [b"\x1b[38;2;100;150;200mTRUE\x1b[0m"],
         "sgr 256": [b"\x1b[38;5;82mIDX\x1b[0m"],
@@ -642,3 +644,351 @@ async def test_resize_narrower_does_not_orphan_a_wide_lead():
     s = _feed(12, _W)
     s.resize(columns=5)            # '다' 의 뒤칸(5열)이 잘린다
     assert _render_width(s, 0, 5) == 5, _row_cells(s, 0, 5)
+
+
+# ── pytmux-506: 밀고 당기는 조작은 경계에서 «시작하는» 쌍을 안 부순다 ──────────
+#
+# pytmux-495 는 셀을 건드리는 경로마다 경계의 폭 2 쌍을 끊게 했는데, ICH/DCH 는
+# **덮어쓰는** 조작이 아니라 **미는/당기는** 조작이라 경계에서 시작하는 쌍은 통째로
+# 옮겨져 온전히 살아남아야 한다. 종전엔 그것까지 공백으로 부숴 글자를 잃었다.
+# 아래 기대값은 전부 **tmux 3.6a 실측**이다(같은 바이트열을 같은 폭의 tmux 패널에
+# 먹이고 capture-pane 으로 읽었다).
+
+def _feed_rows(cols, rows, *chunks):
+    s = NativeScreen(cols, rows)
+    t = VTTokenizer(s)
+    for c in chunks:
+        t.feed(c if isinstance(c, bytes) else c.encode("utf-8"))
+    return s
+
+
+def _shown(screen, y, cols):
+    """그 행이 클라에 보내지는 대로 — 뒤칸(빈 data)은 건너뛴다(`_serialize_row`)."""
+    return "".join(d for d in _row_cells(screen, y, cols) if d != "").rstrip()
+
+
+async def test_push_and_pull_keep_a_wide_pair_that_starts_at_the_boundary():
+    """ICH/DCH·IRM 삽입은 경계에서 시작하는 폭 2 쌍을 **밀거나 당길 뿐** 안 부순다.
+
+    tmux 3.6a 대조 실측(2026-09-14). 종전(pytmux-495 수정 직후)엔 가드 한 줄을 뺀
+    넷이 글자를 잃어 사용자 화면의 좌우가 계속 깨졌다 — 제보 「여전히 화면 좌우측에
+    깨지는 부분이…」.
+    """
+    cases = {
+        # 라벨: (열, 바이트열, tmux 가 보여준 첫 행)
+        "ICH 가 앞칸 위 — 쌍이 통째로 밀린다":
+            (10, ["가나", b"\x1b[1G\x1b[3@"], "   가나"),
+        "DCH 가 앞칸 위 — 그 쌍만 지우고 뒤를 당긴다":
+            (10, ["가나다", b"\x1b[3G\x1b[2P"], "가다"),
+        "ICH 로 오른쪽이 밀려 나가도 남는 쌍은 온전하다":
+            (6, ["가나다", b"\x1b[1G\x1b[2@"], "  가나"),
+        "IRM 삽입 — 폭 2 글자 위에 폭 1":
+            (18, [b"\x1b[4h", "나", b"\r", "b"], "b나"),
+        "IRM 삽입 — 앞칸 위에 폭 1(뒤가 통째로 밀린다)":
+            (12, ["가나다", b"\x1b[3G\x1b[4h", "Z"], "가Z나다"),
+        # ↓ 이 줄은 **원래 멀쩡했다**(끊을 쌍이 없다) — 회귀 가드로만 둔다.
+        "IRM 삽입 — 폭 1 줄 위에 폭 2(가드)":
+            (10, ["abcdef", b"\x1b[1G\x1b[4h", "가"], "가abcdef"),
+    }
+    for label, (cols, chunks, want) in cases.items():
+        s = _feed_rows(cols, 3, *chunks)
+        got = _shown(s, 0, cols)
+        assert got == want, f"{label}: {got!r} != tmux {want!r}"
+        assert _render_width(s, 0, cols) == cols, _row_cells(s, 0, cols)
+
+
+async def test_a_pair_straddling_the_boundary_is_still_broken():
+    """반대쪽 규약은 그대로다 — 경계를 **가로지르는** 쌍은 끊는다(pytmux-495).
+
+    끊지 않으면 반쪽이 고아로 남고, 직렬화가 그 칸을 건너뛰어 뒤가 한 칸씩 밀린다
+    (클라에 가는 것은 셀이 아니라 **런**이라 tmux 처럼 「그리지 않고 넘기기」를 못 한다).
+    """
+    s = _feed_rows(10, 3, "가나", b"\x1b[2G\x1b[3@")   # ICH 가 '가' 한가운데
+    assert _shown(s, 0, 10) == "     나", _row_cells(s, 0, 10)
+    assert _render_width(s, 0, 10) == 10
+
+
+async def test_delete_lines_blanks_the_row_when_the_source_row_is_empty():
+    """DL 은 끌어올릴 원본 행이 **빈 줄**이어도 대상 행을 비운다(pytmux-506).
+
+    `buffer` 는 희소 defaultdict 라 한 번도 안 그린 줄은 키가 없다. 종전엔 그때
+    아무것도 안 해서 지운 줄이 화면에 **그대로 남았다**(폭 2 와 무관 — ASCII 도 같다).
+    """
+    for text in ("가나", "a"):
+        s = _feed_rows(10, 4, text, b"\x1b[1M")
+        assert _shown(s, 0, 10) == "", f"{text!r}: 지운 줄이 남았다 {_row_cells(s, 0, 10)!r}"
+    # 원본 행이 있을 때의 정상 경로는 그대로다.
+    s = _feed_rows(10, 4, "가나\r\n다라", b"\x1b[1;1H\x1b[1M")
+    assert _shown(s, 0, 10) == "다라", _row_cells(s, 0, 10)
+    assert _shown(s, 1, 10) == ""
+
+
+async def test_delete_lines_pulling_an_empty_row_diverges_from_pyte():
+    """DL 이 **빈 줄**을 끌어올리는 갈래는 pyte 와 갈린다 — 우리가 맞다(pytmux-506).
+
+    pyte 의 `delete_lines` 는 `if y + count in self.buffer` 로 원본 행을 **있을 때만**
+    옮긴다. 화면 버퍼가 희소 dict 라 한 번도 안 그린 줄은 키가 없고, 그때 대상 행은
+    옛 내용 그대로 남는다 — 지운 줄이 화면에 잔상으로 선다. nativescreen 이 그 관용구를
+    물려받았던 자리다.
+
+    tmux 3.6a 대조 실측(2026-09-14): 아래 바이트열의 첫 행은 **빈 줄**이다.
+    """
+    if not _HAVE_PYTE:
+        skip("pyte 미설치 — 이 시험은 pyte 와의 «의도적 갈림»을 못박는 자리다.")
+    cols, rows = 40, 6
+    chunks = [b"row\r\n" * 5 + b"\x1b[2;1H\x1b[2L\x1b[1;1H\x1b[1M"]
+    tok = _tok_screen(chunks, cols, rows)
+    ref = _ref_screen(chunks, cols, rows)
+    want = ["", "", "row", "row", "row", ""]          # = tmux 3.6a
+    assert [d.rstrip() for d in tok.display] == want, tok.display
+    assert ref.display[0].rstrip() == "row", (
+        "pyte 가 고쳐졌다면 이 시험과 위 차분 코퍼스를 함께 되돌려라")
+
+
+# ── 내용 차분 속성 시험(pytmux-506) ─────────────────────────────────────────
+#
+# ⛔ 왜 또 만드나 — pytmux-495 가 세운 「행의 렌더 폭 == 격자 열 수」 불변식은 이번
+#    결함을 **못 잡는다**: ICH/DCH 가 쌍을 공백 둘로 바꿔도 폭은 그대로 12 다. 폭은
+#    맞고 **내용**이 틀린 갈래라, 오라클도 내용을 봐야 한다.
+#
+# 참조는 「셀은 글자 아니면 뒤칸」이라는 가장 단순한 모델이다. 기대값은 tmux 3.6a
+# 실측으로 맞췄다(경계에서 시작하는 쌍은 옮기고, 가로지르는 쌍만 끊는다).
+
+# 폭 판정은 격자와 **같은 SSOT**(cellwidth)를 쓴다 — 여기서 재는 것은 폭 분류가
+# 아니라 **배치**다(폭까지 새로 쓰면 무엇이 틀렸는지 안 갈린다).
+from pytmuxlib.vtconst import wcwidth as _wcwidth   # noqa: E402
+
+_CONT = object()
+
+
+class _RefGrid:
+    """차분용 독립 격자 — nativescreen 과 **공유 코드가 없다**."""
+
+    def __init__(self, cols, rows):
+        self.cols, self.rows = cols, rows
+        self.g = [[" "] * cols for _ in range(rows)]
+        self.x = self.y = 0
+
+    # ★ 「펜딩 랩」 — 줄을 꽉 채우면 커서는 열 밖(`x == cols`)에 선다. 그 상태의
+    #   셀 조작은 **아무 일도 안 한다**(가리키는 칸이 없다). tmux 3.6a 실측:
+    #   18칸을 꽉 채운 뒤 ICH/DCH/ECH/EL(0) 넷 다 줄이 그대로였고 EL(1) 만 줄을
+    #   통째로 지웠다(그쪽은 범위가 [0, cols) 로 잘려 온 줄을 덮기 때문이다).
+    def _cx(self):
+        return self.x
+
+    def _clear(self, lo, hi):
+        """[lo,hi) 를 공백으로 — 양 경계를 **가로지르는** 쌍은 통째로 끊는다."""
+        row = self.g[self.y]
+        lo, hi = max(0, lo), min(hi, self.cols)
+        if lo >= hi:
+            return
+        if row[lo] is _CONT and lo:
+            row[lo - 1] = " "
+        if hi < self.cols and row[hi] is _CONT:
+            row[hi] = " "
+        for x in range(lo, hi):
+            row[x] = " "
+
+    def _fix_tail(self, row):
+        last = row[self.cols - 1]
+        if last is not _CONT and _wcwidth(last) == 2:
+            row[self.cols - 1] = " "       # 뒤칸을 잃은 앞칸은 못 앉는다
+        return row
+
+    def _cut_straddle(self, row, x):
+        if row[x] is _CONT and x:
+            row[x - 1] = row[x] = " "
+
+    def put(self, ch):
+        w = _wcwidth(ch)
+        if w < 1:
+            return
+        if self.x + w > self.cols:
+            self.x = 0
+            self.lf()
+        self._clear(self.x, self.x + w)
+        self.g[self.y][self.x] = ch
+        if w == 2:
+            self.g[self.y][self.x + 1] = _CONT
+        self.x = min(self.x + w, self.cols)
+
+    def lf(self):
+        if self.y == self.rows - 1:
+            self.g.pop(0)
+            self.g.append([" "] * self.cols)
+        else:
+            self.y += 1
+
+    def cr(self):
+        self.x = 0
+
+    def cup(self, y, x):
+        self.y = max(0, min(y, self.rows - 1))
+        self.x = max(0, min(x, self.cols - 1))
+
+    def el(self, how):
+        x = self._cx()
+        self._clear(*((x, self.cols) if how == 0 else
+                      (0, x + 1) if how == 1 else (0, self.cols)))
+
+    def ech(self, n):
+        self._clear(self._cx(), self._cx() + n)
+
+    def ich(self, n):
+        x, row = self._cx(), self.g[self.y]
+        if x >= self.cols:
+            return                          # 펜딩 랩 — 가리키는 칸이 없다
+        self._cut_straddle(row, x)
+        self.g[self.y] = self._fix_tail(
+            (row[:x] + [" "] * n + row[x:])[:self.cols])
+
+    def dch(self, n):
+        x, row = self._cx(), self.g[self.y]
+        if x >= self.cols:
+            return                          # 펜딩 랩 — 가리키는 칸이 없다
+        self._cut_straddle(row, x)
+        end = min(x + n, self.cols)
+        if end < self.cols and row[end] is _CONT:
+            row[end] = " "
+        self.g[self.y] = self._fix_tail(
+            (row[:x] + row[end:] + [" "] * (end - x))[:self.cols])
+
+    def dl(self, n):
+        for _ in range(min(n, self.rows - self.y)):
+            self.g.pop(self.y)
+            self.g.append([" "] * self.cols)
+        self.x = 0
+
+    def il(self, n):
+        for _ in range(min(n, self.rows - self.y)):
+            self.g.pop(self.rows - 1)
+            self.g.insert(self.y, [" "] * self.cols)
+        self.x = 0
+
+    def text(self, y):
+        return "".join(c for c in self.g[y] if c is not _CONT)
+
+
+def _ref_ops(rnd, cols, rows):
+    """(바이트열, 참조에 먹일 콜러블) 쌍 하나."""
+    k = rnd.random()
+    if k < .40:
+        txt = "".join(rnd.choice("가나다라abc한글x 一二")
+                      for _ in range(rnd.randint(1, 14)))
+        return txt.encode(), lambda r: [r.put(c) for c in txt]
+    if k < .52:
+        y, x = rnd.randint(0, rows - 1), rnd.randint(0, cols - 1)
+        return (f"\x1b[{y + 1};{x + 1}H".encode(), lambda r: r.cup(y, x))
+    if k < .60:
+        n = rnd.randint(0, 2)
+        return f"\x1b[{n}K".encode(), lambda r: r.el(n)
+    if k < .68:
+        n = rnd.randint(1, 8)
+        return f"\x1b[{n}X".encode(), lambda r: r.ech(n)
+    if k < .78:
+        n = rnd.randint(1, 8)
+        return f"\x1b[{n}P".encode(), lambda r: r.dch(n)
+    if k < .88:
+        n = rnd.randint(1, 8)
+        return f"\x1b[{n}@".encode(), lambda r: r.ich(n)
+    if k < .92:
+        n = rnd.randint(1, 2)
+        return f"\x1b[{n}M".encode(), lambda r: r.dl(n)
+    if k < .96:
+        n = rnd.randint(1, 2)
+        return f"\x1b[{n}L".encode(), lambda r: r.il(n)
+    if k < .98:
+        return b"\r", lambda r: r.cr()
+    return b"\n", lambda r: r.lf()
+
+
+async def test_grid_content_matches_an_independent_model():
+    """무작위 조작에도 **보이는 내용**이 독립 참조와 같다(pytmux-506 속성 시험).
+
+    폭 불변식만 보던 종전 오라클은 ICH/DCH 가 폭 2 쌍을 공백 둘로 **바꿔치기**해도
+    통과했다 — 사용자 화면에서는 글자가 사라지는데. 여기서는 행이 보여주는 글자열을
+    통째로 맞춘다.
+    """
+    import random
+    rnd = random.Random(20260914)
+    for _ in range(1200):
+        cols, rows = rnd.randint(4, 20), rnd.randint(2, 5)
+        s = NativeScreen(cols, rows)
+        tk = VTTokenizer(s)
+        ref = _RefGrid(cols, rows)
+        trace = []
+        for _ in range(rnd.randint(1, 16)):
+            raw, run_ref = _ref_ops(rnd, cols, rows)
+            trace.append(raw)
+            tk.feed(raw)
+            run_ref(ref)
+        for y in range(rows):
+            got = "".join(d for d in _row_cells(s, y, cols) if d != "")
+            assert got == ref.text(y), (
+                f"cols={cols} row={y}\n  native={got!r}\n  참조  ={ref.text(y)!r}"
+                f"\n  조작={b''.join(trace)!r}")
+
+
+async def test_ed3_clears_the_scrollback():
+    """`ESC[3J`(ED 3)는 화면뿐 아니라 **스크롤백까지** 지운다(pytmux-510).
+
+    `/clear` 류가 ED 2 와 **함께** 보내는 것이 이 시퀀스다. 종전엔 `_NativeBase` 가
+    2 와 3 을 같게 다뤄 뷰포트만 비고 history 는 그대로였다 — 「지웠는데 위로 올리면
+    옛 대화가 그대로」.
+
+    되돌리면 실패해야 하는 오라클:
+      · `erase_in_display` 재정의를 지우면 → ①이 실패
+      · `how != 3` 가드를 없애 ED 2 도 비우게 하면 → ②가 실패
+      · `on_history_cleared` 호출을 지우면 → ③이 실패
+    """
+    from pytmuxlib.nativescreen import NativeScrollbackScreen
+
+    def filled(rows=4, cols=20):
+        s = NativeScrollbackScreen(cols, rows, history=100, ratio=0.5)
+        tk = VTTokenizer(s)
+        for i in range(rows + 3):        # 화면 높이보다 많이 써서 위로 밀어낸다
+            tk.feed(("line%d\r\n" % i).encode())
+        return s, tk
+
+    # ① ED 3 은 스크롤백을 비운다.
+    s, tk = filled()
+    assert len(s.history.top) > 0, "선행조건: 스크롤백이 쌓여 있어야 한다"
+    tk.feed(b"\x1b[3J")
+    assert len(s.history.top) == 0, (
+        "ED 3 인데 스크롤백이 남았다: %d줄" % len(s.history.top))
+
+    # ② ED 2 는 화면만 비운다(스크롤백은 남는다) — 대조군.
+    s, tk = filled()
+    before = len(s.history.top)
+    tk.feed(b"\x1b[2J")
+    assert len(s.history.top) == before, (
+        "ED 2 가 스크롤백까지 비웠다 %d → %d" % (before, len(s.history.top)))
+    assert all(not row.strip() for row in s.display), "ED 2 는 화면을 비운다"
+
+    # ③ 비웠으면 패널에 알린다(스크롤 위치·검색 매치가 절대 인덱스라 함께 되돌려야).
+    s, tk = filled()
+    called = []
+    s.on_history_cleared = lambda: called.append(1)
+    tk.feed(b"\x1b[3J")
+    assert called == [1], "스크롤백을 비웠는데 on_history_cleared 를 안 불렀다"
+    # 비울 것이 없으면 훅도 안 부른다(공회전 방지).
+    tk.feed(b"\x1b[3J")
+    assert called == [1], "빈 스크롤백에 ED 3 — 훅을 또 불렀다"
+
+
+async def test_pane_resets_scroll_when_app_clears_the_scrollback():
+    """호출부 오라클(pytmux-510): 훅을 **실제로 꽂았고** 패널이 좌표계를 되돌린다.
+
+    ⛔ 화면 모델만 시험하면 `_make_main_screen` 에서 `on_history_cleared = …` 한 줄을
+    지워도 통과한다(공허 통과 — CLAUDE.md §표시 기능은 호출부까지 단언).
+    """
+    p = Pane(-1, -1, 20, 4, vt_parser="native")
+    for i in range(8):
+        p.feed(("line%d\r\n" % i).encode())
+    assert len(p.screen.history.top) > 0, "선행조건: 스크롤백"
+    p.scroll = 3
+    p._match_abs = 2
+    p.feed(b"\x1b[3J")
+    assert len(p.screen.history.top) == 0, "패널 경로에서도 스크롤백이 비어야 한다"
+    assert p.scroll == 0, "스크롤백이 사라졌는데 scroll 이 %d 로 남았다" % p.scroll
+    assert p._match_abs is None, "검색 매치의 절대 인덱스가 남았다"

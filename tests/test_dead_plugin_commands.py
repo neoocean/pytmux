@@ -27,9 +27,20 @@ from pytmuxlib.servercmd import _CMD_TABLE
 
 #: 이 CL 이 살린 열하나(이슈 본문의 그 목록 그대로).
 REVIVED = (
-    "auto-launch", "capture-output", "capture-toggle", "claude-rules",
+    "capture-output", "capture-toggle",
     "claude-settings", "claude-token-log", "ime-indicator", "model",
     "namesync", "prompt-clear-queue", "prompt-history-lines",
+)
+
+#: Claude Code CLI 가 스스로 하게 돼 **일부러 걷은** 이름(계획
+#: `pytmux/claude_code_native_retirement_plan_2026-10-01`). 위 REVIVED 와 반대 방향의
+#: 오라클이다 — 이 이름들이 명령이나 화면으로 **되살아나면** 운다.
+RETIRED = (
+    "claude-rules", "rules", "startup-rules",          # pytmux-524 → SessionStart 훅
+    "auto-launch", "claude-auto-launch",               # pytmux-525 → CLI 기본 auto 모드
+    "claude-auto-mode", "auto-mode",                   #   · remoteControlAtStartup
+    "auto-resume", "autoresume", "auto-resume-message",  # pytmux-526 → CLI 의
+    "autoresume-message", "claude-resume-verify", "resume-verify",  # 자동 계속
 )
 
 
@@ -73,6 +84,17 @@ async def test_the_eleven_dead_commands_are_all_alive():
         f"아직 죽은 줄: {dead} — 이름을 액션으로 옮기거나(cmdmap) 화면 스펙을 낼 것")
 
 
+async def test_the_retired_names_are_neither_commands_nor_screens():
+    """걷은 이름은 **두 길 다** 막혀 있어야 한다 — 광고만 빼고 디스패치·화면이 남으면
+    팔레트에는 없는데 손으로 치면 옛 기능이 도는 반쪽 제거가 된다."""
+    reg = plugins.load()
+    advertised = {row[0] for p in reg.plugins
+                  for row in (getattr(p, "commands", None) or [])}
+    alive = [n for n in RETIRED
+             if n in advertised or _runnable(reg, n) or _has_screen(reg, n)]
+    assert alive == [], f"걷은 이름이 아직 산다: {alive}"
+
+
 async def test_every_advertised_command_is_advertised_by_someone_alive():
     """오라클이 **헛돌지 않는가**: 광고 목록이 비면 위 단언은 무엇을 해도 통과한다."""
     reg = plugins.load()
@@ -109,17 +131,6 @@ async def test_prompt_history_lines_maps_and_cycles_when_bare():
         ("set_ph_max_lines", {"n": None})           # 무인자 = 순환
 
 
-async def test_auto_launch_was_dead_in_canon_too_and_now_maps():
-    """`auto-launch` 는 팔레트·선택지 팝업·CLI 토글표에 다 있었는데 `handle_command`
-    사슬에만 없어 **정본에서도** 아무 일이 안 났다. 전수로 재는 자가 없으면 이런
-    구멍은 안 보인다."""
-    cc = _plugin("claude-code")
-    assert cc.plugin_command_action("auto-launch", ["on"]) == \
-        ("set_claude_auto_launch", {"value": True})
-    assert cc.plugin_command_action("claude-auto-launch", []) == \
-        ("set_claude_auto_launch", {"value": None})
-
-
 async def test_prompt_clear_queue_branches_on_its_argument():
     """한 이름이 **화면이기도 하고 액션이기도** 하다. 무인자면 `None`(→ 화면 경로)."""
     cc = _plugin("claude-code")
@@ -135,12 +146,6 @@ async def test_the_server_actually_runs_the_revived_actions():
     async with running_server() as (srv, _task, _sock):
         sess = srv.ensure_default_session(80, 24)
         client = MagicMock()
-
-        # auto-launch — 종전에는 외부 CLI 만 이 셋터에 닿을 수 있었다.
-        before = srv.claude_auto_launch
-        assert srv.plugins.server_command(
-            srv, client, sess, "set_claude_auto_launch", {"value": None}) == "send_full"
-        assert srv.claude_auto_launch is not before
 
         # ime-indicator — 표시 여부가 서버 옵션이라야 두 클라가 같은 상태를 본다.
         assert srv.plugins.server_command(
@@ -162,7 +167,6 @@ async def test_the_four_popups_become_screen_specs():
         spec_mod = importlib.import_module(
             "pytmuxlib.plugins.claude-code.screenspec")
         for name, kind in (("claude-settings", "form"),
-                           ("claude-rules", "prompt"),
                            ("model", "list"),
                            ("claude-token-log", "table"),
                            ("prompt-clear-queue", "list")):
@@ -181,29 +185,15 @@ async def test_the_settings_form_shows_the_live_values_and_enter_changes_them():
             "pytmuxlib.plugins.claude-code.screenspec")
         spec = spec_mod.open_spec(srv, sess, "claude-settings")
         rows = {r["key"]: r["cols"][0] for r in spec["rows"]}
-        assert "claude_auto_mode" in rows, rows
-        before = srv.claude_auto_mode
+        assert "claude_auto_yes" in rows, rows
+        assert "claude_auto_mode" not in rows, "걷은 토글(pytmux-525)이 설정 판에 남았다"
+        before = srv.claude_auto_yes
         nxt = spec_mod.action(srv, sess, {"id": "claude-settings", "do": "toggle",
-                                          "row": 0, "input": "claude_auto_mode"})
-        assert srv.claude_auto_mode is not before, "Enter 가 값을 안 바꿨다"
+                                          "row": 0, "input": "claude_auto_yes"})
+        assert srv.claude_auto_yes is not before, "Enter 가 값을 안 바꿨다"
         # 그리고 **바뀐 값이 곧바로 보인다**(다음 스펙이 돌아온다).
         after = {r["key"]: r["cols"][0] for r in nxt["rows"]}
-        assert after["claude_auto_mode"] != rows["claude_auto_mode"]
-
-
-async def test_the_rules_prompt_carries_the_current_text_as_the_seed():
-    """고치는 화면인데 지금 값이 안 실리면 '편집'이 아니라 '덮어쓰기'다."""
-    async with running_server() as (srv, _task, _sock):
-        sess = srv.ensure_default_session(80, 24)
-        spec_mod = importlib.import_module(
-            "pytmuxlib.plugins.claude-code.screenspec")
-        srv.set_claude_rules("한국어로 답할 것")
-        spec = spec_mod.open_spec(srv, sess, "claude-rules")
-        assert spec["text"] == "한국어로 답할 것", spec
-        out = spec_mod.action(srv, sess, {"id": "claude-rules", "do": "save",
-                                          "row": 0, "input": "새 규칙"})
-        assert srv.claude_rules == "새 규칙"
-        assert out["t"] == "plugin_screen_close"
+        assert after["claude_auto_yes"] != rows["claude_auto_yes"]
 
 
 class _FakePty:
@@ -336,6 +326,6 @@ async def test_building_a_screen_spec_never_reaches_for_textual():
 async def test_the_plugin_screen_hook_actually_routes_to_the_specs():
     """`plugin_screen` 이 `screenspec` 을 안 부르면 스펙이 아무리 옳아도 죽은 줄이다."""
     reg = plugins.load()
-    for name in ("claude-settings", "claude-rules", "model", "claude-token-log",
+    for name in ("claude-settings", "model", "claude-token-log",
                  "prompt-clear-queue", "namesync"):
         assert _has_screen(reg, name), f"{name}: 레지스트리를 통해 화면이 안 나온다"

@@ -17,7 +17,6 @@
     { t: 'claude-prompt-history',   n: 'claude-prompt-history',   c: 'Claude' },
     { t: 'claude-name-sync',        n: 'claude-name-sync',        c: 'Claude' },
     { t: 'claude-token-usage-view', n: 'claude-token-usage-view', c: 'Claude' },
-    { t: 'claude-disable-feedback', n: 'claude-disable-feedback', c: 'Claude' },
     { t: 'ncd',                     n: 'ncd',                     c: '탐색' },
     { t: 'mdir',                    n: 'mdir',                    c: '탐색' },
     { t: 'clock',                   n: 'clock',                   c: '오버레이' },

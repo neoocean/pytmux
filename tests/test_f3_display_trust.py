@@ -9,9 +9,8 @@
     떼고 (b) `_bypass_seen` sticky 가 서서 팝업에 Bypass 가 노출된다. 완화 = 권한모드
     footer 는 **진짜로 화면 아래쪽**에만 그려지므로(한도 배너와 달리 행 위치 앵커가
     성립) 행위 소비자는 `anchored=True` 로 footer tail 만 본다.
-  · 벡터 3 조직차단 위장: `claude_remote_blocked` 한 줄이 **서버 전역·영구** 래치를
-    세워 /rc 자동 주입을 죽인다. 완화 = ①알린다(조용한 중단은 고장과 구분 불가)
-    ②원격제어가 실제로 켜진 것을 관측하면 래치를 푼다(공존 불가 → 자기치유).
+  · 벡터 3 조직차단 위장: 이 벡터는 **기능째 사라졌다**(pytmux-525 — /rc 자동 주입과
+    그 정책 래치를 걷었다. CLI 의 `remoteControlAtStartup` 이 대신한다).
   · 벡터 4 토큰카운터 wipe: 세션 경계(None→Claude)가 회계를 끊는데, 그 경계는 화면
     파서가 만든다. 위조뿐 아니라 **transient flap**(긴 busy 출력이 footer 를 샘플 밖으로
     밀어 한두 프레임 None)에서도 발동해 세션 토큰이 0 이 되고 세션 id 가 갈렸다. 모델
@@ -117,9 +116,6 @@ class _P:
         self._claude_model_weak = False
         self._claude_model_cand = None
         self._claude_model_cand_n = 0
-        self._rules_pending = False
-        self._rc_pending = False
-        self._perm_auto_pending = False
         # 대역외 근거: 같은 트랜스크립트 파일(=같은 Claude 프로세스)을 이미 봤다.
         self._xc_path = "/x/proj/abc-123.jsonl"
         self._xc_session_seen = "abc-123.jsonl"
@@ -128,10 +124,7 @@ class _P:
 class _S:
     _scan_session_boundary = sm.ServerClaudeMixin._scan_session_boundary
     _xc_session_looks_new = sm.ServerClaudeMixin._xc_session_looks_new
-    claude_rules = ""
-    claude_auto_launch = False
     usage_refresh_sec = 0
-    _rc_policy_blocked = False
 
     def __init__(self):
         self.assigned = 0
@@ -252,27 +245,6 @@ async def test_scan_idle_perm_observation_is_anchored():
     src = __import__("inspect").getsource(sm.ServerClaudeMixin._scan_idle_actions)
     assert "claude_perm_mode(txt, anchored=True)" in src, \
         "idle 관측이 전체 화면 스캔으로 돌아갔다(본문 위조가 Bypass sticky 를 세운다)"
-
-
-# ── 벡터 3: 조직 정책 래치 ───────────────────────────────────────────────────
-async def test_org_policy_latch_is_announced_and_self_heals():
-    """래치는 ①알림을 내고 ②원격제어가 실제 켜진 걸 보면 풀린다."""
-    src = __import__("inspect").getsource(sm.ServerClaudeMixin)
-    assert "ccmsg.rc_policy_blocked" in src, "조용한 영구 중단(투명성 없음)"
-    assert "ccmsg.rc_policy_cleared" in src and "_rc_policy_blocked = False" in src, \
-        "자기치유(관측된 활성 → 래치 해제) 경로가 없다"
-    # **실측 함정**: claude_remote_active 는 "remote control" 부분일치라 차단 메시지
-    # ("Remote Control is disabled by your organization")에도 매칭된다 → 같은 프레임에서
-    # 세운 래치를 곧바로 풀어 기존 회귀(test_rc_suppressed_after_org_policy_block)가
-    # 깨졌다. 치유는 그 프레임에 차단 문구가 없을 때만이어야 한다.
-    assert "not claude_remote_blocked(txt)" in src, \
-        "자기치유가 차단 문구와 같은 프레임에서도 발동한다(래치가 즉시 풀린다)"
-    # 알림 문구는 ko/en 양쪽에 있어야 한다(카탈로그 대칭 게이트와 같은 이유).
-    plug = importlib.import_module("pytmuxlib.plugins.claude-code")
-    from pytmuxlib import i18n
-    assert plug is not None
-    for key in ("ccmsg.rc_policy_blocked", "ccmsg.rc_policy_cleared"):
-        assert key in i18n._CATALOG["ko"] and key in i18n._CATALOG["en"], key
 
 
 # ── 벡터 5: 모델 배지(신규 코드 없음 — 기존 방어 생존 확인) ──────────────────

@@ -41,7 +41,7 @@
           아래에는 detach·서버 종료가 있습니다.
         </p>
         <p>
-          토글 항목(줌·입력 동기화·자동 재개·프롬프트 클리어·핀)은 on/off 를 보여주고, 눌러도 메뉴가
+          토글 항목(줌·입력 동기화·프롬프트 클리어·핀)은 on/off 를 보여주고, 눌러도 메뉴가
           닫히지 않아 연속 조작할 수 있습니다. 플러그인은 자신의 서브메뉴를 끼워 넣을 수 있습니다.
         </p>
         <figure>
@@ -165,7 +165,7 @@
             <tr><td><kbd>n</kbd> <kbd>p</kbd> <kbd>l</kbd> <kbd>w</kbd></td><td>다음/이전/최근 탭 · 트리 개요</td></tr>
             <tr><td><kbd>P</kbd> / <kbd>!</kbd></td><td>탭 핀 토글 / 패널을 새 탭으로 분리</td></tr>
             <tr><td><kbd>[</kbd> / <kbd>]</kbd> / <kbd>=</kbd></td><td>스크롤 모드 / 붙여넣기 / 버퍼 고르기</td></tr>
-            <tr><td><kbd>t</kbd> / <kbd>R</kbd> / <kbd>r</kbd></td><td>시계 토글 / 자동 재개 토글 / 화면 다시 그림</td></tr>
+            <tr><td><kbd>t</kbd> / <kbd>r</kbd></td><td>시계 토글 / 화면 다시 그림</td></tr>
             <tr><td><kbd>d</kbd> / <kbd>Enter</kbd> / <kbd>:</kbd></td><td>detach / 메뉴 / 명령 프롬프트</td></tr>
           </tbody>
         </table>
@@ -215,19 +215,18 @@
             <tr><td><code class="nb">client-attached</code></td><td>클라이언트가 서버에 붙었을 때(시작·재접속)</td></tr>
             <tr><td><code class="nb">after-new-window</code></td><td>탭이 새로 생겼을 때</td></tr>
             <tr><td><code class="nb">alert-bell</code></td><td>어느 탭에서든 벨(<code>\a</code>)이 울렸을 때 — 알림 스크립트를 붙이기 좋습니다</td></tr>
-            <tr><td><code class="nb">claude-auto-armed</code></td><td>Claude <a href="/guide/claude">자동 재개</a>가 <strong>예약된 순간</strong>(한도가 풀릴 시각을 읽어 카운트다운이 걸릴 때). 한 번 예약될 때 1회만 돕니다</td></tr>
             <tr><td><code class="nb">claude-limit</code></td><td>활성 패널의 Claude 가 <strong>사용량 한도로 멈춘 순간</strong>. 폰으로 알림을 보내는 식으로 쓰기 좋습니다</td></tr>
           </tbody>
         </table>
         <p>
           훅 명령은 <strong>그 순간의 맥락을 환경변수로</strong> 받습니다 —
           <code class="nb">PYTMUX_HOOK_EVENT</code>(발화한 이벤트 이름)에 더해,
-          <code class="nb">claude-auto-armed</code> 는 <code class="nb">PYTMUX_PENDING_KIND</code>(예약의 종류 — 현재 배포본은 <code>resume</code>)와
-          <code class="nb">PYTMUX_PENDING_ETA</code>(발화까지 남은 초)를,
-          두 Claude 훅 모두 <code class="nb">PYTMUX_ACCOUNT</code>(계정 <strong>별칭</strong> — 이메일 원문은 싣지 않습니다)를 함께 넘깁니다.
+          <code class="nb">claude-limit</code> 은 <code class="nb">PYTMUX_ACCOUNT</code>(계정 <strong>별칭</strong> — 이메일 원문은 싣지 않습니다)를 함께 넘깁니다.
+          (예전의 <code>claude-auto-armed</code> 는 자동 재개와 함께 없앴습니다 — 한도 뒤 이어 가는 순간은
+          Claude Code 의 Notification 훅 <code>quota_auto_resume_fired</code> 가 알립니다.)
           <code class="nb">run-shell</code> 로 부른 셸 명령이 그대로 물려받으므로
           <code class="nb">set-hook claude-limit run-shell "notify.sh $PYTMUX_ACCOUNT"</code> 처럼 쓰면 됩니다.
-          Claude 훅 둘은 <a href="/guide/plugins">claude-code 플러그인</a>이 있을 때만 발화합니다(디렉토리를 지우면 함께 사라집니다).
+          Claude 훅은 <a href="/guide/plugins">claude-code 플러그인</a>이 있을 때만 발화합니다(디렉토리를 지우면 함께 사라집니다).
         </p>
       </section>
 

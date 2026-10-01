@@ -565,7 +565,7 @@ class SettingsScreen(ModalScreen):
         self._cats = []
         self._cat_first = {}
         # 플러그인 기여 설정(delete-to-disable): claude-code 가 'Claude' 카테고리와
-        # token-saver/model/claude-rules/token-log 링크를 settings() 훅으로 준다. 코어
+        # token-saver/model/token-log 링크를 settings() 훅으로 준다. 코어
         # SETTINGS 뒤에 항목을, SETTINGS_CATS 의 '키' 앞에 카테고리를 병합한다.
         p_descs, p_cats = plugin_settings or ([], [])
         all_settings = list(SETTINGS) + list(p_descs)
@@ -938,7 +938,6 @@ class MenuScreen(ModalScreen):
             return self._optim[key]
         st = self.app.status
         return {"zoom": st.zoomed, "sync": st.sync,
-                "autoresume": st.autoresume,
                 "prompt_clear": getattr(st, "prompt_clear", False),
                 # 항목7: 활성 탭이 고정이면 ●.
                 "toggle_pin": any(t.get("active") and t.get("pinned")

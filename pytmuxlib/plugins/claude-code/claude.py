@@ -75,7 +75,7 @@ def claude_limit(text: str) -> bool:
     """화면이 **사용량 리밋으로 차단된** 상태면 True(정밀). 사용자 입력·소스/diff 줄을
     제외한 Claude 출력에서 차단 배너 문구(reached/exceeded/hit · "limit will reset")만
     본다 — 사용률 경고("used N% of your limit")·산문 속 'rate limit' 언급·소스 표시를
-    리밋으로 오판하지 않는다. claude_state·parse_reset_delay 가 공유하는 단일 신호."""
+    리밋으로 오판하지 않는다. claude_state 가 쓰는 단일 신호."""
     # 컨텍스트 하드스톱("Context limit reached · /compact or /clear to continue")은
     # 'limit reached' 로 _LIMIT_BLOCKED_RE 에 걸리지만 사용량/rate 리밋이 아니라
     # *대화 컨텍스트* 가 꽉 찬 별도 신호다(#9 F2). claude_context_hardstop 이 즉시
@@ -727,44 +727,6 @@ def fmt_long_turn_badge(elapsed_sec) -> str:
     return "⚠ %d:%02d" % (el // 60, el % 60)
 
 
-def claude_remote_active(text: str) -> bool:
-    """Claude Code 패널이 데스크탑 앱 '원격 제어'에 연결돼 있는지(화면의 'Remote
-    Control active' 표시) 판정. 시작 시 자동 /rc 주입(auto-launch)이 **이미 켜진**
-    원격제어를 도로 끄지 않도록 idempotent 가드로 쓴다(재시작 resume 후 첫 스캔이
-    None→Claude 로 보여 새 세션으로 오인하는 경우 등). 클라 클릭존 판정과 동일 문구."""
-    return "remote control" in (text or "").lower()
-
-
-# Claude Code `/rc`(원격 제어) 실행 시 뜨는 **원격 제어 관리 메뉴**. 예전 CLI 의 /rc 는
-# 메뉴 없이 원격을 토글했지만, 현재 CLI 는 세션을 모바일 앱/claude.ai 에 노출한 뒤
-# "Disconnect this session · Show QR code(Scan with your phone) · Continue (Enter to
-# select · Esc to continue)" **비모달 메뉴**를 띄워 응답 대기로 진행을 막는다. auto-launch
-# (set_claude_auto_launch, 기본 ON)가 새 세션마다 /rc 를 1회 주입하므로 이 메뉴가 매번
-# 떠 자동화가 멈췄다(제보 2026-06-18: 폰에서 pytmux 로 접속 중 Continue 메뉴가
-# 진행을 가로막음). 메뉴 안내대로 **Esc=Continue**(원격은 켜진 채 메뉴만 닫힘)를 자동
-# 주입해 치우기 위한 감지 — 피드백 프롬프트 자동 Dismiss(#26)와 같은 Esc 경로를 탄다.
-# 'Disconnect this session' + QR/scan 안내가 **함께** 보일 때만 잡아, 산문에 'Disconnect'
-# 한 단어가 우연히 섞인 경우의 오검출을 막는다.
-_REMOTE_MENU_RE = re.compile(r"Disconnect this session", re.I)
-_REMOTE_MENU_QR_RE = re.compile(r"Show QR code|Scan with your phone", re.I)
-
-
-def claude_remote_menu(text: str) -> bool:
-    """Claude `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR)가 떠 진행을 막고 있으면
-    True(자동 Esc Dismiss 대상). 'Disconnect this session' 과 QR/scan 안내가 함께 보일
-    때만 — 단어 하나가 산문에 우연히 섞인 경우의 오검출을 피한다."""
-    t = text or ""
-    return bool(_REMOTE_MENU_RE.search(t) and _REMOTE_MENU_QR_RE.search(t))
-
-
-def claude_remote_blocked(text: str) -> bool:
-    """원격 제어가 조직 정책으로 비활성화됐다는 메시지("Remote Control is disabled by
-    your organization's policy")가 화면에 보이면 True. 이게 한 번 뜨면 이 세션에서는
-    /rc 자동 주입을 영구 중단해야 한다(요청) — 매 새 세션마다 /rc 를 재시도해 같은
-    거부 메시지를 반복 띄우는 것을 막는다. 조직 정책이라 폭넓게(소유격 유무 무관) 잡는다."""
-    return "disabled by your organization" in (text or "").lower()
-
-
 # 조직 관리 설정(managed settings) 최초 승인 화면. 조직 계정으로 `claude` 를 띄우면
 # 부팅 직후 "Managed settings require approval / ❯ 1. Yes, I trust these settings /
 # 2. No, exit Claude Code / Enter to confirm · Esc to exit" 로 멈춰 선다. 사람이 매번
@@ -1334,43 +1296,8 @@ def claude_perm_mode(text: str, *, anchored: bool = False):
     return None
 
 
-def parse_reset_delay(text: str, now: "_dt.datetime | None" = None):
-    """Claude Code 등의 사용량 리밋 안내 문구에서 해제 시각을 찾아
-    지금부터 그때까지의 지연(초)을 반환. 못 찾으면 None.
-
-    §3.2: **차단 상태일 때만**(claude_limit) 시각을 찾고, 시각도 사용자 입력·소스/diff
-    를 제외한 Claude 출력(_claude_body)에서만 본다 — 화면 아무 곳의 우연한 시각 숫자를
-    리셋 시각으로 오인하던 위험을 줄인다(자동재개가 엉뚱한 delay 로 트리거되는 것 방지)."""
-    if not claude_limit(text):
-        return None
-    text = _claude_body(text)
-    now = now or _dt.datetime.now()
-    m = _RESET_RE12.search(text)
-    if m:
-        hour = int(m.group(1))
-        minute = int(m.group(2) or 0)
-        ap = m.group(3).lower()
-        if ap == "pm" and hour != 12:
-            hour += 12
-        if ap == "am" and hour == 12:
-            hour = 0
-    else:
-        m = _RESET_RE24.search(text)
-        if not m:
-            return None
-        hour, minute = int(m.group(1)), int(m.group(2))
-    if hour > 23 or minute > 59:
-        return None
-    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if target <= now:
-        target += _dt.timedelta(days=1)
-    delay = (target - now).total_seconds()
-    return delay if 0 < delay <= 26 * 3600 else None
-
-
 # ---- /usage 리셋 표기 → 절대 시각(epoch) 파서 ----
-# parse_reset_delay(위)는 "리밋 차단 화면"에서 지연(초)을 구하는 자동재개 전용이고,
-# 이건 /usage 패널·footer 인라인이 주는 **리셋 표기 문자열**("6:59pm (Asia/Seoul)" ·
+# /usage 패널·footer 인라인이 주는 **리셋 표기 문자열**("6:59pm (Asia/Seoul)" ·
 # "Jun 13 at 3am (Asia/Seoul)")을 epoch 로 바꾼다 — 토큰 팝업이 ① 리셋까지 남은
 # 시간 표시 ② 현재 5h/주간 창 구간 역산(창 시작 = 리셋 - 5h/7일)에 쓴다.
 _RESET_MD_RE = re.compile(
@@ -1391,7 +1318,7 @@ def parse_reset_ts(reset, now: "_dt.datetime | None" = None):
     해석 규약: 월·일이 있으면 그 달력일(200일 넘게 지난 월일이면 내년 — 12월 말
     실측의 'Jan 2' 연도 롤오버). **약간 지난** 월일은 그대로 과거를 돌려줘 호출부가
     stale 실측을 판단하게 한다(내년으로 잘못 점프하지 않음). 시각만 있으면 지금
-    이후 가장 가까운 그 시각(지났으면 다음날 — parse_reset_delay 와 동일 규약)."""
+    이후 가장 가까운 그 시각(지났으면 다음날)."""
     text = reset or ""
     now = now or _dt.datetime.now()
     m = _RESET_MD_RE.search(text)
@@ -1443,31 +1370,23 @@ def parse_reset_ts(reset, now: "_dt.datetime | None" = None):
 
 
 # ---- M16: PTY 밖 에스컬레이션 훅 — status 전이 → (event, env) (§8) ----
-# 클라(PytmuxApp)가 status 마다 호출한다. 이미 송신되는 신호(claude_pending·
-# 활성패널 limit)의 **상승 에지에서만** 1회 발화하도록 (event, env)
+# 클라(PytmuxApp)가 status 마다 호출한다. 이미 송신되는 신호(활성패널 limit)의
+# **상승 에지에서만** 1회 발화하도록 (event, env)
 # 목록을 계산하고 prev(가변 dict)를 갱신한다. PytmuxApp 은 import 불가(함수 내부
 # 정의)라 여기 모듈 함수로 빼서 단위 테스트가 가능하게 한다(alert-bell 전이 패턴과 동형).
 def saver_hook_events(prev: dict, msg: dict) -> list:
     """status 전이에서 발화할 [(event, env_dict), …] 을 계산하고 prev 를 갱신한다.
 
-    prev 키: pending_kind(str|None)·limit(bool). 상승 에지(None→값, False→True)에서만
+    prev 키: limit(bool). 상승 에지(False→True)에서만
     이벤트를 낸다 — 같은 화면을 여러 프레임 봐도 중복 발화하지 않는다(§5.6). env 는
     사용자 훅 셸 명령이 참조할 PYTMUX_* 컨텍스트. 계정은 별칭(claude_account)만 —
     원문 이메일은 싣지 않는다."""
     events = []
     acct = msg.get("claude_account") or ""
 
-    pend = msg.get("claude_pending")
-    kind = pend.get("kind") if isinstance(pend, dict) else None
-    if kind and not prev.get("pending_kind"):
-        events.append(("claude-auto-armed", {
-            "PYTMUX_HOOK_EVENT": "claude-auto-armed",
-            "PYTMUX_PENDING_KIND": kind,
-            "PYTMUX_PENDING_ETA": (pend.get("eta") if isinstance(pend, dict)
-                                   else "") or "",
-            "PYTMUX_ACCOUNT": acct}))
-    prev["pending_kind"] = kind
-
+    # (`claude-auto-armed` 는 걷었다 — 그 재료인 자동재개 예약이 pytmux-526 에서
+    #  사라졌다. 한도 뒤 이어 가기는 CLI 가 하고, 그 순간은 CLI 의 Notification 훅
+    #  `quota_auto_resume_*` 가 알린다.)
     apid = msg.get("active_pane")
     astate = None
     for e in msg.get("panes_claude", []):
