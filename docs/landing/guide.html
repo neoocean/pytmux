@@ -87,6 +87,15 @@
             <br>· <span class="inline-code nb">claude-rules</span> → <span class="inline-code">SessionStart</span> 훅(적어 두었던 규칙은 상태 디렉터리의 <span class="inline-code">…claude-rules.retired.txt</span> 로 한 번 보존됩니다)
             <br>· <span class="inline-code nb">claude-disable-feedback</span> 플러그인 → <span class="inline-code">"spinnerTipsEnabled": false</span> · <span class="inline-code">"feedbackSurveyRate": 0</span>
             <br>전송 오류 자동 재시도(<span class="inline-code nb">auto-retry</span>)는 그대로입니다 — Claude Code 는 재시도를 다 쓰면 대화형 턴을 끝내기 때문입니다. 파이썬·GUI 클라이언트 둘 다에 적용됩니다. 자세한 설정은 <a href="/guide/claude">8. Claude Code 연동</a>.</li>
+        <li><span class="pill stable">표시</span> <strong><span class="inline-code nb">:set ambiguous-width</span> 가 언제나 서버까지 맞추고, <span class="inline-code">ESC[3J</span> 가 스크롤백도 비웁니다.</strong>
+          모호폭(한글 환경에서 폭이 애매한 글자) 설정은 클라이언트와 서버가 따로 들고 있는데, 둘이 어긋난 채로 클라이언트 값과 같은 값을 고르면 서버에 아무것도 알리지 않았습니다 — 「바꿨는데 화면이 그대로다」로만 보였습니다. 이제 이 명령은 언제나 <strong>둘을 그 값으로 맞춥니다</strong>(파이썬 클라이언트).
+          <br><span class="inline-code">/clear</span> 류 명령은 화면 지우기(<span class="inline-code">ESC[2J</span>)와 함께 스크롤백 지우기(<span class="inline-code">ESC[3J</span>)를 보내는데, pytmux 가 뒤엣것을 앞엣것과 똑같이 다뤄 <strong>화면은 비었는데 위로 굴리면 옛 대화가 그대로</strong> 나왔습니다. 이제 xterm·tmux 처럼 스크롤백까지 비웁니다. 화면 격자는 서버가 관리하므로 파이썬·GUI 클라이언트 둘 다에 적용됩니다.</li>
+        <li><span class="pill stable">문서</span> <strong>가이드·플러그인 페이지·위키를 지금 코드와 다시 맞추고, 스크린샷을 전부 다시 찍어 내용이 달라진 6장을 갈아 끼웠습니다.</strong>
+          위에서 걷은 기능을 소개하던 문장을 정리하고, <a href="/guide/claude">8장</a>에 남은 Claude 보조 기능을 모은 「설정 팝업과 그 밖의 도움」 절을 새로 넣었습니다.
+          <br>사실과 달랐던 것 — 공유 격자 크기 <span class="inline-code nb">window-size</span> 의 기본은 <span class="inline-code">latest</span>, Windows 마우스 이동 전달은 기본 <span class="inline-code">on</span> 입니다. <a href="/guide/install">2장</a>은 없어진 <span class="inline-code">--native</span> 대신 <span class="inline-code nb">pytmux-gui</span> 를 안내합니다.
+          <br><a href="/guide/config">14장</a>에 설정 파일의 <span class="inline-code">set</span> 줄이 <strong>실제로 읽는 옵션 목록</strong>을 적고, 파일에 적어도 읽히지 않는 옵션에는 <strong>(런타임)</strong> 표시를 달았습니다. <a href="/guide/command">7장</a>의 훅 예시는 따옴표가 지켜지는 설정 파일의 <span class="inline-code">hook</span> 줄로 바꾸고, ESC 모드 표에 <kbd>c</kbd>·<kbd>f</kbd>·<kbd>b</kbd>·<kbd>Shift+ESC</kbd>·<kbd>`</kbd> 를 더했습니다.
+          <br>플러그인 페이지는 명령 표를 실제 명령 목록과 맞췄고(<span class="inline-code nb">claude-usage</span>·<span class="inline-code nb">claude-auto-yes</span>·<span class="inline-code nb">claude-auto-redraw</span> 등), 블록 고르기 키 · 녹화 로그 경로 · 한/영 배지 자리(커서 줄 오른쪽 끝)를 바로잡았습니다.
+          <br>스크린샷은 45장을 새로 찍어 <strong>6장</strong>만 교체했습니다 — 첫 실행 · 메뉴 2장 · 명령 목록 · Claude 설정 팝업 · 설정 팝업에서 걷은 기능의 항목이 빠졌습니다. 나머지는 박혀 있는 시계·날짜만 달랐습니다.</li>
         </ul>
       </div>
 

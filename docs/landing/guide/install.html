@@ -59,6 +59,8 @@
         <p>
           래퍼를 <code>~/.local/bin</code> 에 설치하면 어디서든 <code>pytmux</code> 로 호출할 수 있습니다.
           인자로 다른 디렉터리를, <span class="inline-code">BIN=pt</span> 로 다른 이름(pt)을 지정할 수 있습니다.
+          설치 스크립트는 <code>requirements.txt</code> 의 의존성도 함께 설치합니다(건너뛰려면
+          <span class="inline-code">SKIP_DEPS=1 ./install.sh</span> · <span class="inline-code">.\install.ps1 -SkipDeps</span>).
         </p>
         <p style="margin:0 0 6px;">macOS · Linux — 설치 / 제거</p>
         <div class="code">./install.sh
@@ -87,13 +89,12 @@ BIN=pt ./install.sh
             <tr><td><code class="nb">start-server</code></td><td>서버 데몬만 띄우고 화면은 열지 않습니다. <code class="nb">ssh &lt;호스트&gt; pytmux start-server</code> 로 <strong>원격 서버를 미리 올려 두고</strong>, 실패하면 그 자리에서 이유를 볼 때 씁니다(이미 떠 있으면 아무것도 하지 않습니다). 부팅 스크립트에서도 유용합니다.</td></tr>
             <tr><td><code class="nb">kill-server</code></td><td>서버와 모든 탭·셸을 종료합니다. 되돌릴 수 없어 <strong>확인</strong>을 받으며, 파이프·스크립트처럼 물어볼 수 없는 자리에서는 <code class="nb">--yes</code> 를 요구합니다.</td></tr>
             <tr><td><code class="nb">record</code> / <code class="nb">replay</code></td><td>명령을 유사 터미널에서 실행하며 <strong>원시 출력을 그대로 녹화</strong>하고, 녹화 파일을 다시 재생해 화면을 텍스트로 덤프합니다. 화면 깨짐을 재현·신고할 때 쓰는 진단 도구입니다(패널 출력 녹화는 <a href="/guide/plugin/rec">rec 플러그인</a>).</td></tr>
-            <tr><td><code class="nb">stdio-proxy</code> · <code class="nb">server</code></td><td>내부용입니다 — 앞은 <a href="/guide/remote">원격 페더레이션</a>이 ssh 너머로 서버 소켓을 잇는 통로이고, 뒤는 데몬 본체를 전경에서 실행합니다. 직접 칠 일은 없습니다.</td></tr>
+            <tr><td><code class="nb">stdio-proxy</code> · <code class="nb">relay-proxy</code> · <code class="nb">server</code></td><td>내부용입니다 — <code class="nb">stdio-proxy</code> 는 <a href="/guide/remote">원격 페더레이션</a>이 ssh 너머로 서버 소켓을 잇는 통로, <code class="nb">relay-proxy</code> 는 다중홉(<code class="nb">remote-attach C via B</code>)에서 중간 상자 B 가 그 통로를 C 까지 한 번 더 잇는 중계, <code class="nb">server</code> 는 데몬 본체를 전경에서 실행합니다. 직접 칠 일은 없습니다.</td></tr>
           </tbody>
         </table>
         <p>
           어느 서버를 대상으로 할지는 <code class="nb">--socket &lt;경로&gt;</code> 로 지정합니다(생략하면 기본 서버).
-          <code class="nb">--native</code> 는 pytmux 와 <strong>따로 배포되는</strong> 러스트 TUI 클라이언트가 설치돼 있을 때
-          그것을 대신 띄웁니다(이 패키지에는 들어 있지 않습니다 — 기본은 여기 파이썬 클라이언트입니다).
+          러스트 GUI 클라이언트는 이 명령의 옵션이 아니라 <code class="nb">pytmux-gui</code> 를 직접 실행합니다(<a href="/gui">GUI 클라이언트 소개</a>).
         </p>
       </section>
 

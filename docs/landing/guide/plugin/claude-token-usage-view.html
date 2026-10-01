@@ -25,7 +25,7 @@
       <header style="margin-bottom:8px;">
         <span class="kicker">플러그인 · Claude</span>
         <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">claude-token-usage-view</h1>
-        <p style="font-size:18px;">Claude 사용 한도(세션 5h·주간)를 막대로, <strong>다음 리셋까지 남은 시간을 큰 블록 숫자</strong>로 보여주는 전용 화면입니다. 팝업 말고 탭/패널로도 띄울 수 있어 상시 모니터에 적합합니다.</p>
+        <p style="font-size:18px;">Claude 사용 한도(세션 5h·주간)를 막대로, <strong>다음 리셋까지 남은 시간을 큰 블록 숫자</strong>로 보여줍니다. 기본은 팝업이고, 풀스크린 화면이나 패널 오버레이로도 띄울 수 있어 상시 모니터에 적합합니다.</p>
       </header>
       <section>
         <h2 style="border-top:none;">여는 법</h2>
@@ -33,16 +33,19 @@
           <thead><tr><th>명령</th><th>설명</th></tr></thead>
           <tbody>
             <tr><td><code>usage-view</code></td><td>한도+카운트다운 화면 (<code>usage-view [popup|tab|pane]</code>, 기본 popup; 별칭 <code>token-viewer</code>·<code>usage-clock</code>)</td></tr>
+            <tr><td><code class="nb">usage-view popup</code></td><td>claude-code 플러그인이 있으면 <code>claude-token-log</code> 팝업을 <strong>한도 탭</strong>으로 엽니다. 없을 때만 전용 팝업 화면으로 대신합니다</td></tr>
+            <tr><td><code class="nb">usage-view tab</code></td><td>클라이언트 풀스크린 화면 — pytmux 탭(서버 탭)이 아니라 이 클라이언트 창을 덮는 화면입니다</td></tr>
+            <tr><td><code class="nb">usage-view pane</code></td><td>현재 패널을 한도 막대 + 카운트다운으로 덮는 오버레이(같은 명령을 다시 치면 닫힘)</td></tr>
           </tbody>
         </table>
         <figure>
-          <img src="../../image/30-usage-view.svg" alt="usage-view 팝업">
+          <img src="../../image/30-usage-view.svg" alt="usage-view 화면">
           <figcaption>한도 막대(% 우측정렬) + 다음 리셋 블록 카운트다운.</figcaption>
         </figure>
       </section>
       <section>
         <h2>메모</h2>
-        <p>한도 값은 claude-code 플러그인의 실측(/usage) 데이터를 같이 씁니다. <code>tab</code>/<code>pane</code> 모드로 열면 자리 하나를 차지하는 대시보드가 됩니다.</p>
+        <p>한도 값은 claude-code 플러그인의 실측(/usage) 데이터를 같이 씁니다. <code>tab</code> 은 화면 전체를, <code>pane</code> 은 패널 하나를 차지하는 대시보드가 됩니다.</p>
       </section>
 
       <section>

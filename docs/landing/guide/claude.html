@@ -26,9 +26,10 @@
         <span class="kicker">상세 가이드 · 8 / 15</span>
         <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">Claude Code 연동</h1>
         <p style="font-size:18px;">
-          패널에서 <code>claude</code> CLI 를 돌리면 pytmux 가 상태·토큰·한도를 추적하고, 리밋에 걸리면
-          자동으로 잇습니다. 이 모든 기능은 <code class="nb">claude-code</code> 플러그인이며, 디렉토리를 지우면 조용히
-          사라집니다.
+          패널에서 <code>claude</code> CLI 를 돌리면 pytmux 가 상태·토큰·한도를 추적하고, 전송 오류로 멈추면
+          자동으로 다시 잇습니다(사용량 한도 뒤 이어 가기는 이제 Claude Code 가 스스로 합니다). 대부분은
+          <code class="nb">claude-code</code> 플러그인이고 프롬프트 히스토리·이름 통일·세션 재개는 각자 별도
+          플러그인이라, 디렉토리를 지우면 그 기능만 조용히 사라집니다.
         </p>
       </header>
 
@@ -111,6 +112,25 @@
           <img src="../image/13-perm-mode.svg" alt="권한 모드 선택 팝업">
           <figcaption>권한 모드 선택.</figcaption>
         </figure>
+      </section>
+
+      <section>
+        <h2>설정 팝업과 그 밖의 도움</h2>
+        <p>
+          <code class="nb">claude-settings</code> 팝업 한 곳에서 자동 개입을 켜고 끕니다 — 세션 종료 시 토큰 사용량 표시 ·
+          화면 깨짐 자동 완화 · auto 모드에서 yes/no 자동 «예» · 프롬프트 단위 클리어 · 장기 턴 경고(초, 기본 600) ·
+          반복 루프 경고(회, 기본 3). 각 항목은 같은 이름의 명령으로도 바꿀 수 있습니다.
+        </p>
+        <ul>
+          <li><code class="nb">auto-token-on-exit</code>(기본 on) — Claude <strong>세션이 끝나는 순간</strong> 그 패널에 토큰·한도 요약을
+            출력으로 흘려 둡니다. 팝업이 아니라 패널 출력이라 스크롤백에 그대로 남습니다.</li>
+          <li><code class="nb">claude-auto-yes</code>(기본 off) — auto 모드인 패널에서 Claude 가 yes/no 를 물을 때,
+            <strong>이미 선택돼 있는 맨 «Yes»</strong> 만 <code>Enter</code> 로 확정합니다. 선택을 옮기지 않고,
+            「다시 묻지 않기」처럼 범위를 넓히는 선택지는 사람에게 남깁니다.</li>
+          <li><code class="nb">claude-detail</code>(별칭 <code>plan-detail</code>) — 마지막 플랜 전문과 마지막으로 막힌 호출의 사유를 읽습니다.</li>
+          <li><code class="nb">claude-warn-history</code> — 장기 턴·반복 루프 경고의 이력을 날짜별로 접었다 폅니다.</li>
+        </ul>
+        <p>전체 명령 목록은 <a href="/guide/plugin/claude-code">claude-code 플러그인</a> 쪽에 있습니다.</p>
       </section>
 
       <section>

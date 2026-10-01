@@ -49,7 +49,7 @@
     <p class="lede">
       tmux 처럼 하나의 터미널을 여러 패널·탭으로 나눠 쓰되, <strong>마우스·메뉴를 1급으로</strong>
       지원합니다. 앱을 닫아도 셸은 살아 있고, <strong>Claude Code</strong> 토큰 사용량을
-      한눈에 보여주고 리밋에 걸리면 자동으로 재개합니다. macOS · Linux · Windows 네이티브.
+      한눈에 보여주고 전송 오류로 멈추면 자동으로 다시 잇습니다. macOS · Linux · Windows 네이티브.
     </p>
     <div class="cta">
       <a class="btn btn-primary" href="#download">설치하고 시작하기</a>
@@ -88,6 +88,15 @@
           <br>· <span class="inline-code nb">claude-rules</span> → <span class="inline-code">SessionStart</span> 훅(적어 두었던 규칙은 상태 디렉터리의 <span class="inline-code">…claude-rules.retired.txt</span> 로 한 번 보존됩니다)
           <br>· <span class="inline-code nb">claude-disable-feedback</span> 플러그인 → <span class="inline-code">"spinnerTipsEnabled": false</span> · <span class="inline-code">"feedbackSurveyRate": 0</span>
           <br>전송 오류 자동 재시도(<span class="inline-code nb">auto-retry</span>)는 그대로입니다 — Claude Code 는 재시도를 다 쓰면 대화형 턴을 끝내기 때문입니다. 파이썬·GUI 클라이언트 둘 다에 적용됩니다. 자세한 설정은 <a href="/guide/claude">8. Claude Code 연동</a>.</li>
+        <li><span class="pill stable">표시</span> <strong><span class="inline-code nb">:set ambiguous-width</span> 가 언제나 서버까지 맞추고, <span class="inline-code">ESC[3J</span> 가 스크롤백도 비웁니다.</strong>
+          모호폭(한글 환경에서 폭이 애매한 글자) 설정은 클라이언트와 서버가 따로 들고 있는데, 둘이 어긋난 채로 클라이언트 값과 같은 값을 고르면 서버에 아무것도 알리지 않았습니다 — 「바꿨는데 화면이 그대로다」로만 보였습니다. 이제 이 명령은 언제나 <strong>둘을 그 값으로 맞춥니다</strong>(파이썬 클라이언트).
+          <br><span class="inline-code">/clear</span> 류 명령은 화면 지우기(<span class="inline-code">ESC[2J</span>)와 함께 스크롤백 지우기(<span class="inline-code">ESC[3J</span>)를 보내는데, pytmux 가 뒤엣것을 앞엣것과 똑같이 다뤄 <strong>화면은 비었는데 위로 굴리면 옛 대화가 그대로</strong> 나왔습니다. 이제 xterm·tmux 처럼 스크롤백까지 비웁니다. 화면 격자는 서버가 관리하므로 파이썬·GUI 클라이언트 둘 다에 적용됩니다.</li>
+        <li><span class="pill stable">문서</span> <strong>가이드·플러그인 페이지·위키를 지금 코드와 다시 맞추고, 스크린샷을 전부 다시 찍어 내용이 달라진 6장을 갈아 끼웠습니다.</strong>
+          위에서 걷은 기능을 소개하던 문장을 정리하고, <a href="/guide/claude">8장</a>에 남은 Claude 보조 기능을 모은 「설정 팝업과 그 밖의 도움」 절을 새로 넣었습니다.
+          <br>사실과 달랐던 것 — 공유 격자 크기 <span class="inline-code nb">window-size</span> 의 기본은 <span class="inline-code">latest</span>, Windows 마우스 이동 전달은 기본 <span class="inline-code">on</span> 입니다. <a href="/guide/install">2장</a>은 없어진 <span class="inline-code">--native</span> 대신 <span class="inline-code nb">pytmux-gui</span> 를 안내합니다.
+          <br><a href="/guide/config">14장</a>에 설정 파일의 <span class="inline-code">set</span> 줄이 <strong>실제로 읽는 옵션 목록</strong>을 적고, 파일에 적어도 읽히지 않는 옵션에는 <strong>(런타임)</strong> 표시를 달았습니다. <a href="/guide/command">7장</a>의 훅 예시는 따옴표가 지켜지는 설정 파일의 <span class="inline-code">hook</span> 줄로 바꾸고, ESC 모드 표에 <kbd>c</kbd>·<kbd>f</kbd>·<kbd>b</kbd>·<kbd>Shift+ESC</kbd>·<kbd>`</kbd> 를 더했습니다.
+          <br>플러그인 페이지는 명령 표를 실제 명령 목록과 맞췄고(<span class="inline-code nb">claude-usage</span>·<span class="inline-code nb">claude-auto-yes</span>·<span class="inline-code nb">claude-auto-redraw</span> 등), 블록 고르기 키 · 녹화 로그 경로 · 한/영 배지 자리(커서 줄 오른쪽 끝)를 바로잡았습니다.
+          <br>스크린샷은 45장을 새로 찍어 <strong>6장</strong>만 교체했습니다 — 첫 실행 · 메뉴 2장 · 명령 목록 · Claude 설정 팝업 · 설정 팝업에서 걷은 기능의 항목이 빠졌습니다. 나머지는 박혀 있는 시계·날짜만 달랐습니다.</li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">
@@ -219,7 +228,7 @@
   <div class="wrap">
     <div class="section-head">
       <span class="kicker">Claude Code 통합</span>
-      <h2>토큰을 보고, 자동으로 잇습니다</h2>
+      <h2>토큰을 보고, 끊기면 다시 잇습니다</h2>
       <p>패널에서 돌리는 Claude Code 의 상태·토큰·한도를 상태줄과 팝업으로 한눈에.</p>
     </div>
 
@@ -270,7 +279,6 @@
         <ul>
           <li>멀티라인 프롬프트 붙여넣기 · 이미지 붙여넣기 패스스루</li>
           <li>프롬프트 히스토리 플러그인으로 보낸 프롬프트 점프</li>
-          <li>피드백 문구 자동 숨김 옵션</li>
           <li>CJK 모호폭 자동 감지(<span class="inline-code">:set ambiguous-width auto</span>)와
               화면 깨짐 자동 완화(<span class="inline-code nb">claude-auto-redraw</span>)로 글자 겹침 방지</li>
         </ul>
@@ -350,7 +358,7 @@
       <div class="gcard"><img src="image/33-ime.svg" alt="IME 한영 배지"><div class="meta"><b>IME 한/영 배지</b><span>OS 입력기 상태를 커서줄에 표시</span></div></div>
       <div class="gcard"><img src="image/31-prompt-history.svg" alt="프롬프트 히스토리"><div class="meta"><b>프롬프트 히스토리</b><span>보낸 프롬프트 미리보기·검색·점프</span></div></div>
       <div class="gcard"><img src="image/32-p4changes.svg" alt="Perforce CL 목록"><div class="meta"><b>Perforce CL 목록</b><span>변경 목록 조회 · describe</span></div></div>
-      <div class="gcard"><img src="image/40-settings.svg" alt="통합 설정 팝업"><div class="meta"><b>통합 설정 팝업</b><span><span class="inline-code">:settings</span> 카테고리별 설정 화면</span></div></div>
+      <div class="gcard"><img src="image/40-settings.svg" alt="통합 설정 팝업"><div class="meta"><b>통합 설정 팝업</b><span>코어 <span class="inline-code">:settings</span> — 플러그인이 자기 설정 카테고리를 끼워 넣습니다</span></div></div>
     </div>
   </div>
 </section>
@@ -360,7 +368,7 @@
   <div class="wrap">
     <div class="stats">
       <div class="stat"><div class="n">3</div><div class="l">macOS · Linux · Windows</div></div>
-      <div class="stat"><div class="n">1,400+</div><div class="l">헤드리스 테스트 통과</div></div>
+      <div class="stat"><div class="n">2,400+</div><div class="l">헤드리스 테스트 통과</div></div>
       <div class="stat"><div class="n">1</div><div class="l">파이썬 스크립트로 실행</div></div>
       <div class="stat"><div class="n">∞</div><div class="l">셸 영속 (detach 후 재접속)</div></div>
     </div>
@@ -480,7 +488,7 @@ python3 pytmux.py</div>
       <div class="gcard"><img src="image/04-zoom.svg" alt="패널 줌"><div class="meta"><b>패널 줌</b><span>한 패널을 전체화면으로</span></div></div>
       <div class="gcard"><img src="image/05-menu.svg" alt="컨텍스트 메뉴"><div class="meta"><b>컨텍스트 메뉴</b><span>우클릭 / prefix Enter</span></div></div>
       <div class="gcard"><img src="image/09-calendar.svg" alt="달력 오버레이"><div class="meta"><b>달력 오버레이</b><span>날짜 클릭으로 토글</span></div></div>
-      <div class="gcard"><img src="image/13-perm-mode.svg" alt="권한 모드 선택"><div class="meta"><b>권한 모드</b><span>auto / default / plan</span></div></div>
+      <div class="gcard"><img src="image/13-perm-mode.svg" alt="권한 모드 선택"><div class="meta"><b>권한 모드</b><span>auto / accept / default / plan</span></div></div>
       <div class="gcard"><img src="image/24-token-log.svg" alt="토큰 로그"><div class="meta"><b>토큰 로그</b><span>기간별 사용량 추이</span></div></div>
     </div>
   </div>
