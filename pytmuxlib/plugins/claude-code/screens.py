@@ -1,5 +1,5 @@
-"""claude-code 플러그인의 모달 화면 — 시작 규칙 편집(RulesEditScreen)·토큰 절감
-설정(ClaudeSaverScreen). client.py 의 clientscreens 에서 이리로 이전.
+"""claude-code 플러그인의 모달 화면 — 토큰 절감 설정(ClaudeSaverScreen)·모델·권한모드·
+토큰 사용량. client.py 의 clientscreens 에서 이리로 이전.
 
 textual 의존이 있어 이 모듈은 **실제로 팝업을 열 때** 지연 import 된다(플러그인 __init__
 은 가벼움 — 서버 프로세스도 plugins.load() 로 읽기 때문)."""
@@ -12,7 +12,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.strip import Strip
 from textual.widgets import (DataTable, Input, Label, ListItem, ListView,
-                             Static, TextArea)
+                             Static)
 
 from rich.text import Text
 from rich.segment import Segment
@@ -32,15 +32,15 @@ from . import usagehead
 #: 있어 별칭으로 남긴다(값의 정본은 그쪽 한 벌).
 _LOCAL_HOST = usagehead.LOCAL_HOST
 
-# §6 ⑤ 플러그인 설정/로그 모달 문자열(token-saver·rules·model·perm·token-log). 정적 문자열은
+# §6 ⑤ 플러그인 설정/로그 모달 문자열(token-saver·model·perm·token-log). 정적 문자열은
 # 키=원문 한국어(gettext 식 — 렌더가 t(원문) 로 단순 조회), 포맷 문자열만 pscreen.* semantic
 # 키. SAVER_ROWS 라벨(__init__.py)도 여기서 en 보강(ko 자동 시드). 미등록은 원문 폴백.
 i18n.register({
     "ko": {s: s for s in (
         # 공통/버튼/힌트
         "Enter 토글/순환 · ESC 닫기", "저장", "취소",
-        # rules·model
-        "Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소", "기본", "모델", "컨텍스트",
+        # model
+        "기본", "모델", "컨텍스트",
         "모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc",
         # (perm 모드 라벨은 여기 없다 — 소켓을 건너 GUI 로도 나가므로 `pscreen.perm_*`
         #  키로 __init__.py 에 산다. 한국어 원문을 키로 쓰면 로케일 그물에 안 걸린다.)
@@ -57,8 +57,6 @@ i18n.register({
     "en": {
         "Enter 토글/순환 · ESC 닫기": "Enter toggle/cycle · ESC close",
         "저장": "Save", "취소": "Cancel",
-        "Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소":
-            "Claude start rules — Ctrl+S save · Esc cancel",
         "기본": "Default", "모델": "Model", "컨텍스트": "Context",
         "모델·컨텍스트 변경 · ←→ 값 · Enter 적용 · Esc":
             "Model·context change · ←→ value · Enter apply · Esc",
@@ -281,71 +279,6 @@ class ClaudeSaverScreen(ModalScreen):
         if event.key == "escape":
             event.stop()
             self.dismiss(None)
-
-
-class RulesEditScreen(ModalScreen):
-    """Claude 시작 규칙 편집 팝업(#27). 멀티라인 에디터에 '항상 지킬 규칙'을 적고
-    Ctrl+S 로 저장(dismiss=텍스트), Esc 로 취소(dismiss=None). 저장된 규칙은 새
-    Claude 세션/clear 후 프롬프트에 자동 주입된다(빈값이면 주입 안 함)."""
-    CSS = """
-    RulesEditScreen { align: center middle; background: $background 80%; }
-    #rulesbox { width: 90%; max-width: 100; height: auto; max-height: 90%;
-                border: round $accent; background: $panel; padding: 0 1; }
-    /* 헤더: 타이틀(1fr) + 우측 닫기 [x]. */
-    #ruleshead { width: 100%; height: 1; }
-    #rulestitle { width: 1fr; height: 1; color: $accent; text-style: bold; }
-    #rulesclose { width: 5; height: 1; content-align: center middle;
-                  background: $error; color: $text; text-style: bold; }
-    /* 타이틀과 에디터 사이 한 줄(여백). */
-    #rulesspacer { width: 100%; height: 1; }
-    #rulesedit { width: 100%; height: auto; min-height: 8; max-height: 70%; }
-    /* 하단 저장/취소 버튼(에디터와 한 줄 띄움, 우측 정렬). */
-    #rulesbtns { width: 100%; height: 1; margin-top: 1; align-horizontal: right; }
-    #rulesbtns Label { width: auto; height: 1; padding: 0 2; margin-left: 2;
-                       text-style: bold; }
-    #rulessave { background: $success; color: $text; }
-    #rulescancel { background: $panel-darken-2; color: $text; }
-    """
-
-    def __init__(self, text=""):
-        super().__init__()
-        self._text = text or ""
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="rulesbox"):
-            with Horizontal(id="ruleshead"):
-                yield Label(i18n.t("Claude 시작 규칙 — Ctrl+S 저장 · Esc 취소"),
-                            id="rulestitle")
-                # markup=False: "[x]" 가 마크업 태그로 사라지지 않게.
-                yield Label("[x]", id="rulesclose", markup=False)  # 닫기 버튼
-            yield Label("", id="rulesspacer")        # 타이틀↔에디터 한 줄 여백
-            yield TextArea(self._text, id="rulesedit")
-            with Horizontal(id="rulesbtns"):
-                yield Label(i18n.t("저장"), id="rulessave")
-                yield Label(i18n.t("취소"), id="rulescancel")
-
-    def on_mount(self):
-        ta = self.query_one(TextArea)
-        ta.focus()
-
-    def on_click(self, event: events.Click):
-        # 닫기 [x]/취소 → 취소(None), 저장 → 텍스트 반환. 그 외(에디터 등) 유지.
-        w = getattr(event, "widget", None)
-        while w is not None:
-            wid = getattr(w, "id", None)
-            if wid in ("rulesclose", "rulescancel"):
-                event.stop(); self.dismiss(None); return
-            if wid == "rulessave":
-                event.stop(); self.dismiss(self.query_one(TextArea).text); return
-            w = w.parent
-
-    def on_key(self, event: events.Key):
-        if event.key == "escape":
-            event.stop()
-            self.dismiss(None)
-        elif event.key == "ctrl+s":
-            event.stop()
-            self.dismiss(self.query_one(TextArea).text)
 
 
 class ModelCtxScreen(ModalScreen):

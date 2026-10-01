@@ -390,7 +390,7 @@ register({
         "setting.status-right": "상태줄 오른쪽 포맷",
         "setting.status-bg": "상태줄 배경색",
         "setting.status-fg": "상태줄 글자색",
-        # (setting.token-saver/model/claude-rules/token-log 는 claude-code 플러그인이
+        # (setting.token-saver/model/token-log 는 claude-code 플러그인이
         #  i18n.register 로 등록 — 'Claude' 설정 카테고리 이전, delete-to-disable.)
         "setting.plugins": "플러그인 관리…",
         "setting.list-keys": "키 바인딩 목록…",
@@ -495,7 +495,7 @@ register({
         "setting.status-right": "Status-right format",
         "setting.status-bg": "Status background",
         "setting.status-fg": "Status foreground",
-        # (setting.token-saver/model/claude-rules/token-log registered by the
+        # (setting.token-saver/model/token-log registered by the
         #  claude-code plugin via i18n.register — 'Claude' settings category moved.)
         "setting.plugins": "Manage plugins…",
         "setting.list-keys": "Key bindings…",

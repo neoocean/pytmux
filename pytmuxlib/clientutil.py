@@ -986,9 +986,9 @@ MENU_GROUP_LABELS = {
 # 권위 — `mouse-help`/`mouse` 명령과 컨텍스트 메뉴 "마우스 제스처 도움말"은 그
 # 별칭/진입점이다(제스처 목록을 두 벌 두지 않는다).
 
-# 토큰 절감 설정 팝업(`token-saver`)의 행/순환 프리셋(SAVER_ROWS/SAVER_CYCLES)과
-# 시작 규칙 편집(`claude-rules`)은 claude-code 플러그인(pytmuxlib/plugins/claude-code)
-# 으로 이전했다 — 디렉토리를 지우면 두 명령·팝업이 조용히 사라진다.
+# 토큰 절감 설정 팝업(`token-saver`)의 행/순환 프리셋(SAVER_ROWS/SAVER_CYCLES)은
+# claude-code 플러그인(pytmuxlib/plugins/claude-code)으로 이전했다 — 디렉토리를 지우면
+# 명령·팝업이 조용히 사라진다.
 
 # 명령 프롬프트(:)에서 쓸 수 있는 명령 목록 (이름, 설명) — ? 목록·자동완성용
 # (이름, 설명, 카테고리). 카테고리는 ?/help 목록의 탭 그룹으로 쓰인다.
@@ -1306,7 +1306,7 @@ SETTINGS = [
      "cmd": "set status-bg", "backend": "config"},
     {"key": "status-fg", "cat": "상태줄", "type": "str",
      "cmd": "set status-fg", "backend": "config"},
-    # (Claude 전용 화면 링크 token-saver/model/claude-rules/token-log 와 'Claude'
+    # (Claude 전용 화면 링크 token-saver/model/token-log 와 'Claude'
     #  카테고리는 claude-code 플러그인이 settings() 훅으로 기여한다 — SettingsScreen 이
     #  코어 SETTINGS/SETTINGS_CATS 와 병합. delete-to-disable: 부재 시 통째로 사라진다.)
     # 고급/플러그인(링크)
@@ -1470,7 +1470,7 @@ COMMAND_NOARG = {
     "merge-remote-tab", "merge-remote",
     "restart-check",
     # Claude Code 무인자 명령(token-log(별칭 token-usage)·claude-usage·usage·
-    # usage-panel·usage-limits·limits·claude-rules·token-saver)은 claude-code 플러그인이 등록.
+    # usage-panel·usage-limits·limits·token-saver)은 claude-code 플러그인이 등록.
 }
 # 자유 텍스트 인자를 받는 명령 — 명령 프롬프트에서 명령을 다 치면 인자 자리에 밑줄
 # (____)을 그려 "여기에 인자를 입력" 임을 알린다(사용자 요청). 선택지형(COMMAND_OPTIONS)

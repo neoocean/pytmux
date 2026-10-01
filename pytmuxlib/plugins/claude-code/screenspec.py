@@ -9,7 +9,6 @@
 | 명령 | 정본 화면 | 여기서 |
 |---|---|---|
 | `claude-settings` | `ClaudeSaverScreen` | `form` — 줄마다 현재값, Enter 로 토글·순환 |
-| `claude-rules` | `RulesEditScreen` | `prompt` — 지금 규칙을 **초기값으로** 물어본다 |
 | `model` | 토큰 팝업의 `[한도]` 탭 | `list` — 모델×컨텍스트, 고르면 `/model` 주입 |
 | `claude-token-log` | `TokenLogScreen` | `table` — 일별 집계(전체 재현은 EXT-0008) |
 | `prompt-clear-queue` | `InfoScreen` | `list` — 쌓인 명령(비우기는 `c`) |
@@ -41,7 +40,6 @@ from pytmuxlib import i18n
 
 # 화면 id = 명령 이름. 별칭은 여기 한 벌로 모은다(정본 `handle_command` 와 같은 표).
 PC_QUEUE = ("prompt-clear-queue", "pc-queue")
-RULES = ("claude-rules", "rules", "startup-rules")
 SETTINGS = ("claude-settings",)
 # 플랜 전문·거부 사유(pytmux-468 · 449 ⑵). GUI 는 이 판을 `esc v` 로 먼저 갖고 있었고,
 # 사람 결정(2026-09-04 ⓐ)으로 **서버가 그 글을 지어** 두 클라가 한 벌을 그린다.
@@ -80,8 +78,6 @@ i18n.register({
         "pscreen.spec_detail_hint": "↑↓ 스크롤 · Esc 닫기",
         "pscreen.spec_detail_empty": "보여 줄 플랜도 거부도 없다",
         "pscreen.spec_settings_hint": "↑↓ 이동 · Enter 바꾸기 · Esc 닫기",
-        "pscreen.spec_rules_title": "Claude 시작 규칙 — 새 세션·/clear 뒤 자동 주입",
-        "pscreen.spec_rules_empty": "(지금은 비어 있습니다. 빈 채로 저장하면 지웁니다.)",
         "pscreen.spec_model_title": "Claude 모델·컨텍스트",
         "pscreen.spec_model_hint": "↑↓ 이동 · Enter 적용(/model 주입) · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_model_now": "지금",
@@ -137,8 +133,6 @@ i18n.register({
         "pscreen.spec_detail_hint": "↑↓ scroll · Esc close",
         "pscreen.spec_detail_empty": "No plan or denial to show",
         "pscreen.spec_settings_hint": "↑↓ move · Enter change · Esc close",
-        "pscreen.spec_rules_title": "Claude start rules — injected after a new session/clear",
-        "pscreen.spec_rules_empty": "(empty for now. Saving it empty clears the rules.)",
         "pscreen.spec_model_title": "Claude model/context",
         "pscreen.spec_model_hint": "↑↓ move · Enter apply (injects /model) · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_model_now": "now",
@@ -286,18 +280,6 @@ def _pc_queue_spec(server, sess, selected=0):
                  rows=rows,
                  note="" if rows else i18n.t("pscreen.spec_pcq_empty"),
                  keys={"c": "clear"}, selected=selected)
-
-
-# ── claude-rules — 지금 규칙을 초기값으로 물어본다 ──────────────────────────
-def _rules_spec(server):
-    """`prompt` 판. `text` 가 **입력칸의 초기값**이다 — 규칙을 고치는 화면인데 초기값이
-    없으면 사람은 지금 규칙을 다시 쳐야 하고, 그러면 '편집'이 아니라 '덮어쓰기'다."""
-    cur = str(getattr(server, "claude_rules", "") or "")
-    return _spec("claude-rules", "prompt",
-                 i18n.t("pscreen.spec_rules_title"), "",
-                 text=cur,
-                 note=cur or i18n.t("pscreen.spec_rules_empty"),
-                 keys={"enter": "save"})
 
 
 # ── claude-detail — 플랜 전문·거부 사유(pytmux-468 · 449 ⑵) ────────────────
@@ -1394,8 +1376,6 @@ def open_spec(server, sess, name, args=(), state=None):
     바꾼다** — 비활성 Claude 패널의 footer 를 눌렀을 때 딱 그 사고가 난다."""
     if name in PC_QUEUE:
         return _pc_queue_spec(server, sess)
-    if name in RULES:
-        return _rules_spec(server)
     if name in SETTINGS:
         return _settings_spec(server, sess)
     if name in DETAIL:
@@ -1430,7 +1410,7 @@ def open_spec(server, sess, name, args=(), state=None):
 
 
 #: 이 모듈이 여는 화면 id 들 — `plugin_screen` 이 "내 화면인가"를 이것으로 가른다.
-IDS = ("pc-queue", "claude-rules", "claude-settings", "model", "claude-token-log",
+IDS = ("pc-queue", "claude-settings", "model", "claude-token-log",
        "claude-token-machines", "claude-usage-panel", "claude-warn-history",
        "claude-token-period", "claude-token-sessions",
        "claude-perm-mode",
@@ -1440,7 +1420,7 @@ IDS = ("pc-queue", "claude-rules", "claude-settings", "model", "claude-token-log
 def action(server, sess, req):
     """화면 안에서 누른 것 → 다음 스펙이거나 닫기. 내 화면이 아니면 `None`.
 
-    ⚠ **상태가 바뀌면 알린다**: 설정·규칙은 서버 전역 값이라 다른 클라의 status 도
+    ⚠ **상태가 바뀌면 알린다**: 설정은 서버 전역 값이라 다른 클라의 status 도
     같이 움직여야 한다(정본은 그 길을 `server_command` 의 `broadcast` 로 얻는다).
     안 알리면 같은 서버에 붙은 두 사람이 서로 다른 설정을 본다."""
     sid = req.get("id")
@@ -1455,12 +1435,6 @@ def action(server, sess, req):
         if do == "clear":
             server.pc_queue_clear(sess)
             return _pc_queue_spec(server, sess, row)
-        return None
-    if sid == "claude-rules":
-        if do == "save":
-            server.set_claude_rules(str(picked or ""))
-            server._broadcast_session(sess)
-            return _close(sid)
         return None
     if sid == "claude-settings":
         if do == "toggle":

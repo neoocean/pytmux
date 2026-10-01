@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>Claude Code 연동 — pytmux 가이드 8</title>
-<meta name="description" content="pytmux 의 Claude Code 통합: 상태 아이콘, 모델 배지, 토큰 리밋 자동 재개, 권한 모드, 시작 규칙, 프롬프트 히스토리, 화면 안정성(모호폭·auto-redraw), 세션 이름 통일, 세션 재개.">
+<meta name="description" content="pytmux 의 Claude Code 통합: 상태 아이콘, 모델 배지, 토큰 리밋 자동 재개, 권한 모드, 프롬프트 히스토리, 화면 안정성(모호폭·auto-redraw), 세션 이름 통일, 세션 재개.">
 <link rel="stylesheet" href="../styles.css">
 <script>
   var _paq = window._paq = window._paq || [];
@@ -82,9 +82,24 @@
           주입). <code class="nb">claude-auto-mode</code> 로 Claude 가 idle 일 때 자동으로 auto 모드로 바꾸게 할 수도 있습니다.
         </p>
         <p>
-          <code class="nb">claude-rules</code> 로 <strong>시작 규칙</strong>을 정의해 두면 새 세션이 시작되거나
-          <code>/clear</code> 뒤에 자동으로 주입됩니다. 새 세션에서 <code>/rc</code>(원격 제어)와 권한 auto 를
-          한 번 자동 적용하는 <code class="nb">auto-launch</code>(기본 on)도 있습니다.
+          <strong>시작 규칙</strong>(새 세션이나 <code>/clear</code> 뒤에 늘 넣던 글)은 이제 Claude Code 의
+          <code>SessionStart</code> 훅에 둡니다. 훅이 출력한 글은 프롬프트가 아니라 <strong>컨텍스트</strong>로 들어가서
+          턴을 따로 시작하지 않습니다. 늘 지킬 규칙이라면 <code>CLAUDE.md</code> 가 제자리입니다.
+          그래서 예전 <code>claude-rules</code> 는 없앴습니다. 거기 적어 둔 글은 서버가 처음 뜰 때 상태 디렉터리의
+          <code>&lt;소켓&gt;.claude-rules.retired.txt</code> 에 한 번 보존되니, 그 글을 아래 훅으로 옮기면 됩니다.
+        </p>
+        <pre><code>// ~/.claude/settings.json
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|clear",
+        "hooks": [{ "type": "command", "command": "cat ~/.claude/start-rules.md" }] }
+    ]
+  }
+}</code></pre>
+        <p>
+          새 세션에서 <code>/rc</code>(원격 제어)와 권한 auto 를 한 번 자동 적용하는
+          <code class="nb">auto-launch</code>(기본 on)도 있습니다.
         </p>
         <p>
           <strong>진행을 막는 화면은 자동으로 넘깁니다.</strong> <code>/rc</code> 로 열리는 원격 제어 관리 메뉴는
@@ -96,7 +111,7 @@
         </p>
         <figure>
           <img src="../image/13-perm-mode.svg" alt="권한 모드 선택 팝업">
-          <figcaption>권한 모드 선택 · 시작 규칙 자동 주입.</figcaption>
+          <figcaption>권한 모드 선택.</figcaption>
         </figure>
       </section>
 

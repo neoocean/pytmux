@@ -117,7 +117,6 @@ class _P:
         self._claude_model_weak = False
         self._claude_model_cand = None
         self._claude_model_cand_n = 0
-        self._rules_pending = False
         self._rc_pending = False
         self._perm_auto_pending = False
         # 대역외 근거: 같은 트랜스크립트 파일(=같은 Claude 프로세스)을 이미 봤다.
@@ -128,7 +127,6 @@ class _P:
 class _S:
     _scan_session_boundary = sm.ServerClaudeMixin._scan_session_boundary
     _xc_session_looks_new = sm.ServerClaudeMixin._xc_session_looks_new
-    claude_rules = ""
     claude_auto_launch = False
     usage_refresh_sec = 0
     _rc_policy_blocked = False

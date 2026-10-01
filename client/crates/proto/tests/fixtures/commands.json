@@ -81,7 +81,6 @@
     "set_claude_auto_yes": "full",
     "set_claude_perm_mode": "handled",
     "set_claude_resume_verify": "full",
-    "set_claude_rules": "full",
     "set_claude_turn_warn": "full",
     "set_coalesce": "full",
     "set_exit_empty": "full",
@@ -338,9 +337,6 @@
     ],
     "set_claude_resume_verify": [
       "value"
-    ],
-    "set_claude_rules": [
-      "text"
     ],
     "set_claude_turn_warn": [
       "long_sec",

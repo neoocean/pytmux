@@ -5,7 +5,7 @@
 
 **단계적 추출(staged)**: Claude Code 기능은 매우 방대하고 30Hz 스캔 루프·렌더·토큰
 회계·영속에 깊게 얽혀 있어 여러 단계로 나눠 옮긴다. 이 모듈은 그 첫 단계로 **명령 전용
-팝업**(시작 규칙 편집 `claude-rules`, 토큰 절감 설정 `token-saver`)과 그 메타데이터·
+팝업**(토큰 절감 설정 `token-saver` 등)과 그 메타데이터·
 디스패치를 담는다. 나머지(헤더 렌더·상태줄 토큰·서버 스캔 등)는 후속 단계에서 이리로
 옮긴다.
 
@@ -29,8 +29,6 @@ from . import clienttail
 
 # ---- 명령 메타데이터(코어 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐짐) ----
 COMMANDS = [
-    ("claude-rules", "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 "
-                     "자동 주입)", "Claude"),
     ("claude-settings", "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·"
                         "프롬프트 단위 클리어·장기턴/반복 경고", "Claude"),
     ("auto-resume", "토큰 리밋 자동 재개 [on|off]", "Claude"),
@@ -91,7 +89,7 @@ COMMANDS = [
                     "Claude"),
 ]
 NOARG = {
-    "claude-rules", "claude-settings", "claude-detail", "plan-detail",
+    "claude-settings", "claude-detail", "plan-detail",
     "claude-token-log", "claude-token-machines", "token-machines",
     "claude-warn-history", "claude-warns", "warn-history",
     "claude-token-period", "token-period",
@@ -159,7 +157,6 @@ COMMAND_OPTIONS = {
 i18n.register({
     "ko": {f"cmd.{n}": d for n, d, *_ in COMMANDS},
     "en": {
-        "cmd.claude-rules": "Edit Claude start rules (auto-injected into the prompt after a new session/clear)",
         "cmd.claude-settings": "Claude settings popup — auto-resume·auto-token-on-exit·auto permission mode·per-prompt clear·long-turn/repeat warnings (alias claude-settings, token-settings)",
         "cmd.auto-resume": "Auto-resume on token limit [on|off]",
         "cmd.auto-resume-message": "Set the auto-resume message",
@@ -189,7 +186,7 @@ i18n.register({
 })
 
 # :settings 팝업 라벨 i18n — 'Claude' 카테고리와 링크 항목(token-saver/model/
-# claude-rules/token-log)이 코어 clientutil.SETTINGS/i18n 에서 플러그인으로 이전
+# token-log)이 코어 clientutil.SETTINGS/i18n 에서 플러그인으로 이전
 # (완전분리, 2026-07-07). 코어 SettingsScreen 이 t("setcat.Claude")·t(f"setting.{key}")
 # 로 조회한다 — 디렉토리 삭제 시 이 등록·항목·카테고리가 함께 사라진다.
 i18n.register({
@@ -197,14 +194,12 @@ i18n.register({
         "setcat.Claude": "Claude",
         "setting.claude-settings": "Claude 설정…",
         "setting.model": "Claude 모델/컨텍스트…",
-        "setting.claude-rules": "Claude 시작 규칙…",
         "setting.claude-token-log": "Claude 토큰 사용량…",
     },
     "en": {
         "setcat.Claude": "Claude",
         "setting.claude-settings": "Claude settings…",
         "setting.model": "Claude model/context…",
-        "setting.claude-rules": "Claude start rules…",
         "setting.claude-token-log": "Claude token usage…",
     },
 })
@@ -263,8 +258,6 @@ i18n.register({
         "ccmsg.pc_queue_title": "프롬프트 클리어 큐",
         "ccmsg.pc_queue_empty": "(큐 비어 있음)",
         "ccmsg.pc_cleared": "큐 비움",
-        "ccmsg.rules_saved": "시작 규칙 저장됨",
-        "ccmsg.rules_cleared": "시작 규칙 비움",
         "ccmsg.token_remote_timeout":
             "원격({host}) 토큰 응답 없음 — 원격 서버 응답 지연/웨지일 수 있습니다.",
     },
@@ -306,8 +299,6 @@ i18n.register({
         "ccmsg.pc_queue_title": "Prompt-clear queue",
         "ccmsg.pc_queue_empty": "(queue empty)",
         "ccmsg.pc_cleared": "Queue cleared",
-        "ccmsg.rules_saved": "Start rules saved",
-        "ccmsg.rules_cleared": "Start rules cleared",
         "ccmsg.token_remote_timeout":
             "No token response from remote ({host}) — the remote server may be "
             "slow or wedged.",
@@ -645,6 +636,34 @@ def saver_action(app, key):
         nxt = _cycle_next("repeat_alert", int(st.claude_repeat_alert))
         app.send_cmd("set_claude_turn_warn", repeat=nxt)
         st.claude_repeat_alert = nxt
+
+
+#: 걷은 `claude_rules` 를 보존해 두는 옆 파일의 꼬리(상태 디렉터리의 `<base>` 뒤).
+RETIRED_RULES_SUFFIX = ".claude-rules.retired.txt"
+
+
+def _preserve_retired_rules(server, po, opts):
+    """옛 opts.json 의 `claude_rules` 글을 **지워지기 전에** 옆 파일로 한 번 남긴다.
+
+    시작 규칙 주입(`claude-rules`)은 pytmux-524 에서 걷었다 — CLI 의 `SessionStart`
+    훅(matcher `startup|clear`)이 `additionalContext` 로 같은 글을 **턴 없이** 넣는다.
+    키가 `_OPTS_KEYS` 에서 빠졌으니 다음 `_save_opts` 가 그 글을 조용히 지운다. 사람이
+    훅이나 CLAUDE.md 로 옮길 수 있게 그 전에 `<state>/<base>.claude-rules.retired.txt` 에
+    적어 둔다. 이미 있으면 덮지 않는다(첫 보존본이 원본이다). 실패해도 기동은 계속한다."""
+    raw = po.get("claude_rules") if "claude_rules" in po else opts.get("claude_rules")
+    text = raw.strip() if isinstance(raw, str) else ""
+    sock = getattr(server, "sock_path", None)
+    if not text or not sock:
+        return None
+    from pytmuxlib import ipc
+    path = ipc.state_base(sock) + RETIRED_RULES_SUFFIX
+    if os.path.exists(path):
+        return path
+    with contextlib.suppress(OSError):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        return path
+    return None
 
 
 def _pane_claude_entry(p, full):
@@ -1087,8 +1106,6 @@ class _ClaudeCodePlugin:
                   ("claude_auto_yes", False, bool),
                   # 새 Claude 세션 자동 셋업(요청): None→Claude 첫 idle 에 /rc 1회+auto 유도. 기본 ON.
                   ("claude_auto_launch", True, bool),
-                  # Claude Code 시작 규칙(#27): 새 세션/‑clear 후 프롬프트에 주입할 규칙 텍스트.
-                  ("claude_rules", "", str),
                   # M17(T7) 경고 임계: long_turn=한 턴 busy 지속 한계(초, 0=끔).
                   ("claude_long_turn_sec", 600, int),
                   # M17(T7) 경고 임계: repeat=동일 완료 출력 반복 횟수(0=끔).
@@ -1135,6 +1152,7 @@ class _ClaudeCodePlugin:
         # 런타임 토글이 _save_opts 로 영속되면 그 값이 권위(다음 기동부터 env 무시).
         if "token_debug" not in po and "token_debug" not in opts:
             server.token_debug = bool(os.environ.get("PYTMUX_TOKEN_DEBUG"))
+        _preserve_retired_rules(server, po, opts)
 
     async def server_background(self, server):
         """플러그인 소유 장기 작업 — 토큰 동기화 워커(설정 off 면 잠만 잔다).
@@ -1246,7 +1264,6 @@ class _ClaudeCodePlugin:
         # 접속 시 항상 도달하고, 주기(full=False) status 에선 빠져도 클라가 직전 값 유지.
         if full:
             msg.update({
-                "claude_rules": server.claude_rules,   # #27 시작 규칙(에디터 초기값)
                 "claude_long_turn_sec": server.claude_long_turn_sec,
                 "claude_repeat_alert": server.claude_repeat_alert,
                 # §10-D 토큰 회계 진단 로그 토글(현재값 표시용 — 정적 옵션, full 시만).
@@ -1401,9 +1418,6 @@ class _ClaudeCodePlugin:
         if action == "set_token_debug":               # §10-D 토큰 회계 진단 로그 토글
             server.set_token_debug(msg.get("value"))
             return "broadcast"                         # status 로 새 값 회신(:설정 표시)
-        if action == "set_claude_rules":              # #27 시작 규칙 저장(영속)
-            server.set_claude_rules(msg.get("text", ""))
-            return "broadcast"                        # status 로 새 규칙 회신
         if action == "jump_prompt":
             # esc ctrl+↑/↓: 활성 Claude 패널을 이전/다음 프롬프트 위치로 스크롤.
             # 스크롤만 바뀌므로 그 패널 프레임만 다시 보내면 된다(send_full).
@@ -1713,7 +1727,6 @@ class _ClaudeCodePlugin:
         {"key": "claude-settings", "cat": "Claude", "type": "link",
          "link": "claude-settings"},
         {"key": "model", "cat": "Claude", "type": "link", "link": "model"},
-        {"key": "claude-rules", "cat": "Claude", "type": "link", "link": "claude-rules"},
         {"key": "claude-token-log", "cat": "Claude", "type": "link",
          "link": "claude-token-log"},
     ]
@@ -1742,13 +1755,11 @@ class _ClaudeCodePlugin:
 
     def client_status(self, app, msg):
         """서버 status 의 Claude 필드를 클라가 흡수한다(코어 _dispatch status 에서 위임).
-        claude_rules 동기화, 패널별 Claude 상태(pane_claude) 갱신.
+        패널별 Claude 상태(pane_claude) 갱신.
 
         (인패널 /usage 자동 팝업은 2026-06-17 제거 — §3.9. 사용자가 Claude 패널에서
         /usage 를 직접 띄워 보고 있는데 같은 내용을 전용 모달로 덮는 게 불필요·방해라서.
         수동 usage-panel/limits 명령과 그림자 /usage 질의·실측 캡처는 그대로 유지.)"""
-        if "claude_rules" in msg:
-            app._claude_rules = msg.get("claude_rules", "")
         _update_claude(app, msg.get("panes_claude", []))
         # M16: 절감 신호 전이 → PTY 밖 에스컬레이션 훅(자리 비움 대응, §8). 코어
         # client._dispatch 에서 이리로 이전(S5a) — saver_hook_events 는 플러그인 소유
@@ -1952,9 +1963,7 @@ class _ClaudeCodePlugin:
         # 팝업(명령 전용 + 클릭/ESC 겸용) — 클릭/렌더 경로의 open_* 는 아직 코어에 있어
         # (Phase 2 이전 예정) 여기선 그 메서드를 호출한다. 디렉토리를 지우면 명령 경로는
         # 사라지지만 클릭 경로는 Phase 2 까지 코어에 남는다(단계적 추출).
-        if c in ("claude-rules", "rules", "startup-rules"):
-            self._open_rules(app)
-        elif c == "claude-settings":
+        if c == "claude-settings":
             self._open_saver(app)
         elif c in ("claude-detail", "plan-detail"):
             # ★ **정본이 스펙을 청한다**(pytmux-468 걸음 4). 이 판의 글은 서버가 짓고
@@ -2009,18 +2018,6 @@ class _ClaudeCodePlugin:
         lines = [f"{i + 1}. {cmd}" for i, cmd in enumerate(q)] or \
             [i18n.t("ccmsg.pc_queue_empty")]
         app.push_screen(InfoScreen(lines, title=i18n.t("ccmsg.pc_queue_title")))
-
-    def _open_rules(self, app):
-        # #27: Claude 시작 규칙 편집 팝업. 저장하면 서버 opts.json 에 영속하고, 새 Claude
-        # 세션 또는 /clear 직후 첫 idle 에 프롬프트로 자동 주입한다.
-        from .screens import RulesEditScreen
-
-        def _saved(text):
-            if text is not None:
-                app.send_cmd("set_claude_rules", text=text)
-                app.display_message(i18n.t("ccmsg.rules_saved") if text.strip()
-                                    else i18n.t("ccmsg.rules_cleared"))
-        app.push_screen(RulesEditScreen(getattr(app, "_claude_rules", "")), _saved)
 
     def _open_saver(self, app):
         from .screens import ClaudeSaverScreen

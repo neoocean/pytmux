@@ -6414,7 +6414,7 @@ fn plugin_settings_show_up_with_their_own_sidebar_tab() {
             "commands": [],
             "noarg": [],
             "menu_items": [],
-            "settings": [{"key": "claude-rules", "cat": "Claude", "type": "link"}],
+            "settings": [{"key": "claude-settings", "cat": "Claude", "type": "link"}],
             "setting_cats": ["Claude"]
         }
     }))
@@ -6431,7 +6431,7 @@ fn plugin_settings_show_up_with_their_own_sidebar_tab() {
         "플러그인 분류 탭이 사이드바에 없다: {painted:?}"
     );
     assert!(
-        painted_contains(&painted, "Claude 시작 규칙…"),
+        painted_contains(&painted, "Claude 설정…"),
         "플러그인 설정 줄이 화면에 없다: {painted:?}"
     );
 }
@@ -7495,10 +7495,10 @@ fn a_prompt_spec_uses_the_native_ask_and_sends_the_typed_answer() {
 fn a_prompt_spec_seeds_the_input_with_what_the_plugin_sent() {
     // pytmux-35: **고치는 화면**의 물음은 지금 값에서 시작해야 한다. 안 그러면 규칙
     // 하나를 손보려고 전체를 다시 쳐야 하고, 그건 '편집'이 아니라 '덮어쓰기'다
-    // (`claude-rules` 의 시작 규칙 · `namesync` 의 경로·키워드가 그 부류다).
+    // (`namesync` 의 경로·키워드가 그 부류다).
     let ask: ServerMessage = serde_json::from_value(serde_json::json!({
-        "t": "plugin_screen", "id": "claude-rules", "kind": "prompt",
-        "title": "Claude 시작 규칙", "hint": "", "rows": [],
+        "t": "plugin_screen", "id": "namesync", "kind": "prompt",
+        "title": "이름 동기화", "hint": "", "rows": [],
         "text": "한국어로 답할 것", "note": "", "selected": 0,
         "keys": {"enter": "save"}
     }))

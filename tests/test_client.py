@@ -7938,42 +7938,6 @@ async def test_command_list_home_end_tab_click_and_close():
     await _with_app(body)
 
 
-async def test_rules_editor_save_cancel_and_spacer():
-    # #27 규칙 에디터: 타이틀↔에디터 한 줄 여백 + 우측 닫기[x] + 하단 저장/취소.
-    # RulesEditScreen 은 claude-code 플러그인으로 이전(패키지명에 하이픈 → importlib).
-    import importlib
-    RulesEditScreen = importlib.import_module(
-        "pytmuxlib.plugins.claude-code.screens").RulesEditScreen
-    async def body(app, pilot, srv):
-        captured = []
-        app.push_screen(RulesEditScreen("hello rules"),
-                        lambda v: captured.append(v))
-        await wait_mounted(pilot, "RulesEditScreen")
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "RulesEditScreen"
-        assert scr.query("#rulesspacer"), "타이틀↔에디터 한 줄 여백"
-        assert scr.query("#rulesclose"), "우측 닫기 버튼"
-        assert scr.query("#rulessave") and scr.query("#rulescancel"), "저장/취소"
-        await pilot.click("#rulessave")                    # 저장 → 텍스트 반환
-        await wait_until(pilot, lambda: captured == ["hello rules"])
-        assert captured == ["hello rules"], captured
-    await _with_app(body)
-
-
-async def test_rules_editor_cancel_returns_none():
-    import importlib
-    RulesEditScreen = importlib.import_module(
-        "pytmuxlib.plugins.claude-code.screens").RulesEditScreen
-    async def body(app, pilot, srv):
-        captured = []
-        app.push_screen(RulesEditScreen("x"), lambda v: captured.append(v))
-        await pilot.pause(0.2)
-        await pilot.click("#rulescancel")                  # 취소 → None
-        await wait_until(pilot, lambda: captured == [None])
-        assert captured == [None], captured
-    await _with_app(body)
-
-
 async def test_command_prompt_empty_lists_all_commands():
     # esc : 로 연 빈 명령 프롬프트는 위쪽(#pcand)에 전체 명령을 펼친다(↑↓ 탐색, #).
     # 전체 = 코어 COMMANDS + 등록된 플러그인 명령(_commands() 풀과 동일).

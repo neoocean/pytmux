@@ -664,41 +664,6 @@ class ServerClaudeMixin:
         except OSError:
             pass
 
-    # 본문 붙여넣기 처리가 끝난 뒤 Enter 를 보낼 지연(초). Claude Code 가 빠르게
-    # 도착한 본문+\r 을 하나의 '붙여넣기'로 보고 마지막 \r 을 줄바꿈으로 흡수하던
-    # 문제(타이핑만 되고 전송 안 됨)를 피하려고 Enter 를 한 박자 뒤 별도로 보낸다.
-    _RULES_ENTER_DELAY = 0.25
-
-    def _inject_rules(self, pane: Pane):
-        """저장된 시작 규칙(#27)을 Claude 시작/clear 시 패널 프롬프트에 넣고 **엔터까지
-        눌러 제출**한다. 본문(여러 줄 가능)은 \\n(=Claude 입력 줄바꿈)으로 한 번에 넣고,
-        Enter(\\r)는 본문 처리가 끝난 뒤 **별도 쓰기**로 보낸다 — 본문과 \\r 을 한 번에
-        보내면 Claude Code 가 통째로 붙여넣기로 보고 \\r 을 줄바꿈으로 흡수해 제출이 안
-        되기 때문이다(타이핑만 되고 전송 안 됨). 규칙이 비었으면 무동작."""
-        text = (self.claude_rules or "").strip()
-        if not text or pane.pty is None:
-            return
-        # 본문 내부 개행은 \n(미제출)으로. Enter 는 아래에서 별도로.
-        payload = text.replace("\r\n", "\n").replace("\r", "\n")
-        try:
-            pane.pty.write(payload.encode("utf-8"))
-        except OSError:
-            return
-
-        def _send_enter():
-            # 패널이 그새 닫혔을 수 있어 매번 확인.
-            try:
-                if pane.pty is not None:
-                    pane.pty.write(b"\r")
-            except OSError:
-                pass
-
-        # loop 가 있으면 한 박자 뒤 별도 Enter, 없으면(드묾) 즉시.
-        if self.loop is not None:
-            self.loop.call_later(self._RULES_ENTER_DELAY, _send_enter)
-        else:
-            _send_enter()
-
     def _pc_drain(self, pane: Pane):
         """큐(#4)의 다음 명령을 Claude 에 투입하고 새 사이클을 시작한다. last_prompt
         를 그 명령으로 갱신해 헤더가 '지금 처리 중인 명령'을 보이게 하고, phase 는
@@ -872,9 +837,6 @@ class ServerClaudeMixin:
             # 안 그러면 절감 자동화(doc→clear)가 돌수록 doc 작성·/clear 자체 토큰이 사용자
             # 프롬프트 누계에 계속 합산되고, 세션 id 가 실제 컨텍스트 경계와 어긋난다.
             self._reset_token_session(pane)
-            # /clear 직후엔 시작 규칙을 다시 넣는다(#27): 다음 idle 에 1회 주입 예약.
-            if self.claude_rules.strip():
-                pane._rules_pending = True
         else:  # "clear"
             pane._pc_phase = None
             if pane.prompt_clear_queue:
@@ -1824,7 +1786,7 @@ class ServerClaudeMixin:
             p._retry_last = 0.0
 
     def _scan_idle_actions(self, p, txt, new_cl) -> bool:
-        """idle 프레임의 자동개입 phase — 보류 리네임 주입·시작 규칙·auto-launch(/rc→
+        """idle 프레임의 자동개입 phase — 보류 리네임 주입·auto-launch(/rc→
         권한 auto)·권한모드 관측/구동.
 
         `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). idle 이 아니면 권한모드
@@ -1865,10 +1827,6 @@ class ServerClaudeMixin:
                 nm = p._pending_rename
                 p._pending_rename = None
                 self._pc_inject(p, "/rename " + nm)
-            # 시작 규칙 주입(#27): 새 세션/clear 후 첫 idle(입력 준비됨)에 한 번.
-            if p._rules_pending:
-                p._rules_pending = False
-                self._inject_rules(p)
             # 새 세션 자동 셋업(auto-launch, 요청): idle 이 _RC_CONFIRM_FRAMES
             # 안정되면 /rc 로 원격 제어(리모트 커넥션)를 켜고, 다음 idle 에 권한
             # 모드를 auto 로 유도한다. /rc 와 권한 shift+tab 을 다른 프레임으로
@@ -1998,10 +1956,6 @@ class ServerClaudeMixin:
             # 새 세션 경계에서만 본다 — 이 순간이 「지금 뜬 claude 가 classic 이다」가
             # 확정되는 자리고, 프레임마다 설정 파일을 읽을 이유가 없다.
             self._notice_fullscreen_off()
-            # 시작 규칙 주입 예약(#27): 새 Claude 세션이 뜨면 다음 idle(입력
-            # 준비됨) 때 저장된 규칙을 프롬프트에 넣는다. 빈 규칙이면 안 함.
-            if self.claude_rules.strip():
-                p._rules_pending = True
             # 새 세션 자동 셋업(auto-launch): 첫 idle 에 /rc(원격제어)+권한 auto
             # 1회 적용. _rc_pending 가 idle 에서 /rc 를 쏘고 _perm_auto_pending
             # 으로 넘겨, 다음 idle 에 _perm_target=auto 를 세운다(프레임 분리로
@@ -2012,7 +1966,6 @@ class ServerClaudeMixin:
             if self.claude_auto_launch and not self._rc_policy_blocked:
                 p._rc_pending = True
         if not fr.new_cl:
-            p._rules_pending = False   # 세션 끝나면 예약 해제
             p._rc_pending = False      # 세션 끝 — auto-launch 예약 해제
             p._perm_auto_pending = False
 
@@ -2314,8 +2267,6 @@ class ServerClaudeMixin:
                 wel = claude_welcome(txt)
                 if wel and not p._welcome_seen and old_cl:
                     self._reset_token_session(p)
-                    if self.claude_rules.strip():
-                        p._rules_pending = True
                     changed = True
                 p._welcome_seen = wel
                 # 계정·모델·토큰 회계 phase(분할) — fr.committed 를 만든다.
@@ -2742,10 +2693,6 @@ class ServerClaudeMixin:
                 buf += ch
             i += 1
         pane._inbuf = buf[-500:]
-
-    def set_claude_rules(self, text: str):
-        self.claude_rules = text or ""
-        self._save_opts()
 
     def _pending_action(self, pane):
         """카운트다운: 무장된 자동재개 예약의 남은 초(ETA)를 반환한다(없으면 None).

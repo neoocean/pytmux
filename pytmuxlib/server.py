@@ -255,7 +255,7 @@ class Server(*_SERVER_BASES):
         self.remote_allowed_hosts = [str(h) for h in _allow
                                      if isinstance(_allow, (list, tuple))]
         # Claude 전용 옵션(prompt_clear_message·claude_auto_mode·claude_auto_launch·
-        # claude_rules·claude_long_turn_sec·claude_repeat_alert)은 claude-code 플러그인이
+        # claude_long_turn_sec·claude_repeat_alert 등)은 claude-code 플러그인이
         # 소유한다 — 아래 plugins.server_opts_init 이 plugin_opts 네임스페이스로 설치·영속
         # 한다(코어는 키 의미를 모름). 디렉토리 삭제 시 이 속성들이 안 생긴다(delete-to-disable).
         # 원격 제어가 조직 정책으로 막혔다는 메시지("disabled by your organization")를

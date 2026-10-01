@@ -1313,36 +1313,50 @@ async def test_pane_shell_pid_host_fallback_and_cmd_shell_recognized():
         await teardown(srv, task, sock)
 
 
-async def test_startup_rules_injection():
-    # #27: 저장된 시작 규칙이 새 Claude 세션의 첫 idle 에 프롬프트로 주입되고 **엔터까지
-    # 눌러 제출**된다(본문 줄바꿈은 \n, 맨 끝 \r 로 제출). 빈 규칙이면 주입하지 않는다.
+async def test_retired_startup_rules_are_not_injected_but_preserved():
+    """pytmux-524(R2): 시작 규칙 주입(`claude-rules`)은 걷었다 — CLI 의 `SessionStart`
+    훅(matcher `startup|clear`)이 같은 글을 `additionalContext` 로 **턴 없이** 넣는다.
+
+    ① 옛 opts.json 에 규칙이 남아 있어도 새 Claude 세션·수동 `/clear`(환영 배너) 어느
+       쪽에서도 pty 로 **아무 글도 안 간다**(호출부 단언 — 주입 경로가 되살아나면 운다).
+    ② 그 글은 키가 빠져 다음 `_save_opts` 에 지워지므로, 그 전에 옆 파일로 보존된다.
+       이미 있으면 덮지 않는다(첫 보존본이 원본)."""
+    import importlib
+    cc = importlib.import_module("pytmuxlib.plugins.claude-code")
     srv, task, sock = await server_only()
     try:
-        srv.claude_auto_launch = False   # 규칙 주입만 격리(auto-launch /rc 제외)
-        srv.set_claude_rules("always do X\nand Y")
-        assert srv.claude_rules == "always do X\nand Y"
+        srv.claude_auto_launch = False   # 이 시험은 /rc 자동 주입과 무관하게 잰다
+        keep = ipc.state_base(srv.sock_path) + cc.RETIRED_RULES_SUFFIX
+        assert not os.path.exists(keep)
+        srv.plugins.server_opts_init(
+            srv, {"plugin_opts": {"claude_rules": "always do X\nand Y"}})
+        assert getattr(srv, "claude_rules", None) is None, "옛 키가 서버 속성으로 되살아났다"
+        with open(keep, encoding="utf-8") as f:
+            assert f.read() == "always do X\nand Y\n"
+        # 두 번째 기동(다른 글)은 첫 보존본을 덮지 않는다.
+        srv.plugins.server_opts_init(srv, {"claude_rules": "다른 글"})
+        with open(keep, encoding="utf-8") as f:
+            assert f.read() == "always do X\nand Y\n"
+        # 저장하면 opts.json 에서 사라진다(보존본은 남는다).
+        srv._save_opts()
+        with open(srv.opts_path, encoding="utf-8") as f:
+            saved = json.load(f)
+        assert "claude_rules" not in saved.get("plugin_opts", {}), saved
+        assert os.path.exists(keep)
+
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
         writes = []
         p.pty.write = lambda b: writes.append(b)
-        # None→claude(새 세션) + idle footer → 같은 스캔에서 예약+주입
+        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")              # 새 세션
+        srv._scan_claude(sess, win)
+        p.feed("\x1b[2J\x1b[H✻ Welcome to Claude Code!\r\n".encode())  # 수동 /clear
+        srv._scan_claude(sess, win)
         p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
         srv._scan_claude(sess, win)
-        # 본문은 즉시(\n 줄바꿈), Enter(\r)는 한 박자 뒤 별도 쓰기로 도착한다.
-        assert b"".join(writes) == b"always do X\nand Y", writes
-        assert p._rules_pending is False
-        await asyncio.sleep(srv._RULES_ENTER_DELAY + 0.15)
-        assert b"".join(writes) == b"always do X\nand Y\r", writes
-        # 빈 규칙이면 다음 세션에서 주입 없음
-        srv.set_claude_rules("")
-        srv.new_window(sess)
-        p2 = sess.tabs[-1].window.active_pane
-        w2 = []
-        p2.pty.write = lambda b: w2.append(b)
-        p2.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
-        srv._scan_claude(sess, sess.tabs[-1].window)
-        assert w2 == [], w2
+        # 옛 경로는 본문을 **스캔 안에서 바로** 썼다(Enter 만 0.25초 뒤) — 기다릴 것 없다.
+        assert writes == [], writes
     finally:
         await teardown(srv, task, sock)
 
@@ -2145,7 +2159,7 @@ _SCAN_FP_ATTRS = (
     "_was_busy", "_welcome_seen", "_rc_menu_active", "_rc_pending", "_rc_done",
     "_perm_auto_pending", "_perm_mode", "_perm_target", "_bypass_seen",
     "_session_tokens", "_exit_tokens", "_busy_exit_miss", "_exit_token_pending",
-    "_rules_pending", "_fmt_unknown", "_claude_warn", "_claude_warn_kind",
+    "_fmt_unknown", "_claude_warn", "_claude_warn_kind",
     "_claude_warn_n", "_repeat_n", "_claude_account", "_claude_model",
     "last_prompt",
 )
@@ -6245,14 +6259,13 @@ async def test_tok5h_pct_fail_open_on_account_mismatch():
 
 
 async def test_status_static_opts_only_on_full_c4():
-    """C4: 토글로만 바뀌는 정적 옵션(claude_rules·컨텍스트/경고 임계)은 full status
+    """C4: 토글로만 바뀌는 정적 옵션(컨텍스트/경고 임계)은 full status
     (attach·_broadcast_session)에만 싣고 주기(full=False) status 에선 뺀다. 낙관적
     토글 4개 불린은 주기에도 유지(전용 브로드캐스트 경로 없음)."""
     srv, task, sock = await server_only()
     try:
         sess = srv.ensure_default_session(80, 24)
-        STATIC = ["claude_rules",
-                  "claude_long_turn_sec", "claude_repeat_alert"]
+        STATIC = ["claude_long_turn_sec", "claude_repeat_alert"]
         full = srv._status_msg(sess, full=True)
         for k in STATIC:
             assert k in full, f"full status 에 정적 옵션 {k} 누락"

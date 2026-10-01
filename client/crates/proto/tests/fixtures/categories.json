@@ -21,7 +21,6 @@
     "claude-detail": "Claude",
     "claude-resume": "Claude",
     "claude-resume-verify": "Claude",
-    "claude-rules": "Claude",
     "claude-settings": "Claude",
     "claude-token-account": "Claude",
     "claude-token-debug": "Claude",
@@ -151,7 +150,6 @@
     "ambiguous-width": "입력",
     "automatic-rename": "동작",
     "claude-command": "동작",
-    "claude-rules": "Claude",
     "claude-settings": "Claude",
     "claude-token-log": "Claude",
     "coalesce-repaints": "동작",
@@ -369,11 +367,6 @@
       "cat": "설정/기타"
     },
     {
-      "name": "claude-rules",
-      "desc": "Claude 시작 규칙 편집(저장 시 새 세션/clear 후 프롬프트에 자동 주입)",
-      "cat": "Claude"
-    },
-    {
       "name": "claude-settings",
       "desc": "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·프롬프트 단위 클리어·장기턴/반복 경고",
       "cat": "Claude"
@@ -577,7 +570,6 @@
     "capture-toggle",
     "claude-detail",
     "claude-resume",
-    "claude-rules",
     "claude-sessions",
     "claude-settings",
     "claude-token-log",
@@ -633,12 +625,6 @@
     },
     {
       "key": "model",
-      "cat": "Claude",
-      "type": "link",
-      "values": []
-    },
-    {
-      "key": "claude-rules",
       "cat": "Claude",
       "type": "link",
       "values": []
@@ -704,7 +690,6 @@
     "list-keys",
     "claude-settings",
     "model",
-    "claude-rules",
     "claude-token-log"
   ],
   "setcat_ko": {

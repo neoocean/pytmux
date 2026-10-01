@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>claude-code — pytmux 플러그인</title>
-<meta name="description" content="pytmux claude-code 플러그인 — 토큰 회계·상태줄 배지·자동 재개·시작 규칙·모델 팝업·권한 오토모드 등 Claude Code 통합의 중심.">
+<meta name="description" content="pytmux claude-code 플러그인 — 토큰 회계·상태줄 배지·자동 재개·모델 팝업·권한 오토모드 등 Claude Code 통합의 중심.">
 <link rel="stylesheet" href="../../styles.css">
 <script>
   var _paq = window._paq = window._paq || [];
@@ -25,7 +25,7 @@
       <header style="margin-bottom:8px;">
         <span class="kicker">플러그인 · Claude</span>
         <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">claude-code</h1>
-        <p style="font-size:18px;">Claude Code 통합의 중심 플러그인입니다. 패널 속 Claude 세션을 감지해 상태줄 배지·토큰 회계·자동 개입(리밋 자동 재개, 전송 에러 재시도)·시작 규칙 주입까지 담당합니다.</p>
+        <p style="font-size:18px;">Claude Code 통합의 중심 플러그인입니다. 패널 속 Claude 세션을 감지해 상태줄 배지·토큰 회계·자동 개입(리밋 자동 재개, 전송 에러 재시도)까지 담당합니다.</p>
       </header>
       <section>
         <h2 style="border-top:none;">무엇을 하나</h2>
@@ -50,7 +50,6 @@
             <tr><td><code>auto-resume</code></td><td>토큰 리밋 자동 재개 on/off — 주입할 때마다 알림이 남고, 같은 패널 15분 재주입 쿨다운이 걸립니다</td></tr>
             <tr><td><code>claude-resume-verify</code></td><td>자동 재개 <strong>대역외 확인</strong> <code>off|weak|strict</code>(기본 off) — 최근 실사용이 거의 없는데 뜬 한도 문구면 재개를 억제</td></tr>
             <tr><td><code>claude-token-sync</code></td><td>여러 머신 토큰 사용량 <a href="/guide/sync">동기화</a> — <code>status | on &lt;URL&gt; | off | enroll &lt;코드&gt; | now | resync</code></td></tr>
-            <tr><td><code>claude-rules</code></td><td>시작 규칙 편집 — 새 세션/<code>/clear</code> 후 첫 프롬프트에 자동 주입</td></tr>
             <tr><td><code>model</code></td><td>모델·컨텍스트 변경 팝업 (상태줄 모델 배지 클릭)</td></tr>
             <tr><td><code>prompt-clear</code></td><td>프롬프트 단위 클리어 모드 — 완료마다 문서화+/clear</td></tr>
             <tr><td><code>auto-retry</code></td><td>전송 에러 시 1분 뒤 '계속' 자동 주입 on/off</td></tr>
@@ -76,10 +75,6 @@
         <figure>
           <img src="../../image/38-token-log-limit.svg" alt="토큰 팝업 한도 탭">
           <figcaption>한도 탭 — /usage 막대·5h 창 합계·리셋 카운트다운.</figcaption>
-        </figure>
-        <figure>
-          <img src="../../image/28-claude-rules.svg" alt="시작 규칙 편집">
-          <figcaption>claude-rules — 저장하면 새 세션마다 자동 주입.</figcaption>
         </figure>
         <figure>
           <img src="../../image/13-perm-mode.svg" alt="권한 오토모드">

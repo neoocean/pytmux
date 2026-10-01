@@ -14,7 +14,6 @@
     "claude-detail",
     "claude-resume",
     "claude-resume-verify",
-    "claude-rules",
     "claude-settings",
     "claude-token-account",
     "claude-token-debug",
@@ -48,7 +47,6 @@
   "with_screen": [
     "claude-detail",
     "claude-resume",
-    "claude-rules",
     "claude-settings",
     "claude-token-log",
     "claude-token-machines",

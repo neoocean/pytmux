@@ -10,7 +10,7 @@ pytmux 안에서 돌아가는 [Claude Code](https://claude.com/claude-code) 세�
 
 - **모니터링** — 활성 Claude 패널의 상태(idle/busy/limit), 토큰 사용량, 5h 한도 근접도, 컨텍스트 여유, 에러를 실시간 추적. 숨은 `/usage` 스크랩(`usageprobe`)으로 실측 세션·주간 한도를 가져와 근사 분모를 대체한다.
 - **보조 자동화(옵트인)** — 토큰 리밋 자동재개, 전송 에러 자동 재시도, idle 시 권한모드 자동 전환, 프롬프트 단위 정리(완료마다 doc+/clear), 세션 종료 시 토큰 사용량 화면.
-- **표시·팝업** — 상태줄 배지(위), 토큰 로그(`token-log`), 사용 한도 막대(`usage-panel`), 모델 변경(`model`), 권한모드(footer 클릭), 시작 규칙 편집(`claude-rules`).
+- **표시·팝업** — 상태줄 배지(위), 토큰 로그(`token-log`), 사용 한도 막대(`usage-panel`), 모델 변경(`model`), 권한모드(footer 클릭).
 - **진행 차단 화면 자동 통과** — `/rc` 원격 제어 관리 메뉴(Esc=Continue), 조직 관리 설정 승인 화면(`Managed settings require approval` → 이미 선택된 `1. Yes, I trust these settings` 를 Enter 로 확정). 둘 다 화면 인스턴스당 1회만, **기본선택이 그 항목일 때만** — 선택을 옮기는 키는 보내지 않는다.
 - **턴 단위 고르기·복사** — 프롬프트 하나와 그 프롬프트가 낸 출력을 **한 블록**으로 골라 `↑`/`↓` 로 옮기고 `Ctrl`+`C` 로 통째로 복사한다(네이티브 GUI 클라). 셸 블록은 셸 통합(OSC 133)이 경계를 알려 주지만 Claude 는 OSC 를 안 보내므로, 여기서는 화면 글의 **프롬프트 마커**(`❯ `/`> `)로 경계를 잡아 같은 블록 메시지로 보낸다(`promptblocks.py`) — 클라에는 셸 블록과 같은 조작이다. ⛔ 셸 패널에는 이 판정을 안 건다(`> ` 로 시작하는 인용·diff 오인).
 - **알림만** — 장기 턴·반복 루프 경고(`⚠`).
@@ -24,7 +24,6 @@ pytmux 안에서 돌아가는 [Claude Code](https://claude.com/claude-code) 세�
 | `usage-panel` | `usage-limits`, `limits` | `/usage` 한도 막대(세션 5h·주 전체·주 Sonnet) |
 | `claude-usage` | `usage` | 그림자 `/usage` 질의(실측 한도 갱신) |
 | `model` | `model-config`, `claude-model` | 모델·컨텍스트 변경 팝업 |
-| `claude-rules` | | 시작 규칙 편집(새 세션/clear 후 자동 주입) |
 | `token-account <이름>` | | 활성 패널 계정 수동 지정(빈값=자동) |
 
 **토글 명령**(`on`/`off`/무=토글): `auto-resume` · `auto-retry`(기본 on) · `auto-token-on-exit`(기본 on) · `claude-auto-mode` · `auto-launch`(기본 on) · `prompt-clear`.

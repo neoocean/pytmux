@@ -21,7 +21,7 @@ import pytmuxlib.plugins as plugins
 
 # claude-code 가 코어에 노출하던 명령(이 플러그인 부재 시 전부 사라져야 함).
 _CLAUDE_CMDS = {
-    "claude-rules", "claude-settings", "auto-resume",
+    "claude-settings", "auto-resume",
     "claude-token-log", "claude-usage",
     "usage-panel", "claude-token-account", "prompt-clear", "model",
     "auto-doc-clear", "auto-compact", "claude-auto-mode", "auto-launch",
@@ -65,7 +65,7 @@ async def test_new_hooks_present_when_loaded():
     descs, cats = reg.settings()
     assert "Claude" in cats
     assert {d["key"] for d in descs} == {"claude-settings", "model",
-                                         "claude-rules", "claude-token-log"}
+                                         "claude-token-log"}
 
 
 async def test_cli_toggle_routes_through_plugin_and_survives_deletion():
@@ -265,7 +265,7 @@ async def _opts_namespace_body(reg, _S):
     # 다른 플러그인 소유 opt(별개) — claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고
     # 비교한다. 2026-07-07: prompt_clear_message·claude_auto_mode·claude_auto_launch·
     # claude_rules·claude_long_turn_sec·claude_repeat_alert 6종을 코어에서 plugin_opts 로
-    # 이전(완전분리).
+    # 이전(완전분리). claude_rules 는 pytmux-524 에서 걷었다(SessionStart 훅이 대신한다).
     assert set(out) - {"ph_max_lines", "capture", "namesync_rules", "ime_show"} == {
         "claude_auto_retry", "token_debug", "auto_token_on_exit",
         "claude_auto_redraw", "prompt_clear_message", "claude_auto_mode",
@@ -275,7 +275,7 @@ async def _opts_namespace_body(reg, _S):
         # pytmux-475: auto mode 패널의 yes/no 자동 «예» 확정(기본 끔). 같은 이유로
         # 이 골든에 선다 — serialize 에 안 실리면 설정이 재시작을 못 넘긴다.
         "claude_auto_yes",
-        "claude_auto_launch", "claude_rules", "claude_long_turn_sec",
+        "claude_auto_launch", "claude_long_turn_sec",
         "claude_repeat_alert",
         # 2026-07-23 토큰 동기화(P2): 전송 설정도 plugin_opts 소유다 — 코어는
         # token_sync* 의 의미를 모른다(플러그인을 지우면 통째로 사라진다).

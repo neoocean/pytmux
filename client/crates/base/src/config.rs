@@ -1287,13 +1287,12 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("list-keys", "키 바인딩 목록…"),
     ("plugins", "플러그인 관리…"),
     // ── 플러그인이 낸 설정 줄의 이름(설계 Tier A · P2) ──────────────────────
-    // 이 넷은 코어 `i18n.py` 가 아니라 claude-code 플러그인이 `i18n.register` 로 넣는다
+    // 이 셋은 코어 `i18n.py` 가 아니라 claude-code 플러그인이 `i18n.register` 로 넣는다
     // (생성기가 그래서 `plugins.load()` 를 부른다 — `gen_setting_labels.py` 머리말).
     // 줄 자체는 서버가 런타임에 부는 것이고(`plugin_surface.settings`), 여기 있는 것은
     // **그 줄의 사람 말**뿐이다. 표에 없는 키는 키 그대로 보인다(`setting_label`).
     ("claude-settings", "Claude 설정…"),
     ("model", "Claude 모델/컨텍스트…"),
-    ("claude-rules", "Claude 시작 규칙…"),
     ("claude-token-log", "Claude 토큰 사용량…"),
 ];
 

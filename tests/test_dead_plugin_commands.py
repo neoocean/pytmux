@@ -27,9 +27,16 @@ from pytmuxlib.servercmd import _CMD_TABLE
 
 #: 이 CL 이 살린 열하나(이슈 본문의 그 목록 그대로).
 REVIVED = (
-    "auto-launch", "capture-output", "capture-toggle", "claude-rules",
+    "auto-launch", "capture-output", "capture-toggle",
     "claude-settings", "claude-token-log", "ime-indicator", "model",
     "namesync", "prompt-clear-queue", "prompt-history-lines",
+)
+
+#: Claude Code CLI 가 스스로 하게 돼 **일부러 걷은** 이름(계획
+#: `pytmux/claude_code_native_retirement_plan_2026-10-01`). 위 REVIVED 와 반대 방향의
+#: 오라클이다 — 이 이름들이 명령이나 화면으로 **되살아나면** 운다.
+RETIRED = (
+    "claude-rules", "rules", "startup-rules",          # pytmux-524 → SessionStart 훅
 )
 
 
@@ -71,6 +78,17 @@ async def test_the_eleven_dead_commands_are_all_alive():
             if not _runnable(reg, n) and not _has_screen(reg, n)]
     assert dead == [], (
         f"아직 죽은 줄: {dead} — 이름을 액션으로 옮기거나(cmdmap) 화면 스펙을 낼 것")
+
+
+async def test_the_retired_names_are_neither_commands_nor_screens():
+    """걷은 이름은 **두 길 다** 막혀 있어야 한다 — 광고만 빼고 디스패치·화면이 남으면
+    팔레트에는 없는데 손으로 치면 옛 기능이 도는 반쪽 제거가 된다."""
+    reg = plugins.load()
+    advertised = {row[0] for p in reg.plugins
+                  for row in (getattr(p, "commands", None) or [])}
+    alive = [n for n in RETIRED
+             if n in advertised or _runnable(reg, n) or _has_screen(reg, n)]
+    assert alive == [], f"걷은 이름이 아직 산다: {alive}"
 
 
 async def test_every_advertised_command_is_advertised_by_someone_alive():
@@ -162,7 +180,6 @@ async def test_the_four_popups_become_screen_specs():
         spec_mod = importlib.import_module(
             "pytmuxlib.plugins.claude-code.screenspec")
         for name, kind in (("claude-settings", "form"),
-                           ("claude-rules", "prompt"),
                            ("model", "list"),
                            ("claude-token-log", "table"),
                            ("prompt-clear-queue", "list")):
@@ -189,21 +206,6 @@ async def test_the_settings_form_shows_the_live_values_and_enter_changes_them():
         # 그리고 **바뀐 값이 곧바로 보인다**(다음 스펙이 돌아온다).
         after = {r["key"]: r["cols"][0] for r in nxt["rows"]}
         assert after["claude_auto_mode"] != rows["claude_auto_mode"]
-
-
-async def test_the_rules_prompt_carries_the_current_text_as_the_seed():
-    """고치는 화면인데 지금 값이 안 실리면 '편집'이 아니라 '덮어쓰기'다."""
-    async with running_server() as (srv, _task, _sock):
-        sess = srv.ensure_default_session(80, 24)
-        spec_mod = importlib.import_module(
-            "pytmuxlib.plugins.claude-code.screenspec")
-        srv.set_claude_rules("한국어로 답할 것")
-        spec = spec_mod.open_spec(srv, sess, "claude-rules")
-        assert spec["text"] == "한국어로 답할 것", spec
-        out = spec_mod.action(srv, sess, {"id": "claude-rules", "do": "save",
-                                          "row": 0, "input": "새 규칙"})
-        assert srv.claude_rules == "새 규칙"
-        assert out["t"] == "plugin_screen_close"
 
 
 class _FakePty:
@@ -336,6 +338,6 @@ async def test_building_a_screen_spec_never_reaches_for_textual():
 async def test_the_plugin_screen_hook_actually_routes_to_the_specs():
     """`plugin_screen` 이 `screenspec` 을 안 부르면 스펙이 아무리 옳아도 죽은 줄이다."""
     reg = plugins.load()
-    for name in ("claude-settings", "claude-rules", "model", "claude-token-log",
+    for name in ("claude-settings", "model", "claude-token-log",
                  "prompt-clear-queue", "namesync"):
         assert _has_screen(reg, name), f"{name}: 레지스트리를 통해 화면이 안 나온다"

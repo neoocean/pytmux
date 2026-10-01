@@ -3818,7 +3818,7 @@ impl SessionView {
                             //   "플러그인이 물었다:" 한 줄만 보인다.
                             // ★ 입력칸의 **초기값도 스펙이 정한다**(pytmux-35). 고치는
                             //   화면인데 지금 값이 안 실리면 '편집'이 아니라 '다시 치기'가
-                            //   된다 — `claude-rules`(시작 규칙)·`namesync`(경로·키워드)가
+                            //   된다 — `namesync`(경로·키워드)가
                             //   그 부류다. 실을 것이 없는 물음은 종전대로 빈 칸이다.
                             let (kind, ask, sel, seed) = match self.state.plugin_screen() {
                                 Some(spec) => (

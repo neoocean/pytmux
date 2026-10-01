@@ -62,11 +62,11 @@ Python + [Textual](https://textual.textualize.io/) 로 만든 **tmux 유사 터�
 - **Claude Code 상태 표시**: 실행 중인 탭에 상태 아이콘(**대기 `○` / 처리중 `◐` / 리밋
   멈춤 `⊘`**)을 표시하고, 비활성 탭의 작업이 끝나면 탭 배경색으로 알립니다. 보낸 프롬프트
   이력은 `prompt-history`(claude-prompt-history 플러그인)로 미리보기·점프합니다.
-- **Claude 토큰 사용량 / 권한모드 / 시작 규칙**: 활성 Claude 패널의 토큰·컨텍스트를
+- **Claude 토큰 사용량 / 권한모드**: 활성 Claude 패널의 토큰·컨텍스트를
   상태줄에 표시하고, 클릭하면 **노트북 탭(기간/계정/세션/한도/대사/경고)** 으로 보는
   토큰 사용량 팝업이 열립니다 — 시간 뷰는 시각별 5h 한도를 계단식 막대로, 한도 뷰는
   `/usage` 실측 막대와 리셋 카운트다운을 보여줍니다. 권한모드 footer 클릭 시 선택 팝업
-  (auto/default/plan), `claude-rules` 로 시작 규칙 자동 주입.
+  (auto/default/plan). 시작 규칙은 Claude Code 의 `SessionStart` 훅이 맡습니다.
 - **네트워크 응답성 표시 + 회복**: 클라↔서버 IPC 지연이 커지면 패널 외곽선을 **빨간색**
   으로 표시하고, 고착되면 `reconnect`(또는 워치독 자동)으로 **실행 중 셸/Claude 를 죽이지
   않고** IPC 만 다시 세워 반응성을 회복합니다.

@@ -114,7 +114,6 @@ def init_pane(pane) -> None:
     pane._retry_last = 0.0
     # 수동 /clear 감지 디바운스(환영 배너가 머무는 동안 토큰세션 재리셋 방지).
     pane._welcome_seen = False
-    pane._rules_pending = False     # 시작 규칙 주입 예약(다음 idle 1회, #27)
     # 새 Claude 세션 자동 셋업(auto-launch): /rc 주입(_rc_pending) 후 권한 auto 유도.
     pane._rc_pending = False
     pane._perm_auto_pending = False

@@ -27,7 +27,6 @@
       "pytmuxlib/plugins/mdir/__init__.py"
     ],
     "prompt": [
-      "pytmuxlib/plugins/claude-code/screenspec.py",
       "pytmuxlib/plugins/claude-name-sync/screenspec.py",
       "pytmuxlib/plugins/mdir/__init__.py"
     ],
