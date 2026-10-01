@@ -1063,7 +1063,7 @@ SCENES = [
     ("19-confirm-tab-last", "마지막 탭 닫기 — pytmux 종료 경고 팝업", confirm_tab_last),
     ("21-restart-check", "restart-check 드라이런 — 작업보존 재시작 안전점검", restart_check),
     ("26-restart-confirm", "재시작 확인 — 드라이런 FAIL 시 '그래도 재시작?'(기본 취소)", restart_confirm),
-    ("23-token-saver", "Claude 설정 팝업(token-saver) — 자동재개·세션종료 토큰화면·오토모드·클리어·경고", token_saver),
+    ("23-token-saver", "Claude 설정 팝업(claude-settings) — 세션종료 토큰화면·깨짐완화·자동 «예»·클리어·경고", token_saver),
     ("24-token-log", "토큰 사용량 팝업(일별) — 노트북 탭+요약줄+기간:토큰 표", token_log),
     ("42-token-log-session", "토큰 팝업(세션) — Claude 세션별 합·탭:패널·타임스탬프", token_log_session),
     ("37-token-log-hour", "토큰 팝업(시간) — 시각별 5h 한도 계단식 막대 + 1w% 열", token_log_hour),

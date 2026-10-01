@@ -1,5 +1,5 @@
 // pytmux 플러그인 페이지 공용 크롬 — guide-nav.js 와 같은 패턴의 파셜 주입기.
-// 개별 플러그인 페이지(guide/plugins/<name>.html)의 <body data-plugin> 으로 현재
+// 개별 플러그인 페이지(guide/plugin/<name>.html)의 <body data-plugin> 으로 현재
 // 플러그인을 알아내 목차 강조·이전/다음 페이저를 만든다. 챕터 페이저(guide-nav.js
 // 의 CH)와 분리한 이유: 플러그인 13개를 가이드 챕터 목차에 섞으면 목차·페이저가
 // 배로 길어진다 — 플러그인끼리만 도는 별도 트랙으로 둔다.

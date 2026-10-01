@@ -34,10 +34,11 @@
       <section>
         <h2 style="border-top:none;">메뉴 (<code>prefix Enter</code> · 우클릭)</h2>
         <p>
-          패널 위 우클릭 또는 <kbd>prefix</kbd> <kbd>Enter</kbd> 로 메뉴를 엽니다. 항목은 그룹으로 정리돼
+          패널 위 우클릭, <kbd>prefix</kbd> <kbd>Enter</kbd>, 또는 <kbd>F10</kbd>(메뉴가 떠 있을 때 다시 누르면 닫힘)으로
+          메뉴를 엽니다. 항목은 그룹으로 정리돼
           있습니다 — <strong>패널</strong>(분할 │/─·줌·회전·swap·새 탭으로 분리·다른 탭에서 합치기·원격 탭
-          합치기·이름·닫기), <strong>레이아웃</strong>(프리셋·다음·저장·불러오기), <strong>탭</strong>(새·이름·닫기·핀
-          토글·트리 개요·다음·이전). 상단에는 스크롤백 검색·명령 입력·⚙ 설정·마우스 도움말이, 구분선
+          합치기·이름·닫기), <strong>레이아웃</strong>(프리셋·다음·저장·불러오기), <strong>탭</strong>(새·새 탭에서 Claude Code 실행·이름·닫기·핀
+          토글·트리 개요·다음·이전). 그룹 아래에는 스크롤백 검색·모든 탭·패널 검색·명령 입력·⚙ 설정·마우스 도움말이, 구분선
           아래에는 detach·서버 종료가 있습니다.
         </p>
         <p>
@@ -110,7 +111,9 @@
         <p>
           사라진 알림은 상태줄 오른쪽 <strong><code class="nb">≡N</code> 배지</strong>에 남습니다 —
           <code>N</code> 은 아직 확인하지 않은 알림 수이고, <strong>배지 색은 그중 가장 심각한 등급</strong>입니다.
-          배지를 클릭하거나 <kbd>ESC</kbd> → <kbd>↓</kbd> → <kbd>Enter</kbd> 로 <strong>이력</strong>(최근 200개)을 엽니다.
+          배지를 클릭하거나, 최하단 패널에서 <kbd>ESC</kbd> → <kbd>↓</kbd> 로 상태줄 배지에 들어가 <code class="nb">≡N</code> 에서
+          <kbd>Enter</kbd> 로 <strong>이력</strong>(최근 200개)을 엽니다 — <kbd>↓</kbd> 는 <strong>첫 배지</strong>에 서므로,
+          모델·사용량·REC 배지가 떠 있으면 <kbd>←</kbd><kbd>→</kbd> 로 <code class="nb">≡N</code> 까지 옮겨야 합니다.
         </p>
         <ul>
           <li><kbd>↑↓</kbd> · <kbd>PgUp</kbd>/<kbd>PgDn</kbd> · <kbd>Home</kbd>/<kbd>End</kbd> 로 이동</li>
@@ -144,11 +147,16 @@
             <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>번호로 탭 전환</td></tr>
             <tr><td><kbd>Tab</kbd></td><td>탭 스위처 — 목록에서 <kbd>Tab</kbd> 다음 · <kbd>Shift+Tab</kbd> 이전으로 고르고 <kbd>Enter</kbd> 전환(<kbd>Esc</kbd> 취소). 원격 탭=분홍·핀=<code>*</code> 경고색, 패널 2개 이상 탭엔 패널 줄(<kbd>Enter</kbd> 로 그 패널로), <kbd>Home</kbd>/<kbd>End</kbd>/<kbd>PgUp</kbd>/<kbd>PgDn</kbd>·<kbd>↑↓</kbd> 순환 지원</td></tr>
             <tr><td><kbd>n</kbd> / <kbd>p</kbd> / <kbd>P</kbd></td><td>새 탭 / 상하 분할 / 탭 핀 토글</td></tr>
+            <tr><td><kbd>c</kbd></td><td>지금 디렉토리에서 <strong>Claude Code 가 도는 새 탭</strong>(실행할 명령은 <code class="nb">claude-command</code> 설정)</td></tr>
+            <tr><td><kbd>f</kbd></td><td><strong>모든 탭·패널 검색</strong> — 결과 목록에서 고르면 그 자리로 갑니다</td></tr>
+            <tr><td><kbd>b</kbd></td><td>블록 고르기(명령 + 그 출력 · <kbd>↑↓</kbd> 이동 · <kbd>Ctrl+C</kbd> 복사 · <kbd>Esc</kbd>/<kbd>q</kbd>/<kbd>Enter</kbd> 끝) — <a href="/guide/plugin/blocks">blocks 플러그인</a></td></tr>
             <tr><td><kbd>e</kbd></td><td>활성 패널에 ESC 전송</td></tr>
+            <tr><td><kbd>Shift+ESC</kbd></td><td>활성 패널에 시계·달력 오버레이가 떠 있으면 그것을 닫고, 없으면 패널에 ESC 를 보낸 뒤 모드 종료</td></tr>
+            <tr><td><kbd>`</kbd></td><td>패널에 백틱(<code>`</code>) 한 글자를 보내고 모드 종료 — 백틱으로 들어왔다면 <kbd>`</kbd> 두 번이 곧 백틱 입력</td></tr>
             <tr><td><kbd>Insert</kbd> / <kbd>Shift+Delete</kbd></td><td>작성창(블록 선택 편집 → 주입) · <kbd>Shift+Delete</kbd> 는 Insert 키 없는 맥 키보드용</td></tr>
             <tr><td><kbd>Ctrl+↑</kbd> / <kbd>Ctrl+↓</kbd></td><td>이전 / 다음에 입력한 프롬프트 위치로 점프(Claude 패널)</td></tr>
-            <tr><td><kbd>↑</kbd>(최상단 패널에서)</td><td>탭 <strong>닫기 <code>[x]</code></strong> 포커스 → 한 번 더 <kbd>↑</kbd> 면 <strong>탭바 포커스</strong>. 탭바에서는 <kbd>←→</kbd>(또는 <kbd>↑↓</kbd>)로 탭과 맨 오른쪽 <code>[+]</code> 를 돌며 고르고, <kbd>Enter</kbd> 로 그 탭 전환(<code>[+]</code> 면 새 탭), <kbd>+</kbd>/<kbd>a</kbd> 새 탭, <kbd>x</kbd>/<kbd>d</kbd>/<kbd>Delete</kbd> 탭 닫기(확인 후), <kbd>Shift+←→</kbd> 로 탭 순서 이동, <kbd>↓</kbd>/<kbd>Esc</kbd> 로 빠져나옵니다</td></tr>
-            <tr><td><kbd>↓</kbd>(최하단 패널에서)</td><td>상태줄 배지 포커스 — <kbd>←→</kbd> 로 배지 순환, <kbd>Enter</kbd> 실행. 알림 배지(<code class="nb">≡N</code>)에서 <kbd>Enter</kbd> = <strong>지나간 알림 이력</strong>(<kbd>↑↓</kbd>·<kbd>PgUp</kbd>/<kbd>PgDn</kbd>·<kbd>Home</kbd>/<kbd>End</kbd> 이동 · <kbd>Enter</kbd> 전문 펼치기 · <kbd>c</kbd> 복사 · <kbd>Esc</kbd> 닫기)</td></tr>
+            <tr><td><kbd>↑</kbd>(최상단 패널에서)</td><td>탭 <strong>닫기 <code>[x]</code></strong> 포커스 → 한 번 더 <kbd>↑</kbd> 면 <strong>탭바 포커스</strong>. 탭바에서는 <kbd>←</kbd>/<kbd>↑</kbd> 이전 · <kbd>→</kbd> 다음으로 탭과 맨 오른쪽 <code>[+]</code> 를 돌며 고르고, <kbd>Enter</kbd> 로 그 탭 전환(<code>[+]</code> 면 새 탭), <kbd>+</kbd>/<kbd>a</kbd> 새 탭, <kbd>x</kbd>/<kbd>d</kbd>/<kbd>Delete</kbd> 탭 닫기(확인 후), <kbd>Shift+←→</kbd> 로 탭 순서 이동. <kbd>↓</kbd> 는 탭바에서 패널로 돌아가고(ESC 모드 유지), <kbd>Esc</kbd> 는 모드까지 끝냅니다</td></tr>
+            <tr><td><kbd>↓</kbd>(최하단 패널에서)</td><td>상태줄 배지 포커스(첫 배지부터) — <kbd>←→</kbd> 로 배지 순환, <kbd>Enter</kbd> 실행. 알림 배지(<code class="nb">≡N</code>)에서 <kbd>Enter</kbd> = <strong>지나간 알림 이력</strong>(<kbd>↑↓</kbd>·<kbd>PgUp</kbd>/<kbd>PgDn</kbd>·<kbd>Home</kbd>/<kbd>End</kbd> 이동 · <kbd>Enter</kbd> 전문 펼치기 · <kbd>c</kbd> 복사 · <kbd>Esc</kbd> 닫기)</td></tr>
             <tr><td><kbd>:</kbd> / <kbd>?</kbd></td><td>명령 프롬프트 / 도움말</td></tr>
             <tr><td><kbd>ESC</kbd></td><td>모드 종료(앱에 ESC 안 보냄)</td></tr>
           </tbody>
@@ -172,8 +180,8 @@
         <h3>내 키에 명령 묶기</h3>
         <p>
           <code>bind-key &lt;키&gt; &lt;명령&gt;</code>(별칭 <code>bind</code>) 으로 런타임에 키를 묶습니다.
-          <code class="nb">-n</code> 을 붙이면 prefix 없이 바로 듣는 <strong>루트 바인딩</strong>이 됩니다(F1–F11·<code class="nb">M-</code>
-          키 권장 — 매칭된 키는 셸로 전달되지 않음). 해제는 <code class="nb">unbind-key</code>(<code class="nb">-a</code> 전부).
+          <code class="nb">-n</code> 을 붙이면 prefix 없이 바로 듣는 <strong>루트 바인딩</strong>이 됩니다(F1–F9·F11·<code class="nb">M-</code>
+          키 권장 — 매칭된 키는 셸로 전달되지 않음. <kbd>F10</kbd>(메뉴)·<kbd>F12</kbd>(명령 프롬프트)는 내장 키가 먼저 받아 묶어도 듣지 않습니다). 해제는 <code class="nb">unbind-key</code>(<code class="nb">-a</code> 전부).
           현재 바인딩과 마우스 제스처는 <code class="nb">list-keys</code>(별칭 <code>lsk</code>) 팝업에서 봅니다.
           설정 파일에도 <code>bind | split-window -h</code> 처럼 적어 둘 수 있습니다(자세한 내용은
           <a href="/guide/config">14. 설정 파일</a>).
@@ -212,20 +220,22 @@
         <table>
           <thead><tr><th>이벤트</th><th>언제</th></tr></thead>
           <tbody>
-            <tr><td><code class="nb">client-attached</code></td><td>클라이언트가 서버에 붙었을 때(시작·재접속)</td></tr>
+            <tr><td><code class="nb">client-attached</code></td><td>클라이언트를 띄워 서버에 처음 붙었을 때 — 클라이언트 프로세스마다 <strong>한 번</strong>뿐이고, 재접속(<code>reconnect</code>)이나 <code class="nb">restart-server</code> 뒤에는 다시 발화하지 않습니다</td></tr>
             <tr><td><code class="nb">after-new-window</code></td><td>탭이 새로 생겼을 때</td></tr>
-            <tr><td><code class="nb">alert-bell</code></td><td>어느 탭에서든 벨(<code>\a</code>)이 울렸을 때 — 알림 스크립트를 붙이기 좋습니다</td></tr>
+            <tr><td><code class="nb">alert-bell</code></td><td><strong>보고 있지 않은 탭</strong> 중 <code class="nb">monitor-bell</code> 이 켜진(기본 on) 탭에서 벨(<code>\a</code>)이 울려 벨 표시가 생겼을 때 — 지금 보는 탭의 벨에는 발화하지 않고, 벨 표시가 남은 탭이 이미 있으면 그 표시가 모두 풀릴 때까지 다시 발화하지 않습니다</td></tr>
             <tr><td><code class="nb">claude-limit</code></td><td>활성 패널의 Claude 가 <strong>사용량 한도로 멈춘 순간</strong>. 폰으로 알림을 보내는 식으로 쓰기 좋습니다</td></tr>
           </tbody>
         </table>
         <p>
-          훅 명령은 <strong>그 순간의 맥락을 환경변수로</strong> 받습니다 —
-          <code class="nb">PYTMUX_HOOK_EVENT</code>(발화한 이벤트 이름)에 더해,
-          <code class="nb">claude-limit</code> 은 <code class="nb">PYTMUX_ACCOUNT</code>(계정 <strong>별칭</strong> — 이메일 원문은 싣지 않습니다)를 함께 넘깁니다.
+          <code class="nb">claude-limit</code> 훅 명령은 <strong>그 순간의 맥락을 환경변수로</strong> 받습니다 —
+          <code class="nb">PYTMUX_HOOK_EVENT</code>(발화한 이벤트 이름)와
+          <code class="nb">PYTMUX_ACCOUNT</code>(계정 <strong>별칭</strong> — 이메일 원문은 싣지 않습니다). 나머지 세 이벤트는 환경변수 없이 명령만 실행합니다.
           (예전의 <code>claude-auto-armed</code> 는 자동 재개와 함께 없앴습니다 — 한도 뒤 이어 가는 순간은
           Claude Code 의 Notification 훅 <code>quota_auto_resume_fired</code> 가 알립니다.)
-          <code class="nb">run-shell</code> 로 부른 셸 명령이 그대로 물려받으므로
-          <code class="nb">set-hook claude-limit run-shell "notify.sh $PYTMUX_ACCOUNT"</code> 처럼 쓰면 됩니다.
+          <code class="nb">run-shell</code> 로 부른 셸 명령이 그대로 물려받으므로 설정 파일에
+          <code class="nb">hook claude-limit run-shell "notify.sh $PYTMUX_ACCOUNT"</code> 한 줄로 적어 두면 됩니다.
+          (명령 프롬프트의 <code class="nb">set-hook</code> 으로 같은 줄을 걸면 따옴표가 풀린 채 저장돼
+          <code class="nb">run-shell</code> 이 첫 단어 <code>notify.sh</code> 만 실행합니다.)
           Claude 훅은 <a href="/guide/plugins">claude-code 플러그인</a>이 있을 때만 발화합니다(디렉토리를 지우면 함께 사라집니다).
         </p>
       </section>

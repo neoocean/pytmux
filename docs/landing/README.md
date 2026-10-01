@@ -7,8 +7,9 @@
 | 파일 | 내용 |
 |------|------|
 | `index.html` | 랜딩(소개·핵심가치·기능·Claude 연동·운영·플러그인·갤러리·설치·**다운로드·연락**) |
-| `guide.html` | 상세 가이드 **개요**(14개 챕터로 가는 목차·카드) |
-| `guide/*.html` | 챕터별 상세 가이드 14장(`start`·`install`·`panes`·`tabs`·`scrollback`·`mouse`·`command`·`claude`·`tokens`·`remote`·`restart`·`tools`·`config`·`plugins`). 각 페이지 하단에 이전·다음 페이저 |
+| `guide.html` | 상세 가이드 **개요**(15개 챕터로 가는 목차·카드) |
+| `guide/*.html` | 챕터별 상세 가이드 15장(`start`·`install`·`panes`·`tabs`·`scrollback`·`mouse`·`command`·`claude`·`tokens`·`sync`·`remote`·`restart`·`tools`·`config`·`plugins`). 각 페이지 하단에 이전·다음 페이저 |
+| `guide/plugin/*.html` · `plugin-nav.js` | 플러그인별 페이지와 그 공용 크롬(목차·이전/다음) |
 | `guide-nav.js` | 챕터 페이지 공용 크롬(상단 내비·목차 사이드바·이전/다음 페이저·푸터)을 `data-topic` 으로 주입. space 프로젝트 `guide-nav.js` 패턴 |
 | `styles.css` | 공용 다크 테마 스타일 |
 | `lightbox.js` | 스크린샷 클릭 확대(라이트박스) |

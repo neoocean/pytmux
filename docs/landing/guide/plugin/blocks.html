@@ -32,13 +32,24 @@
       </header>
 
       <section>
-        <h2 style="border-top:none;">지금 무엇이 달라지나</h2>
+        <h2 style="border-top:none;">블록 고르기</h2>
         <p>
-          이 플러그인은 <strong>정보를 모으는 쪽</strong>이고, 그것을 화면에 그리는 일은 클라이언트 몫입니다.
-          지금 배포되는 <strong>파이썬 클라이언트는 이 정보를 요청하지 않으므로, 켜 두어도 화면은 종전과 완전히 같습니다</strong>
-          (프레임도 한 바이트 늘지 않습니다 — 클라이언트가 접속할 때 “나는 블록을 그린다”고 밝힌 경우에만 서버가 보냅니다).
-          블록을 실제로 그리는 것은 <strong>따로 배포되는 러스트 TUI 클라이언트</strong>이고, 이 페이지는 그 준비를 위한
-          <strong>셸 쪽 설정</strong>을 설명합니다. 설치해 두면 나중에 그 클라이언트로 붙었을 때 바로 동작합니다.
+          모은 블록으로 <strong>명령 하나와 그 출력을 한 덩이로 골라 복사</strong>합니다.
+          파이썬 클라이언트와 GUI 클라이언트(<code class="nb">pytmux-gui</code>) 모두 접속할 때 “나는 블록을 그린다”고 밝혀 블록 정보를 받습니다
+          — 그렇게 밝히지 않은 클라이언트에는 서버가 블록 프레임을 한 바이트도 보내지 않습니다.
+        </p>
+        <table>
+          <thead><tr><th>입구 · 키</th><th>동작</th></tr></thead>
+          <tbody>
+            <tr><td><code>select-blocks</code> · <kbd>ESC</kbd> <kbd>b</kbd></td><td>블록 고르기 모드로 — 첫 선택은 <strong>마지막 블록</strong>(방금 친 명령), 상태줄에 <code class="nb">[block]</code> 배지</td></tr>
+            <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>이전 / 다음(더 최근) 블록 — 고른 블록은 반전으로 강조</td></tr>
+            <tr><td><kbd>Ctrl+C</kbd></td><td>고른 블록 전체(명령 + 출력)를 복사 — 드래그 복사와 같은 경로</td></tr>
+            <tr><td><kbd>Esc</kbd> · <kbd>q</kbd> · <kbd>Enter</kbd></td><td>모드 끝내기</td></tr>
+          </tbody>
+        </table>
+        <p>
+          모드 중에 친 그 밖의 키는 패널로 흘러가지 않습니다. 블록이 하나도 없는 패널에서는 모드에 들어가지 않고 이유를 알려 줍니다.
+          Claude 패널은 셸 신호 대신 화면의 프롬프트 표시로 경계를 잡아(claude-code 플러그인) <strong>턴 단위</strong>로 골라집니다.
         </p>
       </section>
 

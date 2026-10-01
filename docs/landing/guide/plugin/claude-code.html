@@ -40,19 +40,27 @@
         <table>
           <thead><tr><th>명령</th><th>설명</th></tr></thead>
           <tbody>
-            <tr><td><code>claude-settings</code></td><td>Claude 설정 팝업 — 세션종료 토큰화면·프롬프트 단위 클리어·장기턴/반복 경고 (별칭 <code>claude-settings</code>)</td></tr>
+            <tr><td><code>claude-settings</code></td><td>Claude 설정 팝업 — 세션종료 토큰화면·화면 깨짐 자동 완화·auto 모드 자동 «예»·프롬프트 단위 클리어·장기턴/반복 경고</td></tr>
             <tr><td><code>claude-token-log</code></td><td>토큰 사용량 팝업 — 기간(시/일/주/월)·세션·한도·경고 탭 + 실측 한도·5h창 (상태줄 토큰 배지 클릭). 여러 머신을 합쳤을 때만 <strong>머신</strong> 탭이 하나 더 붙습니다</td></tr>
-            <tr><td><code>usage-panel</code></td><td>/usage 한도 막대 그래프 팝업 (별칭 <code>limits</code>)</td></tr>
-            <tr><td><code>claude-token-sync</code></td><td>여러 머신 토큰 사용량 <a href="/guide/sync">동기화</a> — <code>status | on &lt;URL&gt; | off | enroll &lt;코드&gt; | now | resync</code></td></tr>
+            <tr><td><code>usage-panel</code></td><td>/usage 한도 막대 그래프 팝업 (별칭 <code>usage-limits</code>·<code>limits</code>)</td></tr>
+            <tr><td><code>claude-usage</code></td><td>그림자 /usage 질의 — 숨은 세션으로 실 세션/주간 한도를 갱신 (별칭 <code>usage</code>)</td></tr>
+            <tr><td><code>claude-token-period</code> · <code>claude-token-sessions</code> · <code>claude-token-machines</code></td><td>토큰 사용량을 기간별(시/일/주/월)·세션별·원산지 머신별 총계와 막대로 (별칭 <code>token-period</code>·<code>token-sessions</code>·<code>token-machines</code>). GUI 클라이언트용이며, 터미널 클라이언트에서는 <code>claude-token-log</code> 의 같은 탭을 씁니다</td></tr>
+            <tr><td><code>claude-warn-history</code></td><td>경고 이력 — 날짜별로 접었다 펴는 목록 (별칭 <code>claude-warns</code>·<code>warn-history</code>). GUI 클라이언트용이며, 터미널 클라이언트에서는 <code>claude-token-log</code> 의 경고 탭을 씁니다</td></tr>
+            <tr><td><code>claude-token-account</code></td><td>활성 패널의 Claude 계정을 손으로 지정 — <code>claude-token-account &lt;이름&gt;</code>, 빈 값 = 자동</td></tr>
+            <tr><td><code>claude-token-sync</code></td><td>여러 머신 토큰 사용량 <a href="/guide/sync">동기화</a> — <code>status | on &lt;URL&gt; | off | enroll &lt;코드&gt; | invite | adopt &lt;코드&gt; | now | resync</code></td></tr>
             <tr><td><code>model</code></td><td>모델·컨텍스트 변경 팝업 (상태줄 모델 배지 클릭)</td></tr>
+            <tr><td><code>claude-detail</code></td><td>플랜 전문·거부 사유 판 — 마지막 플랜과 마지막으로 막힌 호출을 읽습니다 (별칭 <code>plan-detail</code>, GUI 는 <kbd>esc</kbd> <kbd>v</kbd>)</td></tr>
             <tr><td><code>prompt-clear</code></td><td>프롬프트 단위 클리어 모드 — 완료마다 문서화+/clear</td></tr>
             <tr><td><code>auto-retry</code></td><td>전송 에러 시 1분 뒤 '계속' 자동 주입 on/off</td></tr>
+            <tr><td><code>claude-auto-redraw</code></td><td>화면 깨짐 자동 완화 — <code>off | idle | corruption</code>(끔 / 완료마다 재출력 / 깨짐 감지 시만), 기본 off (별칭 <code>auto-redraw</code>)</td></tr>
+            <tr><td><code>claude-auto-yes</code></td><td>auto 모드 패널이 yes/no 를 물으면 <strong>이미 선택돼 있는 맨 «Yes»</strong> 만 Enter 로 확정 on/off, 기본 off (별칭 <code>auto-yes</code>)</td></tr>
             <tr><td><code>auto-token-on-exit</code></td><td>Claude <strong>세션이 끝나는 순간</strong> 그 패널에 토큰·한도 요약을 흘려보내기 on/off(기본 on, 별칭 <code>auto-token</code>). 팝업이 아니라 <strong>패널 출력</strong>이라 스크롤백에 그대로 남습니다</td></tr>
             <tr><td><code>prompt-clear-message</code></td><td>프롬프트 단위 클리어가 <code>/clear</code> 전에 넣는 <strong>문서화 지시문 문구</strong>를 바꿉니다(설정 파일에 영속)</td></tr>
             <tr><td><code>prompt-clear-queue</code></td><td>클리어 사이클마다 하나씩 꺼내 쓸 <strong>다음 프롬프트 대기열</strong>(별칭 <code>pc-queue</code>) — 인자 없이 = 지금 쌓인 목록 팝업, <code class="nb">-c</code> = 비우기, 그 밖의 문구 = 큐에 추가(모드가 꺼져 있으면 자동으로 켜집니다)</td></tr>
+            <tr><td><code>claude-token-debug</code></td><td>토큰 회계 진단 로그(<code>&lt;sock&gt;.tokendbg.jsonl</code>) on/off — 과소집계 원인을 가리는 진단용, 기본 off</td></tr>
           </tbody>
         </table>
-        <p>명령은 <kbd>ESC</kbd> → <kbd>:</kbd> 프롬프트에서 실행합니다. 토글류는 인자 없이 실행하면 선택 팝업이 뜹니다.</p>
+        <p>명령은 <kbd>ESC</kbd> → <kbd>:</kbd> 프롬프트에서 실행합니다. 값 선택지가 있는 명령(<code>prompt-clear</code>·<code>auto-retry</code>·<code>claude-auto-redraw</code>·<code>claude-auto-yes</code>·<code>claude-token-debug</code>)은 <code>?</code> 명령 목록에서 고르면 선택 팝업이 뜹니다. 토글은 인자 없이 실행하면 켜짐/꺼짐이 뒤집히고(<code>claude-auto-redraw</code> 는 다음 모드로 순환), <code>auto-token-on-exit</code> 처럼 선택지가 없는 토글은 선택 팝업 없이 그렇게만 동작합니다.</p>
       </section>
       <section>
         <h2>화면</h2>
@@ -69,7 +77,7 @@
           <figcaption>한도 탭 — /usage 막대·5h 창 합계·리셋 카운트다운.</figcaption>
         </figure>
         <figure>
-          <img src="../../image/13-perm-mode.svg" alt="권한 오토모드">
+          <img src="../../image/13-perm-mode.svg" alt="권한 모드 선택 팝업">
           <figcaption>권한 모드 선택 팝업(footer 클릭).</figcaption>
         </figure>
       </section>

@@ -90,7 +90,8 @@
           <code>set mouse-drag-copy shift</code> 면 평드래그가 앱에게 가고 <strong>복사는 Shift+드래그</strong>가 됩니다.
           <code>set mouse-drag-copy off</code> 면 <strong>Shift+드래그까지</strong> 앱에게 가므로, 그때 선택은 위
           스크롤백(copy-mode)에서 드래그로 합니다.
-          어느 값이든 <strong>마우스를 안 켠 패널</strong>(보통 셸)에서는 넘길 앱이 없어 평드래그가 그대로 선택입니다.
+          <code>shift</code> 값에서도 <strong>마우스를 안 켠 패널</strong>(보통 셸)에서는 넘길 앱이 없어 평드래그가 그대로 선택입니다.
+          <code>off</code> 면 그런 패널에서도 평드래그는 포커스만 옮기므로, 선택은 스크롤백(copy-mode)에서 합니다.
         </div>
       </section>
 
@@ -120,8 +121,9 @@
         </div>
         <div class="callout">
           <strong>박스드로잉 제거:</strong> 분할된 화면을 복사해 붙여넣으면 패널 테두리(<code>│─┼</code>)가
-          섞여 들어올 수 있습니다. <code>set strip-box-drawing on</code>(기본 ON)이면 붙여넣을 때 이런
-          박스드로잉 문자를 자동으로 걸러냅니다.
+          섞여 들어올 수 있습니다. 기본(ON)으로 붙여넣을 때 이런 박스드로잉 문자를 자동으로 걸러냅니다.
+          실행 중에는 명령 프롬프트에서 <code class="nb">strip-box-drawing on|off</code>(인자 없으면 토글)로,
+          영구히는 설정 파일의 <code class="nb">set strip-box-drawing off</code> 줄로 바꿉니다.
         </div>
       </section>
 

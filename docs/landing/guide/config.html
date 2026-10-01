@@ -29,7 +29,11 @@
           <code>pytmux.conf</code> 로 동작을 바꾸거나, 통합 설정 팝업 <code>:settings</code> 로 카테고리별로
           조정합니다. <code>:settings</code> 에서 바꾼 <strong>파일 설정</strong>은 설정 파일에 자동으로 되쓰기 되고
           (주석·바인딩 보존), <strong>서버 옵션</strong>(<code class="nb">window-size</code>·<code class="nb">vt-parser</code>·
-          <code class="nb">automatic-rename</code> 등)은 서버가 <code>opts.json</code> 에 영속합니다 — 어느 쪽이든 다시 켤 때 유지됩니다.
+          <code class="nb">exit-empty</code> 등)은 서버가 <code>opts.json</code> 에 영속합니다 — 어느 쪽이든 다시 켤 때 유지됩니다.
+          예외가 있습니다: <code class="nb">alt-scroll</code> 은 설정 파일에 적히기는 하지만 시작할 때 그 줄을 읽지 않아
+          다시 켜면 기본값(on)으로 돌아오고, <code class="nb">automatic-rename</code>·<code class="nb">monitor-activity</code>·
+          <code class="nb">monitor-bell</code>·<code class="nb">synchronize-panes</code>·<code class="nb">pane-border-status</code> 는
+          <strong>지금 보고 있는 탭에만</strong> 걸리는 상태라 <code>opts.json</code> 에 남지 않습니다.
         </p>
       </header>
 
@@ -40,7 +44,11 @@
           <code>PYTMUX_CONFIG</code> 로 지정한 경로에서 읽습니다(<code>pytmux.conf.example</code> 참고).
           여러 곳에 있으면 <code>PYTMUX_CONFIG</code> → <code>$PYTMUX_HOME/config</code> →
           <code>~/.config/pytmux/config</code> → <code>~/.pytmux.conf</code> 순으로 <strong>먼저 있는 하나</strong>만 씁니다.
-          각 줄은 <code>set &lt;이름&gt; &lt;값&gt;</code> 형식이고, <code class="nb">source-file</code> 로 다시 읽습니다.
+          각 줄은 <code>set &lt;이름&gt; &lt;값&gt;</code> 형식입니다. 실행 중에 <code class="nb">source-file</code> 로 다시 읽으면
+          <code>prefix</code>·키 바인딩·<code>alias</code>·<code>hook</code>·<code>mouse</code>·<code class="nb">mode-keys</code>·
+          상태줄 색(<code class="nb">status-bg</code>/<code class="nb">status-fg</code>)과 <code class="nb">status-left</code>/<code class="nb">status-right</code>·
+          <code class="nb">tab-bar</code>·<code class="nb">default-path</code>·<code class="nb">claude-command</code> 만 새로 적용되고,
+          나머지 줄은 클라이언트를 다시 시작해야 반영됩니다.
           현재 값은 <code class="nb">show-options</code> 로 확인합니다.
           <strong>실행 중에 바꿀 때는</strong> 명령 프롬프트에서 <code>set</code> 을 <strong>빼고</strong>
           옵션 이름을 그대로 칩니다(예: <code>:strip-box-drawing off</code>, <code>:lang en</code>) —
@@ -48,6 +56,18 @@
           일부뿐이라, 가장 확실한 방법은 <strong>설정 팝업</strong>(<code>:settings</code>)에서
           고르는 것입니다.
         </p>
+        <div class="callout">
+          <strong>설정 파일의 <code>set</code> 줄이 읽는 옵션은 다음뿐입니다</strong> —
+          <code>prefix</code> · <code>mouse</code> · <code class="nb">mouse-drag-copy</code> · <code class="nb">mouse-drag-threshold</code> ·
+          <code class="nb">copy-unwrap</code> · <code class="nb">set-clipboard</code> · <code class="nb">status-bg</code> / <code class="nb">status-fg</code> /
+          <code class="nb">status-left</code> / <code class="nb">status-right</code> / <code class="nb">status-position</code> / <code class="nb">status-interval</code> ·
+          <code class="nb">mode-keys</code> · <code class="nb">remote-title</code> · <code class="nb">tab-bar</code> · <code class="nb">set-titles</code> ·
+          <code class="nb">set-titles-string</code> · <code class="nb">default-path</code> · <code class="nb">claude-command</code> ·
+          <code class="nb">ambiguous-width</code> · <code>lang</code>(<code>language</code>) · <code class="nb">inactive-dim</code> ·
+          <code class="nb">inactive-dim-ratio</code> · <code class="nb">strip-box-drawing</code>.
+          아래 표에서 <strong>(런타임)</strong> 으로 표시한 옵션과 «동작 · 고급» 표의 옵션은 파일에 적어도 읽지 않으니,
+          실행 중에 명령 프롬프트나 <code>:settings</code> 로 바꿉니다.
+        </div>
       </section>
 
       <section>
@@ -60,11 +80,13 @@
             <tr><td><code>mouse-drag-copy</code></td><td><code>on|off|shift</code> (on)</td><td>좌드래그로 선택→클립보드 자동 복사(off=앱에 전달 / <code>shift</code>=평드래그를 앱에 주고 <strong>복사는 Shift+드래그</strong>로 — 제 선택 기능을 가진 fullscreen 앱을 마우스로 쓸 때)</td></tr>
             <tr><td><code>mouse-drag-threshold</code></td><td><code>1~20</code> (3)</td><td>드래그로 인정할 최소 이동 칸수 — 짧은 클릭이 드래그로 오인돼 클립보드가 바뀌는 것을 막습니다(1=예전 감도)</td></tr>
             <tr><td><code>copy-unwrap</code></td><td><code>on|off</code> (on)</td><td>마우스로 긁어 복사할 때 <strong>앱이 접은</strong> 줄바꿈과 그에 딸린 들여쓰기를 펴서, 여러 줄로 보이던 명령을 바로 붙여넣을 수 있게 합니다</td></tr>
-            <tr><td><code>alt-scroll</code></td><td><code>on|off</code> (on)</td><td>on=pytmux 가 휠 스크롤백 처리 / off=터미널 기본</td></tr>
+            <tr><td><code>set-clipboard</code></td><td><code>on|off</code> (on)</td><td>패널 안 앱이 OSC 52 로 보낸 복사를 이 클라이언트의 OS 클립보드에 반영</td></tr>
+            <tr><td><code>alt-scroll</code> (런타임)</td><td><code>on|off</code> (on)</td><td>on=pytmux 가 휠 스크롤백 처리 / off=터미널 기본. <code>:settings</code> 에서 바꾸면 설정 파일에 <code class="nb">set alt-scroll</code> 줄이 적히지만 시작할 때 그 줄을 읽지 않아, 다시 켜면 on 으로 돌아옵니다</td></tr>
             <tr><td><code>mode-keys</code></td><td><code>vi|emacs</code> (vi)</td><td>복사/스크롤 모드 키 스타일</td></tr>
             <tr><td><code>ambiguous-width</code></td><td><code>auto|narrow|wide</code> (auto)</td><td>CJK 모호폭 셀 크기(단말 자동 감지)</td></tr>
             <tr><td><code>tab-bar</code></td><td><code>always|auto</code> (always)</td><td>상단 탭바: 항상 / 2개 이상일 때만</td></tr>
             <tr><td><code>default-path</code></td><td><code>current|home|&lt;경로&gt;</code> (current)</td><td>새 탭/패널 시작 디렉토리</td></tr>
+            <tr><td><code>claude-command</code></td><td>명령 (claude)</td><td>ESC 모드 <kbd>c</kbd>·<code class="nb">new-claude-tab</code> 이 새 탭에서 실행할 Claude Code 명령(경로·플래그 포함)</td></tr>
             <tr><td><code>strip-box-drawing</code></td><td><code>on|off</code> (on)</td><td>붙여넣기 시 패널 테두리(박스드로잉) 제거</td></tr>
             <tr><td><code>inactive-dim</code></td><td><code>on|off</code> (on)</td><td>비활성 패널 흐리게</td></tr>
             <tr><td><code>inactive-dim-ratio</code></td><td><code>0.0–0.8</code> (0.18)</td><td>흐림 강도</td></tr>
@@ -78,35 +100,42 @@
         <table>
           <thead><tr><th>설정</th><th>값</th><th>설명</th></tr></thead>
           <tbody>
-            <tr><td><code>status</code></td><td><code>on|off|0–5</code></td><td>상태줄 줄 수</td></tr>
+            <tr><td><code>status</code> (런타임)</td><td><code>on|off|0–5</code></td><td>상태줄 줄 수</td></tr>
             <tr><td><code>status-position</code></td><td><code>bottom|top</code></td><td>상태줄 위치</td></tr>
             <tr><td><code>status-left</code> / <code>status-right</code></td><td>포맷 문자열</td><td><code>#S</code>·<code>#h</code>·<code>#{pane_title}</code>·strftime 등</td></tr>
             <tr><td><code>status-interval</code></td><td><code>1–60</code></td><td>상태줄 갱신 주기(초)</td></tr>
-            <tr><td><code>status-format &lt;줄&gt; &lt;포맷&gt;</code></td><td><code>1</code>~ + 포맷 문자열</td><td><code>status</code> 를 2줄 이상으로 켰을 때 <strong>보조 줄</strong>의 내용. 줄 번호는 1부터이며 포맷 기호는 <code>status-left</code> 와 같습니다</td></tr>
+            <tr><td><code>status-format &lt;줄&gt; &lt;포맷&gt;</code> (런타임)</td><td><code>1</code>~ + 포맷 문자열</td><td><code>status</code> 를 2줄 이상으로 켰을 때 <strong>보조 줄</strong>의 내용. 줄 번호는 1부터이며 포맷 기호는 <code>status-left</code> 와 같습니다</td></tr>
             <tr><td><code>status-bg</code> / <code>status-fg</code></td><td>색</td><td>상태줄 배경/전경색</td></tr>
             <tr><td><code>set-titles</code> / <code>set-titles-string</code></td><td><code>on|off</code> / 포맷</td><td>터미널 창 제목 설정</td></tr>
-            <tr><td><code>single-border</code></td><td><code>on|off|toggle</code></td><td>패널이 하나일 때도 테두리</td></tr>
-            <tr><td><code>pane-border-status</code></td><td><code>on|top|off</code></td><td>패널 테두리 제목줄</td></tr>
+            <tr><td><code>remote-title</code></td><td><code>full|host|name</code> (full)</td><td>원격 탭 이름을 보여 줄 형식 — <code>full</code>=<code>⇄호스트:이름</code> · <code>host</code>=<code>호스트:이름</code>(아이콘만 뺌) · <code>name</code>=<code>이름</code>. 그릴 때만 접고 이름 자체는 바꾸지 않습니다</td></tr>
+            <tr><td><code>single-border</code> (런타임)</td><td><code>on|off|toggle</code></td><td>패널이 하나일 때도 테두리</td></tr>
+            <tr><td><code>pane-border-status</code> (런타임)</td><td><code>on|top|off</code></td><td>패널 테두리 제목줄(지금 탭에만 적용)</td></tr>
           </tbody>
         </table>
       </section>
 
       <section>
         <h2>동작 · 고급</h2>
+        <p>
+          이 표의 옵션은 <strong>설정 파일이 읽지 않습니다</strong> — 명령 프롬프트(예: <code>:exit-empty off</code>)나
+          <code>:settings</code> 로 바꿉니다. 그중 <code class="nb">coalesce-repaints</code>·<code class="nb">nest-auto-attach</code>·
+          <code class="nb">exit-empty</code>·<code class="nb">win-mouse-motion</code>·<code class="nb">vt-parser</code>·<code class="nb">window-size</code>
+          는 서버가 <code>opts.json</code> 에 영속하고, 앞의 셋(<code class="nb">automatic-rename</code>·<code>monitor-*</code>·
+          <code class="nb">synchronize-panes</code>)은 지금 탭에만 걸립니다.
+        </p>
         <table>
           <thead><tr><th>설정</th><th>값</th><th>설명</th></tr></thead>
           <tbody>
-            <tr><td><code>automatic-rename</code></td><td><code>on|off</code></td><td>실행 앱으로 탭 자동 명명</td></tr>
-            <tr><td><code>monitor-activity</code> / <code>monitor-bell</code></td><td><code>on|off</code></td><td>비활성 탭 활동/벨 감지</td></tr>
-            <tr><td><code>synchronize-panes</code></td><td><code>on|off</code></td><td>패널 입력 동기화</td></tr>
+            <tr><td><code>automatic-rename</code></td><td><code>on|off</code></td><td>실행 앱으로 탭 자동 명명(지금 탭)</td></tr>
+            <tr><td><code>monitor-activity</code> / <code>monitor-bell</code></td><td><code>on|off</code> (off / on)</td><td>비활성 탭 활동/벨 감지(지금 탭)</td></tr>
+            <tr><td><code>synchronize-panes</code></td><td><code>on|off</code></td><td>패널 입력 동기화(지금 탭)</td></tr>
             <tr><td><code>coalesce-repaints</code></td><td><code>on|off|toggle</code></td><td>ssh 반응성: 전체 리페인트 병합</td></tr>
             <tr><td><code>nest-auto-attach</code></td><td><code>on|off|toggle</code></td><td>중첩 pytmux 시 자동 remote-attach</td></tr>
             <tr><td><code>exit-empty</code></td><td><code>on|off|toggle</code> (on)</td><td>세션이 0개가 되면 서버 종료. <code>off</code>=빈 채로 상주(원격 서버용, <a href="/guide/remote">11장</a>)</td></tr>
-            <tr><td><code>win-mouse-motion</code></td><td><code>on|off|toggle</code> (off)</td><td><strong>Windows</strong> 마우스 이동 전달</td></tr>
+            <tr><td><code>win-mouse-motion</code></td><td><code>on|off|toggle</code> (on)</td><td><strong>Windows</strong> 마우스 이동 전달</td></tr>
             <tr><td><code>mouse-debug</code></td><td><code>on|off</code> (off)</td><td>진단용 — 클라이언트가 받은 마우스·휠 이벤트와 화살표/페이지 키를 <code class="nb">&lt;소켓&gt;.mouse.log</code> 에 기록합니다. 원격에서 휠이 안 먹는 것처럼 <strong>환경에 따라 달라지는 입력 문제</strong>를 제보할 때 켭니다(글자·단축키는 기록하지 않습니다)</td></tr>
             <tr><td><code>vt-parser</code></td><td><code>native</code></td><td>VT 파서 백엔드. 현재는 <strong>자체 native 파서 단일</strong>이라 사실상 고를 것이 없습니다 — 옛 <code>pyte</code> 백엔드는 은퇴했고, 그 값을 넣어도 native 로 수렴합니다(옛 설정 파일 호환용으로만 받습니다)</td></tr>
-            <tr><td><code>window-size</code></td><td><code>smallest|latest|largest</code> (smallest)</td><td>여러 클라이언트가 한 세션을 볼 때 공유 격자 크기 기준(<a href="/guide/remote">11장</a>)</td></tr>
-            <tr><td><code>net_rtt_threshold</code></td><td>초 (0.4)</td><td>응답성 저하 판정 문턱(파일 전용)</td></tr>
+            <tr><td><code>window-size</code></td><td><code>smallest|latest|largest</code> (latest)</td><td>여러 클라이언트가 한 세션을 볼 때 공유 격자 크기 기준(<a href="/guide/remote">11장</a>)</td></tr>
           </tbody>
         </table>
       </section>
@@ -126,7 +155,7 @@ set ambiguous-width auto
 <span class="c"># 키 바인딩 (prefix 뒤 / -n 은 prefix 없이)</span>
 bind | split-window -h
 bind - split-window -v
-bind r rename-window
+bind y select-layout tiled
 bind k kill-pane
 
 <span class="c"># 내 이름으로 명령 줄이기</span>
@@ -139,10 +168,12 @@ hook alert-bell run-shell "afplay /System/Library/Sounds/Ping.aiff"</div>
         <table>
           <thead><tr><th>지시어</th><th>뜻</th></tr></thead>
           <tbody>
-            <tr><td><code class="nb">set &lt;옵션&gt; &lt;값&gt;</code></td><td>위 표의 설정들. 런타임 <code class="nb">:set</code> 과 같은 이름입니다.</td></tr>
-            <tr><td><code class="nb">bind &lt;키&gt; &lt;명령&gt;</code></td><td>prefix 뒤 키. <code class="nb">bind -n</code> 은 prefix 없이 바로 듣습니다(<a href="/guide/command">7장</a>).</td></tr>
+            <tr><td><code class="nb">set &lt;옵션&gt; &lt;값&gt;</code></td><td>위 표의 설정 중 <strong>설정 파일이 읽는 것</strong>(맨 위 목록)만 먹습니다. 런타임 <code class="nb">:set</code> 과 같은 이름입니다.</td></tr>
+            <tr><td><code class="nb">bind &lt;키&gt; &lt;명령&gt;</code></td><td>prefix 뒤 키. <code class="nb">bind -n</code> 은 prefix 없이 바로 듣습니다(<a href="/guide/command">7장</a>).
+              내 바인딩은 <strong>내장 prefix 키보다 먼저</strong> 보므로, 같은 키(예: <kbd>r</kbd> 화면 다시 그림)에 묶으면 그 내장 키를 가립니다.</td></tr>
             <tr><td><code class="nb">alias &lt;이름&gt; &lt;명령&gt;</code></td><td>명령 프롬프트에서 쓸 <strong>짧은 이름</strong>을 만듭니다 — 인자까지 통째로 담을 수 있어 자주 쓰는 조합을 한 단어로 줄입니다.</td></tr>
-            <tr><td><code class="nb">hook &lt;이벤트&gt; &lt;명령&gt;</code></td><td>정해진 순간에 자동 실행합니다(<code class="nb">client-attached</code> · <code class="nb">after-new-window</code> · <code class="nb">alert-bell</code>). 런타임에서는 <code class="nb">set-hook</code>, 지금 걸린 목록은 <code class="nb">show-hooks</code> — 자세한 것은 <a href="/guide/command">7장</a>.</td></tr>
+            <tr><td><code class="nb">hook &lt;이벤트&gt; &lt;명령&gt;</code></td><td>정해진 순간에 자동 실행합니다(<code class="nb">client-attached</code> · <code class="nb">after-new-window</code> · <code class="nb">alert-bell</code> · <code class="nb">claude-limit</code>).
+              여기 적은 줄은 따옴표를 그대로 지켜 <code class="nb">run-shell</code> 에 인자 붙은 셸 명령을 넘길 수 있습니다. 런타임에서는 <code class="nb">set-hook</code>, 지금 걸린 목록은 <code class="nb">show-hooks</code> — 자세한 것은 <a href="/guide/command">7장</a>.</td></tr>
           </tbody>
         </table>
       </section>
@@ -153,7 +184,9 @@ hook alert-bell run-shell "afplay /System/Library/Sounds/Ping.aiff"</div>
           <code>:settings</code>(별칭 <code>config</code>·<code>preferences</code>)는 옵션을
           <strong>표시 · 입력 · 동작 · 상태줄 · 고급 · 키</strong> 카테고리(+ 플러그인의 Claude 카테고리)로
           묶어 보여 줍니다. 여기서 바꾼 값은 파일 설정이면 설정 파일에, 서버 옵션이면 서버 <code>opts.json</code> 에
-          각각 자동 반영됩니다. UI 언어는 <code>lang ko|en</code>
+          각각 자동 반영됩니다(지금 탭에만 걸리는 <code class="nb">automatic-rename</code>·<code>monitor-*</code>·
+          <code class="nb">synchronize-panes</code>·<code class="nb">pane-border-status</code> 는 <code>opts.json</code> 에 남지 않고,
+          <code class="nb">alt-scroll</code> 은 파일에 적히지만 다음 시작 때 읽히지 않습니다). UI 언어는 <code>lang ko|en</code>
           (별칭 <code>language</code>)으로 즉시 바꾸며, 선택은 클라이언트에 저장됩니다.
         </p>
         <figure>
