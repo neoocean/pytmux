@@ -37,8 +37,6 @@ class _Pane:
         self._claude_account_manual = False
         self._exit_tokens = 0
         self._rules_pending = False
-        self._rc_pending = False
-        self._perm_auto_pending = False
 
 
 class _Srv:

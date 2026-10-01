@@ -570,11 +570,8 @@ async def test_model_change_settles_without_further_output():
         assert p._claude_model_cand == "opus-5", \
             f"후보 개시 기대, got {p._claude_model_cand!r}"
         # 이 테스트가 **dirty 게이트를 겨눈다**는 전제 고정: 다른 pending 항이 스캔을
-        # 살려두면 게이트를 안 지나 공허 통과한다. auto-launch `/rc` 예약은 새 세션
-        # 감지로 서 있으므로(실 라이브에선 이미 소진) 내려 두고, 화면 불변 상태
-        # (_feed_seq == _scan_seq)임을 단언한다.
-        p._rc_pending = False
-        p._rc_menu_active = False
+        # 살려두면 게이트를 안 지나 공허 통과한다. 화면 불변 상태(_feed_seq ==
+        # _scan_seq)임을 단언한다.
         assert p._feed_seq == p._scan_seq and not p._was_busy, \
             "화면 불변 + busy 이력 없음(= dirty 게이트가 걸리는 상태)이어야"
         # 이후 flush 틱은 계속 돌지만 **PTY 출력은 없다** — 그래도 확정돼야 한다.
@@ -1325,7 +1322,6 @@ async def test_retired_startup_rules_are_not_injected_but_preserved():
     cc = importlib.import_module("pytmuxlib.plugins.claude-code")
     srv, task, sock = await server_only()
     try:
-        srv.claude_auto_launch = False   # 이 시험은 /rc 자동 주입과 무관하게 잰다
         keep = ipc.state_base(srv.sock_path) + cc.RETIRED_RULES_SUFFIX
         assert not os.path.exists(keep)
         srv.plugins.server_opts_init(
@@ -1370,8 +1366,6 @@ async def test_feedback_prompt_no_key_injection():
     import importlib
     from pytmuxlib.claude import claude_feedback_prompt
     # serverclaude 는 claude-code 플러그인으로 이전됨(하이픈 디렉토리 → importlib).
-    _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
-    assert _sc._FEEDBACK_DISMISS_KEY == b"\x1b"
     assert claude_feedback_prompt("x How is Claude doing this session? (optional)")
     assert not claude_feedback_prompt("just normal output")
     _BANNER = (b"\x1b[2J\x1b[HHow is Claude doing this session? (optional)\r\n"
@@ -1388,67 +1382,40 @@ async def test_feedback_prompt_no_key_injection():
             p.feed(_BANNER)
             srv._scan_claude(sess, win)
         assert writes == [], (writes, "피드백 프롬프트엔 키 주입 없음 — interrupt 위험 제거")
-        # `/rc` 메뉴 디바운스 상태와도 무관(피드백은 그 상태를 건드리지 않는다).
-        assert p._rc_menu_active is False
     finally:
         await teardown(srv, task, sock)
 
 
-async def test_remote_menu_matcher_narrow():
-    # claude_remote_menu 는 'Disconnect this session' 과 QR/scan 안내가 **함께** 보일
-    # 때만 True — 산문에 'Disconnect' 한 단어만 섞인 경우의 오검출을 막는다.
-    from pytmuxlib.claude import claude_remote_menu
-    MENU = ("Remote Control\n"
-            "This session is available in the Claude mobile app and at "
-            "https://claude.ai/code/session_X.\n"
-            "  Disconnect this session\n"
-            "  Show QR code   Scan with your phone to open this session\n"
-            "  Continue\n"
-            "Enter to select · Esc to continue\n")
-    assert claude_remote_menu(MENU)
-    assert claude_remote_menu("... Show QR code ...\n Disconnect this session")
-    # 한쪽만 있으면 False(오검출 방지).
-    assert not claude_remote_menu("Disconnect this session when you are done.")
-    assert not claude_remote_menu("Show QR code below to share the link.")
-    assert not claude_remote_menu("just normal output")
-    assert not claude_remote_menu("")
+async def test_new_claude_session_gets_no_rc_and_no_mode_cycling():
+    """pytmux-525(R3): auto-launch(새 세션마다 `/rc` + auto 유도)·claude-auto-mode(idle
+    마다 shift+tab)·`/rc` 관리 메뉴 자동 Esc 를 걷었다 — CLI 2.1.284 부터 대화형 세션은
+    권한모드 설정이 없으면 auto 로 시작하고(`permissions.defaultMode`), 원격 제어 자동
+    연결은 `remoteControlAtStartup` 이 한다.
 
-
-async def test_auto_dismiss_remote_control_menu():
-    # 제보(2026-06-18): auto-launch 가 새 세션마다 /rc 를 주입하는데 현재 Claude
-    # CLI 의 /rc 는 원격 제어 관리 메뉴(Continue/Disconnect/QR, "Esc to continue")를 띄워
-    # 진행을 가로막는다. Esc 자동 Dismiss 로 치운다 — Esc=Continue 라 원격은 켜진 채
-    # 메뉴만 닫힌다. _rc_menu_active 로 메뉴 인스턴스당 Esc 1회만 쏜다(이중 Esc=Rewind 차단).
-    import importlib
-    _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
-    _DISMISS = _sc._FEEDBACK_DISMISS_KEY
-    assert _DISMISS == b"\x1b"
-    _MENU = (b"\x1b[2J\x1b[HRemote Control\r\n"
-             b"This session is available in the Claude mobile app.\r\n"
-             b"  Disconnect this session\r\n"
-             b"  Show QR code   Scan with your phone to open this session\r\n"
-             b"  Continue\r\n"
-             b"Enter to select   Esc to continue\r\n")
+    호출부 단언: 옛 opts 가 둘 다 켜 두었어도(읽고 버린다) 새 세션이 idle 로 오래
+    머물러도(옛 디바운스 30프레임을 넘겨도), footer 가 default 모드여도, `/rc` 관리
+    메뉴가 떠도 pty 로 **아무 키도 안 간다**."""
     srv, task, sock = await server_only()
     try:
+        srv.plugins.server_opts_init(srv, {"plugin_opts": {
+            "claude_auto_launch": True, "claude_auto_mode": True}})
+        assert getattr(srv, "claude_auto_launch", None) is None
+        assert getattr(srv, "claude_auto_mode", None) is None
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
         writes = []
         p.pty.write = lambda b: writes.append(b)
-        p.feed(_MENU)
-        srv._scan_claude(sess, win)
-        assert writes == [b"\x1b"], (writes, "메뉴 첫 감지 → 즉시 Esc 1회")
-        assert p._rc_menu_active is True
-        # 메뉴가 화면에 머무는 동안 redraw 돼도 두 번째 Esc 없음(이중 Esc=Rewind 차단).
-        for _ in range(10):
-            p.feed(_MENU)
+        for _ in range(40):
+            p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
             srv._scan_claude(sess, win)
-        assert writes == [b"\x1b"], (writes, "배너당 Esc 는 딱 한 번")
-        # 메뉴가 닫히면(다음 idle 화면) 재무장 — 다음 세션 메뉴에 다시 Esc.
-        p.feed(b"\x1b[2J\x1b[H? for shortcuts\r\n")
+        assert p._claude == "idle"
+        p.feed(b"\x1b[2J\x1b[HRemote Control active\r\n"
+               b"  Disconnect this session\r\n  Show QR code\r\n"
+               b"  Continue (Enter to select \xc2\xb7 Esc to continue)\r\n"
+               b"? for shortcuts\r\n")
         srv._scan_claude(sess, win)
-        assert p._rc_menu_active is False, "사라지면 재무장"
+        assert writes == [], writes
     finally:
         await teardown(srv, task, sock)
 
@@ -2156,8 +2123,8 @@ async def test_command_table_disposition_golden():
 # (_busy_since 등 monotonic)는 비결정적이라 제외하고, _done_tail 은 길어서 존재여부만.
 _SCAN_FP_ATTRS = (
     "_claude", "_claude_usage", "_hdr_claude", "_hdr_claude_miss", "_idle_frames",
-    "_was_busy", "_welcome_seen", "_rc_menu_active", "_rc_pending", "_rc_done",
-    "_perm_auto_pending", "_perm_mode", "_perm_target", "_bypass_seen",
+    "_was_busy", "_welcome_seen",
+    "_perm_mode", "_perm_target", "_bypass_seen",
     "_session_tokens", "_exit_tokens", "_busy_exit_miss", "_exit_token_pending",
     "_fmt_unknown", "_claude_warn", "_claude_warn_kind",
     "_claude_warn_n", "_repeat_n", "_claude_account", "_claude_model",
@@ -2809,7 +2776,6 @@ async def test_no_auto_token_saving_intervention_at_high_usage():
         srv.loop = _FakeLoop()
 
         # 기본 opts 는 모두 off — 자동 개입 조건 없음
-        assert srv.claude_auto_mode is False
         assert p.prompt_clear_mode is False
         assert not p._perm_target
 
@@ -3190,7 +3156,6 @@ async def test_scan_claude_gating_skips_settled_pane():
     calls = []
     sc.claude_state = lambda txt: (calls.append(1), orig(txt))[1]
     try:
-        srv.claude_auto_launch = False   # auto /rc 디바운스(_rc_pending 스캔 지속) 제외 — B1 게이팅만 격리
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
@@ -3257,17 +3222,19 @@ async def test_screen_delta_frame_and_equivalence():
         await teardown(srv, task, sock)
 
 
-async def test_claude_auto_mode_cycles_to_auto():
-    """§10 권한모드 자동전환: 토글 ON 이면 idle 패널의 footer 권한모드가 auto 가
-    아닐 때 shift+tab(\\x1b[Z)을 폐루프로 순환 주입해 auto 로 맞춘다. 같은 모드
-    반복(화면 미갱신) 시 중복 주입 안 함, auto/bypass 도달 시 정지, idle 이탈 시
-    카운터 리셋, 오검출 대비 _CAM_MAX 가드. 토글 opts 영속."""
+async def test_perm_drive_closed_loop_reaches_target_and_caps():
+    """§10 item 2 권한모드 폐루프(footer 팝업이 건 `_perm_target`): idle 패널의 footer 가
+    목표가 아니면 shift+tab(\\x1b[Z)을 순환 주입한다. 같은 모드 반복(화면 미갱신) 시
+    중복 주입 안 함 · 목표 도달 시 정지하고 목표를 내린다 · bypass 는 손대지 않음 ·
+    idle 이탈 시 카운터 리셋 · 오검출 대비 `_CAM_MAX` 가드.
+
+    종전에는 상시 auto 강제(`claude-auto-mode`)로 이 폐루프를 쟀다. pytmux-525 에서 그
+    토글을 걷었으므로(CLI 2.1.284 가 auto 로 시작한다) 남은 쓰임인 팝업 목표로 잰다."""
     import importlib
     _CAM_MAX = importlib.import_module(
         "pytmuxlib.plugins.claude-code.servermixin")._CAM_MAX
     srv, task, sock = await server_only()
     try:
-        srv.claude_auto_launch = False   # 상시 auto_mode 만 격리(launch /rc·auto 제외)
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
@@ -3275,31 +3242,28 @@ async def test_claude_auto_mode_cycles_to_auto():
         srv._inject_keys = lambda pane, data: sent.append(data)
         BT = b"\x1b[Z"
 
-        assert srv.claude_auto_mode is False, "기본 off"
-        assert srv.set_claude_auto_mode(True) is True
-        import json as _json
-        # claude_auto_mode 는 plugin_opts 로 이전됨(완전분리, 2026-07-07).
-        assert _json.load(open(srv.opts_path))["plugin_opts"]["claude_auto_mode"] is True
-
         def scan(s):
             p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
             srv._scan_claude(sess, win)
 
-        scan("? for shortcuts")                       # idle, 실제 default footer → 1회
+        srv.set_claude_perm_mode(sess, "auto")
+        scan("? for shortcuts")                       # default → 1회
         assert p._claude == "idle" and sent == [BT], sent
         scan("? for shortcuts")                       # 같은 default → 중복 방지
         assert sent == [BT]
         scan("⏸ plan mode on (shift+tab to cycle)")    # plan → 한 번 더
         assert sent == [BT, BT], sent
-        scan("⏵⏵ auto mode on (shift+tab to cycle)")   # auto 도달 → 정지+리셋
-        assert sent == [BT, BT] and p._cam_tries == 0
+        scan("⏵⏵ auto mode on (shift+tab to cycle)")   # auto 도달 → 정지·리셋·목표 해제
+        assert sent == [BT, BT] and p._cam_tries == 0 and p._perm_target is None
 
-        # bypass(명시·위험 모드)는 건드리지 않음
+        # bypass(명시·위험 모드)는 건드리지 않는다 — 목표만 내리고 끝낸다.
         sent.clear()
+        srv.set_claude_perm_mode(sess, "auto")
         scan("bypass permissions on (shift+tab to cycle)")
-        assert sent == []
+        assert sent == [] and p._perm_target is None
 
         # idle 이탈(busy) 시 카운터 리셋(다음 idle 진입에 다시 시도)
+        srv.set_claude_perm_mode(sess, "auto")
         scan("⏸ plan mode on (shift+tab to cycle)")    # plan → 주입(1)
         assert sent == [BT]
         scan("✽ Crunching… (5s · ↑ 1k tokens)")        # busy → 리셋
@@ -3307,294 +3271,11 @@ async def test_claude_auto_mode_cycles_to_auto():
 
         # _CAM_MAX 가드: 모드가 계속 바뀌어도 최대 _CAM_MAX 회까지만
         sent.clear()
+        srv.set_claude_perm_mode(sess, "auto")
         modes = ["? for shortcuts", "⏸ plan mode on (shift+tab to cycle)"]
         for i in range(_CAM_MAX + 3):
             scan(modes[i % 2])
         assert len(sent) == _CAM_MAX, (len(sent), _CAM_MAX)
-
-        # 토글 off → 카운터 리셋, 더 안 보냄
-        srv.set_claude_auto_mode(False)
-        assert p._cam_tries == 0
-        sent.clear()
-        scan("? for shortcuts")
-        assert sent == []
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
-async def test_claude_auto_launch_rc_and_perm_auto():
-    """요청: 새 Claude 세션이 패널에 뜨면(None→Claude) auto-launch(기본 ON)가
-    ① 첫 idle 에 `/rc`(원격 제어) 를 1회 주입하고 ② 다음 idle 에 권한모드를 auto 로
-    1회 유도(shift+tab 폐루프)한다. 이미 원격제어가 켜진 화면('Remote Control active')
-    에선 /rc 를 건너뛴다(도로 끄지 않음). 토글 OFF 면 어느 것도 안 한다. opts 영속."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        win = sess.active_window
-        p = win.active_pane
-        rc, bt = [], []
-        srv._pc_inject = lambda pane, text: rc.append(text)
-        srv._inject_keys = lambda pane, data: bt.append(data)
-        BT = b"\x1b[Z"
-
-        assert srv.claude_auto_launch is True, "기본 on"
-
-        import importlib
-        _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
-
-        def scan(s):
-            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
-            srv._scan_claude(sess, win)
-
-        # 새 세션(None→idle): auto /rc 는 첫 idle 한 프레임에 즉발하지 않는다(버그 수정)
-        # — 데스크탑 앱이 원격제어를 이미 켜 둔 경우 'Remote Control active' 오버레이가
-        # 한두 프레임 늦게 떠도 잡도록 idle 이 _RC_CONFIRM_FRAMES 안정될 때까지 디바운스.
-        scan("? for shortcuts")
-        assert p._claude == "idle"
-        assert rc == [], "첫 idle 프레임엔 /rc 즉발 안 함(디바운스 시작)"
-        assert p._rc_pending is True
-        for _ in range(_sc._RC_CONFIRM_FRAMES - 2):
-            scan("? for shortcuts")
-        assert rc == [], "디바운스 만료 전엔 여전히 /rc 없음"
-        # 이 프레임에 _idle_frames 가 임계 도달 → /rc 1회, 권한 유도는 예약만(프레임 분리)
-        scan("? for shortcuts")
-        assert rc == ["/rc"], rc
-        assert p._rc_pending is False and p._perm_auto_pending is True
-        assert bt == [], "이 프레임엔 shift+tab 없음(프레임 분리)"
-
-        # 다음 idle(권한=plan): _perm_target=auto 세우고 shift+tab 1회 주입
-        scan("⏸ plan mode on (shift+tab to cycle)")
-        assert p._perm_auto_pending is False and p._perm_target == "auto"
-        assert bt == [BT], bt
-        # auto 도달 → 폐루프 정지, /rc 재주입 없음(세션 유지 중)
-        scan("⏵⏵ auto mode on (shift+tab to cycle)")
-        assert p._perm_target is None and rc == ["/rc"]
-
-        # 같은 세션 유지 중엔 /rc 재주입 없음(busy→idle 왕복해도)
-        scan("✽ Crunching… (5s · ↑ 1k tokens)")   # busy → idle 이탈(세션 유지)
-        scan("/help for help")                     # 다시 idle — 재주입 없음
-        assert rc == ["/rc"]
-        # 세션 종료(None) 후 'Remote Control active' 동반 재시작
-        scan("$ ")                          # 비-Claude(None) → 세션 끝
-        assert p._claude is None
-        rc.clear()
-        scan("Remote Control active\n? for shortcuts")   # 새 세션 + 이미 원격 ON
-        assert p._claude == "idle"
-        assert rc == [], "원격제어 ON 화면이면 /rc 건너뜀"
-        assert p._perm_auto_pending is True, "그래도 권한 auto 유도는 예약"
-
-        # 토글 OFF → 영속 + 새 세션에 아무 자동 셋업 안 함
-        import json as _json
-        assert srv.set_claude_auto_launch(False) is False
-        # claude_auto_launch 는 plugin_opts 로 이전됨(완전분리, 2026-07-07).
-        assert _json.load(open(srv.opts_path))["plugin_opts"]["claude_auto_launch"] is False
-        scan("$ ")                          # 세션 종료
-        rc.clear(); bt.clear()
-        scan("? for shortcuts")             # 새 세션이지만 OFF
-        assert p._rc_pending is False and p._perm_auto_pending is False
-        assert rc == [] and bt == []
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
-async def test_rc_skipped_when_remote_active_appears_during_debounce():
-    """버그 수정(요청 2026-06-12): 원격제어가 **이미 활성**인 세션에 auto /rc 를 쏘면
-    /remote-control 이 응답 대기 대화로 멈춰 진행이 정지한다. 데스크탑 앱의 'Remote
-    Control active' 오버레이는 새 세션 첫 idle 직후 한두 프레임 늦게 그려질 수 있어,
-    첫 프레임만 보고 쏘면 가드를 못 세운다. 수정: idle 이 _RC_CONFIRM_FRAMES 안정될
-    때까지 디바운스 — 그 사이 오버레이가 뜨면 _rc_done 이 서서 /rc 를 건너뛴다."""
-    srv, task, sock = await server_only()
-    try:
-        import importlib
-        _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
-        sess = srv.ensure_default_session(80, 24)
-        win = sess.active_window
-        p = win.active_pane
-        rc = []
-        srv._pc_inject = lambda pane, text: rc.append(text)
-        srv._inject_keys = lambda pane, data: None
-
-        def scan(s):
-            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
-            srv._scan_claude(sess, win)
-
-        # 새 세션: 첫 idle 몇 프레임은 오버레이 없이 평범한 프롬프트(데스크탑 앱 재연결
-        # 직전) — /rc 즉발 금지, 디바운스 진행 중.
-        scan("? for shortcuts")
-        assert p._claude == "idle" and p._rc_pending is True
-        for _ in range(_sc._RC_CONFIRM_FRAMES // 2):
-            scan("? for shortcuts")
-        assert rc == [], "디바운스 중엔 아직 /rc 없음"
-        # 디바운스 임계 전에 'Remote Control active' 오버레이가 뜸 → _rc_done 셋·/rc 스킵.
-        scan("⏵⏵ auto mode on (shift+tab to cycle)Remote Control active")
-        assert p._rc_done is True
-        assert p._rc_pending is False, "원격 ON 관측 → 디바운스 종료"
-        assert srv._rc_seen_active is True, "원격 ON 관측 → 서버 전역 sticky 셋"
-        assert rc == [], "이미 원격제어 ON — /rc 안 쏨(응답 대기 대화 방지)"
-        # 이후 오버레이가 안 보이는 프레임이 와도 재주입 없음(sticky _rc_done).
-        for _ in range(_sc._RC_CONFIRM_FRAMES + 2):
-            scan("? for shortcuts")
-        assert rc == [], "원격 ON 관측 후엔 /rc 재발 없음"
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_rc_globally_suppressed_after_remote_seen_active():
-    """버그 수정 강화(요청 2026-06-12 — "이미 리모트컨트롤 켜져있을 때 /remote-control
-    대화 다시 띄우지 마세요"): 원격제어가 **이미 켜진** 게 한 번이라도 관측되면 이 서버
-    세션 동안 auto /rc 를 **서버 전역**으로 영구 중단한다(데스크탑 앱이 세션마다 원격제어
-    지속 연결). 디바운스(타이밍)만으론 첫 프레임 레이스를 완전히 못 막으므로, 정책 차단과
-    같은 sticky(_rc_seen_active)로 새 세션의 /rc 재무장 자체를 막아 확정 보장한다."""
-    srv, task, sock = await server_only()
-    try:
-        import importlib
-        _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
-        sess = srv.ensure_default_session(80, 24)
-        win = sess.active_window
-        p = win.active_pane
-        rc = []
-        srv._pc_inject = lambda pane, text: rc.append(text)
-        srv._inject_keys = lambda pane, data: None
-
-        def scan(s):
-            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
-            srv._scan_claude(sess, win)
-
-        assert srv._rc_seen_active is False
-        # 세션 A: 원격제어가 이미 켜진 화면 관측 → 서버 전역 sticky 셋, /rc 안 쏨.
-        scan("⏵⏵ auto mode on (shift+tab to cycle)Remote Control active")
-        assert srv._rc_seen_active is True and rc == []
-        # 세션 종료(디바운스 확정) → 새 세션 시작.
-        for _ in range(_sc._HDR_CLAUDE_MISS + 1):
-            scan("$ ")
-        assert p._claude is None
-        rc.clear()
-        # 새 세션이 원격제어 표시 **없이** 떠도(오버레이 늦음) — sticky 로 fire 시점에
-        # /rc 확정 스킵. 단 권한모드 auto 유도(_perm_auto_pending)는 디커플링되어 정상
-        # 인계된다(auto-launch 는 /rc 외에 perm-auto 도 겸함 — 그건 막지 않는다).
-        scan("? for shortcuts")
-        assert p._claude == "idle"
-        assert p._perm_auto_pending is True, "perm-auto 는 sticky 와 무관하게 인계"
-        for _ in range(_sc._RC_CONFIRM_FRAMES + 2):
-            scan("? for shortcuts")
-        assert rc == [], "원격 기관측 후엔 새 세션에도 /rc 안 쏨(대화 재호출 방지)"
-    finally:
-        await teardown(srv, task, sock)
-
-
-async def test_rc_suppressed_after_org_policy_block():
-    """요청: '원격 제어가 조직 정책으로 비활성화' 메시지를 한 번 보면 이 세션(서버
-    프로세스) 동안 자동 /rc 를 영구 중단한다 — 매 새 세션마다 /rc 를 재시도해 같은
-    거부를 반복하지 않는다. 서버 전역 sticky 플래그(조직 단위 정책)."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        win = sess.active_window
-        p = win.active_pane
-        rc = []
-        srv._pc_inject = lambda pane, text: rc.append(text)
-        srv._inject_keys = lambda pane, data: None
-
-        assert srv.claude_auto_launch is True and srv._rc_policy_blocked is False
-
-        import importlib
-        _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
-
-        def scan(s):
-            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
-            srv._scan_claude(sess, win)
-
-        def settle_rc():
-            # auto /rc 디바운스(_RC_CONFIRM_FRAMES) 통과까지 idle 을 반복 스캔.
-            for _ in range(_sc._RC_CONFIRM_FRAMES):
-                scan("? for shortcuts")
-
-        # 새 세션 → 디바운스 통과 후 /rc 1회 주입
-        settle_rc()
-        assert p._claude == "idle" and rc == ["/rc"], rc
-        # /rc 결과로 조직 정책 거부 메시지가 뜸 → sticky 차단 + 무장 해제
-        scan("/remote-control\n"
-             "Remote Control is disabled by your organization's policy.")
-        assert srv._rc_policy_blocked is True
-        assert p._rc_pending is False
-        # 세션 종료 후 새 세션 → /rc 재무장·재주입 없음(차단 유지)
-        scan("$ ")
-        assert p._claude is None
-        rc.clear()
-        scan("? for shortcuts")
-        assert p._claude == "idle"
-        assert p._rc_pending is False, "차단 후 /rc 재무장 안 함"
-        assert rc == [], "차단 후 /rc 재주입 없음"
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
-async def test_rc_not_reinjected_after_restart_transient():
-    """버그(요청): 작업보존 재시작(re-exec) 직후 _induce_redraw_all 의 강제 repaint 가
-    순간 빈 프레임을 만들어 _claude 가 None→Claude 로 깜빡이면 거짓 '새 세션'으로
-    오인돼 auto /rc 가 재주입됐다 — 이미 켜진 원격제어 패널이 다시 떴다. fire 시점
-    _rc_done(직렬화 sticky) 가드로 재주입을 막고, 진짜 세션 종료(디바운스)에서만 해제해
-    다음 claude 기동엔 정상 재무장한다."""
-    import importlib
-    _sc = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
-    from pytmuxlib.model import Pane
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        win = sess.active_window
-        p = win.active_pane
-        rc = []
-        srv._pc_inject = lambda pane, text: rc.append(text)
-        srv._inject_keys = lambda pane, data: None
-
-        def scan(s):
-            p.feed(b"\x1b[2J\x1b[H" + s.encode("utf-8") + b"\r\n")
-            srv._scan_claude(sess, win)
-
-        def settle_rc():
-            # auto /rc 디바운스(_RC_CONFIRM_FRAMES) 통과까지 idle 을 반복 스캔.
-            for _ in range(_sc._RC_CONFIRM_FRAMES):
-                scan("? for shortcuts")
-
-        # 최초 세션 → 디바운스 통과 후 /rc 1회 주입, _rc_done 셋
-        settle_rc()
-        assert rc == ["/rc"] and p._rc_done is True
-
-        # _rc_done 은 재시작 직렬화 대상이라 re-exec 후에도 유지된다(이 케이스의 핵심).
-        # S4 에서 직렬화 위치가 코어 _RESUME_FIELDS → claude-code 플러그인 pane_serialize
-        # 로 이전됐다 — export_state 의 불투명 'plugin_state' dict 에 담긴다(동작 불변).
-        assert p.export_state()["plugin_state"]["_rc_done"] is True
-
-        # 재시작 transient 재현: 빈 프레임(None) 몇 개 뒤 다시 Claude(거짓 None→Claude).
-        # 미스가 디바운스 임계에 못 미쳐 _rc_done 이 살아남아 /rc 가 재주입되지 않는다.
-        rc.clear()
-        for _ in range(3):
-            scan("")
-        assert p._claude is None
-        scan("? for shortcuts")
-        assert p._claude == "idle"
-        assert rc == [], "재시작 transient 후 /rc 재주입 없음"
-        assert p._rc_done is True
-
-        # 진짜 세션 종료(디바운스 임계 초과) → sticky 해제 → 다음 기동엔 재무장·주입
-        for _ in range(_sc._HDR_CLAUDE_MISS + 1):
-            scan("$ ")
-        assert p._rc_done is False, "디바운스 확정 종료 후 sticky 해제"
-        rc.clear()
-        settle_rc()
-        assert rc == ["/rc"], "진짜 새 세션엔 /rc 재주입"
     finally:
         await teardown(srv, task, sock)
 
@@ -3665,7 +3346,6 @@ async def test_rename_busy_claude_defers_until_idle():
     /rename 을 발동한다(요청). idle 게이트는 자동 compact/doc-clear 와 동일한 규약."""
     srv, task, sock = await server_only()
     try:
-        srv.claude_auto_launch = False   # 첫 idle /rc 자동주입 격리(드레인만 검증)
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
@@ -3696,7 +3376,6 @@ async def test_rename_waits_while_composer_has_text():
     끼어들어 덮는 것을 막는다."""
     srv, task, sock = await server_only()
     try:
-        srv.claude_auto_launch = False   # 첫 idle /rc 자동주입 격리
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
@@ -3737,7 +3416,6 @@ async def test_rename_waits_while_inbuf_has_text_even_if_screen_lags():
     사용자가 치던 프롬프트에 `/rename` 이 끼어들어 섞인 텍스트가 그대로 제출된다."""
     srv, task, sock = await server_only()
     try:
-        srv.claude_auto_launch = False   # 첫 idle /rc 자동주입 격리
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
@@ -6007,7 +5685,6 @@ async def test_bypass_availability_tracked_and_in_status():
     팝업이 'Bypass Permission Mode' 항목을 노출하게 한다. 세션 종료 시 리셋된다."""
     srv, task, sock = await server_only()
     try:
-        srv.claude_auto_launch = False    # auto-launch /rc·auto 격리
         sess = srv.ensure_default_session(80, 24)
         win = sess.active_window
         p = win.active_pane
@@ -6272,8 +5949,7 @@ async def test_status_static_opts_only_on_full_c4():
         periodic = srv._status_msg(sess, full=False)
         for k in STATIC:
             assert k not in periodic, f"주기 status 가 정적 옵션 {k} 를 실음(C4 위반)"
-        for k in ("single_border",
-                  "claude_auto_mode", "claude_pending"):
+        for k in ("single_border", "claude_pending"):
             assert k in periodic, f"주기 status 에 동적/낙관 필드 {k} 누락"
     finally:
         await teardown(srv, task, sock)

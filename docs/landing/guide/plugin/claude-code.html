@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>claude-code — pytmux 플러그인</title>
-<meta name="description" content="pytmux claude-code 플러그인 — 토큰 회계·상태줄 배지·자동 재개·모델 팝업·권한 오토모드 등 Claude Code 통합의 중심.">
+<meta name="description" content="pytmux claude-code 플러그인 — 토큰 회계·상태줄 배지·자동 재개·모델 팝업·권한모드 팝업 등 Claude Code 통합의 중심.">
 <link rel="stylesheet" href="../../styles.css">
 <script>
   var _paq = window._paq = window._paq || [];
@@ -44,7 +44,7 @@
         <table>
           <thead><tr><th>명령</th><th>설명</th></tr></thead>
           <tbody>
-            <tr><td><code>claude-settings</code></td><td>Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·프롬프트 단위 클리어·장기턴/반복 경고 (별칭 <code>claude-settings</code>)</td></tr>
+            <tr><td><code>claude-settings</code></td><td>Claude 설정 팝업 — 자동재개·세션종료 토큰화면·프롬프트 단위 클리어·장기턴/반복 경고 (별칭 <code>claude-settings</code>)</td></tr>
             <tr><td><code>claude-token-log</code></td><td>토큰 사용량 팝업 — 기간(시/일/주/월)·세션·한도·경고 탭 + 실측 한도·5h창 (상태줄 토큰 배지 클릭). 여러 머신을 합쳤을 때만 <strong>머신</strong> 탭이 하나 더 붙습니다</td></tr>
             <tr><td><code>usage-panel</code></td><td>/usage 한도 막대 그래프 팝업 (별칭 <code>limits</code>)</td></tr>
             <tr><td><code>auto-resume</code></td><td>토큰 리밋 자동 재개 on/off — 주입할 때마다 알림이 남고, 같은 패널 15분 재주입 쿨다운이 걸립니다</td></tr>
@@ -53,8 +53,6 @@
             <tr><td><code>model</code></td><td>모델·컨텍스트 변경 팝업 (상태줄 모델 배지 클릭)</td></tr>
             <tr><td><code>prompt-clear</code></td><td>프롬프트 단위 클리어 모드 — 완료마다 문서화+/clear</td></tr>
             <tr><td><code>auto-retry</code></td><td>전송 에러 시 1분 뒤 '계속' 자동 주입 on/off</td></tr>
-            <tr><td><code>claude-auto-mode</code></td><td>idle 시 권한모드 자동 오토모드 전환 on/off</td></tr>
-            <tr><td><code>auto-launch</code></td><td>새 Claude 세션에 /rc+권한모드 1회 자동 적용 on/off</td></tr>
             <tr><td><code>auto-token-on-exit</code></td><td>Claude <strong>세션이 끝나는 순간</strong> 그 패널에 토큰·한도 요약을 흘려보내기 on/off(기본 on, 별칭 <code>auto-token</code>). 팝업이 아니라 <strong>패널 출력</strong>이라 스크롤백에 그대로 남습니다</td></tr>
             <tr><td><code>prompt-clear-message</code></td><td>프롬프트 단위 클리어가 <code>/clear</code> 전에 넣는 <strong>문서화 지시문 문구</strong>를 바꿉니다(설정 파일에 영속)</td></tr>
             <tr><td><code>prompt-clear-queue</code></td><td>클리어 사이클마다 하나씩 꺼내 쓸 <strong>다음 프롬프트 대기열</strong>(별칭 <code>pc-queue</code>) — 인자 없이 = 지금 쌓인 목록 팝업, <code class="nb">-c</code> = 비우기, 그 밖의 문구 = 큐에 추가(모드가 꺼져 있으면 자동으로 켜집니다)</td></tr>
@@ -78,7 +76,7 @@
         </figure>
         <figure>
           <img src="../../image/13-perm-mode.svg" alt="권한 오토모드">
-          <figcaption>권한 프롬프트 자동 전환(claude-auto-mode).</figcaption>
+          <figcaption>권한 모드 선택 팝업(footer 클릭).</figcaption>
         </figure>
       </section>
       <section>

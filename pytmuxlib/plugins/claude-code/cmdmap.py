@@ -111,16 +111,8 @@ _TABLE = {
         ("set_claude_resume_verify", lambda a: {"value": verify_arg(a)}),
     ("auto-retry", "retry"):
         ("set_claude_auto_retry", lambda a: {"value": onoff(a)}),
-    ("claude-auto-mode", "auto-mode"):
-        ("set_claude_auto_mode", lambda a: {"value": onoff(a)}),
     ("claude-auto-yes", "auto-yes"):
         ("set_claude_auto_yes", lambda a: {"value": onoff(a)}),
-    # ★ 종전에는 이 이름이 **정본에서도 죽어 있었다**(pytmux-35): 팔레트·선택지 팝업·
-    #   외부 CLI 토글표에는 있는데 `handle_command` 의 사슬에 분기가 없어, `:auto-launch
-    #   on` 은 "알 수 없는 명령"으로 끝났다. 전수로 재는 자가 없으면 이런 구멍은 안
-    #   보인다 — 이 표가 그 자가 재는 자리다.
-    ("auto-launch", "claude-auto-launch"):
-        ("set_claude_auto_launch", lambda a: {"value": onoff(a)}),
     ("prompt-clear-message",):
         ("set_prompt_clear_message", lambda a: {"msg": " ".join(a).strip()}),
 }

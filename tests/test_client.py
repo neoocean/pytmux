@@ -1137,12 +1137,12 @@ async def test_command_list_and_autocomplete():
         catmap = dict(scr._all_cats)
         assert "Claude" in catmap and "모니터" in catmap, list(catmap)
         claude_names = [n for n, _ in catmap["Claude"]]
-        for nm in ("claude-auto-mode", "auto-retry", "auto-resume",
+        for nm in ("claude-auto-yes", "auto-retry", "auto-resume",
                    "claude-token-log", "prompt-clear"):
             assert nm in claude_names, (nm, claude_names)
         mon_names = [n for n, _ in catmap["모니터"]]
         assert "monitor-activity" in mon_names, mon_names
-        assert "claude-auto-mode" not in mon_names, mon_names
+        assert "claude-auto-yes" not in mon_names, mon_names
     await _with_app(body)
 
 

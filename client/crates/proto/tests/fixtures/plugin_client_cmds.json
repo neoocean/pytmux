@@ -1,6 +1,5 @@
 {
   "advertised": [
-    "auto-launch",
     "auto-resume",
     "auto-resume-message",
     "auto-retry",
@@ -8,7 +7,6 @@
     "calendar-mode",
     "capture-output",
     "capture-toggle",
-    "claude-auto-mode",
     "claude-auto-redraw",
     "claude-auto-yes",
     "claude-detail",
@@ -63,14 +61,12 @@
     "usage-panel"
   ],
   "server_runnable": [
-    "auto-launch",
     "auto-resume",
     "auto-resume-message",
     "auto-retry",
     "auto-token-on-exit",
     "capture-output",
     "capture-toggle",
-    "claude-auto-mode",
     "claude-auto-redraw",
     "claude-auto-yes",
     "claude-resume-verify",
@@ -83,7 +79,6 @@
     "prompt-history-lines"
   ],
   "stateful": [
-    "auto-launch",
     "auto-resume",
     "auto-resume-message",
     "auto-retry",
@@ -91,7 +86,6 @@
     "calendar-mode",
     "capture-output",
     "capture-toggle",
-    "claude-auto-mode",
     "claude-auto-redraw",
     "claude-auto-yes",
     "claude-resume-verify",

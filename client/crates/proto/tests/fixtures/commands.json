@@ -74,8 +74,6 @@
     "set_buffer": "handled",
     "set_capture": "full",
     "set_claude_account": "handled",
-    "set_claude_auto_launch": "full",
-    "set_claude_auto_mode": "full",
     "set_claude_auto_redraw": "full",
     "set_claude_auto_retry": "full",
     "set_claude_auto_yes": "full",
@@ -315,12 +313,6 @@
     ],
     "set_claude_account": [
       "name"
-    ],
-    "set_claude_auto_launch": [
-      "value"
-    ],
-    "set_claude_auto_mode": [
-      "value"
     ],
     "set_claude_auto_redraw": [
       "value"

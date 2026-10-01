@@ -29,7 +29,7 @@ from . import clienttail
 
 # ---- 명령 메타데이터(코어 COMMANDS/COMPLETIONS/COMMAND_NOARG 에 합쳐짐) ----
 COMMANDS = [
-    ("claude-settings", "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·"
+    ("claude-settings", "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·"
                         "프롬프트 단위 클리어·장기턴/반복 경고", "Claude"),
     ("auto-resume", "토큰 리밋 자동 재개 [on|off]", "Claude"),
     ("auto-resume-message", "자동 재개 메시지 설정", "Claude"),
@@ -75,15 +75,11 @@ COMMANDS = [
     ("claude-token-sync", "여러 머신 간 Claude 토큰 사용량 동기화 — status | on <URL> | "
                           "off | enroll <코드> | invite | adopt <코드> | now | resync",
                           "Claude"),
-    ("claude-auto-mode", "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off "
-                         "(claude-auto-mode on|off|toggle)", "Claude"),
     ("claude-detail", "Claude 플랜 전문·거부 사유 판 — 마지막 플랜과 마지막 막힌 호출을 "
                       "읽는다(별칭 plan-detail · GUI 는 esc v)", "Claude"),
     ("claude-auto-yes", "auto mode 인 패널이 yes/no 를 물으면 «맨 Yes» 를 자동 확정 "
                         "on/off — 이미 선택돼 있는 것만 Enter 로 확정한다 "
                         "(claude-auto-yes on|off|toggle, 기본 off)", "Claude"),
-    ("auto-launch", "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 "
-                    "on/off (auto-launch on|off|toggle, 기본 on)", "Claude"),
     ("claude-token-debug", "Claude 토큰 회계 진단 로그(<sock>.tokendbg.jsonl) on/off — §10-D 과소집계 "
                     "원인 판정용 진단(평시 OFF) (claude-token-debug on|off|toggle, 기본 off)",
                     "Claude"),
@@ -143,9 +139,7 @@ COMMAND_OPTIONS = {
                             "choices": _REDRAW_CHOICES}],
     "claude-resume-verify": [{"key": "state", "label": "재개확인",
                               "choices": _VERIFY_CHOICES}],
-    "claude-auto-mode": [{"key": "state", "label": "오토모드", "choices": _ONOFF}],
     "claude-auto-yes": [{"key": "state", "label": "자동예", "choices": _ONOFF}],
-    "auto-launch": [{"key": "state", "label": "자동셋업", "choices": _ONOFF}],
     "claude-token-debug": [{"key": "state", "label": "토큰진단로그",
                             "choices": _ONOFF}],
 }
@@ -176,10 +170,8 @@ i18n.register({
         "cmd.auto-token-on-exit": "Auto-open token usage screen (Limit/usage) when Claude session ends on/off (auto-token-on-exit on|off|toggle, default on)",
         "cmd.claude-auto-redraw": "Auto-mitigate screen corruption — off | idle (repaint each completion) | corruption (repaint only when corruption is detected) (claude-auto-redraw off|idle|corruption|toggle, default off)",
         "cmd.claude-resume-verify": "Out-of-band check before auto-resume — off | weak (suppress when the session used almost nothing in the last 5h) | strict (claude-resume-verify off|weak|strict|toggle, default off)",
-        "cmd.claude-auto-mode": "Auto-switch permission mode to auto when Claude idle on/off (claude-auto-mode on|off|toggle)",
         "cmd.claude-detail": "Claude plan / denied-call panel — the last plan and the last blocked call (alias plan-detail; GUI: esc v)",
         "cmd.claude-auto-yes": "In auto mode, auto-confirm a yes/no prompt whose selector already sits on the plain Yes on/off (claude-auto-yes on|off|toggle, default off)",
-        "cmd.auto-launch": "On new Claude session apply /rc (remote control)+permission auto once on/off (auto-launch on|off|toggle, default on)",
         "cmd.claude-token-sync": "Sync token usage across machines — status | on <URL> | off | enroll <code> | invite | adopt <code> | now | resync",
         "cmd.claude-token-debug": "Token-accounting diagnostic log (<sock>.tokendbg.jsonl) on/off — §10-D undercount root-cause diagnostic (off normally) (token-debug on|off|toggle, default off)",
     },
@@ -222,9 +214,6 @@ i18n.register({
             "Claude fullscreen 이 꺼져 있습니다 — 스크롤 프롬프트 바와 «클릭해서 "
             "점프»가 안 뜹니다. claude 에서 /tui fullscreen 으로 되살리세요"
             "(claude {ver} · {when} · 스트라이크 {strikes})",
-        # F3 벡터 3: 정책 차단 래치는 투명해야 하고(조용한 중단 금지) 자기치유한다.
-        "ccmsg.rc_policy_blocked": "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})",
-        "ccmsg.rc_policy_cleared": "원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다",
         # pytmux-477: 재시도가 **도는 중**임을 비활성 탭에 있는 사람에게도 알린다
         # (배지는 활성 패널의 것이라 다른 탭을 보고 있으면 아무것도 안 보인다).
         "ccmsg.retry_injected":
@@ -268,8 +257,6 @@ i18n.register({
             "Claude's fullscreen renderer is off — the scrolled-prompt bar and "
             "click-to-jump are gone. Run /tui fullscreen in claude to bring it "
             "back (claude {ver} · {when} · {strikes} strikes)",
-        "ccmsg.rc_policy_blocked": "Org policy message seen — stopping auto /rc injection (pane {pane})",
-        "ccmsg.rc_policy_cleared": "Remote control is actually on — clearing the policy-block latch",
         "ccmsg.retry_injected":
             "Transmission-error auto-retry: injected '{msg}' (#{n} · pane {pane})",
         "ccmsg.resume_unverified": "Auto-resume suppressed: only {used} tokens used in "
@@ -312,7 +299,6 @@ i18n.register({
            (s["label"] for specs in COMMAND_OPTIONS.values() for s in specs)},
     "en": {
         "자동재개": "Auto-resume", "클리어모드": "Clear mode",
-        "오토모드": "Auto mode", "자동셋업": "Auto setup",
         "자동예": "Auto-yes",
         "자동재시도": "Auto-retry",
         "깨짐완화": "Anti-corruption",
@@ -545,7 +531,6 @@ SAVER_ROWS = [
     ("auto_token_on_exit", "세션 종료 시 토큰 사용량 화면 자동 표시", "toggle"),
     ("claude_auto_redraw", "화면 깨짐 자동 완화(끔/완료마다/깨짐감지)", "cycle"),
     ("claude_resume_verify", "자동재개 대역외 확인(끔/약하게/엄격)", "cycle"),
-    ("claude_auto_mode", "권한모드 자동 오토", "toggle"),
     ("claude_auto_yes", "auto 모드에서 yes/no 자동 «예»", "toggle"),
     ("prompt_clear", "프롬프트 단위 클리어(완료마다 doc+/clear)", "toggle"),
     ("long_turn", "장기 턴 경고(초)", "cycle"),
@@ -575,7 +560,6 @@ def saver_display(app, key):
     bools = {
         "autoresume": st.autoresume,
         "auto_token_on_exit": st.auto_token_on_exit,
-        "claude_auto_mode": st.claude_auto_mode,
         "claude_auto_yes": st.claude_auto_yes,
         "prompt_clear": st.prompt_clear,
     }
@@ -619,9 +603,6 @@ def saver_action(app, key):
             getattr(st, "claude_resume_verify", "off")))
         app.send_cmd("set_claude_resume_verify", value=nxt)
         st.claude_resume_verify = nxt
-    elif key == "claude_auto_mode":
-        app.send_cmd("set_claude_auto_mode", value=None)
-        st.claude_auto_mode = not st.claude_auto_mode
     elif key == "claude_auto_yes":
         app.send_cmd("set_claude_auto_yes", value=None)
         st.claude_auto_yes = not st.claude_auto_yes
@@ -1025,10 +1006,8 @@ class _ClaudeCodePlugin:
         "prompt-clear": "prompt_clear",
         "claude-auto-redraw": "claude_auto_redraw",
         "claude-resume-verify": "claude_resume_verify",
-        "claude-auto-mode": "claude_auto_mode",
         "claude-auto-yes": "claude_auto_yes",
         "auto-retry": "claude_auto_retry",
-        "auto-launch": "auto_launch",
         "claude-token-debug": "token_debug",
     }
 
@@ -1099,13 +1078,9 @@ class _ClaudeCodePlugin:
                   ("prompt_clear_message",
                    "이번 세션에서 얻은 정보·결정을 프로젝트 문서(CLAUDE.md/메모리)에 기록해줘.",
                    str),
-                  # 권한모드 자동 오토모드 전환(§10): idle+비-auto 면 shift+tab 순환 주입. 기본 OFF.
-                  ("claude_auto_mode", False, bool),
                   # pytmux-475: auto mode 패널의 yes/no 확인 자동 «예» 확정. 기본 OFF —
                   # 이 기능은 auto mode 를 더 공격적으로 만든다(켠 사람에게만 발효).
                   ("claude_auto_yes", False, bool),
-                  # 새 Claude 세션 자동 셋업(요청): None→Claude 첫 idle 에 /rc 1회+auto 유도. 기본 ON.
-                  ("claude_auto_launch", True, bool),
                   # M17(T7) 경고 임계: long_turn=한 턴 busy 지속 한계(초, 0=끔).
                   ("claude_long_turn_sec", 600, int),
                   # M17(T7) 경고 임계: repeat=동일 완료 출력 반복 횟수(0=끔).
@@ -1253,7 +1228,6 @@ class _ClaudeCodePlugin:
         # "켰는데 뭐가 켜졌는지" 를 사람이 확인할 수 있다.
         msg["claude_resume_verify"] = getattr(
             server, "claude_resume_verify", "off")
-        msg["claude_auto_mode"] = server.claude_auto_mode
         msg["claude_auto_yes"] = server.claude_auto_yes
         # 무장된 자동재개 카운트다운(없으면 None): {kind, eta(초)}.
         msg["claude_pending"] = server._pending_action(ap)
@@ -1268,10 +1242,9 @@ class _ClaudeCodePlugin:
                 "claude_repeat_alert": server.claude_repeat_alert,
                 # §10-D 토큰 회계 진단 로그 토글(현재값 표시용 — 정적 옵션, full 시만).
                 "token_debug": server.token_debug,
-                # 선택지 팝업(`: auto-retry`·`: auto-launch`)이 현재값에 커서를 올리도록
+                # 선택지 팝업(`: auto-retry`)이 현재값에 커서를 올리도록
                 # 싣는다(정적 옵션, full 시만 — 클라가 직전값 유지). 기본은 서버 기본값.
                 "claude_auto_retry": getattr(server, "claude_auto_retry", True),
-                "auto_launch": getattr(server, "claude_auto_launch", True),
             })
 
     #: 페더레이션: 이 서버가 업스트림에 붙을 때 광고할 능력. 이게 없으면 업스트림이
@@ -1397,16 +1370,8 @@ class _ClaudeCodePlugin:
         if action == "set_claude_auto_retry":
             server.set_claude_auto_retry(msg.get("value"))
             return "send_full"
-        if action == "set_claude_auto_mode":
-            server.set_claude_auto_mode(msg.get("value"))
-            return "send_full"
         if action == "set_claude_auto_yes":
             server.set_claude_auto_yes(msg.get("value"))
-            return "send_full"
-        if action == "set_claude_auto_launch":
-            # 종전에는 이 액션을 **외부 CLI 만** 부를 수 있었다(_CLI_TOGGLES → server_control).
-            # 팔레트의 `auto-launch` 는 어느 클라에서도 여기 못 닿아 죽은 줄이었다(pytmux-35).
-            server.set_claude_auto_launch(msg.get("value"))
             return "send_full"
         if action == "set_claude_turn_warn":          # M17 장기턴/반복 임계
             server.set_claude_turn_warn(long_sec=msg.get("long_sec"),
@@ -1442,12 +1407,8 @@ class _ClaudeCodePlugin:
     # (delete-to-disable 위반). 이제 이 플러그인이 소유한다 — 부재 시 server_control
     # 훅 자체가 사라져 코어가 'unknown' 을 깨끗이 회신한다.
     _CLI_TOGGLES = {
-        "claude-auto-mode": "set_claude_auto_mode",
-        "auto-mode": "set_claude_auto_mode",
         "claude-auto-yes": "set_claude_auto_yes",
         "auto-yes": "set_claude_auto_yes",
-        "claude-auto-launch": "set_claude_auto_launch",
-        "auto-launch": "set_claude_auto_launch",
         "claude-token-debug": "set_token_debug",
     }
 

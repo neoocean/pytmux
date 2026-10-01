@@ -90,11 +90,6 @@ def init_pane(pane) -> None:
     pane._fmt_first_mono = None
     pane._fmt_logged = False
     pane._fmt_check_mono = 0.0
-    # `/rc` 원격 제어 메뉴 자동 Dismiss: 메뉴가 떠 있는 동안 True 로 디바운스해
-    # **메뉴당 Esc 를 딱 한 번**만 쏜다. 재주입(이중 Esc)은 Rewind 모달을 띄워 진행을
-    # 막던 버그라 영구 제거했다(servermixin _FEEDBACK_DISMISS_KEY 주석). 세션 피드백
-    # 프롬프트는 더 이상 Esc 를 안 쏜다(표시 필터로만 가림) — 이 상태와 무관하다.
-    pane._rc_menu_active = False
     # 조직 관리 설정 승인 화면("Managed settings require approval") 자동 통과 디바운스:
     # 화면이 떠 있는 동안 True 로 두어 **인스턴스당 Enter 를 딱 한 번**만 쏜다(재주입은
     # 승인 뒤 컴포저에 빈 프롬프트를 제출한다 — servermixin._scan_managed_settings).
@@ -114,12 +109,6 @@ def init_pane(pane) -> None:
     pane._retry_last = 0.0
     # 수동 /clear 감지 디바운스(환영 배너가 머무는 동안 토큰세션 재리셋 방지).
     pane._welcome_seen = False
-    # 새 Claude 세션 자동 셋업(auto-launch): /rc 주입(_rc_pending) 후 권한 auto 유도.
-    pane._rc_pending = False
-    pane._perm_auto_pending = False
-    # _rc_done: 이 세션에 auto /rc 를 이미 적용했음 sticky(재시작 직렬화 — 거짓 새세션
-    # 오인으로 /rc 재주입되는 버그 방지). 진짜 세션 종료에서만 해제.
-    pane._rc_done = False
     # _resume_handle=자동재개 예약 call_later 핸들(busy 복귀 시 cancel).
     pane._resume_handle = None
     # 디바운스된 Claude 존재 플래그·연속 non-Claude 스캔 수 — raw _claude 가 한 프레임
@@ -186,7 +175,7 @@ def reset_pane(pane) -> None:
 # 이리로 이전. set/타이머/call 핸들 등 휘발성 필드는 제외 — 재관측으로 복원.)
 _SER_FIELDS = (
     "_claude", "_claude_usage", "_scanbuf", "_resume_pending", "resume_msg",
-    "last_prompt", "_claude_session_id", "prompt_clear_mode", "_rc_done",
+    "last_prompt", "_claude_session_id", "prompt_clear_mode",
     "pending_prompts",
     # S5 토큰 모듈화 T4: 토큰 누계도 재시작에 보존(코어 _RESUME_FIELDS 에서 이전).
     "_tok_state", "_session_tokens",

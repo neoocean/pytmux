@@ -27,7 +27,7 @@ from pytmuxlib.servercmd import _CMD_TABLE
 
 #: 이 CL 이 살린 열하나(이슈 본문의 그 목록 그대로).
 REVIVED = (
-    "auto-launch", "capture-output", "capture-toggle",
+    "capture-output", "capture-toggle",
     "claude-settings", "claude-token-log", "ime-indicator", "model",
     "namesync", "prompt-clear-queue", "prompt-history-lines",
 )
@@ -37,6 +37,8 @@ REVIVED = (
 #: 오라클이다 — 이 이름들이 명령이나 화면으로 **되살아나면** 운다.
 RETIRED = (
     "claude-rules", "rules", "startup-rules",          # pytmux-524 → SessionStart 훅
+    "auto-launch", "claude-auto-launch",               # pytmux-525 → CLI 기본 auto 모드
+    "claude-auto-mode", "auto-mode",                   #   · remoteControlAtStartup
 )
 
 
@@ -127,17 +129,6 @@ async def test_prompt_history_lines_maps_and_cycles_when_bare():
         ("set_ph_max_lines", {"n": None})           # 무인자 = 순환
 
 
-async def test_auto_launch_was_dead_in_canon_too_and_now_maps():
-    """`auto-launch` 는 팔레트·선택지 팝업·CLI 토글표에 다 있었는데 `handle_command`
-    사슬에만 없어 **정본에서도** 아무 일이 안 났다. 전수로 재는 자가 없으면 이런
-    구멍은 안 보인다."""
-    cc = _plugin("claude-code")
-    assert cc.plugin_command_action("auto-launch", ["on"]) == \
-        ("set_claude_auto_launch", {"value": True})
-    assert cc.plugin_command_action("claude-auto-launch", []) == \
-        ("set_claude_auto_launch", {"value": None})
-
-
 async def test_prompt_clear_queue_branches_on_its_argument():
     """한 이름이 **화면이기도 하고 액션이기도** 하다. 무인자면 `None`(→ 화면 경로)."""
     cc = _plugin("claude-code")
@@ -153,12 +144,6 @@ async def test_the_server_actually_runs_the_revived_actions():
     async with running_server() as (srv, _task, _sock):
         sess = srv.ensure_default_session(80, 24)
         client = MagicMock()
-
-        # auto-launch — 종전에는 외부 CLI 만 이 셋터에 닿을 수 있었다.
-        before = srv.claude_auto_launch
-        assert srv.plugins.server_command(
-            srv, client, sess, "set_claude_auto_launch", {"value": None}) == "send_full"
-        assert srv.claude_auto_launch is not before
 
         # ime-indicator — 표시 여부가 서버 옵션이라야 두 클라가 같은 상태를 본다.
         assert srv.plugins.server_command(
@@ -198,14 +183,15 @@ async def test_the_settings_form_shows_the_live_values_and_enter_changes_them():
             "pytmuxlib.plugins.claude-code.screenspec")
         spec = spec_mod.open_spec(srv, sess, "claude-settings")
         rows = {r["key"]: r["cols"][0] for r in spec["rows"]}
-        assert "claude_auto_mode" in rows, rows
-        before = srv.claude_auto_mode
+        assert "claude_auto_yes" in rows, rows
+        assert "claude_auto_mode" not in rows, "걷은 토글(pytmux-525)이 설정 판에 남았다"
+        before = srv.claude_auto_yes
         nxt = spec_mod.action(srv, sess, {"id": "claude-settings", "do": "toggle",
-                                          "row": 0, "input": "claude_auto_mode"})
-        assert srv.claude_auto_mode is not before, "Enter 가 값을 안 바꿨다"
+                                          "row": 0, "input": "claude_auto_yes"})
+        assert srv.claude_auto_yes is not before, "Enter 가 값을 안 바꿨다"
         # 그리고 **바뀐 값이 곧바로 보인다**(다음 스펙이 돌아온다).
         after = {r["key"]: r["cols"][0] for r in nxt["rows"]}
-        assert after["claude_auto_mode"] != rows["claude_auto_mode"]
+        assert after["claude_auto_yes"] != rows["claude_auto_yes"]
 
 
 class _FakePty:

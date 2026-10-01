@@ -79,7 +79,10 @@
           패널의 <strong>권한모드 footer</strong> 를 클릭하면 auto / accept / default / plan 선택 팝업이
           열립니다(권한 우회로 띄운 세션에만 bypass 가 목록 끝에 붙습니다).
           <strong>모델 배지</strong> 를 클릭하면 모델·컨텍스트를 바꾸는 팝업이 열립니다(내부적으로 <code>/model</code>
-          주입). <code class="nb">claude-auto-mode</code> 로 Claude 가 idle 일 때 자동으로 auto 모드로 바꾸게 할 수도 있습니다.
+          주입). 새 세션을 처음부터 auto 모드로 여는 일은 이제 Claude Code 가 스스로 합니다 —
+          대화형 세션은 권한모드 설정이 없으면 auto 로 시작하고(Claude Code 2.1.284), 고정하려면
+          <code>~/.claude/settings.json</code> 에 <code>"permissions": {"defaultMode": "auto"}</code> 를 적습니다.
+          그래서 예전 <code>claude-auto-mode</code>(idle 마다 auto 로 돌리기)는 없앴습니다.
         </p>
         <p>
           <strong>시작 규칙</strong>(새 세션이나 <code>/clear</code> 뒤에 늘 넣던 글)은 이제 Claude Code 의
@@ -98,15 +101,15 @@
   }
 }</code></pre>
         <p>
-          새 세션에서 <code>/rc</code>(원격 제어)와 권한 auto 를 한 번 자동 적용하는
-          <code class="nb">auto-launch</code>(기본 on)도 있습니다.
+          <strong>원격 제어</strong>를 세션마다 켜 두려면 Claude Code 의 <code>/config</code> 에서
+          「Enable Remote Control for all sessions」를 켜거나 <code>"remoteControlAtStartup": true</code> 를 적습니다.
+          예전에 새 세션마다 <code>/rc</code> 를 대신 치던 <code>auto-launch</code> 는 그래서 없앴습니다.
         </p>
         <p>
-          <strong>진행을 막는 화면은 자동으로 넘깁니다.</strong> <code>/rc</code> 로 열리는 원격 제어 관리 메뉴는
-          <code>Esc</code>(=Continue)로 닫고, 조직이 관리 설정을 걸어 둔 계정에서 Claude 가 시작하자마자 멈춰 서는
+          <strong>진행을 막는 화면은 자동으로 넘깁니다.</strong> 조직이 관리 설정을 걸어 둔 계정에서 Claude 가 시작하자마자 멈춰 서는
           <span class="nb">Managed settings require approval</span> 화면은 <strong>이미 선택돼 있는
           <code>1. Yes, I trust these settings</code> 를 <code>Enter</code> 로 확정</strong>해 통과시킵니다.
-          두 경우 모두 <strong>화면 하나당 딱 한 번</strong>만 키를 보내고, <strong>선택을 옮기는 키는 보내지 않습니다</strong> —
+          <strong>화면 하나당 딱 한 번</strong>만 키를 보내고, <strong>선택을 옮기는 키는 보내지 않습니다</strong> —
           화살표가 다른 항목에 놓여 있거나 문구가 바뀐 화면이면 아무 키도 치지 않고 <strong>그대로 사람에게 남깁니다</strong>.
         </p>
         <figure>

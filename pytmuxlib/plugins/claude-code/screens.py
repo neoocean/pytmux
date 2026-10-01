@@ -85,7 +85,6 @@ i18n.register({
             "Auto-mitigate corruption (off/each completion/on detection)",
         "자동재개 대역외 확인(끔/약하게/엄격)":
             "Out-of-band auto-resume check (off/weak/strict)",
-        "권한모드 자동 오토": "Auto-switch permission mode to auto",
         "auto 모드에서 yes/no 자동 «예»": "Auto-confirm yes/no in auto mode",
         "프롬프트 단위 클리어(완료마다 doc+/clear)":
             "Per-prompt clear (doc+/clear each completion)",

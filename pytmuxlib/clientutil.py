@@ -1073,7 +1073,7 @@ COMMANDS = [
     ("window-size", "다중 클라 미러링 시 공유 크기 규칙 smallest|latest|largest — latest=마지막 조작 창 크기(window-size smallest|latest|largest)", "설정/기타"),
     # Claude Code 명령(auto-resume·token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
-    # auto-compact·claude-auto-mode·auto-launch 등)은 claude-code 플러그인이 등록한다
+    # auto-compact 등)은 claude-code 플러그인이 등록한다
     # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
     ("version", "클라/서버 버전(p4 CL)·업타임 팝업(별칭 about)", "설정/기타"),
     ("debug-stats", "클라 런타임 계측 팝업 — 산 객체·GC 세대·판 깊이·Timer 수"
@@ -1202,7 +1202,7 @@ COMMAND_OPTIONS = {
                                  ("largest", "largest")]}],
     "lang": [{"key": "lang", "label": "언어",
               "choices": [("한국어", "ko"), ("English", "en")]}],
-    # auto-resume·prompt-clear·auto-doc-clear·claude-auto-mode·auto-launch
+    # auto-resume·prompt-clear·auto-doc-clear
     # 의 옵션 스키마는 claude-code 플러그인이 등록한다(command_options).
 }
 

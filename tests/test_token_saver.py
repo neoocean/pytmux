@@ -484,8 +484,6 @@ async def test_fmt_unknown_clears_on_static_shell_after_exit():
         p._hdr_claude = False
         p._busy_exit_miss = 0
         p._exit_token_pending = 0
-        p._rc_menu_active = False
-        p._rc_pending = False
         p._was_busy = False
         assert p._feed_seq == p._scan_seq, "새 출력 없음(정적) 전제"
         srv._scan_claude(sess, win)                  # 재-feed 없이 스캔만

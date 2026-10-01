@@ -35,8 +35,6 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_managed_settings_yes,
                      claude_model_badge,
                      claude_prompt, claude_prompt_marks, claude_perm_mode,
-                     claude_remote_active, claude_remote_blocked,
-                     claude_remote_menu,
                      claude_state, claude_usage,
                      claude_welcome, ctx_window_tokens, parse_inline_limit,
                      parse_reset_delay, parse_usage, screen_tail_key,
@@ -140,31 +138,10 @@ _AUTO_REDRAW_DEBOUNCE_SEC = 10.0
 # 비싸 한 번 잡은 경로를 이만큼 테일 동안 캐시한다(재기동 시 경로 변경만 재해석).
 _XC_TAIL_FRAMES = 30
 _XC_RESOLVE_FRAMES = 60
-# auto-launch `/rc` 발화 디바운스(버그 수정 요청 2026-06-12): 새 Claude 세션의 **첫
-# idle 한 프레임**만 보고 `/rc` 를 쏘면, 데스크탑 앱이 원격제어를 **이미 켜 둔** 세션에
-# `/remote-control` 을 한 번 더 보내게 돼 Claude 가 "응답 대기" 대화로 멈춘다(사용자
-# 보고: "remote 이미 활성화돼 있는데도 /rc 입력하고 응답 대기로 진행 정지"). 원인은
-# 타이밍 — 데스크탑 앱의 'Remote Control active' 오버레이는 새 세션이 붙은 뒤 한두
-# 프레임 늦게 footer 에 그려져, 첫 idle 프레임엔 화면에 없어 가드(`claude_remote_active`/
-# `_rc_done`)를 못 세운다. idle 이 이만큼 프레임 **연속 안정**될 때까지 기다리면 그 사이
-# 도착한 오버레이 출력이 `_rc_done`(원격 ON 관측, 위 `claude_remote_active` 분기)을 세워
-# `/rc` 를 건너뛰게 된다. 원격이 정말 꺼진 새 세션이면 이만큼 지나도 안 떠 정상적으로
-# `/rc` 를 1회 쏜다. 30Hz flush 기준 ~1초 — 원격제어가 켜지는 지연은 무시할 만하다.
-_RC_CONFIRM_FRAMES = 30
-# 진행을 막는 Claude 오버레이 자동 Dismiss 키 = Esc(\x1b). 현재 유일한 대상은 `/rc`
-# 원격 제어 관리 메뉴(Continue/Disconnect/QR, "Esc to continue") — 응답 대기로 진행을
-# 막아 Esc=Continue 를 첫 감지에 **딱 한 번** 주입한다(_scan_claude). 절대 재주입하지
-# 않는다 — 이중 Esc=되감기(Rewind) 모달의 직접 원인이었다(첫 Esc 가 메뉴를 닫아도 feed
-# 지연으로 화면이 아직 메뉴에 매칭되는 동안 Esc#2 가 나가면 Claude Code 가 이중 Esc 를
-# Rewind 단축키로 해석해 모달로 진행을 막는다, 제보 2026-06-20). _rc_menu_active
-# 디바운스로 메뉴 인스턴스당 1회만 쏜다.
-#
-# ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 이 Esc 경로를 더 이상
-# 타지 않는다(제보 2026-06-20): 단일 Esc 가 종종 Dismiss 대신 작동 중인 턴을
-# interrupt 했다. 이 배너는 컴포저 **위**에 비모달로 떠 있어 안 닫아도 작업을 막지 않는다.
-# 아예 안 보이게 하려면 CLI 설정 `feedbackSurveyRate: 0` 을 쓴다(pytmux-523 — 배너를
-# 가리던 claude-disable-feedback 플러그인은 그 설정이 대신해서 지웠다).
-_FEEDBACK_DISMISS_KEY = b"\x1b"
+# (pytmux-525: auto-launch 의 `/rc` 자동 주입과 그 부속 — 관리 메뉴 자동 Esc·조직 정책
+#  래치·`_RC_CONFIRM_FRAMES` — 은 걷었다. CLI 2.1.284 부터 대화형 세션은 권한모드 설정이
+#  없으면 auto 로 시작하고, 원격 제어 자동 연결은 `remoteControlAtStartup` 이 한다.
+#  세션 피드백 배너에도 키를 안 넣는다 — 그 규율은 `test_feedback_prompt_no_key_injection`.)
 # 조직 관리 설정 승인 화면("Managed settings require approval")의 기본선택 확정 키
 # = Enter(요청 2026-07-24). 조직 계정으로 `claude` 를 띄우면 부팅이 이 화면에서 멈춰
 # 사람이 매번 "1. Yes, I trust these settings" 를 고르는 것 외에 선택지가 없다 —
@@ -1146,22 +1123,6 @@ class ServerClaudeMixin:
         self.loop.call_later(self._EXIT_LOG_WIN_SETTLE, _place)
 
     # ---- 권한모드 자동 오토모드 전환(§10) ----
-    def set_claude_auto_mode(self, value=None):
-        """Claude idle 시 권한모드를 auto 로 자동 맞추는 모드 토글. value 미지정 시
-        반전. 끄면 모든 패널의 시도 카운터를 리셋한다. opts.json 영속."""
-        self.claude_auto_mode = (not self.claude_auto_mode) if value is None \
-            else bool(value)
-        if not self.claude_auto_mode:
-            for p in self._all_panes():
-                self._perm_reset(p)
-        else:
-            # 켤 때: 이미 idle-settled(출력 없음)라 스캔 게이팅(B1)으로 스킵될 패널도
-            # 다음 프레임에 한 번 재스캔해 auto 로 즉시 맞추도록 강제한다.
-            for p in self._all_panes():
-                p._scan_seq = -1
-        self._save_opts()
-        return self.claude_auto_mode
-
     def set_claude_auto_yes(self, value=None):
         """auto mode 패널의 권한 확인(yes/no)을 자동으로 «예» 확정하는 모드 토글
         (pytmux-475). value 미지정 시 반전. opts.json 영속(기본 OFF).
@@ -1169,7 +1130,7 @@ class ServerClaudeMixin:
         끄면 모든 패널의 상자 래치와 앵커드 관측을 비운다 — 다시 켤 때 «지금 떠 있는
         상자»가 아니라 **다음 상자**부터 발효한다(켜는 순간 눈앞의 선택이 확정되는
         놀라움을 안 만든다). 켤 때는 정적 화면으로 스캔이 게이팅된 패널을 한 번
-        재스캔시켜, 그다음 상자를 놓치지 않게 한다(set_claude_auto_mode 선례)."""
+        재스캔시켜, 그다음 상자를 놓치지 않게 한다."""
         self.claude_auto_yes = (not self.claude_auto_yes) if value is None \
             else bool(value)
         for p in self._all_panes():
@@ -1182,19 +1143,6 @@ class ServerClaudeMixin:
                 p._perm_seen = None
         self._save_opts()
         return self.claude_auto_yes
-
-    def set_claude_auto_launch(self, value=None):
-        """새 Claude 세션 시작 시 /rc(원격 제어 켜기)+권한모드 auto 를 1회 자동 적용
-        하는 모드 토글. value 미지정 시 반전. opts.json 영속. 끌 때 진행 중인 1회
-        예약(_rc_pending/_perm_auto_pending)도 거둔다(다음 세션부터 적용/미적용)."""
-        self.claude_auto_launch = (not self.claude_auto_launch) if value is None \
-            else bool(value)
-        if not self.claude_auto_launch:
-            for p in self._all_panes():
-                p._rc_pending = False
-                p._perm_auto_pending = False
-        self._save_opts()
-        return self.claude_auto_launch
 
     def _inject_keys(self, pane: Pane, data: bytes):
         """패널 PTY 로 raw 키 바이트를 보낸다(_pc_inject 와 달리 Enter 를 안 붙임).
@@ -1250,14 +1198,9 @@ class ServerClaudeMixin:
         self._inject_keys(pane, b"\x1b[Z")
         return False
 
-    def _maybe_auto_mode(self, pane: Pane, txt: str):
-        """claude_auto_mode(상시 강제): idle 패널을 진짜 auto 모드로 폐루프 구동한다
-        (auto 미존재 계정은 acceptEdits 폴백). _perm_step 가 도달/포기/대기를 판정."""
-        self._perm_step(pane, txt, "auto")
-
     def _drive_perm_mode(self, pane: Pane, txt: str, target: str):
-        """사용자가 고른 target(footer 클릭 팝업, §10 item 2) 또는 auto-launch/예산
-        plan 유도가 건 _perm_target 까지 폐루프 구동. 도달/포기 시 _perm_target 해제."""
+        """사용자가 고른 target(footer 클릭 팝업, §10 item 2)이 건 _perm_target 까지
+        폐루프 구동. 도달/포기 시 _perm_target 해제."""
         if self._perm_step(pane, txt, target):
             pane._perm_target = None
 
@@ -1478,86 +1421,6 @@ class ServerClaudeMixin:
                 self._record_warn_history(p, warn, warn_kind, warn_n,
                                           time.time())
         return changed
-
-    def _scan_rc_signals(self, p, txt) -> None:
-        """`/rc`(원격 제어) 관련 화면 신호 phase — 관리 메뉴 자동 Dismiss·조직 정책
-        차단 감지·'이미 켜짐' sticky 관측.
-
-        `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). 상태(changed)를 바꾸지
-        않는다 — 여기서 세우는 건 전부 **서버/패널 내부 플래그**(클라 표시 무관)라
-        원 체인도 changed 를 안 건드렸다.
-        """
-        # `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR) 자동 Dismiss: 이
-        # 메뉴는 "Esc to continue" 응답 대기로 **진행을 막으므로**(auto-launch 가
-        # 새 세션마다 /rc 를 1회 주입, 제보 2026-06-18) Esc=Continue 를
-        # 첫 감지에 **딱 한 번** 주입해 치운다(원격은 켜진 채 메뉴만 닫혀 자동화가
-        # 이어진다). 절대 재주입하지 않는다(이중 Esc=Rewind 모달 차단, 위 상수
-        # 주석) — _rc_menu_active 로 메뉴가 사라질 때까지 디바운스한다. 메뉴 출현은
-        # claude_remote_active 분기가 _rc_done 도 세워 같은 세션에 /rc 가 재발하지
-        # 않는다.
-        #
-        # ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 더 이상
-        # Esc 를 주입하지 않는다(제보 2026-06-20): 단일 Esc 가 종종 Dismiss
-        # 대신 작동 중인 턴을 interrupt 했다 — busy 중 배너 텍스트가 화면에 매칭
-        # 되거나 feed 지연으로 stale 매칭이 남으면 Esc 가 interrupt 키로 해석된다.
-        # 이 배너는 비모달이라 안 닫아도 컴포저를 막지 않는다(사용자의 다음 Enter/
-        # Space 가 자연히 닫는다). 아예 안 띄우는 길은 CLI 설정 `feedbackSurveyRate: 0`
-        # 이다(pytmux-523 — 가리던 claude-disable-feedback 플러그인은 지웠다).
-        if claude_remote_menu(txt):
-            if not p._rc_menu_active:
-                p._rc_menu_active = True
-                if p.pty is not None:
-                    try:
-                        p.pty.write(_FEEDBACK_DISMISS_KEY)
-                    except OSError:
-                        pass
-        else:
-            p._rc_menu_active = False
-        # 원격 제어가 조직 정책으로 막혔다는 메시지를 한 번이라도 보면, 이
-        # 세션(서버 프로세스) 동안 /rc 자동 주입을 영구 중단한다(요청). 정책은
-        # 조직 단위라 서버 전역 플래그로 둬 모든 패널에 적용한다 — 안 그러면
-        # 매 새 세션(/clear·재시작)마다 /rc 를 재시도해 같은 거부가 반복된다.
-        if not self._rc_policy_blocked and claude_remote_blocked(txt):
-            self._rc_policy_blocked = True
-            for q in self._all_panes():
-                q._rc_pending = False   # 무장된 자동 /rc 예약도 거둔다
-            # F3 벡터 3 완화 ①**투명성**: 이 래치는 서버 전역·영구라 위조 한 줄로도
-            # 자동 /rc 가 조용히 죽는다. 조용한 중단은 '고장'과 구분 불가라 알린다.
-            note = getattr(self, "_notice_msg", None)
-            if note is not None:
-                note("ccmsg.rc_policy_blocked",
-                     "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})",
-                     severity="warn", pane=p.id)
-        # 원격제어가 켜진 걸(패널/표시) 한 번이라도 보면 sticky 로 기록 — 재시작
-        # re-exec 후 거짓 None→Claude 로 auto /rc 가 재발해 이미 켜진 패널을 다시
-        # 띄우지 않게 한다(_rc_done 은 _RESUME_FIELDS 로 직렬화돼 유지).
-        if claude_remote_active(txt):
-            p._rc_done = True
-            # F3 벡터 3 완화 ②**자기치유**: '정책으로 막힘' 과 '지금 켜져 있음' 은
-            # 공존할 수 없다 → 켜진 것을 관측하면 오래치를 푼다(위조로 걸린 래치가
-            # 서버 수명 내내 남지 않게). 진짜 차단 환경에선 이 관측이 안 나온다.
-            # **함정(실측)**: claude_remote_active 는 "remote control" 부분일치라
-            # **차단 메시지 자체**("Remote Control is disabled by your organization")
-            # 에도 매칭된다 → 같은 프레임에서 세운 래치를 곧바로 풀어버렸다. 그래서
-            # 치유는 그 프레임에 차단 문구가 **없을 때만** 한다(차단 문구가 이긴다).
-            if self._rc_policy_blocked and not claude_remote_blocked(txt):
-                self._rc_policy_blocked = False
-                note = getattr(self, "_notice_msg", None)
-                if note is not None:
-                    note("ccmsg.rc_policy_cleared",
-                         "원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다",
-                         severity="info")
-            # 추가(요청): 원격제어가 이미 켜진 걸 한 번이라도 관측하면 **서버
-            # 전역** sticky 를 세워, 이후 새 세션의 auto-launch fire 시점에 /rc 를
-            # 확정 스킵한다(아래 fire 블록의 skip 조건에 _rc_seen_active 포함).
-            # 데스크탑 앱이 세션마다 원격제어를 지속 연결하는 환경에선 이미 켜진
-            # 세션에 /rc 를 보내면 Claude 의 `/remote-control` 관리 대화가 다시 떠
-            # 진행이 멈추는데, 디바운스(타이밍)만으론 첫 프레임 레이스를 완전히 못
-            # 막으므로 "한 번 본 적 있으면 더는 안 쏨"으로 보장한다. **무장은
-            # 그대로 둔다** — auto-launch 는 /rc 외에 권한모드 auto 유도도 겸하므로
-            # (fire 블록이 /rc 만 건너뛰고 _perm_auto_pending 은 정상 인계). 수동
-            # 토글(footer 클릭→팝업 [r])은 영향 없음.
-            self._rc_seen_active = True
 
     def _scan_managed_settings(self, p, txt) -> None:
         """조직 관리 설정 승인 화면 자동 통과 phase(요청 2026-07-24).
@@ -1786,8 +1649,7 @@ class ServerClaudeMixin:
             p._retry_last = 0.0
 
     def _scan_idle_actions(self, p, txt, new_cl) -> bool:
-        """idle 프레임의 자동개입 phase — 보류 리네임 주입·auto-launch(/rc→
-        권한 auto)·권한모드 관측/구동.
+        """idle 프레임의 자동개입 phase — 보류 리네임 주입·권한모드 관측/구동.
 
         `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). idle 이 아니면 권한모드
         시도 카운터만 리셋한다(다음 idle 진입에 재시도). 권한모드 관측값(pm)은 이 프레임
@@ -1827,43 +1689,6 @@ class ServerClaudeMixin:
                 nm = p._pending_rename
                 p._pending_rename = None
                 self._pc_inject(p, "/rename " + nm)
-            # 새 세션 자동 셋업(auto-launch, 요청): idle 이 _RC_CONFIRM_FRAMES
-            # 안정되면 /rc 로 원격 제어(리모트 커넥션)를 켜고, 다음 idle 에 권한
-            # 모드를 auto 로 유도한다. /rc 와 권한 shift+tab 을 다른 프레임으로
-            # 갈라 한 묶음 입력으로 섞이지 않게 한다. 이미 원격제어가 켜진 화면
-            # (resume 후 오인·데스크탑 앱 재연결 등)에선 /rc 를 건너뛰어 도로
-            # 끄거나 /remote-control 응답 대기 대화로 멈추지 않게 한다.
-            if p._rc_pending:
-                # /rc 생략 조건: ① 조직 정책 차단 ② 원격제어 기관측 sticky
-                # (_rc_seen_active — 서버 전역) ③ 이미 이 세션에 적용함(_rc_done —
-                # 재시작 re-exec 후 거짓 새세션 오인 방지, 직렬화됨. 위
-                # claude_remote_active 분기가 'Remote Control active' 관측 시 셋)
-                # ④ 지금 화면이 이미 원격제어 ON. 어느 하나라도면 즉시 종료
-                # (도로 끄지/응답 대기 대화 띄우지 않음).
-                if (self._rc_policy_blocked or self._rc_seen_active
-                        or p._rc_done or claude_remote_active(txt)):
-                    p._rc_pending = False
-                    p._rc_done = True
-                    p._perm_auto_pending = True
-                elif p._idle_frames >= _RC_CONFIRM_FRAMES:
-                    # idle 이 _RC_CONFIRM_FRAMES 프레임 연속 안정 — 그 사이 원격제어
-                    # 오버레이가 안 떴으니 정말 꺼진 새 세션 → /rc 1회 주입. 첫 idle
-                    # 프레임에 바로 안 쏘는 이유: 데스크탑 앱이 이미 켠 원격제어
-                    # 오버레이가 한두 프레임 늦게 그려질 수 있어, 그걸 못 보고 쏘면
-                    # /remote-control 이 응답 대기 대화로 멈춘다(버그 수정).
-                    p._rc_pending = False
-                    self._pc_inject(p, "/rc")
-                    p._rc_done = True
-                    p._perm_auto_pending = True
-                # else: 디바운스 진행 중 — _rc_pending 유지(위 pending 게이트가
-                # 정적 화면에서도 스캔을 이어 가 _idle_frames 를 임계까지 올린다).
-            elif p._perm_auto_pending:
-                p._perm_auto_pending = False
-                if pm not in ("auto", "bypass"):
-                    # acceptEdits 도 auto 가 아니므로 여기서 auto 까지 마저 순환한다
-                    # (예전엔 accept 를 auto 로 오인해 새 세션이 accept 에서 멈췄다).
-                    p._perm_target = "auto"   # 아래 폐루프가 auto 까지 순환
-                    self._perm_reset(p)
             # idle: 현재 권한모드를 관측해 저장(팝업 '현재 모드' 표시용 — status
             # 로 클라에 전달, §10 item 2). footer 가 안 보이면(None) 마지막 값 유지.
             # (pm 은 위 else 진입부에서 1회 계산 — P1 CSE.)
@@ -1875,13 +1700,11 @@ class ServerClaudeMixin:
             if pm == "bypass" and not p._bypass_seen:
                 p._bypass_seen = True
                 changed = True
-            # 권한모드 구동: 사용자가 footer 클릭 팝업으로 고른 수동 목표
-            # (_perm_target)가 우선, 없고 claude_auto_mode 면 auto 로 순환
-            # (§10 item 2 + 권한모드 자동 오토모드 전환). 둘 다 shift+tab 폐루프.
+            # 권한모드 구동: 사용자가 footer 클릭 팝업으로 고른 수동 목표(_perm_target)
+            # 까지 shift+tab 폐루프(§10 item 2). 상시 auto 강제(claude-auto-mode)는
+            # 걷었다(pytmux-525 — CLI 2.1.284 부터 대화형 세션이 auto 로 시작한다).
             if p._perm_target:
                 self._drive_perm_mode(p, txt, p._perm_target)
-            elif self.claude_auto_mode:
-                self._maybe_auto_mode(p, txt)
             # M11 디바운스 해제: 정리 후 잔량이 임계+여유(5%p) 위로 회복하면
             # 다음 저잔량 구간에 재발화할 수 있게 한다. 회복 전엔 재발화 금지
             # (compact 가 효과 없어도 매 응답 무한 정리하지 않게 — §5.5).
@@ -1895,7 +1718,7 @@ class ServerClaudeMixin:
     # 넘긴다 — 기계적으로 밀면 헬퍼에서 NameError 가 나고, 스캔 예외는 _flush 가
     # 삼켜 **조용히 상태가 멈춘다**(HANDOFF §10-4 가 경고한 지뢰가 정확히 여기다).
     def _scan_session_boundary(self, fr, p):
-        """새 Claude 세션 경계(None→Claude) 리셋 + 세션 종료 시 예약 해제 phase."""
+        """새 Claude 세션 경계(None→Claude) 리셋 phase."""
         # 토큰 누계(#3): 새 Claude 세션 시작(None→Claude) 시 리셋, 매 프레임
         # 현재 응답 running 토큰을 step 으로 접어 응답별 peak 를 누계에 확정.
         # (확정 시점 fr.committed>0 은 #7 의 영속 로깅 이벤트로도 쓰인다 — 프레임 필드.)
@@ -1956,18 +1779,6 @@ class ServerClaudeMixin:
             # 새 세션 경계에서만 본다 — 이 순간이 「지금 뜬 claude 가 classic 이다」가
             # 확정되는 자리고, 프레임마다 설정 파일을 읽을 이유가 없다.
             self._notice_fullscreen_off()
-            # 새 세션 자동 셋업(auto-launch): 첫 idle 에 /rc(원격제어)+권한 auto
-            # 1회 적용. _rc_pending 가 idle 에서 /rc 를 쏘고 _perm_auto_pending
-            # 으로 넘겨, 다음 idle 에 _perm_target=auto 를 세운다(프레임 분리로
-            # /rc 제출과 shift+tab 이 한 묶음으로 섞이지 않게).
-            # 조직 정책으로 /rc 가 막힌 세션이면 자동 /rc 를 재무장하지 않는다.
-            # (재시작 후 거짓 새세션 오인으로 /rc 가 재발하는 건 fire 시점의
-            # _rc_done 가드로 막는다 — 무장은 perm-auto 유도도 겸하므로 둔다.)
-            if self.claude_auto_launch and not self._rc_policy_blocked:
-                p._rc_pending = True
-        if not fr.new_cl:
-            p._rc_pending = False      # 세션 끝 — auto-launch 예약 해제
-            p._perm_auto_pending = False
 
     def _scan_token_accounting(self, fr, sess, t, p):
         """계정 래치·모델 배지·토큰 step/누계·트랜스크립트 적재 phase.
@@ -2138,17 +1949,6 @@ class ServerClaudeMixin:
                 pending = ((p._was_busy and p._claude == "idle"
                             and p._idle_frames < _DONE_IDLE_FRAMES)
                            or (p._hdr_claude and not p._claude)
-                           # `/rc` 메뉴 배너가 떠 Esc 디바운스 중: 화면이 정적이어도
-                           # 메뉴가 사라지는 프레임을 관측해 _rc_menu_active 를 풀고
-                           # 다음 인스턴스에 재무장하려면 계속 스캔해야 한다.
-                           or p._rc_menu_active
-                           # auto `/rc` 디바운스 중(_RC_CONFIRM_FRAMES): 정적 idle
-                           # 화면이어도 _idle_frames 를 임계까지 진행시켜 발화하거나,
-                           # 그 사이 도착한 'Remote Control active' 오버레이를 관측해
-                           # 스킵해야 하므로 계속 스캔한다(첫 프레임 즉발 → 응답 대기
-                           # 대화 멈춤 버그 수정).
-                           or (p._rc_pending and p._claude == "idle"
-                               and p._idle_frames < _RC_CONFIRM_FRAMES)
                            # §3.4 busy 이탈 확정 대기 중: 화면이 정적이어도 다음
                            # 스캔이 이탈을 확정(또는 busy 복귀)할 수 있게 계속 스캔.
                            or p._busy_exit_miss > 0
@@ -2199,9 +1999,6 @@ class ServerClaudeMixin:
                 # 그 상자가 뜬 프레임은 footer 가 없어 claude_state 가 None 이다.
                 # new_cl 게이트 안에 두면 영영 안 돈다.
                 self._scan_auto_yes(p, txt)
-                # `/rc` 화면 신호 phase(메뉴 dismiss·정책 차단·active sticky) —
-                # 로드맵 #1 God-분할로 _scan_rc_signals 추출(동작 불변).
-                self._scan_rc_signals(p, txt)
                 # 실측 /usage 한도 캡처 phase(로드맵 #1 God-분할 — _scan_usage_capture
                 # 로 추출, 동작 불변).
                 if self._scan_usage_capture(txt):
@@ -2231,10 +2028,6 @@ class ServerClaudeMixin:
                     p._hdr_claude_miss += 1
                     if p._hdr_claude_miss >= _HDR_CLAUDE_MISS:
                         p._hdr_claude = False
-                        # 진짜 세션 종료(디바운스 확정) → auto /rc sticky 해제. 다음 claude
-                        # 기동엔 정상 재무장. 재시작 transient 한 프레임은 miss 임계(30)에
-                        # 못 미쳐 여기 안 오므로 _rc_done 이 살아남는다.
-                        p._rc_done = False
                         # pytmux-475: 다음 claude 는 다른 권한모드로 뜰 수 있다 —
                         # 앵커드 관측을 비워 새 세션이 제 footer 로 다시 무장하게 한다.
                         p._perm_seen = None
@@ -2282,7 +2075,7 @@ class ServerClaudeMixin:
                 # 자동재개/재시도 예약 게이트 phase(로드맵 #1 God-분할 —
                 # _scan_retry_gates 로 추출, 동작 불변).
                 self._scan_retry_gates(p, txt, new_cl)
-                # idle 자동개입 phase(리네임/규칙/auto-launch/권한모드) — 로드맵 #1
+                # idle 자동개입 phase(리네임/권한모드) — 로드맵 #1
                 # God-분할로 _scan_idle_actions 추출(동작 불변).
                 if self._scan_idle_actions(p, txt, new_cl):
                     changed = True

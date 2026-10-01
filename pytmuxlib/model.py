@@ -482,7 +482,7 @@ class Pane:
     # setattr 로 그대로 복원 가능한 JSON 가능 스칼라/딕트 필드 목록. PTY 식별자
     # (child_pid·master_fd)와 크기·화면 스냅샷은 export_state 가 별도로 다룬다.
     # Claude 거동 필드(_claude·_claude_usage·_scanbuf·_resume_pending·resume_msg·
-    # last_prompt·_claude_session_id·prompt_clear_mode·_rc_done·
+    # last_prompt·_claude_session_id·prompt_clear_mode·
     # pending_prompts·토큰 누계 _tok_state/_session_tokens)의 직렬화는 claude-code
     # 플러그인이 pane_serialize/pane_restore 훅으로 담당한다(S4/S5 — export_state 가
     # 'plugin_state' 키로 불투명하게 담는다). 여기 남는 건 코어가 직접 쓰는 계정/리네임/

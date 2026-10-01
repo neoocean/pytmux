@@ -511,7 +511,6 @@ impl Action {
             Action::PluginToggle { action } => match *action {
                 "set_claude_auto_retry" => "전송 재시도",
                 "set_auto_token_on_exit" => "종료 시 토큰 기록",
-                "set_claude_auto_mode" => "Claude 자동 모드",
                 _ => "토큰 진단 로그",
             },
             Action::PluginDo { .. } => "사용량 새로 고침",
@@ -1522,7 +1521,6 @@ pub static PALETTE: &[PaletteEntry] = &[
     //   대응은 정본 훅이 치는 액션 이름 그대로다(`plugins/claude-code/__init__.py`).
     pe("auto-retry", "Claude", Action::PluginToggle { action: "set_claude_auto_retry" }),
     pe("auto-token-on-exit", "Claude", Action::PluginToggle { action: "set_auto_token_on_exit" }),
-    pe("claude-auto-mode", "Claude", Action::PluginToggle { action: "set_claude_auto_mode" }),
     pe("claude-token-debug", "Claude", Action::PluginToggle { action: "set_token_debug" }),
     pe("claude-usage", "Claude", Action::PluginDo { action: "refresh_usage" }),
     pe("plugins", "설정/기타", Action::ShowPlugins),

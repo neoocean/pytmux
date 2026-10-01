@@ -17,7 +17,6 @@
     "(큐 비어 있음)": "(queue empty)",
     "프롬프트 클리어 큐": "Prompt-clear queue",
     "이 패널의 Claude Code 가 데스크탑 앱 '원격 제어'로 연결돼 있습니다.\n(패널 화면의 'Remote Control active' 표시)\n\n• 원격 제어는 Claude Code CLI 의 '/rc' 명령으로 켜고 끕니다.\n  → 이 화면에서 [r] 키로 바로 토글합니다(해당 패널에 /rc 주입).\n• 원격 제어로 입력된 프롬프트도 상단 프롬프트 헤더에 반영됩니다.\n\n[r] 원격 제어 토글(/rc)   ·   닫기: Esc 또는 바깥 클릭.": "This panel's Claude Code is connected to the desktop app's 'Remote Control'.\n(the panel shows 'Remote Control active')\n\n• Remote control is toggled with the Claude Code CLI '/rc' command.\n  → Press [r] here to toggle it directly (injects /rc into the panel).\n• Prompts entered via remote control also appear in the top prompt header.\n\n[r] Toggle remote control (/rc)   ·   close: Esc or click outside.",
-    "원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다": "Remote control is actually on — clearing the policy-block latch",
     "원격 제어(Remote Control)": "Remote Control",
     "/usage 한도 데이터 없음 — Claude 패널에서 /usage 를 먼저 실행": "No /usage limit data — run /usage in a Claude panel first",
     "사용량 조회 중… (숨은 /usage, ~수초)": "Querying usage… (hidden /usage, ~a few sec)",
@@ -173,7 +172,6 @@
     "자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — 리밋 배너가 위조로 의심됨(패널 {pane}, claude-resume-verify {mode})",
     "자동재개: '{msg}' 주입(패널 {pane})",
     "전송 에러 자동 재시도: '{msg}' 주입({n}회째 · 패널 {pane})",
-    "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})",
     "지금 자리: {path}",
     "토큰 사용량 · 머신별 (Σ{tok})",
     "토큰 사용량(추정) · 일별 · Σ{tok}",
@@ -182,7 +180,6 @@
   ],
   "carried": {
     "Claude fullscreen 이 꺼져 있습니다 — 스크롤 프롬프트 바와 «클릭해서 점프»가 안 뜹니다. claude 에서 /tui fullscreen 으로 되살리세요(claude {ver} · {when} · 스트라이크 {strikes})": "Claude's fullscreen renderer is off — the scrolled-prompt bar and click-to-jump are gone. Run /tui fullscreen in claude to bring it back (claude {ver} · {when} · {strikes} strikes)",
-    "조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})": "Org policy message seen — stopping auto /rc injection (pane {pane})",
     "자동재개: '{msg}' 주입(패널 {pane})": "Auto-resume: injected '{msg}' (pane {pane})",
     "자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})": "Auto-resume suppressed: injected too recently (pane {pane})",
     "자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — 리밋 배너가 위조로 의심됨(패널 {pane}, claude-resume-verify {mode})": "Auto-resume suppressed: only {used} tokens used in the last 5h (<{need}) — limit banner looks forged (pane {pane}, claude-resume-verify {mode})",

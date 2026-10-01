@@ -83,7 +83,6 @@ def init_defaults(status):
     # F3 옵션A 자동재개 대역외 확인 3-state(off|weak|strict). 서버가 권위값을 status 로
     # 실어 보내고, 설정/선택지 팝업이 이 값에 커서를 올린다.
     status.claude_resume_verify = "off"
-    status.claude_auto_mode = False
     # pytmux-475: auto mode 패널의 yes/no 확인 자동 «예» 확정(서버 기본 OFF).
     status.claude_auto_yes = False
     # 선택지 팝업(`: auto-retry` 등)이 현재값에 커서를 올리는 데 쓰는 정적 토글들
@@ -154,7 +153,6 @@ def absorb(status, msg):
                                          status.claude_auto_redraw)
     status.claude_resume_verify = msg.get("claude_resume_verify",
                                           status.claude_resume_verify)
-    status.claude_auto_mode = msg.get("claude_auto_mode", status.claude_auto_mode)
     status.claude_auto_yes = msg.get("claude_auto_yes", status.claude_auto_yes)
     status.claude_long_turn_sec = msg.get(
         "claude_long_turn_sec", status.claude_long_turn_sec)

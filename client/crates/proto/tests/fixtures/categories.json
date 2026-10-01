@@ -1,7 +1,6 @@
 {
   "_comment": "python3 scripts/gen_categories.py 로 생성. 출처 = pytmuxlib/clientutil.py 의 분류 표 + plugins 레지스트리 기여. 화면을 나누는 기준(카테고리·그룹)의 정본이다 — 세는 단위는 client_surface.json 쪽이고 여기는 배치다.",
   "command_cats": {
-    "auto-launch": "Claude",
     "auto-resume": "Claude",
     "auto-resume-message": "Claude",
     "auto-retry": "Claude",
@@ -15,7 +14,6 @@
     "capture-toggle": "모니터",
     "choose-buffer": "복사/버퍼",
     "choose-tree": "탭",
-    "claude-auto-mode": "Claude",
     "claude-auto-redraw": "Claude",
     "claude-auto-yes": "Claude",
     "claude-detail": "Claude",
@@ -368,7 +366,7 @@
     },
     {
       "name": "claude-settings",
-      "desc": "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·권한 오토모드·프롬프트 단위 클리어·장기턴/반복 경고",
+      "desc": "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·프롬프트 단위 클리어·장기턴/반복 경고",
       "cat": "Claude"
     },
     {
@@ -467,11 +465,6 @@
       "cat": "Claude"
     },
     {
-      "name": "claude-auto-mode",
-      "desc": "Claude idle 시 권한모드를 자동으로 오토모드로 전환 on/off (claude-auto-mode on|off|toggle)",
-      "cat": "Claude"
-    },
-    {
       "name": "claude-detail",
       "desc": "Claude 플랜 전문·거부 사유 판 — 마지막 플랜과 마지막 막힌 호출을 읽는다(별칭 plan-detail · GUI 는 esc v)",
       "cat": "Claude"
@@ -479,11 +472,6 @@
     {
       "name": "claude-auto-yes",
       "desc": "auto mode 인 패널이 yes/no 를 물으면 «맨 Yes» 를 자동 확정 on/off — 이미 선택돼 있는 것만 Enter 로 확정한다 (claude-auto-yes on|off|toggle, 기본 off)",
-      "cat": "Claude"
-    },
-    {
-      "name": "auto-launch",
-      "desc": "새 Claude 세션 시작 시 /rc(원격 제어)+권한모드 auto 1회 자동 적용 on/off (auto-launch on|off|toggle, 기본 on)",
       "cat": "Claude"
     },
     {

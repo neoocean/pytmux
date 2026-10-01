@@ -26,7 +26,7 @@ pytmux 안에서 돌아가는 [Claude Code](https://claude.com/claude-code) 세�
 | `model` | `model-config`, `claude-model` | 모델·컨텍스트 변경 팝업 |
 | `token-account <이름>` | | 활성 패널 계정 수동 지정(빈값=자동) |
 
-**토글 명령**(`on`/`off`/무=토글): `auto-resume` · `auto-retry`(기본 on) · `auto-token-on-exit`(기본 on) · `claude-auto-mode` · `auto-launch`(기본 on) · `prompt-clear`.
+**토글 명령**(`on`/`off`/무=토글): `auto-resume` · `auto-retry`(기본 on) · `auto-token-on-exit`(기본 on) · `prompt-clear`.
 
 ## `token-saver` 설정 항목
 

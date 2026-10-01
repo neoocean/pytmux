@@ -537,7 +537,6 @@ static NATIVE_PLUGIN_COMMANDS: &[&str] = &[
     // 우리가 네이티브로 드는 것은 **켠 사실**뿐이다: 어느 패널에 오버레이가 떴는지는
     // 그 클라만 아는 상태라 서버가 대신 정할 수 없다(설계 §4.4 `client_fact`).
     "calendar-mode",
-    "claude-auto-mode",
     "claude-token-debug",
     // 토글이 아니라 **한 번 시키는** 것이다(서버가 숨은 claude 로 /usage 를 긁는다).
     "claude-usage",

@@ -238,7 +238,6 @@ pub static EN: &[(&str, &str)] = &[
     ("엄격", "strict"),
     ("완료마다", "each turn"),
     ("원격 제어(Remote Control)", "Remote Control"),
-    ("원격제어가 실제로 켜져 있어 정책 차단 래치를 해제합니다", "Remote control is actually on — clearing the policy-block latch"),
     ("원본이 없습니다", "The source is gone"),
     ("이 규칙을 지웁니다", "Delete this rule"),
     ("이 패널의 Claude Code 가 데스크탑 앱 '원격 제어'로 연결돼 있습니다.\n(패널 화면의 'Remote Control active' 표시)\n\n• 원격 제어는 Claude Code CLI 의 '/rc' 명령으로 켜고 끕니다.\n  → 이 화면에서 [r] 키로 바로 토글합니다(해당 패널에 /rc 주입).\n• 원격 제어로 입력된 프롬프트도 상단 프롬프트 헤더에 반영됩니다.\n\n[r] 원격 제어 토글(/rc)   ·   닫기: Esc 또는 바깥 클릭.", "This panel's Claude Code is connected to the desktop app's 'Remote Control'.\n(the panel shows 'Remote Control active')\n\n• Remote control is toggled with the Claude Code CLI '/rc' command.\n  → Press [r] here to toggle it directly (injects /rc into the panel).\n• Prompts entered via remote control also appear in the top prompt header.\n\n[r] Toggle remote control (/rc)   ·   close: Esc or click outside."),
@@ -266,7 +265,6 @@ pub static EN: &[(&str, &str)] = &[
      "Transmission-error auto-retry: injected '{msg}' (#{n} · pane {pane})"),
     // pytmux-468 — 플랜 전문·거부 사유 판(Tier C `claude-detail`).
     ("↑↓ 스크롤 · Esc 닫기", "↑↓ scroll · Esc close"),
-    ("조직 정책 메시지 관측 — /rc 자동 주입을 중단합니다(패널 {pane})", "Org policy message seen — stopping auto /rc injection (pane {pane})"),
     ("지금", "now"),
     ("지금 자리: {path}", "Now at: {path}"),
     ("초대 코드(이 값이 곧 키입니다 — 채팅·스크린샷 금지): {code}", "Invite code (this IS the key — never paste in chat): {code}"),

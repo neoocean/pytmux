@@ -24,7 +24,7 @@ _CLAUDE_CMDS = {
     "claude-settings", "auto-resume",
     "claude-token-log", "claude-usage",
     "usage-panel", "claude-token-account", "prompt-clear", "model",
-    "auto-doc-clear", "auto-compact", "claude-auto-mode", "auto-launch",
+    "auto-doc-clear", "auto-compact", "claude-auto-yes",
 }
 
 
@@ -69,20 +69,23 @@ async def test_new_hooks_present_when_loaded():
 
 
 async def test_cli_toggle_routes_through_plugin_and_survives_deletion():
-    """① server_control: 외부 CLI(`pytmux cmd claude-auto-mode …`)가 코어 표가 아니라
+    """① server_control: 외부 CLI(`pytmux cmd claude-auto-yes …`)가 코어 표가 아니라
     claude-code 플러그인 훅으로 처리된다. 플러그인 있을 때 'on'/'off' 왕복이 되고,
     부재 시엔 크래시가 아니라 'unknown'(코어 handle_control 폴백)이 나온다."""
     srv, task, sock = await server_only()
     try:
         srv.new_session(80, 24)         # handle_control 은 세션이 있어야 진행(동기)
         # 플러그인 존재 — on/off 왕복(코어 _ONOFF_CONTROLS 가 아니라 server_control 훅).
-        assert srv.handle_control("claude-auto-mode on") == "on"
-        assert srv.claude_auto_mode is True
-        assert srv.handle_control("claude-auto-mode off") == "off"
-        assert srv.claude_auto_mode is False
+        assert srv.handle_control("claude-auto-yes on") == "on"
+        assert srv.claude_auto_yes is True
+        assert srv.handle_control("claude-auto-yes off") == "off"
+        assert srv.claude_auto_yes is False
+        # 걷은 토글(pytmux-525)은 플러그인이 있어도 모른다 — 코어가 'unknown' 을 회신한다.
+        assert srv.handle_control("claude-auto-mode on") != "on"
+        assert srv.handle_control("auto-launch on") != "on"
         assert srv.handle_control("claude-token-debug on") == "on"
         # 코어 _ONOFF_CONTROLS 에는 더는 claude/token 엔트리가 없다(플러그인 소유).
-        assert "claude-auto-mode" not in srv._ONOFF_CONTROLS
+        assert "claude-auto-yes" not in srv._ONOFF_CONTROLS
         assert "token-debug" not in srv._ONOFF_CONTROLS
     finally:
         await teardown(srv, task, sock)
@@ -119,7 +122,7 @@ async def test_contract_server_hooks_noop_without_plugin():
     # server_control: 외부 CLI claude/token 토글이 플러그인 부재 시 None(코어가
     # 'unknown' 회신) — 종전엔 코어 _ONOFF_CONTROLS setter 미존재로 크래시(delete-
     # to-disable 위반). 이 훅으로 소유가 이전돼 안전해졌다.
-    for cmd in ("claude-auto-mode", "auto-mode", "auto-launch",
+    for cmd in ("claude-auto-yes", "auto-yes",
                 "token-debug", "token-dbg"):
         assert reg.server_control(None, None, cmd, ["on"]) is None, cmd
     # relay_actions: Claude/토큰 릴레이 액션이 플러그인 부재 시 화이트리스트에서
@@ -265,17 +268,18 @@ async def _opts_namespace_body(reg, _S):
     # 다른 플러그인 소유 opt(별개) — claude-code 계약을 엄격히 검증하기 위해 그 키들만 빼고
     # 비교한다. 2026-07-07: prompt_clear_message·claude_auto_mode·claude_auto_launch·
     # claude_rules·claude_long_turn_sec·claude_repeat_alert 6종을 코어에서 plugin_opts 로
-    # 이전(완전분리). claude_rules 는 pytmux-524 에서 걷었다(SessionStart 훅이 대신한다).
+    # 이전(완전분리). claude_rules 는 pytmux-524, claude_auto_mode·claude_auto_launch 는
+    # pytmux-525 에서 걷었다(CLI 의 SessionStart 훅 · 기본 auto 모드가 대신한다).
     assert set(out) - {"ph_max_lines", "capture", "namesync_rules", "ime_show"} == {
         "claude_auto_retry", "token_debug", "auto_token_on_exit",
-        "claude_auto_redraw", "prompt_clear_message", "claude_auto_mode",
+        "claude_auto_redraw", "prompt_clear_message",
         # F3 옵션A(2026-07-25): 자동재개 대역외 확인 3-state. 이 골든이 새 옵션의
         # **배선 누락을 잡는 자리**다(serialize 에 안 실리면 영속이 안 된다).
         "claude_resume_verify",
         # pytmux-475: auto mode 패널의 yes/no 자동 «예» 확정(기본 끔). 같은 이유로
         # 이 골든에 선다 — serialize 에 안 실리면 설정이 재시작을 못 넘긴다.
         "claude_auto_yes",
-        "claude_auto_launch", "claude_long_turn_sec",
+        "claude_long_turn_sec",
         "claude_repeat_alert",
         # 2026-07-23 토큰 동기화(P2): 전송 설정도 plugin_opts 소유다 — 코어는
         # token_sync* 의 의미를 모른다(플러그인을 지우면 통째로 사라진다).

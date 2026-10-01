@@ -254,23 +254,10 @@ class Server(*_SERVER_BASES):
             _allow = [_allow]
         self.remote_allowed_hosts = [str(h) for h in _allow
                                      if isinstance(_allow, (list, tuple))]
-        # Claude 전용 옵션(prompt_clear_message·claude_auto_mode·claude_auto_launch·
-        # claude_long_turn_sec·claude_repeat_alert 등)은 claude-code 플러그인이
+        # Claude 전용 옵션(prompt_clear_message·claude_long_turn_sec·
+        # claude_repeat_alert 등)은 claude-code 플러그인이
         # 소유한다 — 아래 plugins.server_opts_init 이 plugin_opts 네임스페이스로 설치·영속
         # 한다(코어는 키 의미를 모름). 디렉토리 삭제 시 이 속성들이 안 생긴다(delete-to-disable).
-        # 원격 제어가 조직 정책으로 막혔다는 메시지("disabled by your organization")를
-        # 보면 세션(프로세스) 동안 자동 /rc 를 영구 중단하는 sticky 플래그(요청). 정책은
-        # 조직 단위라 서버 전역. 비영속(프로세스 한정) — 재시작 후 다시 시도해도 정책이
-        # 그대로면 곧 재감지된다.
-        self._rc_policy_blocked = False
-        # 원격 제어가 **이미 켜진** 게 한 번이라도 관측되면(데스크탑 앱이 새 세션마다
-        # 원격제어를 지속 연결) 이 서버 세션 동안 자동 /rc 주입을 영구 중단하는 sticky
-        # (요청 2026-06-12). 이미 켜진 세션에 /rc 를 보내면 Claude 의 `/remote-control`
-        # 관리 대화가 다시 떠 진행이 멈춘다 — 디바운스(타이밍)만으론 첫 프레임 레이스를
-        # 완전히 못 막아, "한 번 본 적 있으면 더는 안 쏨"으로 확정 보장한다. 정책 차단
-        # (_rc_policy_blocked)과 같은 서버 전역·비영속(재시작 후 재감지). 수동 토글
-        # (footer 클릭→팝업 [r])은 그대로 동작한다(사용자 의도).
-        self._rc_seen_active = False
         # M19 그림자 /usage 질의 결과(세션·주간 한도 %·리셋·계정). dict|None.
         # (M18-B 의 5h 분모 학습 _learned_5h_cap 은 S6 T3 분모 근사 폐기로 제거 —
         #  5h% 는 /usage 실측만 따른다.)
@@ -562,7 +549,7 @@ class Server(*_SERVER_BASES):
     @staticmethod
     def _arg_onoff(args):
         """control 토글 인자 파싱: 'on'→True, 'off'→False, 그 외→None(현재값 토글).
-        capture/single-border/coalesce/auto-mode 공용."""
+        capture/single-border/coalesce 공용."""
         return True if "on" in args else (False if "off" in args else None)
 
     # `pytmux cmd <명령> [on|off]` 의 **즉시 "on"/"off" 반환** 토글 표(#5.9 — 종전
@@ -571,7 +558,7 @@ class Server(*_SERVER_BASES):
     # broadcast 가 필요하므로 이 표가 아니라 별도 분기로 둔다.
     _ONOFF_CONTROLS = {
         # capture-output/capture-toggle 는 plugins/rec 로 이전(server_command).
-        # claude-auto-mode/auto-mode/claude-auto-launch/auto-launch/token-debug 등
+        # token-debug 등
         # Claude·토큰 토글도 claude-code 플러그인 소유로 이전됐다 — 이제 코어 표엔
         # 없고, handle_control 이 아래 else 에서 plugins.server_control 훅으로 넘긴다.
         # (종전엔 여기 엔트리가 플러그인 소유 setter 를 가리켜, 플러그인 부재 시

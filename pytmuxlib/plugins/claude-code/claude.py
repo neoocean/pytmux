@@ -727,44 +727,6 @@ def fmt_long_turn_badge(elapsed_sec) -> str:
     return "⚠ %d:%02d" % (el // 60, el % 60)
 
 
-def claude_remote_active(text: str) -> bool:
-    """Claude Code 패널이 데스크탑 앱 '원격 제어'에 연결돼 있는지(화면의 'Remote
-    Control active' 표시) 판정. 시작 시 자동 /rc 주입(auto-launch)이 **이미 켜진**
-    원격제어를 도로 끄지 않도록 idempotent 가드로 쓴다(재시작 resume 후 첫 스캔이
-    None→Claude 로 보여 새 세션으로 오인하는 경우 등). 클라 클릭존 판정과 동일 문구."""
-    return "remote control" in (text or "").lower()
-
-
-# Claude Code `/rc`(원격 제어) 실행 시 뜨는 **원격 제어 관리 메뉴**. 예전 CLI 의 /rc 는
-# 메뉴 없이 원격을 토글했지만, 현재 CLI 는 세션을 모바일 앱/claude.ai 에 노출한 뒤
-# "Disconnect this session · Show QR code(Scan with your phone) · Continue (Enter to
-# select · Esc to continue)" **비모달 메뉴**를 띄워 응답 대기로 진행을 막는다. auto-launch
-# (set_claude_auto_launch, 기본 ON)가 새 세션마다 /rc 를 1회 주입하므로 이 메뉴가 매번
-# 떠 자동화가 멈췄다(제보 2026-06-18: 폰에서 pytmux 로 접속 중 Continue 메뉴가
-# 진행을 가로막음). 메뉴 안내대로 **Esc=Continue**(원격은 켜진 채 메뉴만 닫힘)를 자동
-# 주입해 치우기 위한 감지 — 피드백 프롬프트 자동 Dismiss(#26)와 같은 Esc 경로를 탄다.
-# 'Disconnect this session' + QR/scan 안내가 **함께** 보일 때만 잡아, 산문에 'Disconnect'
-# 한 단어가 우연히 섞인 경우의 오검출을 막는다.
-_REMOTE_MENU_RE = re.compile(r"Disconnect this session", re.I)
-_REMOTE_MENU_QR_RE = re.compile(r"Show QR code|Scan with your phone", re.I)
-
-
-def claude_remote_menu(text: str) -> bool:
-    """Claude `/rc` 원격 제어 관리 메뉴(Continue/Disconnect/QR)가 떠 진행을 막고 있으면
-    True(자동 Esc Dismiss 대상). 'Disconnect this session' 과 QR/scan 안내가 함께 보일
-    때만 — 단어 하나가 산문에 우연히 섞인 경우의 오검출을 피한다."""
-    t = text or ""
-    return bool(_REMOTE_MENU_RE.search(t) and _REMOTE_MENU_QR_RE.search(t))
-
-
-def claude_remote_blocked(text: str) -> bool:
-    """원격 제어가 조직 정책으로 비활성화됐다는 메시지("Remote Control is disabled by
-    your organization's policy")가 화면에 보이면 True. 이게 한 번 뜨면 이 세션에서는
-    /rc 자동 주입을 영구 중단해야 한다(요청) — 매 새 세션마다 /rc 를 재시도해 같은
-    거부 메시지를 반복 띄우는 것을 막는다. 조직 정책이라 폭넓게(소유격 유무 무관) 잡는다."""
-    return "disabled by your organization" in (text or "").lower()
-
-
 # 조직 관리 설정(managed settings) 최초 승인 화면. 조직 계정으로 `claude` 를 띄우면
 # 부팅 직후 "Managed settings require approval / ❯ 1. Yes, I trust these settings /
 # 2. No, exit Claude Code / Enter to confirm · Esc to exit" 로 멈춰 선다. 사람이 매번
