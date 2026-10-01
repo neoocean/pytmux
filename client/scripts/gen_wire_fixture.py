@@ -62,7 +62,11 @@ def build_corpus(pytmux_root):
     for name in sorted(os.listdir(fixtures)):
         if name.endswith(".txt"):
             with open(os.path.join(fixtures, name), "rb") as fp:
-                items.append((f"fixture_{name}", fp.read()))
+                # 골든 테스트의 `pty_shaped` 와 같은 변환 — 덤프를 PTY 모양(줄 끝 \r\n)
+                # 으로 맞춘다. 안 하면 맥(LF)과 Windows(CRLF) 워크스페이스가 다른
+                # 바이트를 먹고, LNM off(CL 78030) 뒤로 맥에서만 갈린다(pytmux-530).
+                data = fp.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+                items.append((f"fixture_{name}", data))
     return items
 
 

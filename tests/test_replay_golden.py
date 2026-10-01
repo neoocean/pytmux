@@ -53,13 +53,24 @@ def _digest(data: bytes, cols: int, rows: int) -> str:
     return hashlib.sha256(_frames(data, cols, rows).encode()).hexdigest()
 
 
+def pty_shaped(data: bytes) -> bytes:
+    """화면 덤프 `.txt` 를 **PTY 가 실제로 주는 모양**(줄 끝 `\\r\\n`)으로 맞춘다.
+
+    p4 `text` 파일은 Windows 워크스페이스에선 CRLF, 맥·리눅스에선 LF 로 풀린다. 그대로
+    먹이면 플랫폼마다 다른 바이트가 들어가고, LNM 이 꺼진(pytmux-511 · CL 78030) 뒤로
+    맨 LF 는 열을 안 되돌려 맥에서만 36건이 계단이 졌다(pytmux-530). 실 PTY 출력은 줄
+    규율(ONLCR)을 지나 `\\r\\n` 으로 오므로 덤프도 그 모양으로 먹인다.
+    `client/scripts/gen_wire_fixture.py` 가 같은 변환을 한다(두 코퍼스는 같아야 한다)."""
+    return data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+
+
 def _corpus():
     """(이름, 원시바이트) 목록 — 픽스처(실 화면 덤프) + 합성 경계 케이스."""
     items = [(f"synth_{k}", v.encode()) for k, v in sorted(_SYNTH.items())]
     for path in sorted(os.listdir(FIXTURES)):
         if path.endswith(".txt"):
             with open(os.path.join(FIXTURES, path), "rb") as fp:
-                items.append((f"fixture_{path}", fp.read()))
+                items.append((f"fixture_{path}", pty_shaped(fp.read())))
     return items
 
 

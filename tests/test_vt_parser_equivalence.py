@@ -192,7 +192,10 @@ def _golden_signatures() -> dict:
     # 실 캡처 픽스처(80x24).
     for path in sorted(glob.glob(os.path.join(FIXTURES, "*.txt"))):
         with open(path, "rb") as f:
-            data = f.read()
+            # PTY 모양(줄 끝 \r\n)으로 맞춘다 — p4 text 파일은 Windows 에선 CRLF·맥에선
+            # LF 로 풀려, LNM off(CL 78030) 뒤로 맥에서만 골든이 갈렸다(pytmux-530 ·
+            # test_replay_golden.pty_shaped 와 같은 변환).
+            data = f.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
         p = Pane(-1, -1, 80, 24)
         p.feed(data)
         out[f"fixture_{os.path.basename(path)}"] = sig(p)
