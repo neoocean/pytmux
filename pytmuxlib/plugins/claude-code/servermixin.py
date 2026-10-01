@@ -161,8 +161,9 @@ _RC_CONFIRM_FRAMES = 30
 #
 # ★ 세션 피드백 프롬프트("How is Claude doing this session?")는 이 Esc 경로를 더 이상
 # 타지 않는다(제보 2026-06-20): 단일 Esc 가 종종 Dismiss 대신 작동 중인 턴을
-# interrupt 했다. 이 배너는 컴포저 **위**에 비모달로 떠 있어 안 닫아도 작업을 막지 않고,
-# server_filter_rows(_blank_feedback_banner)가 화면에서 완전히 가려 키 주입이 불필요하다.
+# interrupt 했다. 이 배너는 컴포저 **위**에 비모달로 떠 있어 안 닫아도 작업을 막지 않는다.
+# 아예 안 보이게 하려면 CLI 설정 `feedbackSurveyRate: 0` 을 쓴다(pytmux-523 — 배너를
+# 가리던 claude-disable-feedback 플러그인은 그 설정이 대신해서 지웠다).
 _FEEDBACK_DISMISS_KEY = b"\x1b"
 # 조직 관리 설정 승인 화면("Managed settings require approval")의 기본선택 확정 키
 # = Enter(요청 2026-07-24). 조직 계정으로 `claude` 를 띄우면 부팅이 이 화면에서 멈춰
@@ -1537,9 +1538,9 @@ class ServerClaudeMixin:
         # Esc 를 주입하지 않는다(제보 2026-06-20): 단일 Esc 가 종종 Dismiss
         # 대신 작동 중인 턴을 interrupt 했다 — busy 중 배너 텍스트가 화면에 매칭
         # 되거나 feed 지연으로 stale 매칭이 남으면 Esc 가 interrupt 키로 해석된다.
-        # 이 배너는 비모달이라 안 닫아도 컴포저를 막지 않고(사용자의 다음 Enter/
-        # Space 가 자연히 닫는다), server_filter_rows(_blank_feedback_banner)가
-        # 배너를 화면에서 완전히 가린다 — 키 주입 없는 표시 필터만으로 충분하다.
+        # 이 배너는 비모달이라 안 닫아도 컴포저를 막지 않는다(사용자의 다음 Enter/
+        # Space 가 자연히 닫는다). 아예 안 띄우는 길은 CLI 설정 `feedbackSurveyRate: 0`
+        # 이다(pytmux-523 — 가리던 claude-disable-feedback 플러그인은 지웠다).
         if claude_remote_menu(txt):
             if not p._rc_menu_active:
                 p._rc_menu_active = True

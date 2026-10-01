@@ -128,15 +128,17 @@
       </section>
 
       <section>
-        <h2>세션 이름 통일 · 세션 재개 · 피드백 숨김</h2>
+        <h2>세션 이름 통일 · 세션 재개 · 피드백 문구</h2>
         <ul>
           <li><strong>이름 통일</strong> — <code>namesync</code>(<code class="nb">claude-name-sync</code> 플러그인)로
             특정 디렉토리에서 Claude 를 돌리면 탭·패널·Claude 세션 이름을 키워드로 <strong>한 번</strong> 자동 통일합니다.
             한 번 맞춘 뒤에는 그 탭·패널·Claude 세션인 한 다시 건드리지 않아, 그 뒤 손수 지은 이름이 그대로 유지됩니다(새 셸을 띄우면 다시 한 번 통일).</li>
           <li><strong>세션 재개</strong> — <code class="nb">claude-resume</code>(별칭 <code>cr</code>)로 이 머신의 Claude
             세션 목록을 보고 <kbd>Enter</kbd> 로 새 탭에서 재개합니다.</li>
-          <li><strong>피드백 숨김</strong> — <code>claude-disable-feedback</code> 플러그인이 Claude 의 피드백
-            유도 문구를 숨깁니다(별도 명령 없음).</li>
+          <li><strong>피드백 문구</strong> — Claude 의 시작 팁(<code>Use /feedback …</code>)과 세션 평가 배너는
+            이제 <strong>Claude Code 설정</strong>으로 끕니다. <code>~/.claude/settings.json</code> 에
+            <code>"spinnerTipsEnabled": false</code>(팁 전체)와 <code>"feedbackSurveyRate": 0</code>(평가 배너)을 적으면 됩니다.
+            예전에 이 문구를 화면에서 가리던 <code>claude-disable-feedback</code> 플러그인은 그래서 없앴습니다.</li>
           <li><strong>세션당 클리어</strong> — <code class="nb">prompt-clear</code> 로 매 완료마다 문서화 후 <code>/clear</code>
             하는 모드를 켤 수 있습니다.</li>
         </ul>

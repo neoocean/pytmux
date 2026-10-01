@@ -745,9 +745,10 @@ class Registry:
 
     def server_filter_rows(self, server, pane, rows) -> list:
         """render 된 행 목록(행 = [text, style] 런 목록)을 클라 전송 직전에 플러그인이
-        변형할 기회. claude-disable-feedback 가 Claude 패널의 '/feedback 팁'·세션 종료
-        평가 배너를 공백으로 가린다(요청 2026-06-17·2026-06-18). 플러그인은 변형 시
-        **새 리스트**를 돌려야 한다(render 캐시를
+        변형할 기회. 지금은 소비자가 없다 — 유일한 소비자였던 claude-disable-feedback
+        ('/feedback 팁'·세션 종료 평가 배너 가림)는 Claude Code CLI 설정
+        (`spinnerTipsEnabled`·`feedbackSurveyRate`)이 같은 일을 해서 지웠다(pytmux-523).
+        훅 계약은 남긴다. 플러그인은 변형 시 **새 리스트**를 돌려야 한다(render 캐시를
         공유하므로 in-place 금지). 아무도 변형 안 하면 원본을 그대로 돌려, 핫패스 비용은
         Claude 패널의 짧은 행 스캔뿐이다(delete-to-disable)."""
         for p in self.plugins:

@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
-<title>claude-disable-feedback — pytmux 플러그인</title>
-<meta name="description" content="pytmux claude-disable-feedback 플러그인 — Claude 시작 팁·세션 종료 평가 배너를 화면에서 가림.">
+<title>claude-disable-feedback — 없앤 플러그인</title>
+<meta name="description" content="없앤 플러그인 — Claude 시작 팁·세션 평가 배너는 이제 Claude Code 설정으로 끕니다.">
 <link rel="stylesheet" href="../../styles.css">
 <script>
   var _paq = window._paq = window._paq || [];
@@ -23,30 +23,25 @@
     <main class="doc">
 
       <header style="margin-bottom:8px;">
-        <span class="kicker">플러그인 · Claude</span>
+        <span class="kicker">플러그인 · Claude · 없앰</span>
         <h1 style="font-size:36px;letter-spacing:-1px;margin:6px 0 10px;">claude-disable-feedback</h1>
-        <p style="font-size:18px;">Claude Code 가 띄우는 <strong>시작 팁(/feedback 안내)과 세션 종료 평가 배너</strong>를 화면에서 가려 줍니다. 명령이 없는 순수 표시 필터 플러그인입니다.</p>
+        <p style="font-size:18px;">이 플러그인은 <strong>없앴습니다</strong>(2026-10-01). Claude Code 가 같은 일을 <strong>설정</strong>으로 하게 됐기 때문입니다.</p>
       </header>
       <section>
-        <h2 style="border-top:none;">동작 방식</h2>
-        <p>서버가 패널 행을 클라이언트로 보내기 직전에 해당 문구 행만 공백으로 바꿉니다(<code>server_filter_rows</code> 훅). Claude 에 키를 주입하지 않으므로 세션 상태에 영향이 없고, 플러그인을 끄면 문구가 다시 보입니다.</p>
+        <h2 style="border-top:none;">대신 이렇게 끕니다</h2>
+        <p><code>~/.claude/settings.json</code> 에 두 줄을 적습니다.</p>
+        <pre><code>{
+  "spinnerTipsEnabled": false,
+  "feedbackSurveyRate": 0
+}</code></pre>
+        <ul>
+          <li><code>spinnerTipsEnabled</code> — 시작·작업 중 팁(<code>Use /feedback to help us improve!</code> 포함)을 모두 끕니다.</li>
+          <li><code>feedbackSurveyRate</code> — 세션 평가 배너(<code>How is Claude doing this session?</code>)를 끕니다. 환경 변수 <code>CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1</code> 로도 됩니다.</li>
+        </ul>
       </section>
       <section>
-        <h2>켜고 끄기</h2>
-        <p>별도 명령이 없습니다. <code>:plugins</code> 관리 팝업에서 켜고 끕니다.</p>
-        <figure>
-          <img src="../../image/40-settings.svg" alt="설정/플러그인 관리">
-          <figcaption>통합 설정 팝업 — 플러그인 on/off 도 여기서.</figcaption>
-        </figure>
-      </section>
-
-      <section>
-        <h2>끄기 · 제거</h2>
-        <p>
-          <code>:plugins</code> 관리 팝업에서 끄거나(가역), <code>pytmuxlib/plugins/claude-disable-feedback/</code>
-          디렉토리를 지우면(delete-to-disable) 명령·자동완성·메뉴 어디에도 나타나지 않고 조용히
-          사라집니다. 코어는 영향받지 않습니다. <a href="/guide/plugins">← 플러그인 개요</a>
-        </p>
+        <h2>왜 없앴나</h2>
+        <p>이 플러그인은 문구를 <strong>글자 그대로 찾아</strong> 화면에서 공백으로 덮었습니다. Claude Code 가 문구를 조금만 바꿔도 조용히 안 먹는 방식이라, 설정이 생긴 뒤로는 둘 이유가 없었습니다. <a href="/guide/plugins">← 플러그인 개요</a></p>
       </section>
 
     </main>

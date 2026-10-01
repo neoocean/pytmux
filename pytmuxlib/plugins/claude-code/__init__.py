@@ -655,9 +655,10 @@ def _pane_claude_entry(p, full):
 
 
 # Claude Code 피드백 권유 문구(시작 팁 "Tip: Use /feedback …" + 세션 종료 평가 배너
-# "How is Claude doing this session?")를 화면에서 가리는 기능은 별도 플러그인
-# claude-disable-feedback 로 분리했다(2026-06-20). server_filter_rows 훅은 레지스트리가
-# 모든 활성 플러그인에 체인하므로, 그 플러그인이 자기 server_filter_rows 에서 가린다.
+# "How is Claude doing this session?")를 화면에서 가리던 별도 플러그인
+# claude-disable-feedback 는 지웠다(pytmux-523) — CLI 설정이 같은 일을 한다:
+# 팁은 `spinnerTipsEnabled: false`, 평가 배너는 `feedbackSurveyRate: 0`
+# (또는 env `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1`).
 
 
 # ---- Claude 팝업(클라) — Phase 2a 에서 코어 client.py 에서 이리로 이전 ----

@@ -1352,7 +1352,7 @@ async def test_feedback_prompt_no_key_injection():
     # 에 대한 Esc 자동 주입이 종종 Dismiss 대신 작동 중인 턴을 **interrupt** 했다(busy 중
     # 배너 텍스트 매칭/feed 지연 stale 매칭 → 단일 Esc 가 interrupt 키로 해석). 그래서
     # 피드백 프롬프트는 더 이상 **어떤 키도 주입하지 않는다** — 비모달이라 안 닫아도 작업을
-    # 막지 않고, server_filter_rows(_blank_feedback_banner)가 화면에서 가린다(표시 필터만).
+    # 막지 않는다. 아예 안 띄우는 길은 CLI 설정 `feedbackSurveyRate: 0` 이다(pytmux-523).
     import importlib
     from pytmuxlib.claude import claude_feedback_prompt
     # serverclaude 는 claude-code 플러그인으로 이전됨(하이픈 디렉토리 → importlib).
