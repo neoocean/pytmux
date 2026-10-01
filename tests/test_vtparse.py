@@ -927,3 +927,68 @@ async def test_grid_content_matches_an_independent_model():
             assert got == ref.text(y), (
                 f"cols={cols} row={y}\n  native={got!r}\n  참조  ={ref.text(y)!r}"
                 f"\n  조작={b''.join(trace)!r}")
+
+
+async def test_ed3_clears_the_scrollback():
+    """`ESC[3J`(ED 3)는 화면뿐 아니라 **스크롤백까지** 지운다(pytmux-510).
+
+    `/clear` 류가 ED 2 와 **함께** 보내는 것이 이 시퀀스다. 종전엔 `_NativeBase` 가
+    2 와 3 을 같게 다뤄 뷰포트만 비고 history 는 그대로였다 — 「지웠는데 위로 올리면
+    옛 대화가 그대로」.
+
+    되돌리면 실패해야 하는 오라클:
+      · `erase_in_display` 재정의를 지우면 → ①이 실패
+      · `how != 3` 가드를 없애 ED 2 도 비우게 하면 → ②가 실패
+      · `on_history_cleared` 호출을 지우면 → ③이 실패
+    """
+    from pytmuxlib.nativescreen import NativeScrollbackScreen
+
+    def filled(rows=4, cols=20):
+        s = NativeScrollbackScreen(cols, rows, history=100, ratio=0.5)
+        tk = VTTokenizer(s)
+        for i in range(rows + 3):        # 화면 높이보다 많이 써서 위로 밀어낸다
+            tk.feed(("line%d\r\n" % i).encode())
+        return s, tk
+
+    # ① ED 3 은 스크롤백을 비운다.
+    s, tk = filled()
+    assert len(s.history.top) > 0, "선행조건: 스크롤백이 쌓여 있어야 한다"
+    tk.feed(b"\x1b[3J")
+    assert len(s.history.top) == 0, (
+        "ED 3 인데 스크롤백이 남았다: %d줄" % len(s.history.top))
+
+    # ② ED 2 는 화면만 비운다(스크롤백은 남는다) — 대조군.
+    s, tk = filled()
+    before = len(s.history.top)
+    tk.feed(b"\x1b[2J")
+    assert len(s.history.top) == before, (
+        "ED 2 가 스크롤백까지 비웠다 %d → %d" % (before, len(s.history.top)))
+    assert all(not row.strip() for row in s.display), "ED 2 는 화면을 비운다"
+
+    # ③ 비웠으면 패널에 알린다(스크롤 위치·검색 매치가 절대 인덱스라 함께 되돌려야).
+    s, tk = filled()
+    called = []
+    s.on_history_cleared = lambda: called.append(1)
+    tk.feed(b"\x1b[3J")
+    assert called == [1], "스크롤백을 비웠는데 on_history_cleared 를 안 불렀다"
+    # 비울 것이 없으면 훅도 안 부른다(공회전 방지).
+    tk.feed(b"\x1b[3J")
+    assert called == [1], "빈 스크롤백에 ED 3 — 훅을 또 불렀다"
+
+
+async def test_pane_resets_scroll_when_app_clears_the_scrollback():
+    """호출부 오라클(pytmux-510): 훅을 **실제로 꽂았고** 패널이 좌표계를 되돌린다.
+
+    ⛔ 화면 모델만 시험하면 `_make_main_screen` 에서 `on_history_cleared = …` 한 줄을
+    지워도 통과한다(공허 통과 — CLAUDE.md §표시 기능은 호출부까지 단언).
+    """
+    p = Pane(-1, -1, 20, 4, vt_parser="native")
+    for i in range(8):
+        p.feed(("line%d\r\n" % i).encode())
+    assert len(p.screen.history.top) > 0, "선행조건: 스크롤백"
+    p.scroll = 3
+    p._match_abs = 2
+    p.feed(b"\x1b[3J")
+    assert len(p.screen.history.top) == 0, "패널 경로에서도 스크롤백이 비어야 한다"
+    assert p.scroll == 0, "스크롤백이 사라졌는데 scroll 이 %d 로 남았다" % p.scroll
+    assert p._match_abs is None, "검색 매치의 절대 인덱스가 남았다"

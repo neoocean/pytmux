@@ -1710,17 +1710,30 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _apply_ambiguous_wide(self, wide: bool):
             """모호폭 wide 모드를 런타임 전환한다(:set ambiguous-width). 클라 폭 모델
             (char_cells·Rich/Textual 측정)을 바꾸고, 서버에 통지(set_ambig)해 서버 pyte
-            격자도 같은 폭으로 맞춘 뒤 앱을 SIGWINCH repaint 시킨다. 같은 모드면 no-op."""
+            격자도 같은 폭으로 맞춘 뒤 앱을 SIGWINCH repaint 시킨다.
+
+            ☠☠ **서버 통지는 «언제나» 한다 — 클라 값이 이미 같아도**(pytmux-507).
+            폭 모델은 **클라 프로세스 전역**과 **서버 프로세스 전역** 두 벌이고 둘은 서로를
+            모른다. 종전에는 클라 값이 같으면 첫 줄에서 돌아가 서버에 **아무것도 안
+            알렸다** — 그래서 서버가 wide 인데 클라가 narrow 인 상태에 빠지면
+            `:set ambiguous-width narrow` 가 **아무 일도 안 하는 명령**이 됐다. 사용자에게는
+            「바꿨는데 화면이 그대로다」로만 보인다(실측 2026-09-15). 게다가 읽기
+            (`set` 의 현재값 표시)는 **클라 값**이라 그 어긋남이 화면에 안 드러난다.
+            ⇒ 이 명령은 「내 값을 바꾼다」가 아니라 **「둘을 이 값으로 맞춘다」**이다.
+
+            ⚠ 로컬 재계산(탭바·상태줄·합성)은 **바뀐 때만** 한다 — 안 바뀌었으면 다시
+            그릴 것이 없고, 서버가 보내올 full 프레임이 화면을 새로 채운다."""
             from . import cellwidth
-            if cellwidth.ambiguous_wide() == wide:
-                return
-            cellwidth.set_ambiguous_wide(wide)        # 클라측 Textual/char_cells 폭
+            changed = cellwidth.ambiguous_wide() != wide
+            if changed:
+                cellwidth.set_ambiguous_wide(wide)    # 클라측 Textual/char_cells 폭
             if self.writer:                            # 서버 pyte 격자 + 앱 repaint
                 asyncio.create_task(write_msg(
                     self.writer, {"t": "set_ambig", "wide": wide}))
-            self._update_tabbar()                      # 탭바 라벨 폭 재계산
-            self.status.refresh()
-            self._composite()                          # 패널 합성 새 폭으로
+            if changed:
+                self._update_tabbar()                  # 탭바 라벨 폭 재계산
+                self.status.refresh()
+                self._composite()                      # 패널 합성 새 폭으로
 
         # ---- 복사/버퍼 ----
         # OS 클립보드 입출력은 앱 상태 비의존이라 clientclip.py 모듈 자유함수로

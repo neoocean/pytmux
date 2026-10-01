@@ -536,7 +536,10 @@ async def test_set_ambiguous_width_runtime_toggle():
             app._apply_ambiguous_wide(False)
             assert cellwidth.ambiguous_wide() is False
             await pilot.pause(0.2)
-            # 같은 모드 재적용은 no-op(크래시·중복 통지 없음)
+            # 같은 모드 재적용도 크래시 없이 동작한다(값은 그대로).
+            # ⚠ 종전엔 여기가 「중복 통지 없음」이었다 — 그 no-op 이 pytmux-507 이다.
+            #    서버 통지까지 안 하므로, 서버가 wide 인 채 클라가 narrow 면 사용자가
+            #    그 명령으로 **영영 못 고친다**. 통지를 단언하는 것은 아래 전용 시험이다.
             app._apply_ambiguous_wide(False)
             assert cellwidth.ambiguous_wide() is False
             # **명령 경로(apply_option)** 도 크래시 없이 동작해야 한다 — `set
@@ -551,6 +554,60 @@ async def test_set_ambiguous_width_runtime_toggle():
             # 그러면 finally 의 복원 후 늦게 처리된 통지가 서버 cellwidth 를 다시 켜
             # 전역이 wide 로 새 다음 테스트(test_remote 등)를 오염시킨다(레이스).
             await pilot.pause(0.3)
+            cellwidth.set_ambiguous_wide(False)
+    await _with_app(body)
+
+
+async def test_ambiguous_width_always_notifies_the_server(tmp_path=None):
+    """`:set ambiguous-width` 는 **클라 값이 이미 같아도 서버에 통지한다**(pytmux-507).
+
+    # 왜 이것이 중요한가
+
+    폭 모델은 **클라 프로세스 전역**과 **서버 프로세스 전역** 두 벌이고 둘은 서로를 모른다.
+    종전 `_apply_ambiguous_wide` 는 클라 값이 같으면 첫 줄에서 돌아가 **서버에 아무것도 안
+    알렸다**. 그래서 서버가 wide 인데 클라가 narrow 인 상태에 빠지면
+    `set ambiguous-width narrow` 가 **아무 일도 안 하는 명령**이 된다 — 사용자에게는
+    「바꿨는데 화면이 그대로다」로만 보이고(실측 2026-09-15 · Claude Code 패널이 계속
+    깨진 채였다), 읽기는 **클라 값**이라 어긋남이 화면에 드러나지도 않는다.
+
+    ⇒ 이 명령의 뜻은 「내 값을 바꾼다」가 아니라 **「둘을 이 값으로 맞춘다」**이다.
+
+    되돌리면 실패해야 하는 것: `if cellwidth.ambiguous_wide() == wide: return` 을
+    되살리면 ⑵ 가 통지 0건으로 실패한다.
+    """
+    from pytmuxlib import client as client_mod
+
+    async def body(app, pilot, srv):
+        from pytmuxlib import cellwidth
+        sent = []
+        real = client_mod.write_msg
+
+        async def spy(writer, msg):
+            if isinstance(msg, dict) and msg.get("t") == "set_ambig":
+                sent.append(msg)
+            return await real(writer, msg)
+
+        try:
+            cellwidth.set_ambiguous_wide(False)
+            with harness.patched(client_mod, write_msg=spy):
+                # ⑴ 실제로 바뀌는 전환은 당연히 통지한다(대조군 — 이게 없으면 ⑵ 가
+                #    「통지 경로가 아예 살아 있나」를 못 가른다).
+                app._apply_ambiguous_wide(True)
+                await pilot.pause(0.3)
+                assert [m for m in sent if m["wide"] is True], \
+                    "바뀌는 전환조차 통지가 안 갔다 — 통지 경로 자체가 죽었다"
+                # ⑵ 클라가 **이미** narrow 인데 narrow 를 다시 걸어도 통지가 가야 한다.
+                app._apply_ambiguous_wide(False)
+                await pilot.pause(0.3)
+                assert cellwidth.ambiguous_wide() is False
+                sent.clear()
+                app._apply_ambiguous_wide(False)       # 같은 값 재적용
+                await pilot.pause(0.3)
+                assert [m for m in sent if m["wide"] is False], (
+                    "클라 값이 같다고 서버에 안 알렸다 — 서버가 wide 면 사용자가 "
+                    "이 명령으로 영영 못 고친다(pytmux-507)")
+        finally:
+            await pilot.pause(0.3)     # 늦게 처리될 set_ambig 를 배수한 뒤 복원
             cellwidth.set_ambiguous_wide(False)
     await _with_app(body)
 

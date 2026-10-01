@@ -486,6 +486,16 @@ class _NativeBase:
         if mo.LNM in self.mode:
             self.carriage_return()
 
+    def newline(self) -> None:
+        """NEL(`ESC E`) — 한 줄 내리고 **열을 1 로** 되돌린다(LNM 과 무관).
+
+        ⛔ 종전엔 `vtconst.ESCAPE["E"]` 가 `linefeed` 를 가리켰다 — 그래서 NEL 의
+        CR 은 **LNM 이 켜져 있다는 우연**에 얹혀 있었다(pytmux-511). LNM 을 실기
+        단말과 같은 기본값(reset)으로 되돌리면 그 우연이 사라져 NEL 이 조용히
+        IND 로 격하되므로, 제 뜻을 제 메서드로 적는다."""
+        self.index()
+        self.carriage_return()
+
     def tab(self) -> None:
         for stop in sorted(self.tabstops):
             if self.cursor.x < stop:
@@ -879,7 +889,31 @@ class NativeScrollbackScreen(_NativeBase):
                  history: int = HISTORY, ratio: float = 0.5) -> None:
         # super().__init__ 가 reset() 을 부르므로 history 를 먼저 만든다.
         self.history = _History(history)
+        # 스크롤백이 **앱의 명령으로** 비워졌음을 알리는 훅(model.Pane 이 꽂는다 —
+        # write_process_input 과 같은 자리). 화면 모델은 패널을 모르는데 스크롤 위치·
+        # 검색 매치는 스크롤백 길이를 기준으로 한 **절대 인덱스**라, 비운 사실을
+        # 패널이 알아야 그 좌표계를 함께 되돌린다. 안 꽂혀 있으면 무동작.
+        self.on_history_cleared = None
         super().__init__(columns, lines)
+
+    def erase_in_display(self, how=0, *args, **kwargs) -> None:
+        """ED 3(`ESC[3J`)은 화면뿐 아니라 **스크롤백까지** 지운다(pytmux-510).
+
+        ⛔ 종전엔 `_NativeBase.erase_in_display` 가 `how in (2, 3)` 을 **같게** 다뤄
+        뷰포트만 비고 `history.top/bottom` 은 손도 안 댔다 — `/clear` 류가 ED 2 와
+        함께 보내는 것이 정확히 이 시퀀스라, 「지웠는데 위로 올리면 옛 대화가 그대로」
+        였다(실측 2026-09-21: 스크롤백 5줄에 `ESC[3J` → 그대로 5줄). xterm 의 「clear
+        saved lines」·tmux 와 같게 맞춘다.
+        """
+        super().erase_in_display(how, *args, **kwargs)
+        if how != 3:
+            return
+        if not (self.history.top or self.history.bottom):
+            return      # 비울 것이 없으면 훅도 안 부른다(공회전 방지)
+        self.history.top.clear()
+        self.history.bottom.clear()
+        if self.on_history_cleared is not None:
+            self.on_history_cleared()
 
     def index(self) -> None:
         top, bottom = self.margins or Margins(0, self.lines - 1)
