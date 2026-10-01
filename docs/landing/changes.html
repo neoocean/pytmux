@@ -79,6 +79,20 @@
       </div>
     </header>
 
+    <section class="cl-day" id="d-2026-10-02">
+      <h2>2026-10-02 <span class="pill">금요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/9754e549839b133c0ca9df7c12db76a2c117a5a7.zip" rel="noopener" title="2026-10-02 마지막 소스 커밋(cbc694e) 시점 · 파이썬 TUI 만(client/ 제외) 소스 zip">pytmux zip ⬇</a> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/cbc694e8be52ca44adb8c2903cdcbfb011fc27c0.zip" rel="noopener" title="2026-10-02 마지막 소스 커밋(cbc694e) 시점 · GUI 소스와 선빌드 바이너리까지 담은 전체 소스 zip">pytmux-gui.zip ⬇</a></h2>
+      <ul>
+        <li><span class="pill stable">Claude</span> <strong>Claude Code 가 이제 스스로 하는 일 넷을 pytmux 에서 걷었습니다.</strong>
+          Claude Code 는 사용량 한도가 풀리면 열린 세션을 <strong>스스로 이어 가고</strong>(2.1.234~), 대화형 세션을 auto 권한 모드로 시작합니다(2.1.284~). 시작 규칙·피드백 문구·원격 제어 자동 연결도 자기 설정으로 다룹니다.
+          겹친 채 두면 서로 방해합니다 — 예를 들어 pytmux 가 한도 리셋 시각에 대신 치던 <span class="inline-code">continue</span> 가 Claude Code 의 대기를 끊어 버립니다. 그래서 다음을 없앴고, 각각 대신 쓸 설정을 가이드에 적었습니다.
+          <br>· 토큰리밋 자동 재개(<span class="inline-code">prefix R</span>·상태줄 <span class="inline-code">AR</span>·<span class="inline-code nb">auto-resume</span>) → Claude Code 의 「Continue automatically at usage limit」(기본 켜짐)
+          <br>· <span class="inline-code nb">auto-launch</span>·<span class="inline-code nb">claude-auto-mode</span> → 기본 auto 모드 · <span class="inline-code">"remoteControlAtStartup": true</span>
+          <br>· <span class="inline-code nb">claude-rules</span> → <span class="inline-code">SessionStart</span> 훅(적어 두었던 규칙은 상태 디렉터리의 <span class="inline-code">…claude-rules.retired.txt</span> 로 한 번 보존됩니다)
+          <br>· <span class="inline-code nb">claude-disable-feedback</span> 플러그인 → <span class="inline-code">"spinnerTipsEnabled": false</span> · <span class="inline-code">"feedbackSurveyRate": 0</span>
+          <br>전송 오류 자동 재시도(<span class="inline-code nb">auto-retry</span>)는 그대로입니다 — Claude Code 는 재시도를 다 쓰면 대화형 턴을 끝내기 때문입니다. 파이썬·GUI 클라이언트 둘 다에 적용됩니다. 자세한 설정은 <a href="/guide/claude">8. Claude Code 연동</a>.</li>
+      </ul>
+    </section>
+
     <section class="cl-day" id="d-2026-09-14">
       <h2>2026-09-14 <span class="pill">월요일</span> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/89793cd5f644bfb7243564671a9ab6febc507013.zip" rel="noopener" title="2026-09-14 마지막 소스 커밋(cd73017) 시점 · 파이썬 TUI 만(client/ 제외) 소스 zip">pytmux zip ⬇</a> <a class="day-zip" href="https://github.com/neoocean/pytmux/archive/cd7301781570f08fbc3e4ceaba67d5d1d9cb2e3c.zip" rel="noopener" title="2026-09-14 마지막 소스 커밋(cd73017) 시점 · GUI 소스와 선빌드 바이너리까지 담은 전체 소스 zip">pytmux-gui.zip ⬇</a></h2>
       <ul>

@@ -75,14 +75,18 @@
       <!-- 최근 수정사항 — 랜딩(/)과 동일한 한 덩어리 박스(정적 폴백 + changes 최신 미러). -->
       <div class="cl-news">
         <div class="cl-news-head">
-          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-09-14 <span class="pill">월요일</span></span>
+          <span class="cl-news-date" id="cl-news-date">🛠 최근 수정사항 · 2026-10-02 <span class="pill">금요일</span></span>
           <a class="cl-news-more" href="/changes">전체 변경 내역 →</a>
         </div>
         <ul id="cl-news-list">
-          <li><span class="pill stable">화면</span> <strong>한글이 많은 화면에서 Claude Code 출력이 겹치거나 줄이 밀리고 두 벌로 남던 것을 고쳤습니다.</strong>
-            화면 안 격자는 폭이 2칸인 글자(한글 등)를 <strong>앞칸 글자 + 뒤칸 빈칸</strong>의 짝으로 관리하는데, 화면을 지우거나 덮어쓰는 여러 경로 중 일부가 이 짝을 지키지 않고 있었습니다. 짝의 절반만 지워지면 그 줄의 실제 폭이 화면 폭과 어긋나, 뒤따르는 글자가 전부 한 칸씩 밀리고 옛 글자 조각이 섞여 보이거나 같은 줄이 두 벌로 남았습니다.
-            <br>Claude Code(Ink)는 화면을 커서로 다시 올라가 덮어쓰고 줄 끝을 지우는 방식이라 이 어긋남이 자주 한글 글자 한가운데서 일어났습니다 — 그래서 한글이 많은 화면에서 유독 심하게 보였습니다.
-            <br>화면 격자는 서버가 관리하므로, 같은 고침이 <strong>파이썬 클라이언트·GUI 클라이언트 둘 다</strong>에 적용됩니다.</li>
+          <li><span class="pill stable">Claude</span> <strong>Claude Code 가 이제 스스로 하는 일 넷을 pytmux 에서 걷었습니다.</strong>
+            Claude Code 는 사용량 한도가 풀리면 열린 세션을 <strong>스스로 이어 가고</strong>(2.1.234~), 대화형 세션을 auto 권한 모드로 시작합니다(2.1.284~). 시작 규칙·피드백 문구·원격 제어 자동 연결도 자기 설정으로 다룹니다.
+            겹친 채 두면 서로 방해합니다 — 예를 들어 pytmux 가 한도 리셋 시각에 대신 치던 <span class="inline-code">continue</span> 가 Claude Code 의 대기를 끊어 버립니다. 그래서 다음을 없앴고, 각각 대신 쓸 설정을 가이드에 적었습니다.
+            <br>· 토큰리밋 자동 재개(<span class="inline-code">prefix R</span>·상태줄 <span class="inline-code">AR</span>·<span class="inline-code nb">auto-resume</span>) → Claude Code 의 「Continue automatically at usage limit」(기본 켜짐)
+            <br>· <span class="inline-code nb">auto-launch</span>·<span class="inline-code nb">claude-auto-mode</span> → 기본 auto 모드 · <span class="inline-code">"remoteControlAtStartup": true</span>
+            <br>· <span class="inline-code nb">claude-rules</span> → <span class="inline-code">SessionStart</span> 훅(적어 두었던 규칙은 상태 디렉터리의 <span class="inline-code">…claude-rules.retired.txt</span> 로 한 번 보존됩니다)
+            <br>· <span class="inline-code nb">claude-disable-feedback</span> 플러그인 → <span class="inline-code">"spinnerTipsEnabled": false</span> · <span class="inline-code">"feedbackSurveyRate": 0</span>
+            <br>전송 오류 자동 재시도(<span class="inline-code nb">auto-retry</span>)는 그대로입니다 — Claude Code 는 재시도를 다 쓰면 대화형 턴을 끝내기 때문입니다. 파이썬·GUI 클라이언트 둘 다에 적용됩니다. 자세한 설정은 <a href="/guide/claude">8. Claude Code 연동</a>.</li>
         </ul>
       </div>
 
