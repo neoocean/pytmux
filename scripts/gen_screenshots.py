@@ -967,14 +967,13 @@ async def usage_view(app, pilot):
 
 
 # 진짜 Claude Code 한 세션에서 캡처하는 §11 컷 묶음(라이브 — 실제 API 호출).
-CLAUDE_OUTPUTS = ["11-claude", "12-claude-autoresume", "13-perm-mode",
-                  "22-claude-real"]
+CLAUDE_OUTPUTS = ["11-claude", "13-perm-mode", "22-claude-real"]
 
 
 async def _claude_suite_once():
-    """진짜 `claude` 한 세션을 운전해 §11 세부 컷 4장을 모두 캡처한다.
+    """진짜 `claude` 한 세션을 운전해 §11 세부 컷 3장을 모두 캡처한다.
 
-    프롬프트 1회로 idle(응답완료)·autoresume·권한모드 팝업을 찍고, 프롬프트
+    프롬프트 1회로 idle(응답완료)·권한모드 팝업을 찍고, 프롬프트
     2회째의 busy 상태로 처리중(◐) 컷을 찍는다(환영 배너가 위로 밀려 계정
     이름이 안 보이는 상태). 저장 시 _redact_svg 가 이메일 등 PII 를 마스킹한다."""
     srv, task, sock = await server_only()
@@ -1001,12 +1000,6 @@ async def _claude_suite_once():
             await _wait_claude(pilot, app, "idle")
             await pilot.pause(0.6)
             await shot(pilot, "22-claude-real")            # 실제 실행(응답완료)
-            # ── 자동재개(AR) 토글 → 상태줄 AR 배지
-            app.send_cmd("set_autoresume")
-            await pilot.pause(0.6)
-            await shot(pilot, "12-claude-autoresume")
-            app.send_cmd("set_autoresume")                 # 원복(off)
-            await pilot.pause(0.3)
             # ── 권한모드 선택 팝업(footer 클릭 상당)
             app.open_perm_mode(aid)
             await pilot.pause(0.5)

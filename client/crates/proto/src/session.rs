@@ -950,14 +950,10 @@ pub struct StatusFlags {
     pub vt_parser: String,
     /// 공유 크기 규칙 이름(서버 옵션).
     pub window_size: String,
-    /// 토큰리밋 **자동재개**가 켜져 있나(claude-code 플러그인 — `prefix R` 로 뒤집는다).
-    ///
-    /// 서버가 활성 패널 기준으로 `status` 에 싣는다. 플러그인이 없으면 그 칸이 안 와
-    /// 기본값 `false` 로 떨어진다 — 그때는 `prefix R` 도 무동작이라 앞뒤가 맞는다.
-    pub autoresume: bool,
     /// 프롬프트 단위 클리어가 켜져 있나(claude-code 플러그인 — 완료마다 문서화+`/clear`).
     ///
-    /// 자동재개와 같은 자리다: 서버가 활성 패널 기준으로 `status` 에 싣고, 플러그인이
+    /// (토큰리밋 자동재개 `autoresume` 칸은 pytmux-526 에서 걷었다 — 옛 서버가 실어 보내도
+    /// 읽지 않는다.) 서버가 활성 패널 기준으로 `status` 에 싣고, 플러그인이
     /// 없으면 칸이 안 와 `false` 다.
     pub prompt_clear: bool,
     /// 출력 캡처(REC)가 켜져 있나 — **rec 서버 플러그인**이 status 에 싣는다.
@@ -1010,7 +1006,6 @@ impl StatusFlags {
             window_size: text("window_size"),
             monitor_activity: flag("monitor_activity"),
             monitor_bell: flag("monitor_bell"),
-            autoresume: flag("autoresume"),
             prompt_clear: flag("prompt_clear"),
             capture: status.fields.get("capture").and_then(serde_json::Value::as_bool),
             capture_path: text("capture_path"),
@@ -1035,16 +1030,16 @@ impl StatusFlags {
         out
     }
 
-    /// **시스템 표식** — 모르고 두면 입력·동작이 달라지는 상태들(줌·동기화·자동재개·
-    /// 프롬프트클리어).
+    /// **시스템 표식** — 모르고 두면 입력·동작이 달라지는 상태들(줌·동기화·
+    /// 프롬프트클리어 · 자동재개는 pytmux-526 에서 걷었다).
     ///
     /// ★ **이름이 「탭」인 것은 옛 자리 때문이다**(pytmux-183). 종전에는 탭바 앞에
     /// 붙었고 근거는 *"눈앞(위쪽)에 있어야 하는 부류"* 였다. 목표는 지금도 옳지만
     /// **정본은 그 목표를 좌하단에서 이룬다** — 그래서 자리를 정본에 맞췄다. 이름은
     /// 호출부가 여럿이라 그대로 두되, 뜻은 「시스템 표식」이다.
     ///
-    /// 낱말이 아니라 **뜻**을 돌려준다([`SysBadge`]) — 뷰가 자동재개 칩에만 클릭을
-    /// 붙여야 하는데, 그 판정을 번역된 글자로 하면 로케일이 바뀌는 순간 조용히 틀린다.
+    /// 낱말이 아니라 **뜻**을 돌려준다([`SysBadge`]) — 뷰가 칩 하나에만 클릭을 붙여야
+    /// 할 때(당시 자동재개) 그 판정을 번역된 글자로 하면 로케일이 바뀌는 순간 조용히 틀린다.
     pub fn tab_badges(&self) -> Vec<base::chrome::SysBadge> {
         use base::chrome::SysBadge;
         let mut out = Vec::new();
@@ -1056,13 +1051,8 @@ impl StatusFlags {
         if self.sync {
             out.push(SysBadge::Sync);
         }
-        // ★ 자동재개는 **꺼져 있을 때가 기본**이라, 켜져 있다는 사실이 보여야 한다 —
-        // 켜 두면 토큰 한도에 걸린 뒤 클라 없이도 서버가 대화를 이어 붙인다. 모르고
-        // 켜 둔 채 자리를 비우면 의도 없이 진행되는 셈이라 동기화와 같은 부류다.
-        if self.autoresume {
-            out.push(SysBadge::AutoResume);
-        }
-        // 자동재개와 같은 이유다 — 켜 두면 완료마다 패널이 문서화+`/clear` 를 돌린다.
+        // 켜 두면 완료마다 패널이 문서화+`/clear` 를 돌린다 — 모르고 켜 둔 채 자리를
+        // 비우면 의도 없이 진행되는 셈이라 동기화와 같은 부류다.
         if self.prompt_clear {
             out.push(SysBadge::PromptClear);
         }

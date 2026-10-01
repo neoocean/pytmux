@@ -225,11 +225,6 @@ static COMMANDS: &[Item] = &[
 /// prefix 모드 키(`clientutil.PREFIX_KEYS`). 네이티브에는 prefix 모드가 아직 없다.
 static PREFIX_KEYS: &[Item] = &[
     i("p_P", Done, "탭 고정 토글"),
-    i(
-        "p_R",
-        Done,
-        "prefix R — 토큰리밋 자동재개 토글(인자 없는 토글) · 켜지면 상태줄에 [자동재개]",
-    ),
     i("p_T", Done, "prefix T - 패널 제목 입력"),
     i("p_amp", Done, "탭 닫기"),
     i("p_arrows", Done, "화살표로 패널 이동"),
@@ -448,7 +443,8 @@ static TABLES_ONLY: &[&[Item]] = &[COMMANDS, PREFIX_KEYS, ESC_KEYS, SETTINGS, SC
 /// 문턱**이다(같은 문서 §5 의 S3). 그때까지 이 숫자를 "GUI 가 다 된다"로 읽지 말 것.
 static SCORE: &[(&str, usize, usize)] = &[
     ("commands", 89, 0),
-    ("prefix_keys", 32, 0),
+    // 32 → 31: prefix R(토큰리밋 자동재개)를 정본·GUI 둘 다에서 걷었다(pytmux-526).
+    ("prefix_keys", 31, 0),
     ("esc_keys", 20, 0),
     ("settings", 38, 0),
     ("screens", 18, 0),

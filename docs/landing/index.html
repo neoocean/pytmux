@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://matomo.woojinkim.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://matomo.woojinkim.org; connect-src 'self' https://matomo.woojinkim.org; base-uri 'self'; frame-ancestors 'self'">
 <title>pytmux — 마우스로 쓰는 tmux, Claude Code 통합 터미널 멀티플렉서</title>
-<meta name="description" content="Python/Textual 로 만든 tmux 유사 터미널 멀티플렉서. 마우스·메뉴 1급 지원, 셸 영속, Claude Code 토큰 추적·자동 재개, 원격 페더레이션. macOS/Linux/Windows.">
+<meta name="description" content="Python/Textual 로 만든 tmux 유사 터미널 멀티플렉서. 마우스·메뉴 1급 지원, 셸 영속, Claude Code 토큰 추적·전송 에러 자동 재시도, 원격 페더레이션. macOS/Linux/Windows.">
 <link rel="stylesheet" href="styles.css">
 <!-- Matomo -->
 <script>
@@ -221,19 +221,18 @@
 
     <div class="feature">
       <div class="ftext">
-        <h3>상태 표시 + 토큰 리밋 자동 재개</h3>
+        <h3>상태 표시 + 권한 모드</h3>
         <p>실행 중인 탭에 상태 아이콘(<strong>대기 ○ / 처리중 ◐ / 리밋 멈춤 ⊘</strong>)을
-           표시하고, 비활성 탭 작업이 끝나면 탭 배경색으로 알립니다. 사용량 리밋에 걸려
-           멈추면 해제 시각을 읽어 <strong>그때 자동으로 재개</strong>합니다.</p>
+           표시하고, 비활성 탭 작업이 끝나면 탭 배경색으로 알립니다. 전송 오류로 멈추면
+           <strong>"계속"</strong> 을 넣어 이어 갑니다(한도 뒤 이어 가기는 Claude Code 가 스스로 합니다).</p>
         <ul>
-          <li><span class="inline-code">prefix R</span> 자동 재개 토글(상태줄 <span class="inline-code">AR</span>)</li>
           <li>권한모드 footer 클릭 → auto / accept / default / plan 선택</li>
           <li>진행을 막는 화면(조직 관리설정 승인)은 <strong>기본 선택 그대로</strong> 자동 통과</li>
         </ul>
       </div>
       <div class="shot">
-        <img src="image/12-claude-autoresume.svg" alt="Claude 자동 재개 상태줄">
-        <div class="cap">12 · 토큰 리밋 자동 재개</div>
+        <img src="image/13-perm-mode.svg" alt="권한 모드 선택 팝업">
+        <div class="cap">13 · 권한 모드 선택</div>
       </div>
     </div>
 

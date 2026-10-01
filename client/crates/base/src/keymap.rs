@@ -381,18 +381,6 @@ pub enum Action {
     /// 자동재개와 같은 부류의 순수 토글이다 — 화면이 없고, 상태는 상태줄 표식
     /// `[프롬프트클리어]` 로 보인다(proto `StatusFlags`).
     TogglePromptClear,
-    /// 토큰리밋 **자동재개**를 뒤집는다(`prefix R` — 파이썬 `p_R`).
-    ///
-    /// 플러그인(claude-code)이 소유한 조작이지만 **화면이 없는 순수 토글**이라, 결정 2
-    /// (「플러그인 = 화면까지 재현」)와 G7 결론(「켜고 끌 수는 있지만 그리지는 않는다」)이
-    /// 여기서는 갈리지 않는다. 그리는 것은 상태줄 표식 하나다(`[자동재개]`).
-    ToggleAutoresume,
-    /// 자동 재개 **설명 판**을 연다(pytmux-183 · 정본 `open_autoresume_info`).
-    ///
-    /// [`ToggleAutoresume`](Action::ToggleAutoresume) 과 가르는 것: 저쪽은 **바로
-    /// 뒤집고**(키·팔레트의 손) 이쪽은 **판을 세운다**(좌하단 표식을 눌렀을 때의 손).
-    /// 정본이 그 둘을 따로 두는 이유는 `Screen::Autoresume` 문서에 있다.
-    ShowAutoresume,
     /// **커서 판**을 연다(`cursor` · GUI 전용 · pytmux-375).
     ///
     /// 모양·두께·색·깜빡임·주기 다섯이 이미 설정 화면에 있는데도 입구를 따로 두는
@@ -576,8 +564,6 @@ impl Action {
             Action::JumpPrompt { up: false } => "다음 프롬프트로",
             Action::ShowCompose => "작성창",
             Action::ShowInfoTabs => "상태 (서버·세션)",
-            Action::ToggleAutoresume => "자동재개",
-            Action::ShowAutoresume => "자동재개 설명",
             Action::ShowCursor => "커서",
             Action::ShowDebugStats => "debug-stats",
             Action::TogglePromptClear => "프롬프트 클리어",
@@ -898,9 +884,6 @@ pub static PREFIX_BINDINGS: &[Binding] = &[
     b("shift-K", Action::ResizePane(Dir::Up), false),
     b("shift-L", Action::ResizePane(Dir::Right), false),
     b("shift-P", Action::TogglePin, true),
-    // 파이썬 `p_R` — 토큰리밋 자동재개 토글. 플러그인 소유 조작이지만 화면이 없는 순수
-    // 토글이라 키 하나가 표면의 전부다(`Action::ToggleAutoresume` 문서 참조).
-    b("shift-R", Action::ToggleAutoresume, true),
     b("]", Action::PasteBuffer, true),
     b("w", Action::ShowTree, true),
     b("=", Action::ShowBuffers, true),
@@ -971,7 +954,6 @@ pub static MENU: &[MenuEntry] = &[
     me("search_all", "모든 탭·패널 검색", Action::SearchAll),
     me("kill_pane", "패널 삭제 ✕", Action::KillPane),
     me("sync", "입력 동기화 토글", Action::ToggleSync),
-    me("autoresume", "토큰리밋 자동재개 토글", Action::ToggleAutoresume),
     me("prompt_clear", "프롬프트 단위 클리어 토글", Action::TogglePromptClear),
     me("new_window", "새 탭", Action::NewTab),
     me("new_claude_window", "새 탭에서 Claude Code 실행", Action::NewClaudeTab),
@@ -1054,7 +1036,7 @@ pub static MENU_GROUP_LABELS: &[(&str, &str)] = &[
 
 /// 지금 on/off 를 옆에 적는 항목(파이썬 `MENU_TOGGLES`). 고른 뒤에도 메뉴를 안 닫는다 —
 /// 토글은 보통 여러 개를 잇달아 만진다.
-pub static MENU_TOGGLES: &[&str] = &["autoresume", "prompt_clear", "sync", "toggle_pin", "zoom"];
+pub static MENU_TOGGLES: &[&str] = &["prompt_clear", "sync", "toggle_pin", "zoom"];
 
 /// 메뉴 최상위 한 줄(파이썬 `MENU_TOPLEVEL` 의 `"group:<g>"` · `"--"` · 낱개 키).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1079,7 +1061,6 @@ pub static MENU_TOPLEVEL: &[MenuTop] = &[
     MenuTop::Item("settings"),
     MenuTop::Item("mouse_help"),
     MenuTop::Item("sync"),
-    MenuTop::Item("autoresume"),
     MenuTop::Item("prompt_clear"),
     MenuTop::Separator,
     MenuTop::Item("detach"),
@@ -1133,15 +1114,14 @@ pub fn menu_is_toggle(key: &str) -> bool {
     MENU_TOGGLES.contains(&key)
 }
 
-/// 메뉴 토글 다섯의 **지금 값**. 뷰가 채운다 — core 는 서버 어휘를 모른다
+/// 메뉴 토글 넷의 **지금 값**. 뷰가 채운다 — core 는 서버 어휘를 모른다
 /// (`chrome::ChromeCtx` 와 같은 갈래).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MenuToggles {
     pub zoom: bool,
     pub sync: bool,
-    pub autoresume: bool,
     pub prompt_clear: bool,
-    /// **활성 탭**이 고정돼 있나(나머지 넷과 달리 탭마다 다른 값이다).
+    /// **활성 탭**이 고정돼 있나(나머지 셋과 달리 탭마다 다른 값이다).
     pub toggle_pin: bool,
 }
 
@@ -1156,7 +1136,6 @@ pub fn menu_toggle_mark(key: &str, now: &MenuToggles) -> Option<&'static str> {
     let on = match key {
         "zoom" => now.zoom,
         "sync" => now.sync,
-        "autoresume" => now.autoresume,
         "prompt_clear" => now.prompt_clear,
         "toggle_pin" => now.toggle_pin,
         _ => return None,
@@ -1430,8 +1409,6 @@ pub static PALETTE: &[PaletteEntry] = &[
     // 파이썬 팔레트에는 없는 이름이다(저쪽 입구는 상태줄 버튼뿐). 배지 동선을 모르는
     // 사람에게 입구를 하나 더 두는 것이라, 우리 쪽에만 있는 것이 낫다고 봤다.
     pe("status", "설정/기타", Action::ShowInfoTabs),
-    // 파이썬 팔레트에도 `auto-resume` 로 있다(플러그인이 기여하는 이름).
-    pe("auto-resume", "Claude", Action::ToggleAutoresume),
     // 같은 플러그인의 다른 토글 — 파이썬도 `prompt-clear` 로 기여한다.
     pe("prompt-clear", "Claude", Action::TogglePromptClear),
     // UI 언어(파이썬 `lang` — 인자 폼에서 한국어/English 를 고른다).
@@ -1977,14 +1954,14 @@ fn variant_index(action: Action) -> usize {
         Action::JumpPrompt { .. } => 94,
         Action::ShowCompose => 95,
         Action::ShowInfoTabs => 96,
-        Action::ToggleAutoresume => 97,
-        Action::ShowAutoresume => 117,
         // ⚠ 104 는 종전 `ToggleScroll` 의 자리다(pytmux-377 로 그 액션을 걷었다).
         // 이 수는 **오라클 비트맵의 자리**일 뿐이라 뜻이 없다 — 다만 0..ACTION_COUNT 가
         // 빈틈없이 차야 `all_actions()` 의 전수 검사가 성립하므로, 구멍을 남기는 대신
         // 맨 끝 것을 그리로 옮기고 [`ACTION_COUNT`] 를 하나 줄였다.
         Action::ShowCursor => 104,
-        Action::ShowDebugStats => 118,
+        // 97·117 은 pytmux-526 이 걷은 자동재개 두 액션의 자리였다 — 위 104 와 같은
+        // 규칙으로 맨 끝(118)을 97 로 옮기고 [`ACTION_COUNT`] 를 둘 줄였다.
+        Action::ShowDebugStats => 97,
         Action::Reconnect => 98,
         Action::RestartAll => 99,
         Action::SetLang(_) => 100,
@@ -1998,7 +1975,7 @@ fn variant_index(action: Action) -> usize {
     }
 }
 
-const ACTION_COUNT: usize = 119;
+const ACTION_COUNT: usize = 117;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -2112,8 +2089,6 @@ pub fn all_actions() -> Vec<Action> {
         Action::JumpPrompt { up: true },
         Action::ShowCompose,
         Action::ShowInfoTabs,
-        Action::ToggleAutoresume,
-        Action::ShowAutoresume,
         Action::ShowCursor,
         Action::ShowDebugStats,
         Action::Reconnect,
@@ -2210,21 +2185,6 @@ mod tests {
                 assert!(
                     scroll_hits('n') && scroll_hits('N'),
                     "스크롤 모드 `n`/`N` 반복이 끊겼다"
-                );
-                continue;
-            }
-            // 좌하단 `[자동재개]` 표식을 **누르는 것**이 이 액션의 유일한 입구다
-            // (pytmux-183). 정본도 그렇다 — `open_autoresume_info` 는 `_ar_zone` 클릭
-            // 하나로만 열리고 명령 이름이 없다. ⛔ 그래서 팔레트에 이름을 지어 넣지
-            // 않는다: 정본에 없는 조작 표면을 GUI 가 먼저 만드는 일이 된다.
-            //
-            // 넘기기만 하면 이 액션이 검사 밖으로 새므로, `MoveTabAt` 때와 같이
-            // **그 입구가 살아 있는지를 여기서 직접 본다**(클릭 표를 실제로 돌린다).
-            if same(Action::ShowAutoresume) {
-                assert_eq!(
-                    crate::chrome::SysBadge::AutoResume.action(),
-                    Some(Action::ShowAutoresume),
-                    "자동재개 표식의 클릭 입구가 끊겼다"
                 );
                 continue;
             }

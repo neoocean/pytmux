@@ -1487,7 +1487,6 @@ class StatusBar(Widget):
         self.zoomed = False
         self.sync = False
         self.pane_title = ""
-        self.autoresume = False
         self.prompt_clear = False  # 프롬프트 단위 클리어 모드(활성 패널, #9)
         self.prompt_clear_queue = []  # 프롬프트 단위 클리어 큐(활성 패널, #4)
         # REC 표시 상태(capture/_rec_zone/capture_path/capture_size)는 rec 플러그인의
@@ -1735,7 +1734,6 @@ class StatusBar(Widget):
         self.zoomed = msg.get("zoomed", False)
         self.sync = msg.get("sync", False)
         self.pane_title = msg.get("pane_title", "")
-        self.autoresume = msg.get("autoresume", False)
         self.prompt_clear = msg.get("prompt_clear", False)
         self.prompt_clear_queue = msg.get("prompt_clear_queue", [])
         # Claude 필드(claude_active/usage/tokens/model/warn/budget 등)와 REC capture*
@@ -1860,13 +1858,6 @@ class StatusBar(Widget):
             segs.append(Segment("SYNC ", Style(color="white", bgcolor=tc("error"),
                                                 bold=True)))
             acc += 5
-        self._ar_zone = None
-        if self.autoresume:
-            segs.append(Segment(" AR ", Style(color="black", bgcolor=tc("accent"),
-                                              bold=True)))
-            # AR 배지 클릭존(요청): 클릭/터치 시 자동 재개 켜고 끄기 팝업을 연다.
-            self._ar_zone = (acc, acc + 4)
-            acc += 4
         # 시스템 배지 영역(SYNC/AR 직후) 플러그인 배지: REC ` REC ` 배지·_rec_zone 을
         # rec 플러그인의 client_statusbar_badges 훅이 여기서 그린다 — 좌하단 정보 클러스터
         # (client_statusbar, 아래)보다 **앞**이라 종전과 같은 위치(시스템 배지 옆)를
@@ -2045,13 +2036,6 @@ class StatusBar(Widget):
                 fn()
                 event.stop()
                 return
-        az = self._ar_zone
-        if az and az[0] <= event.x < az[1]:
-            # AR 배지 클릭 → 자동 재개(autoresume) 설명 + 켜고 끄기 팝업(코어).
-            fn = getattr(self.app, "open_autoresume_info", None)
-            fn and fn()
-            event.stop()
-            return
         uz = self._usage_zone
         if uz and uz[0] <= event.x < uz[1]:
             # 토큰 사용량("N%/5h used") 클릭 → 영속 통계 팝업(모든 세션 합계 포함, pytmux

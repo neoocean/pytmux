@@ -352,12 +352,6 @@ static CONTRACTS: &[Contract] = &[
          우리도 이제 같다(종전엔 아무 키나 닫았다)",
     ),
     c(
-        Screen::Autoresume,
-        Closes,
-        Same("clientconn.py open_autoresume_info 직접 대조 — 정본은 범용 InfoScreen 을 hide_key=a 로 띄운다. 곧 `a` 는 뒤집고 닫고, 그 밖의 키는 InfoScreen 규약대로 닫힌다(_NAV_KEYS 넷 + Home/End 만 스크롤). 우리도 같은 갈래다"),
-        "자동 재개 설명 + 켜고 끄기(pytmux-183). 좌하단 `[자동재개]` 표식을 눌러 연다 — `a` 가 뒤집고 닫는 것까지 정본과 같다",
-    ),
-    c(
         Screen::Cursor,
         Stays,
         Allowed(Ground::NativeOnly),
@@ -391,7 +385,9 @@ static CONTRACTS: &[Contract] = &[
 // 짝이 없는 우리 것」이라 `Allowed(NativeOnly)` 였는데, 정본이 그것을 갖게 되면서
 // (`:claude-detail`) 우리 쪽 전용 화면을 걷었다 — 남은 것은 `esc v` 라는 **지름길**이고
 // 그건 화면이 아니라 키라 이 축이 아니라 갈림 대장이 센다.
-static SCORE: (usize, usize, usize, usize) = (24, 2, 0, 0);
+// 같다 24→23: `Autoresume` 줄이 사라졌다(pytmux-526) — 정본·GUI 둘 다에서 자동재개 판을
+// 걷었다(Claude Code CLI 가 한도 리셋 뒤 스스로 이어 간다).
+static SCORE: (usize, usize, usize, usize) = (23, 2, 0, 0);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4). **지금은 0 이다**(pytmux-454).
 ///

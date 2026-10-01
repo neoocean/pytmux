@@ -928,7 +928,6 @@ MENU_ITEMS = [
     ("search_all", "모든 탭·패널 검색"),
     ("kill_pane", "패널 삭제 ✕"),
     ("sync", "입력 동기화 토글"),
-    ("autoresume", "토큰리밋 자동재개 토글"),
     ("prompt_clear", "프롬프트 단위 클리어 토글"),
     ("new_window", "새 탭"),
     ("new_claude_window", "새 탭에서 Claude Code 실행"),
@@ -948,7 +947,7 @@ MENU_ITEMS = [
     ("kill_server", "서버 종료 (모든 탭/셸 종료)"),
 ]
 # 토글 메뉴 항목(현재 on/off 표시·선택해도 메뉴 안 닫음). 상태는 status 에서 읽음.
-MENU_TOGGLES = {"zoom", "sync", "autoresume", "prompt_clear", "toggle_pin"}
+MENU_TOGGLES = {"zoom", "sync", "prompt_clear", "toggle_pin"}
 
 # §8.1 컨텍스트 메뉴 그룹(서브메뉴)화(요청 2026-06-18): 평면 29항목이 세로로 너무 길어,
 # 묶을 수 있는 항목을 그룹으로 접고 자주/세션 항목만 최상위에 둔다. MENU_ITEMS(평면)는
@@ -972,7 +971,7 @@ MENU_TOPLEVEL = [
     "group:pane", "group:layout", "group:tab",
     "--",
     "search", "search_all", "command", "settings", "mouse_help",
-    "sync", "autoresume", "prompt_clear",
+    "sync", "prompt_clear",
     "--",
     "detach", "kill_server",
 ]
@@ -1071,7 +1070,7 @@ COMMANDS = [
     ("win-mouse-motion", "Windows 마우스 모션(any-motion) 패스스루 on/off — 기본 on(끄면 hover 계열이 안 산다 · pytmux-423) (win-mouse-motion on|off|toggle)", "설정/기타"),
     ("vt-parser", "VT 파서 백엔드 선택 pyte|native (재시작 시 발효 · vt-parser pyte|native)", "설정/기타"),
     ("window-size", "다중 클라 미러링 시 공유 크기 규칙 smallest|latest|largest — latest=마지막 조작 창 크기(window-size smallest|latest|largest)", "설정/기타"),
-    # Claude Code 명령(auto-resume·token-log·
+    # Claude Code 명령(token-log·
     # claude-usage·usage-panel·token-account·prompt-clear*·model·auto-doc-clear·
     # auto-compact 등)은 claude-code 플러그인이 등록한다
     # (pytmuxlib/plugins/claude-code — 디렉토리 삭제 시 명령 검색·자동완성·디스패치에서 사라짐).
@@ -1202,7 +1201,7 @@ COMMAND_OPTIONS = {
                                  ("largest", "largest")]}],
     "lang": [{"key": "lang", "label": "언어",
               "choices": [("한국어", "ko"), ("English", "en")]}],
-    # auto-resume·prompt-clear·auto-doc-clear
+    # prompt-clear·auto-doc-clear
     # 의 옵션 스키마는 claude-code 플러그인이 등록한다(command_options).
 }
 
@@ -1373,7 +1372,6 @@ PREFIX_KEYS = [
     ("p_P", "P", "탭 고정(핀) 토글", "Toggle tab pin"),
     ("p_T", "T", "패널 제목 변경", "Rename pane"),
     ("p_t", "t", "시계 토글", "Toggle clock"),
-    ("p_R", "R", "자동재개 토글", "Toggle autoresume"),
     ("p_r", "r", "화면 재그리기(redraw)", "Redraw screen"),
     ("p_colon", ":", "명령 프롬프트", "Command prompt"),
     ("p_np", "n / p", "다음 / 이전 탭", "Next / prev tab"),
@@ -1478,7 +1476,7 @@ COMMAND_NOARG = {
 # 명령(detach-client·kill-* 등)도 제외해 잘못된 밑줄을 막는다.
 COMMAND_FREETEXT = {
     "rename-pane", "rename-tab", "send-keys", "pipe-pane", "paste-buffer",
-    "layout-save", "layout-load", "layout-load-new", "auto-resume-message",
+    "layout-save", "layout-load", "layout-load-new",
     "set", "set-hook", "display-message", "display-popup", "run-shell",
     "if-shell", "bind-key", "unbind-key", "claude-token-account",
     "prompt-clear-message", "prompt-clear-queue", "select-tab", "move-tab",
@@ -1648,7 +1646,6 @@ i18n.register({
         "menu.search_all": "Search all tabs/panes",
         "menu.kill_pane": "Delete pane ✕",
         "menu.sync": "Toggle input sync",
-        "menu.autoresume": "Toggle token-limit auto-resume",
         "menu.prompt_clear": "Toggle per-prompt clear",
         "menu.new_window": "New tab",
         "menu.new_claude_window": "New tab running Claude Code",

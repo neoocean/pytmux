@@ -1,8 +1,6 @@
 {
   "_comment": "python3 scripts/gen_categories.py 로 생성. 출처 = pytmuxlib/clientutil.py 의 분류 표 + plugins 레지스트리 기여. 화면을 나누는 기준(카테고리·그룹)의 정본이다 — 세는 단위는 client_surface.json 쪽이고 여기는 배치다.",
   "command_cats": {
-    "auto-resume": "Claude",
-    "auto-resume-message": "Claude",
     "auto-retry": "Claude",
     "auto-token-on-exit": "Claude",
     "automatic-rename": "탭",
@@ -18,7 +16,6 @@
     "claude-auto-yes": "Claude",
     "claude-detail": "Claude",
     "claude-resume": "Claude",
-    "claude-resume-verify": "Claude",
     "claude-settings": "Claude",
     "claude-token-account": "Claude",
     "claude-token-debug": "Claude",
@@ -196,7 +193,6 @@
     "키"
   ],
   "menu_labels": {
-    "autoresume": "토큰리밋 자동재개 토글",
     "break_pane": "패널 → 새 탭으로 분리",
     "choose_tree": "탭 선택기(트리)",
     "command": "명령 입력",
@@ -246,7 +242,6 @@
     "search_all",
     "kill_pane",
     "sync",
-    "autoresume",
     "prompt_clear",
     "new_window",
     "new_claude_window",
@@ -266,7 +261,6 @@
     "kill_server"
   ],
   "menu_toggles": [
-    "autoresume",
     "prompt_clear",
     "sync",
     "toggle_pin",
@@ -319,7 +313,6 @@
     "settings",
     "mouse_help",
     "sync",
-    "autoresume",
     "prompt_clear",
     "--",
     "detach",
@@ -366,17 +359,7 @@
     },
     {
       "name": "claude-settings",
-      "desc": "Claude 설정 팝업 — 자동재개·세션종료 토큰화면·프롬프트 단위 클리어·장기턴/반복 경고",
-      "cat": "Claude"
-    },
-    {
-      "name": "auto-resume",
-      "desc": "토큰 리밋 자동 재개 [on|off]",
-      "cat": "Claude"
-    },
-    {
-      "name": "auto-resume-message",
-      "desc": "자동 재개 메시지 설정",
+      "desc": "Claude 설정 팝업 — 세션종료 토큰화면·프롬프트 단위 클리어·장기턴/반복 경고",
       "cat": "Claude"
     },
     {
@@ -452,11 +435,6 @@
     {
       "name": "claude-auto-redraw",
       "desc": "Claude 화면 깨짐 자동 완화 — off|idle(완료마다 재출력)|corruption(깨짐 감지 시만) (claude-auto-redraw off|idle|corruption|toggle, 기본 off)",
-      "cat": "Claude"
-    },
-    {
-      "name": "claude-resume-verify",
-      "desc": "자동재개 대역외 확인 — off|weak(최근 5h 실사용이 거의 0이면 억제)|strict (claude-resume-verify off|weak|strict|toggle, 기본 off)",
       "cat": "Claude"
     },
     {

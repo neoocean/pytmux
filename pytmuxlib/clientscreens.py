@@ -938,7 +938,6 @@ class MenuScreen(ModalScreen):
             return self._optim[key]
         st = self.app.status
         return {"zoom": st.zoomed, "sync": st.sync,
-                "autoresume": st.autoresume,
                 "prompt_clear": getattr(st, "prompt_clear", False),
                 # 항목7: 활성 탭이 고정이면 ●.
                 "toggle_pin": any(t.get("active") and t.get("pinned")

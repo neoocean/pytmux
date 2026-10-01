@@ -1,7 +1,5 @@
 {
   "advertised": [
-    "auto-resume",
-    "auto-resume-message",
     "auto-retry",
     "auto-token-on-exit",
     "calendar-mode",
@@ -11,7 +9,6 @@
     "claude-auto-yes",
     "claude-detail",
     "claude-resume",
-    "claude-resume-verify",
     "claude-settings",
     "claude-token-account",
     "claude-token-debug",
@@ -61,15 +58,12 @@
     "usage-panel"
   ],
   "server_runnable": [
-    "auto-resume",
-    "auto-resume-message",
     "auto-retry",
     "auto-token-on-exit",
     "capture-output",
     "capture-toggle",
     "claude-auto-redraw",
     "claude-auto-yes",
-    "claude-resume-verify",
     "claude-token-account",
     "claude-token-sync",
     "claude-usage",
@@ -79,8 +73,6 @@
     "prompt-history-lines"
   ],
   "stateful": [
-    "auto-resume",
-    "auto-resume-message",
     "auto-retry",
     "auto-token-on-exit",
     "calendar-mode",
@@ -88,7 +80,6 @@
     "capture-toggle",
     "claude-auto-redraw",
     "claude-auto-yes",
-    "claude-resume-verify",
     "claude-token-account",
     "claude-token-debug",
     "claude-token-sync",

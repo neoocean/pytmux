@@ -41,7 +41,6 @@ pub fn opened(screen: Screen) -> Screens {
         | Screen::Version
         | Screen::ShellOutput
         | Screen::RestartCheck
-        | Screen::Autoresume
         | Screen::MergeRemote
         | Screen::Layouts
         | Screen::Notices

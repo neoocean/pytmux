@@ -8,8 +8,8 @@
 동작한다(delete-to-disable).
 
 코어에 **남는** Claude 인접 Pane 필드(코어가 직접 읽거나 쓰는 것들 — 계정·헤더행 예약·
-보류 리네임·자동재개 토글): `_claude_account`·`_claude_account_manual`·`_pending_rename`·
-`_feed_seq`·`autoresume`·`prompt_clear_queue`. 이는 HANDOFF §11.6 의
+보류 리네임): `_claude_account`·`_claude_account_manual`·`_pending_rename`·
+`_feed_seq`·`prompt_clear_queue`. 이는 HANDOFF §11.6 의
 3a/3b 설계("코어가 읽는 Pane 속성은 코어에 안전한 기본값으로 남겨도 무해")와 일치한다.
 (토큰 누계 `_tok_state`·`_session_tokens` 는 S5 토큰 모듈화 T4 에서 이리로 이전 — 코어
 servertree 의 토큰 이관은 pane_closing 훅으로, 코어는 더는 토큰 누계를 모른다.)
@@ -109,8 +109,6 @@ def init_pane(pane) -> None:
     pane._retry_last = 0.0
     # 수동 /clear 감지 디바운스(환영 배너가 머무는 동안 토큰세션 재리셋 방지).
     pane._welcome_seen = False
-    # _resume_handle=자동재개 예약 call_later 핸들(busy 복귀 시 cancel).
-    pane._resume_handle = None
     # 디바운스된 Claude 존재 플래그·연속 non-Claude 스캔 수 — raw _claude 가 한 프레임
     # 깜빡여도 안 흔들리는 안정 신호. API 에러 게이트·스캔 보조 판정이 읽는다(이름의
     # hdr 는 옛 헤더 예약 유래 — 헤더는 2026-06-13 제거, 신호 자체는 그대로 유효).
@@ -120,10 +118,6 @@ def init_pane(pane) -> None:
     # _EXIT_TOKEN_RETRY 로 세팅되고, fg 가 셸로 잡히면 1회 주입 후 0. 한 프레임짜리
     # 일회성 발화가 fg 미확정으로 유실되지 않게 짧은 창 동안 재시도한다(0=예약 없음).
     pane._exit_token_pending = 0
-    # 토큰 리밋 자동 재개 메시지·예약 보류 플래그. (토글 autoresume 은 코어가 쓰므로
-    # 코어 Pane 에 남고, 여기선 메시지/보류만 둔다.)
-    pane.resume_msg = "continue"
-    pane._resume_pending = False
     # 전송 에러(API error/rate limit) 자동 재시도(요청): _retry_handle=백오프 후 "계속"
     # 주입 예약 call_later 핸들(에러 해소·busy 복귀 시 cancel), _retry_pending=예약 보류,
     # _retry_attempts=연속 주입 횟수(백오프 단계 인덱스; 상한 없음·3차+ 5분 무기한,
@@ -131,8 +125,7 @@ def init_pane(pane) -> None:
     pane._retry_handle = None
     pane._retry_pending = False
     pane._retry_attempts = 0
-    # Claude 스캔 버퍼·마지막 스캔 시 본 feed seq(dirty 게이팅; 코어 _feed_seq 와 비교).
-    pane._scanbuf = ""
+    # 마지막 스캔 시 본 feed seq(dirty 게이팅; 코어 _feed_seq 와 비교).
     pane._scan_seq = -1
 
 
@@ -141,16 +134,12 @@ def reset_pane(pane) -> None:
     이전 코어 reinit 의 Claude 서브셋을 그대로 옮긴 것(코어가 쓰는 _claude_account·
     prompt_clear_queue 리셋은 코어 reinit 에 남는다; 토큰 누계 _tok_state/_session_tokens
     리셋은 S5 T4 에서 이리로 이전 — 새 셸이므로 0 에서 시작)."""
-    pane._scanbuf = ""
-    # 무장된 자동재개/재시도 타이머는 **취소**한 뒤 리셋한다(respawn=새 셸). 핸들을
+    # 무장된 재시도 타이머는 **취소**한 뒤 리셋한다(respawn=새 셸). 핸들을
     # 드롭만 하면 ① 살아있는 타이머가 새 셸로 발화하고 ② _retry_pending 잔류로 새
     # 에러의 재무장이 막힌다(#9 H1). reset_pane 은 server 핸들이 없어 _cancel_* 대신
     # 핸들을 직접 cancel(_fire_* 의 pty/state 가드만으론 새 셸 발화를 못 막는다).
-    for _h in (pane._resume_handle, pane._retry_handle):
-        if _h is not None:
-            _h.cancel()
-    pane._resume_pending = False
-    pane._resume_handle = None      # 자동재개 예약 핸들 리셋(M12)
+    if pane._retry_handle is not None:
+        pane._retry_handle.cancel()
     pane._retry_pending = False
     pane._retry_handle = None       # 전송 에러 재시도 예약 핸들 리셋(#9 H1)
     pane._retry_attempts = 0
@@ -174,7 +163,7 @@ def reset_pane(pane) -> None:
 # 재시작(re-exec) 직렬화 대상 — JSON 가능 스칼라/딕트만. (코어 _RESUME_FIELDS 에서
 # 이리로 이전. set/타이머/call 핸들 등 휘발성 필드는 제외 — 재관측으로 복원.)
 _SER_FIELDS = (
-    "_claude", "_claude_usage", "_scanbuf", "_resume_pending", "resume_msg",
+    "_claude", "_claude_usage",
     "last_prompt", "_claude_session_id", "prompt_clear_mode",
     "pending_prompts",
     # S5 토큰 모듈화 T4: 토큰 누계도 재시작에 보존(코어 _RESUME_FIELDS 에서 이전).

@@ -52,33 +52,6 @@ pub static EN: &[(&str, &str)] = &[
     // ⚠ 위와 **다른 기능**이다 — 저쪽은 서버가 든 버퍼, 이쪽은 이 상자의 OS 클립보드다
     //   (`Action::PasteClipboard` 문서). 영어도 그 갈림이 보이게 적는다.
     ("클립보드 붙여넣기", "Paste clipboard"),
-    // ── 자동 재개 판(pytmux-183) — 정본 `ar.*` 카탈로그 그대로다 ──
-    // ⛔ 영어를 새로 짓지 않는다: 같은 판이 두 클라에서 다른 말을 하면 그것도 갈림이다.
-    ("자동 재개 (AR · Autoresume)", "Autoresume (AR)"),
-    ("자동 재개(AR)이 현재 켜짐(ON) 입니다.", "Autoresume (AR) is currently ON."),
-    ("자동 재개(AR)이 현재 꺼짐(OFF) 입니다.", "Autoresume (AR) is currently OFF."),
-    (
-        "• Claude 가 5시간 사용 한도로 멈추면, 리셋 시각 직후 자동으로",
-        "• When Claude stops at the 5-hour usage limit, right after the",
-    ),
-    (
-        "  작업을 이어갑니다('continue' 입력을 그 패널에 주입).",
-        "  reset it resumes work (injects 'continue' into that pane).",
-    ),
-    (
-        "• 활성 패널 기준으로 켜고 끕니다(단축키 prefix+R 과 동일).",
-        "• Toggled per active pane (same as prefix+R).",
-    ),
-    (
-        "[a] AR 켜기   ·   닫기: Esc 또는 바깥 클릭.",
-        "[a] AR on   ·   close: Esc or click outside.",
-    ),
-    (
-        "[a] AR 끄기   ·   닫기: Esc 또는 바깥 클릭.",
-        "[a] AR off   ·   close: Esc or click outside.",
-    ),
-    ("(a 켜고 끄기 · Esc 닫기)", "(a toggles · Esc closes)"),
-    ("자동재개 설명", "Autoresume info"),
     // 커서 판(pytmux-375) — 판 제목이자 `Action::ShowCursor` 의 라벨이다(같은 낱말).
     ("커서", "Cursor"),
     ("키 도움말", "Key help"),
@@ -160,7 +133,6 @@ pub static EN: &[(&str, &str)] = &[
     ("다음 프롬프트로", "To next prompt"),
     ("작성창", "Composer"),
     ("상태 (서버·세션)", "Status (server·session)"),
-    ("자동재개", "Auto-resume"),
     ("프롬프트 클리어", "Prompt clear"),
     ("재접속", "Reconnect"),
     ("전체 재시작", "Restart all"),
@@ -191,7 +163,6 @@ pub static EN: &[(&str, &str)] = &[
         "Merge remote tab into this tab as a pane (same server)",
     ),
     ("레이아웃 프리셋…", "Layout presets…"),
-    ("토큰리밋 자동재개 토글", "Toggle token-limit auto-resume"),
     ("프롬프트 단위 클리어 토글", "Toggle per-prompt clear"),
     ("레이아웃 저장(현재 탭)", "Save layout (this tab)"),
     ("레이아웃 불러오기(현재 탭 덮어쓰기)", "Load layout (overwrite this tab)"),

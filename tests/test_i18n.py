@@ -163,11 +163,11 @@ async def test_plugin_catalog_registered_and_translated():
                                 "en_only": sorted(en - ko)}
     # 플러그인 명령 설명이 코어 cmd.* 키로 등록돼 번역된다.
     i18n.set_locale("en")
-    assert i18n.t("cmd.auto-resume") == "Auto-resume on token limit [on|off]"
-    assert i18n.t("claude.auto_resume") == "auto-resume"
+    assert i18n.t("cmd.auto-retry").startswith("Auto-inject a 'continue'")
+    assert i18n.t("claude.retry_n", n=2) == " ↻ retry ×2 "
     assert i18n.t("usage.session_5h") == "Session 5h"
     i18n.set_locale("ko")
-    assert i18n.t("claude.auto_resume") == "자동재개"
+    assert i18n.t("claude.retry_n", n=2) == " ↻ 재시도 2회 "
     assert i18n.t("usage.session_5h") == "세션 5h"
     # claude-token-usage-view 플러그인(§6.1 후속): uview.* 화면/오버레이 + 명령 설명.
     uv_ko = {k for k in i18n._CATALOG["ko"] if k.startswith("uview.")}
@@ -183,21 +183,20 @@ async def test_plugin_catalog_registered_and_translated():
 
 
 async def test_client_screen_keys_translated():
-    """§6 추가(2026-06-17): 그동안 한국어로 새던 클라 팝업/안내(AR·restart·version·
-    host status·remote/vt-parser·notice 닫기)가 en 로 실제 번역된다(완전 ko/완전 en)."""
-    keys = ("ar.title", "ar.line1", "restart.confirm_q", "restartcheck.title",
+    """§6 추가(2026-06-17): 그동안 한국어로 새던 클라 팝업/안내(restart·version·
+    host status·remote/vt-parser·notice 닫기)가 en 로 실제 번역된다(완전 ko/완전 en).
+    (AR 자동재개 판의 ar.* 는 pytmux-526 에서 기능째 걷었다.)"""
+    keys = ("restart.confirm_q", "restartcheck.title",
             "version.header", "hoststatus.host", "msg.remote_attach_usage",
             "msg.vt_parser_usage", "msg.display_no_output", "ui.notice_close")
     for k in keys:
         assert k in i18n._CATALOG["ko"] and k in i18n._CATALOG["en"], k
     i18n.set_locale("en")
-    assert i18n.t("ar.title") == "Autoresume (AR)"
     assert i18n.t("restart.confirm_q") == "Restart anyway?"
     assert i18n.t("msg.display_no_output") == "(no output)"
     # 포맷 키도 en 으로 치환
     assert i18n.t("hoststatus.host", host="h1") == "Host: h1"
     i18n.set_locale("ko")
-    assert i18n.t("ar.title") == "자동 재개 (AR · Autoresume)"
     assert i18n.t("restart.confirm_q") == "그래도 재시작할까요?"
     _reset()
 

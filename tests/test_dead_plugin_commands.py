@@ -39,6 +39,8 @@ RETIRED = (
     "claude-rules", "rules", "startup-rules",          # pytmux-524 → SessionStart 훅
     "auto-launch", "claude-auto-launch",               # pytmux-525 → CLI 기본 auto 모드
     "claude-auto-mode", "auto-mode",                   #   · remoteControlAtStartup
+    "auto-resume", "autoresume", "auto-resume-message",  # pytmux-526 → CLI 의
+    "autoresume-message", "claude-resume-verify", "resume-verify",  # 자동 계속
 )
 
 

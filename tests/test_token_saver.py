@@ -78,7 +78,7 @@ async def _claude_pane(srv):
     return sess, win, p
 
 
-# ---- 자동재개 예약 취소 ----
+# ---- 사용자 입력 선점 ----
 class _FakePty:
     def __init__(self):
         self.writes = []
@@ -87,63 +87,26 @@ class _FakePty:
         self.writes.append(data)
 
 
-async def test_cancel_resume_clears_pending():
-    """_cancel_resume 가 무장된 예약 핸들을 취소하고 pending 플래그를 내린다."""
-    srv, task, sock = await server_only()
-    try:
-        sess, win, p = await _claude_pane(srv)
-        import asyncio
-        loop = asyncio.get_running_loop()
-        p._resume_handle = loop.call_later(100, lambda: None)
-        p._resume_pending = True
-        srv._cancel_resume(p)
-        assert p._resume_handle is None and p._resume_pending is False
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
-# ---- 무장 자동재개 카운트다운/취소 힌트 ----
-async def test_pending_action_reports_kind_and_eta():
-    """무장된 자동재개 타이머가 있으면 _pending_action 이 종류와 남은 초(ETA)를
-    보고한다(없으면 None)."""
-    srv, task, sock = await server_only()
-    try:
-        sess, win, p = await _claude_pane(srv)
-        assert srv._pending_action(p) is None        # 무장 없음
-        assert srv._pending_action(None) is None      # 패널 없음
-        p._resume_handle = srv.loop.call_later(30, lambda: None)
-        pa = srv._pending_action(p)
-        assert pa and pa["kind"] == "resume" and 25 <= pa["eta"] <= 30, pa
-        p._resume_handle.cancel()
-        p._resume_handle = None
-        assert srv._pending_action(p) is None
-    finally:
-        try:
-            os.unlink(srv.opts_path)
-        except OSError:
-            pass
-        await teardown(srv, task, sock)
-
-
-async def test_user_input_cancels_armed_resume():
-    """사용자가 패널에 입력하면 무장된 자동재개 예약이 취소된다(§5.3 선점 —
-    continue 중복 주입 방지). _handle_input 경로에서 _cancel_resume 가 불린다."""
+async def test_user_input_cancels_armed_retry():
+    """사용자가 패널에 입력하면 무장된 전송 에러 재시도 예약이 취소된다(§5.3 선점 —
+    '계속' 중복 주입 방지). _handle_input → server_input 훅 경로를 재는 호출부 단언.
+    (종전에는 같은 경로의 **자동재개** 취소를 쟀다 — pytmux-526 에서 자동재개를 걷어,
+    그 훅이 하는 일 중 남은 재시도 취소로 같은 배선을 잰다.)"""
     import base64
     from pytmuxlib.model import ClientConn
     srv, task, sock = await server_only()
     try:
         sess, win, p = await _claude_pane(srv)
-        p._resume_handle = srv.loop.call_later(100, lambda: None)
-        p._resume_pending = True
+        p._retry_handle = srv.loop.call_later(100, lambda: None)
+        p._retry_pending = True
+        p._retry_attempts = 3
         client = ClientConn(None)
         client.session = sess
         srv._handle_input(client, {"pane": p.id,
                                    "data": base64.b64encode(b"x").decode()})
-        assert p._resume_handle is None and p._resume_pending is False
+        assert p._retry_handle is None and p._retry_pending is False
+        assert p._retry_attempts == 0
+        assert not hasattr(srv, "_cancel_resume"), "걷은 자동재개 경로가 되살아났다"
     finally:
         try:
             os.unlink(srv.opts_path)

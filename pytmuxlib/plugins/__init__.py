@@ -856,7 +856,7 @@ class Registry:
     def relay_actions(self) -> set:
         """원격 보기(federation) 중 업스트림으로 릴레이해야 하는 cmd 액션 이름 집합을
         플러그인이 기여한다. 코어 serverio 가 코어 화이트리스트(_REMOTE_RELAY_ACTIONS)와
-        **합집합**해 판정한다 — Claude/토큰 액션(set_autoresume·set_prompt_clear·
+        **합집합**해 판정한다 — Claude/토큰 액션(set_prompt_clear·
         request_token_log)은 claude-code 플러그인 소유라 부재 시 자동으로 빠진다."""
         out = set()
         for p in self.plugins:

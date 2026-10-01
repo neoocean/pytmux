@@ -57,8 +57,9 @@ Python + [Textual](https://textual.textualize.io/) 로 만든 **tmux 유사 터�
   Claude Code CLI 등에서 줄마다 실행되지 않고 한 번에 붙습니다. 이미지 붙여넣기도 동일.
   OS 네이티브 선택으로 복사할 때 딸려온 패널 테두리(박스드로잉)는 붙여넣기 단계에서
   자동 제거합니다(`strip-box-drawing`, 기본 ON).
-- **토큰 리밋 자동 재개**: 패널에서 돌리던 Claude Code 등이 사용량 리밋에 걸려 멈추면,
-  출력의 해제 시각을 읽어 그때가 되면 자동으로 재개합니다(`prefix R` 토글, 상태줄 `AR`).
+- **전송 에러 자동 재시도**: 패널에서 돌리던 Claude Code 가 API 오류·과부하로 멈추면
+  "계속" 을 넣어 이어 갑니다(`auto-retry`, 기본 on). 사용량 한도 뒤 이어 가기는 Claude Code
+  자체(`autoContinueAtUsageLimit`, 2.1.234+)가 하므로 pytmux 의 자동 재개는 없앴습니다.
 - **Claude Code 상태 표시**: 실행 중인 탭에 상태 아이콘(**대기 `○` / 처리중 `◐` / 리밋
   멈춤 `⊘`**)을 표시하고, 비활성 탭의 작업이 끝나면 탭 배경색으로 알립니다. 보낸 프롬프트
   이력은 `prompt-history`(claude-prompt-history 플러그인)로 미리보기·점프합니다.

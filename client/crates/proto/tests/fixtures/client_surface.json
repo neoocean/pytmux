@@ -275,7 +275,6 @@
   },
   "prefix_keys": {
     "p_P": "P",
-    "p_R": "R",
     "p_T": "T",
     "p_amp": "&",
     "p_arrows": "← ↑ ↓ →",
@@ -330,7 +329,6 @@
     "e_up": "↑ (최상단에서)"
   },
   "menu_items": [
-    "autoresume",
     "break_pane",
     "choose_tree",
     "command",
@@ -1476,10 +1474,6 @@
       "sends": null
     },
     "P": {
-      "mode": "exit",
-      "sends": null
-    },
-    "R": {
       "mode": "exit",
       "sends": null
     },

@@ -519,8 +519,8 @@ fn every_plugin_command_reaches_the_palette_exactly_once() {
 /// delete-to-disable 이 우리 쪽에서 거짓이 된다(서버가 그 플러그인을 안 실어도 우리는
 /// 그 이름을 계속 실행한다).
 static NATIVE_PLUGIN_COMMANDS: &[&str] = &[
-    // 상태줄 토글 둘 — 서버 상태(`flags`)로 값이 오고 우리가 명령을 보낸다.
-    "auto-resume",
+    // 상태줄 토글 — 서버 상태(`flags`)로 값이 오고 우리가 명령을 보낸다(`prompt-clear` 는
+    // 아래 이름순 자리에 있다 · 짝이던 `auto-resume` 은 pytmux-526 에서 걷었다).
     // ★ 서버가 **이미 받고 있던** 플러그인 토글 다섯(pytmux-35). 왜 서버가 못 하나 —
     //   못 하는 게 아니다. 서버는 처음부터 이 액션들을 받는다(`set_claude_auto_retry` 등,
     //   정본 훅이 치는 그 이름 그대로). 갈린 것은 **"팔레트 이름 → 서버 액션"을 아는
@@ -865,7 +865,9 @@ fn the_server_action_fixture_actually_measured_something() {
         "서버 액션 픽스처가 너무 작다({}) — 생성기가 정본에게 못 물었을 수 있다",
         fx.actions.len()
     );
-    assert!(fx.actions.iter().any(|a| a == "set_autoresume"), "{:?}", fx.actions);
+    assert!(fx.actions.iter().any(|a| a == "set_prompt_clear"), "{:?}", fx.actions);
+    // 걷은 자동재개(pytmux-526)의 액션은 서버가 더는 받지 않는다.
+    assert!(!fx.actions.iter().any(|a| a == "set_autoresume"), "{:?}", fx.actions);
 }
 
 #[test]
@@ -894,10 +896,8 @@ fn a_command_that_needs_an_argument_is_not_wired_as_a_bare_toggle() {
     //    그것들이 슬쩍 넘어오는 것을 막는다.
     const NEEDS_ARG: &[&str] = &[
         "set_claude_auto_redraw",   // corruption/idle/off 3-state
-        "set_claude_resume_verify", // 검증 모드 인자
         "set_claude_account",       // 계정 이름
         "set_prompt_clear_message", // 메시지 문자열
-        "set_autoresume",           // 팔레트의 `auto-resume-message` 는 msg= 를 싣는다
         "token_sync",               // 하위 명령(sub) + 인자
     ];
     let ours = our_plugin_actions();

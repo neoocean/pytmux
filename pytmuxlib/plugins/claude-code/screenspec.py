@@ -328,18 +328,16 @@ def _saver_value(server, sess, key):
     """그 줄이 보일 현재값 — 값의 **원본**은 status 를 채우는 서버·활성 패널이다
     (정본 `saver_display` 는 같은 값을 클라 `status` 에서 읽는다).
 
-    ⚠ 낱말은 정본과 같은 것을 쓴다(`REDRAW_WORDS`·`VERIFY_WORDS` — 카탈로그 키가
+    ⚠ 낱말은 정본과 같은 것을 쓴다(`REDRAW_WORDS` — 카탈로그 키가
     한국어 원문이라 이 클라가 자기 로케일로 다시 읽는다). **수는 그냥 수로 보낸다**:
     `600초 이상` 처럼 수와 낱말이 붙은 글은 원문이 키가 못 돼 어느 카탈로그도 못 잡고
     (`PluginRow::say_cols` 는 고정 리터럴만 본다), 단위는 이미 줄 이름에 있다
     (`장기 턴 경고(초)`). 정본이 붙여 쓰는 것은 그 화면의 관례다 — 스펙은 내용을 정하고
     표현은 각 클라 관례를 따른다(설계 §6)."""
-    from . import REDRAW_WORDS, VERIFY_WORDS, norm_redraw_mode, norm_resume_verify
+    from . import REDRAW_WORDS, norm_redraw_mode
     pane = _active_pane(sess)
     on = i18n.t("pscreen.spec_on_mark")
     off = i18n.t("pscreen.spec_off_mark")
-    if key == "autoresume":
-        return on if (pane is not None and getattr(pane, "autoresume", False)) else off
     if key == "prompt_clear":
         return on if (pane is not None
                       and getattr(pane, "prompt_clear_mode", False)) else off
@@ -350,9 +348,6 @@ def _saver_value(server, sess, key):
     if key == "claude_auto_redraw":
         mode = norm_redraw_mode(getattr(server, "claude_auto_redraw", "off"))
         return i18n.t(REDRAW_WORDS.get(mode, REDRAW_WORDS["off"]))
-    if key == "claude_resume_verify":
-        mode = norm_resume_verify(getattr(server, "claude_resume_verify", "off"))
-        return i18n.t(VERIFY_WORDS.get(mode, VERIFY_WORDS["off"]))
     if key == "long_turn":
         v = int(getattr(server, "claude_long_turn_sec", 0) or 0)
         return i18n.t(REDRAW_WORDS["off"]) if v <= 0 else str(v)
@@ -377,10 +372,8 @@ def _settings_toggle(server, sess, key):
 
     정본 `saver_action` 과 짝이다: 저쪽은 클라에서 `send_cmd` 로 같은 셋터를 부르고,
     여기서는 서버가 자기 셋터를 직접 부른다. 값을 정하는 규칙은 한 벌이다."""
-    from . import _cycle_next, norm_redraw_mode, norm_resume_verify
-    if key == "autoresume":
-        server.set_autoresume(sess, value=None)
-    elif key == "prompt_clear":
+    from . import _cycle_next, norm_redraw_mode
+    if key == "prompt_clear":
         server.set_prompt_clear(sess, None)
     elif key == "auto_token_on_exit":
         server.set_auto_token_on_exit(None)
@@ -390,10 +383,6 @@ def _settings_toggle(server, sess, key):
         server.set_claude_auto_redraw(_cycle_next(
             "claude_auto_redraw",
             norm_redraw_mode(getattr(server, "claude_auto_redraw", "off"))))
-    elif key == "claude_resume_verify":
-        server.set_claude_resume_verify(_cycle_next(
-            "claude_resume_verify",
-            norm_resume_verify(getattr(server, "claude_resume_verify", "off"))))
     elif key == "long_turn":
         server.set_claude_turn_warn(long_sec=_cycle_next(
             "long_turn", int(getattr(server, "claude_long_turn_sec", 0) or 0)))

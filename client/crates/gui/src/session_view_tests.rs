@@ -3302,21 +3302,22 @@ fn the_bottom_edge_takes_the_focus_to_the_badges_and_enter_runs_one() {
     );
 }
 
-// ── 시스템 표식 자리 + 자동재개 판(pytmux-183) ────────────────────────────────
+// ── 시스템 표식 자리(pytmux-183) ───────────────────────────────────────────────
 
-fn autoresume_on() -> ServerMessage {
+fn prompt_clear_on() -> ServerMessage {
     serde_json::from_value(serde_json::json!({
         "t": "status",
         "windows": [{"index": 0, "name": "하나", "active": true}],
-        "autoresume": true
+        "prompt_clear": true
     }))
     .unwrap()
 }
 
 #[test]
 fn system_badges_sit_in_the_bottom_status_bar_not_the_tab_bar() {
-    // 사용자 요청(pytmux-183): `[자동재개]` 자리를 정본에 맞춘다 — 정본은 **좌하단**
-    // 클러스터이고 GUI 는 좌상단(탭바 앞)이었다.
+    // 사용자 요청(pytmux-183): 시스템 표식 자리를 정본에 맞춘다 — 정본은 **좌하단**
+    // 클러스터이고 GUI 는 좌상단(탭바 앞)이었다. (그때 잰 표식은 `[자동재개]` 였고 그
+    // 기능은 pytmux-526 에서 걷었다 — 같은 클러스터의 `[프롬프트클리어]` 로 잰다.)
     //
     // ⚠ 감시류가 2026-07-30 에 **같은 이유로 먼저** 내려간 선례가 있다
     // (`monitor_badges_sit_in_the_bottom_status_bar_not_the_tab_bar`) — 재는 방법도 같다:
@@ -3326,89 +3327,35 @@ fn system_badges_sit_in_the_bottom_status_bar_not_the_tab_bar() {
         "rows": [[["HELLO-ORACLE", {}]]], "cursor": [0, 0], "wrap": [], "top": 0
     }))
     .unwrap();
-    let painted = painted_after(vec![layout_one_pane(), screen, autoresume_on()], &[]);
-    let badge_at = painted.iter().position(|t| t.contains("[자동재개]"));
+    let painted = painted_after(vec![layout_one_pane(), screen, prompt_clear_on()], &[]);
+    let badge_at = painted.iter().position(|t| t.contains("[프롬프트클리어]"));
     let canvas_at = painted.iter().position(|t| t.contains("HELLO-ORACLE"));
-    let badge_at = badge_at.unwrap_or_else(|| panic!("[자동재개] 표식이 프레임에 없다: {painted:?}"));
+    let badge_at =
+        badge_at.unwrap_or_else(|| panic!("[프롬프트클리어] 표식이 프레임에 없다: {painted:?}"));
     let canvas_at = canvas_at.unwrap_or_else(|| panic!("캔버스가 없다: {painted:?}"));
     assert!(
         badge_at > canvas_at,
-        "[자동재개] 가 아직 캔버스보다 먼저 그려진다(= 탭바에 남았다): {painted:?}"
+        "[프롬프트클리어] 가 아직 캔버스보다 먼저 그려진다(= 탭바에 남았다): {painted:?}"
     );
 }
 
 #[test]
-fn clicking_the_autoresume_badge_opens_the_panel_instead_of_toggling() {
-    // 제보 ②: *"이 배지를 마우스로 클릭하면 auto-resume 을 설정할 수 있는 팝업이 떠야 한다."*
-    //
-    // ⛔ **누르자마자 뒤집지 않는다**(정본과 같다). 자동재개는 「모르고 켜 두면 자리를
-    //    비운 사이 대화가 이어지는」 상태라, 클릭 한 번에 뒤집히면 이번엔 **모르고 꺼
-    //    버리는** 자리가 하나 더 생긴다. 정본은 설명을 보이고 `a` 로 뒤집게 한다.
-    let (mut view, tx, sent) = harness();
-    for msg in [layout_one_pane(), autoresume_on()] {
-        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
-    }
-    view.pump_headless();
-    view.chrome_click(base::chrome::ClickTarget::SysBadge(
-        base::chrome::SysBadge::AutoResume,
-    ));
-    view.pump_headless();
-    assert_eq!(
-        view.screens.top(),
-        Some(base::screens::Screen::Autoresume),
-        "표식을 눌렀는데 판이 안 열렸다"
-    );
+fn an_old_server_saying_autoresume_draws_no_badge() {
+    // pytmux-526: 토큰리밋 자동재개를 걷었다(Claude Code CLI 가 한도 리셋 뒤 스스로 이어
+    // 간다). 걷기 전 서버가 `autoresume: true` 를 실어 보내도 표식이 다시 서면 안 된다 —
+    // 누를 판도, 뒤집을 명령도 이제 없다.
+    let old: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "하나", "active": true}],
+        "autoresume": true
+    }))
+    .unwrap();
+    let painted = painted_after(vec![layout_one_pane(), old], &[]);
     assert!(
-        !sent.lock().unwrap().iter().any(|o| matches!(
-            o,
-            Outgoing::Command(Command::SetAutoresume)
-        )),
-        "판을 열기만 해야 하는데 그 자리에서 뒤집었다"
+        !painted.iter().any(|t| t.contains("[자동재개]") || t.contains("Auto-resume")),
+        "걷은 자동재개 표식이 그려졌다: {painted:?}"
     );
 }
-
-#[test]
-fn the_a_key_toggles_autoresume_and_closes_the_panel_like_the_canon() {
-    // 정본 `open_autoresume_info` 의 `hide_key="a"` + `hide_cb` 그대로다 —
-    // 뒤집는 명령을 보내고 판을 닫는다(다시 열어 새 상태를 확인하는 동선).
-    let (mut view, tx, sent) = harness();
-    for msg in [layout_one_pane(), autoresume_on()] {
-        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
-    }
-    view.pump_headless();
-    assert!(view.apply_action_for_test(base::Action::ShowAutoresume));
-    view.handle_key(Key::Char('a'), Mods::NONE);
-    view.pump_headless();
-    assert_eq!(view.screens.top(), None, "`a` 를 눌렀는데 판이 안 닫혔다");
-    let out = sent.lock().unwrap().clone();
-    assert!(
-        out.iter().any(|o| matches!(
-            o,
-            Outgoing::Command(Command::SetAutoresume)
-        )),
-        "`a` 가 자동재개를 안 뒤집었다: {out:?}"
-    );
-}
-
-#[test]
-fn the_autoresume_panel_says_which_way_it_is_set() {
-    // 판이 **지금 상태**를 말해야 뜻이 있다(정본 `ar.line1`). 켜짐/꺼짐이 같은 글이면
-    // 사용자는 무엇을 뒤집는지 모른 채 `a` 를 누른다.
-    let on = proto::info::autoresume_lines(&{
-        let mut s = proto::SessionState::default();
-        s.apply(serde_json::from_value(serde_json::json!({
-            "t": "status", "windows": [{"index": 0, "name": "하나", "active": true}],
-            "autoresume": true
-        }))
-        .unwrap());
-        s
-    });
-    let off = proto::info::autoresume_lines(&proto::SessionState::default());
-    assert_ne!(on, off, "켜짐과 꺼짐의 글이 같다");
-    assert!(on.iter().any(|l| l.contains("[a]")), "뒤집는 손 안내가 없다: {on:?}");
-}
-
-// ── 배지 자리 — 알림은 **우측 무리의 머리**다(pytmux-367) ──────────────────────
 
 #[test]
 fn the_notices_badge_sits_at_the_head_of_the_right_hand_group_like_the_canon() {

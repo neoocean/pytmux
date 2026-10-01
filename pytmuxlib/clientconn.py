@@ -471,26 +471,6 @@ class _RestartVersionMixin:
         self._want_restart_check = True
         self.send_cmd("request_restart_check")
 
-    def open_autoresume_info(self):
-        """하단 'AR' 배지 클릭/터치 → 자동 재개(autoresume) 설명 + 켜고 끄기 팝업(요청).
-        현재 상태를 보여 주고 [a] 로 토글한다(set_autoresume — 활성 패널 기준). 원격제어
-        팝업과 같은 hide_key/hide_cb 패턴(토글 후 닫힘; 다시 열어 새 상태 확인)."""
-        on = bool(getattr(self.status, "autoresume", False))
-        state = i18n.t("ar.state_on") if on else i18n.t("ar.state_off")
-        lines = [
-            i18n.t("ar.line1", state=state),
-            "",
-            i18n.t("ar.line_b1"),
-            i18n.t("ar.line_b2"),
-            i18n.t("ar.line_b3"),
-            "",
-            i18n.t("ar.toggle_line",
-                   act=i18n.t("ar.off") if on else i18n.t("ar.on")),
-        ]
-        self.push_screen(InfoScreen(
-            lines, title=i18n.t("ar.title"),
-            hide_key="a", hide_cb=lambda: self.send_cmd("set_autoresume")))
-
     def begin_restart(self, kind):
         # restart-server/restart-all 공통 진입: 실행 전 드라이런을 먼저 돌린다.
         # 회신(restart_check)에서 _pending_restart 를 보고 안전하면 곧장 실행,

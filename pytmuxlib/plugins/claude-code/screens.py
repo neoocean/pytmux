@@ -78,13 +78,10 @@ i18n.register({
 i18n.register({
     "ko": {r[1]: r[1] for r in SAVER_ROWS},
     "en": {
-        "토큰리밋 자동재개": "Token-limit auto-resume",
         "세션 종료 시 토큰 사용량 화면 자동 표시":
             "Auto-open token usage screen when session ends",
         "화면 깨짐 자동 완화(끔/완료마다/깨짐감지)":
             "Auto-mitigate corruption (off/each completion/on detection)",
-        "자동재개 대역외 확인(끔/약하게/엄격)":
-            "Out-of-band auto-resume check (off/weak/strict)",
         "auto 모드에서 yes/no 자동 «예»": "Auto-confirm yes/no in auto mode",
         "프롬프트 단위 클리어(완료마다 doc+/clear)":
             "Per-prompt clear (doc+/clear each completion)",
@@ -186,7 +183,7 @@ i18n.register({
         "claude.warn_fmt_body":
             "[Situation]\n"
             "• pytmux cannot recognize the Claude Code screen format.\n"
-            "• Token/usage tracking and automation (auto-resume·auto-compact·"
+            "• Token/usage tracking and automation (auto-retry·"
             "limit gate) stop.\n"
             "• Claude Code itself (input·output) is unaffected.\n"
             "• Usually happens when a Claude Code version update changes the layout.\n"

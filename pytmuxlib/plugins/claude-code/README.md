@@ -1,15 +1,15 @@
 # claude-code — Claude Code 통합 (토큰 모니터링·표시·보조 자동화)
 
-pytmux 안에서 돌아가는 [Claude Code](https://claude.com/claude-code) 세션을 **감시·보조**하는 종합 플러그인. 화면을 스크랩해 상태를 읽고, 상태줄에 토큰/모델/사용량을 표기하며, 토큰리밋 자동재개·세션 종료 토큰 화면 같은 보조 자동화를 (옵트인) 제공한다. 자동 액션은 안전 기본값이며 `token-saver` 팝업에서 토글한다.
+pytmux 안에서 돌아가는 [Claude Code](https://claude.com/claude-code) 세션을 **감시·보조**하는 종합 플러그인. 화면을 스크랩해 상태를 읽고, 상태줄에 토큰/모델/사용량을 표기하며, 전송 에러 자동 재시도·세션 종료 토큰 화면 같은 보조 자동화를 (옵트인) 제공한다. 자동 액션은 안전 기본값이며 `token-saver` 팝업에서 토글한다.
 
 ![Claude 설정 팝업](screenshot.svg)
 
-> 위 스크린샷은 `token-saver` 설정 팝업. 상태줄 좌하단에는 활성 Claude 패널의 **모델 배지·컨텍스트%·5h 사용률%·계정**이, 임계 도달 시 **⚠ 경고** 배지가, 토큰리밋 자동재개가 무장되면 **⏳ 카운트다운** 배지가 함께 표기된다.
+> 위 스크린샷은 `token-saver` 설정 팝업. 상태줄 좌하단에는 활성 Claude 패널의 **모델 배지·컨텍스트%·5h 사용률%·계정**이, 임계 도달 시 **⚠ 경고** 배지가 함께 표기된다. (토큰리밋 자동재개와 그 **⏳ 카운트다운**은 걷었다 — Claude Code 가 한도 리셋 뒤 스스로 이어 간다.)
 
 ## 기능 범주
 
 - **모니터링** — 활성 Claude 패널의 상태(idle/busy/limit), 토큰 사용량, 5h 한도 근접도, 컨텍스트 여유, 에러를 실시간 추적. 숨은 `/usage` 스크랩(`usageprobe`)으로 실측 세션·주간 한도를 가져와 근사 분모를 대체한다.
-- **보조 자동화(옵트인)** — 토큰 리밋 자동재개, 전송 에러 자동 재시도, idle 시 권한모드 자동 전환, 프롬프트 단위 정리(완료마다 doc+/clear), 세션 종료 시 토큰 사용량 화면.
+- **보조 자동화(옵트인)** — 전송 에러 자동 재시도, 프롬프트 단위 정리(완료마다 doc+/clear), 세션 종료 시 토큰 사용량 화면.
 - **표시·팝업** — 상태줄 배지(위), 토큰 로그(`token-log`), 사용 한도 막대(`usage-panel`), 모델 변경(`model`), 권한모드(footer 클릭).
 - **진행 차단 화면 자동 통과** — `/rc` 원격 제어 관리 메뉴(Esc=Continue), 조직 관리 설정 승인 화면(`Managed settings require approval` → 이미 선택된 `1. Yes, I trust these settings` 를 Enter 로 확정). 둘 다 화면 인스턴스당 1회만, **기본선택이 그 항목일 때만** — 선택을 옮기는 키는 보내지 않는다.
 - **턴 단위 고르기·복사** — 프롬프트 하나와 그 프롬프트가 낸 출력을 **한 블록**으로 골라 `↑`/`↓` 로 옮기고 `Ctrl`+`C` 로 통째로 복사한다(네이티브 GUI 클라). 셸 블록은 셸 통합(OSC 133)이 경계를 알려 주지만 Claude 는 OSC 를 안 보내므로, 여기서는 화면 글의 **프롬프트 마커**(`❯ `/`> `)로 경계를 잡아 같은 블록 메시지로 보낸다(`promptblocks.py`) — 클라에는 셸 블록과 같은 조작이다. ⛔ 셸 패널에는 이 판정을 안 건다(`> ` 로 시작하는 인용·diff 오인).
@@ -26,11 +26,11 @@ pytmux 안에서 돌아가는 [Claude Code](https://claude.com/claude-code) 세�
 | `model` | `model-config`, `claude-model` | 모델·컨텍스트 변경 팝업 |
 | `token-account <이름>` | | 활성 패널 계정 수동 지정(빈값=자동) |
 
-**토글 명령**(`on`/`off`/무=토글): `auto-resume` · `auto-retry`(기본 on) · `auto-token-on-exit`(기본 on) · `prompt-clear`.
+**토글 명령**(`on`/`off`/무=토글): `auto-retry`(기본 on) · `auto-token-on-exit`(기본 on) · `prompt-clear`.
 
 ## `token-saver` 설정 항목
 
-토큰리밋 자동재개 · 세션 종료 시 토큰 사용량 화면 자동 표시 · 권한모드 자동 오토 · 프롬프트 단위 클리어 · 장기 턴 경고(초) · 반복 루프 경고(회).
+세션 종료 시 토큰 사용량 화면 자동 표시 · 프롬프트 단위 클리어 · 장기 턴 경고(초) · 반복 루프 경고(회).
 
 **영속 옵션(`plugin_opts`):** `claude_auto_retry`(기본 True) · `token_debug`(기본 False) · `auto_token_on_exit`(기본 True) · `claude_auto_redraw`(기본 False — §10-I 화면 깨짐 완화: claude 패널 busy→idle 완료 경계마다 전체 재출력 1회).
 
@@ -38,7 +38,7 @@ pytmux 안에서 돌아가는 [Claude Code](https://claude.com/claude-code) 세�
 
 - **모델 배지 클릭** → 모델 변경 팝업. **사용량/계정 세그먼트 클릭** → 토큰 로그.
 - **footer 권한모드 클릭** → 권한모드 선택 팝업(`bypass` 는 명시 사용자 의도 — 자동으로 안 건드림).
-- 임계 80%/100% 도달 시 노랑/빨강 `⚠`, 무장된 토큰리밋 자동재개는 `⏳`+남은 초(입력하면 취소).
+- 임계 80%/100% 도달 시 노랑/빨강 `⚠`.
 
 ## delete-to-disable
 

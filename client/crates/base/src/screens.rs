@@ -160,15 +160,6 @@ pub enum Screen {
     /// 패널·스크롤로 뛴다(`search_goto`). 상한·누락 상류 안내는 **판 안**에 둔다(테두리
     /// 제목은 넘치면 조용히 잘려 no-silent-caps 를 어긴다 — 정본 `notes_text()` 와 같은 자리).
     SearchResults,
-    /// **자동 재개 설명 + 켜고 끄기 판**(pytmux-183 · 정본 `open_autoresume_info`).
-    ///
-    /// 좌하단 `[자동재개]` 표식을 눌러 연다. 정본과 같은 `InfoScreen` 계열이고 손도
-    /// 같다 — 설명을 읽고 `a` 로 뒤집으면 닫힌다.
-    ///
-    /// ⛔ **누르자마자 뒤집지 않는 이유**가 정본에 있다: 자동재개는 「모르고 켜 두면
-    /// 자리를 비운 사이에 대화가 이어지는」 상태라, 클릭 한 번에 뒤집히면 이번엔
-    /// **모르고 꺼 버리는** 자리가 생긴다. 그래서 판이 한 번 선다.
-    Autoresume,
     /// **커서 판**(`esc :` → `cursor` · GUI 전용 · pytmux-375).
     ///
     /// 모양·두께·색·깜빡임·주기 다섯을 한 자리에 모으고 **바꾸는 즉시 보이는**
@@ -224,7 +215,6 @@ impl Screen {
                 Screen::Version => 7,
                 Screen::ShellOutput => 8,
                 Screen::RestartCheck => 9,
-                Screen::Autoresume => 23,
                 Screen::MergeRemote => 10,
                 Screen::Layouts => 11,
                 Screen::Notices => 12,
@@ -238,8 +228,8 @@ impl Screen {
                 Screen::Settings => 20,
                 Screen::Summary => 21,
                 Screen::SearchResults => 22,
-                Screen::Cursor => 24,
-                Screen::DebugStats => 25,
+                Screen::Cursor => 23,
+                Screen::DebugStats => 24,
             }
         }
         const ALL: &[Screen] = &[
@@ -266,7 +256,6 @@ impl Screen {
             Screen::Settings,
             Screen::Summary,
             Screen::SearchResults,
-            Screen::Autoresume,
             Screen::Cursor,
             Screen::DebugStats,
         ];
@@ -300,7 +289,6 @@ impl Screen {
             Screen::Layouts => "레이아웃",
             Screen::Version => "버전",
             Screen::RestartCheck => "재시작 점검",
-            Screen::Autoresume => "자동 재개",
             // GUI 전용 판(pytmux-375) — 정본에 짝이 없어 옮겨 올 문구도 없다.
             Screen::Cursor => "커서",
             // ⚠ 정본 팔레트의 이름 그대로다 — 판 제목이 이름과 갈리면 「어느 명령이
@@ -359,10 +347,6 @@ impl Screen {
             Screen::Keys
             | Screen::Hooks
             | Screen::ShellOutput
-            // 자동 재개 판도 같은 자리다 — 정본이 `center=True` 없이 띄우므로 클래스
-            // 기본(`align: center top`)을 그대로 탄다(pytmux-183 · 앵커 픽스처가
-            // 처음의 `middle` 추측을 잡아 줬다).
-            | Screen::Autoresume
             // 네이티브 전용(정본에 짝이 없다) — 플랜 전문·거부 사유도 **읽는 판**이라
             // 같은 관습을 따른다.
             // 런타임 계측도 **읽는 판**이고, 정본이 범용 `InfoScreen` 으로 띄우므로
@@ -478,11 +462,6 @@ impl Screen {
             Screen::Version => Some("version"),
             // 정본은 이 판의 제목을 카탈로그 키로 짓는다 — 그 키가 곧 이름이다.
             Screen::RestartCheck => Some("restartcheck.title"),
-            // ⚠ 자동 재개 판은 **여기 없다**(pytmux-183). 정본
-            // `open_autoresume_info` 는 `InfoScreen(..., title=t("ar.title"))` 을
-            // **`center=True` 없이** 부르므로 클래스 CSS 기본(`align: center top`)을
-            // 그대로 탄다 — 덮어쓰는 자리가 아니라 이 표에 이름을 적을 것이 없다.
-            // (처음엔 `middle` 로 적었다가 앵커 픽스처가 잡았다.)
             _ => None,
         }
     }
@@ -494,12 +473,9 @@ impl Screen {
             | Screen::Version
             | Screen::ShellOutput
             | Screen::RestartCheck
-            // 정본도 `InfoScreen` 을 쓴다 — `hide_key="a"` 로 뒤집고 닫는 그 판이다
-            // (`clientconn.py::open_autoresume_info`).
             // 정본은 이 표도 범용 `InfoScreen` 에 띄운다
             // (`clientcmd.py` → `InfoScreen(clientdiag.render(...), title="debug-stats")`).
-            | Screen::DebugStats
-            | Screen::Autoresume => "InfoScreen",
+            | Screen::DebugStats => "InfoScreen",
             // 정본에 짝이 없다 — 이 구역은 GUI 만 갖고 있던 것이다(§10-21ⓓ).
             Screen::Summary => return None,
             // 정본에 짝이 없다 — 정본의 커서는 **호스트 단말의 하드웨어 커서**라
@@ -559,8 +535,6 @@ impl Screen {
             Screen::Options => "(↑↓ 줄 · ←→ 값 · Enter 실행 · Esc 취소)",
             Screen::Version => "(아무 키나 닫기)",
             Screen::RestartCheck => "(아무 키나 닫기 · ↑↓ 스크롤)",
-            // 정본과 같은 손이다: `a` 가 뒤집고 닫는다.
-            Screen::Autoresume => "(a 켜고 끄기 · Esc 닫기)",
             Screen::ShellOutput => "(아무 키나 닫기 · ↑↓ 스크롤)",
             Screen::MergeRemote => "(↑↓ 고르기 · h/v 방향 · Enter 합치기 · Esc 취소)",
             // 파이썬 `compose.hint`·`compose.hint_esc` 와 같은 문구다. `Esc` 를 누른
@@ -1658,17 +1632,6 @@ impl Screens {
         ) {
             return Some(self.press_settings(key));
         }
-        // ★ 자동 재개 판의 `a` — 정본 `open_autoresume_info` 의 `hide_key="a"` 그대로다
-        //   (뒤집고 **닫는다**; 다시 열어 새 상태를 확인하는 동선이다 · pytmux-183).
-        //   `Chosen(0)` 으로 돌려주는 이유: 무엇을 보낼지(= `set_autoresume`)는 뷰의
-        //   일이고, core 는 서버 명령을 모른다(다른 「고르는 판」들과 같은 경계).
-        if self.top() == Some(Screen::Autoresume)
-            && key == Key::Char('a')
-            && mods == Mods::NONE
-        {
-            self.close_top();
-            return Some(ScreenKey::Chosen(0));
-        }
         // 목록형 화면은 **고르는** 화면이라 같은 키가 다른 일을 한다.
         if self.top().is_some_and(Self::is_list) {
             return Some(self.press_list(key));
@@ -1703,7 +1666,6 @@ impl Screens {
                             | Screen::ShellOutput
                             | Screen::RestartCheck
                             | Screen::Hooks
-                            | Screen::Autoresume
                             | Screen::DebugStats
                     )
                 ) =>
@@ -1720,7 +1682,6 @@ impl Screens {
                             | Screen::ShellOutput
                             | Screen::RestartCheck
                             | Screen::Hooks
-                            | Screen::Autoresume
                             | Screen::DebugStats
                     )
                 ) =>

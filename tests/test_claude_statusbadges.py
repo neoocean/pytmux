@@ -64,29 +64,19 @@ def test_nothing_is_drawn_for_a_pane_that_is_not_claude():
     assert _texts({"claude_active": False, "claude_model": "opus-5"}) == []
 
 
-def test_the_countdown_and_the_warning_come_after_the_usage():
+def test_the_warning_comes_after_the_usage_and_no_countdown_is_drawn():
     # 순서는 뜻의 일부다 — 정본의 종전 순서 그대로.
+    # ⏳ 자동재개 카운트다운(`pending`)은 pytmux-526 에서 기능째 걷었다 — 옛 서버가
+    # `claude_pending` 을 실어 보내도 그 배지는 다시 안 선다.
     got = _texts({
         "claude_active": True, "tok5h_pct": 5,
         "claude_pending": {"eta": 30},
         "claude_warn": "⚠ 동일 결과 3회 반복 — 루프 의심",
         "claude_warn_kind": "repeat", "claude_warn_n": 3,
     })
-    assert [k for k, _ in got] == ["usage", "pending", "warn"], got
-    assert got[1][1] == " ⏳ 자동재개 30s(입력=취소) ", got[1]
+    assert [k for k, _ in got] == ["usage", "warn"], got
     # ⚠ 뒤 공백 하나가 더 붙는다(컬러 이모지가 다음 칸을 먹는다 — 제보 2026-06-17).
-    assert got[2][1] == " ⚠  동일 결과 3회 반복 — 루프 의심 ", got[2]
-
-
-def test_a_countdown_does_not_mix_two_languages():
-    """★ 이 오라클이 이 슬라이스의 함정을 붙잡는다.
-
-    라벨을 **인자로** 넘기면 클라가 자기 로케일 포맷에 서버 로케일 조각을 끼워
-    `⏳ 자동재개 30s (input=cancel)` 같은 것을 만든다. 라벨은 포맷 안에 있어야 한다."""
-    spec = _mod().badges({"claude_pending": {"eta": 30}})[0]["i18n"]["text"]
-    assert spec["args"] == {"eta": "30"}, spec
-    assert "자동재개" in spec["fmt"], spec
-    assert "label" not in spec["args"], "번역 대상이 인자로 샜다"
+    assert got[1][1] == " ⚠  동일 결과 3회 반복 — 루프 의심 ", got[1]
 
 
 def test_every_composed_badge_carries_the_ingredients_to_be_retranslated():
@@ -97,7 +87,6 @@ def test_every_composed_badge_carries_the_ingredients_to_be_retranslated():
     for fields in (
         {"claude_active": True, "tok5h_pct": 12},
         {"claude_active": True, "week_sonnet_pct": 40},
-        {"claude_pending": {"eta": 9}},
         {"claude_warn": "⚠ x", "claude_warn_kind": "repeat", "claude_warn_n": 2},
     ):
         for b in _mod().badges(fields):
@@ -168,14 +157,13 @@ def test_only_the_badge_with_a_screen_is_clickable():
     통째로 비워 둔 바로 그 이유다."""
     got = _mod().badges({"claude_active": True, "claude_model": "opus-5",
                          "tok5h_pct": 12,
-                         "claude_pending": {"eta": 9},
                          "claude_warn": "⚠ x"})
     opens = {b["kind"]: b.get("do") for b in got}
     assert opens["usage"] == "usage-panel", opens
     # ★ 모델도 눌린다(pytmux-379) — 규칙은 그대로고 **사실이 바뀌었다**: 그 화면이
     #   Tier C 에 생겼다(`screenspec.MODEL`). 규칙을 지키는지는 아래 대조군이 잰다.
     assert opens["model"] == "model", opens
-    for kind in ("pending", "warn"):
+    for kind in ("warn",):
         assert opens[kind] is None, f"{kind} 에 화면이 없는데 누를 자리를 만들었다: {opens}"
 
 
@@ -315,8 +303,9 @@ def test_the_server_runs_the_same_command_the_canonical_sends():
     cm = _cmdmap()
     assert cm.to_action("claude-auto-redraw", ["corruption"]) == (
         "set_claude_auto_redraw", {"value": "corruption"})
-    assert cm.to_action("claude-resume-verify", ["strict"]) == (
-        "set_claude_resume_verify", {"value": "strict"})
+    # 걷은 이름(pytmux-526)은 표에 없다 — 서버가 화면 경로로 넘기고 거기서도 안 산다.
+    assert cm.to_action("claude-resume-verify", ["strict"]) is None
+    assert cm.to_action("auto-resume", ["on"]) is None
     assert cm.to_action("prompt-clear-message", ["작업", "끝"]) == (
         "set_prompt_clear_message", {"msg": "작업 끝"})
     # 플러그인 훅은 **옮기기만** 한다 — 실행은 서버가 한다(그래야 코어 표가 받는

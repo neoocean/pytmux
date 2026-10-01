@@ -6,7 +6,6 @@ pub static EN: &[(&str, &str)] = &[
     ("[동기화]", "[sync]"),
     ("[활동감시]", "[activity]"),
     ("[벨감시]", "[bell]"),
-    ("[자동재개]", "[auto-resume]"),
     ("[프롬프트클리어]", "[prompt-clear]"),
     // ── session.rs — version 회신 한 줄 ──
     (

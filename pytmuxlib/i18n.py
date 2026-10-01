@@ -112,8 +112,9 @@ def phrase(key: str, default: Optional[str] = None, **kw) -> tuple:
 
     ⚠ **`args` 에는 로케일 중립인 값만 넣는다** — 수·시각·이름·경로. 번역 대상을 인자로
     넘기면 클라가 **자기 로케일 포맷에 서버 로케일 조각을 끼워** 언어가 섞인다
-    (실측 위험: `phrase("claude.countdown", label=t("claude.auto_resume"), …)` 는
-    영어 클라에 `⏳ 자동재개 30s (input=cancel)` 를 만든다). 번역이 필요한 조각은
+    (실측 위험: 라벨을 `label=t(…)` 인자로 넘긴 카운트다운 배지가 영어 클라에
+    `⏳ 자동재개 30s (input=cancel)` 를 만들었다 — 그 배지는 pytmux-526 에서 기능째
+    걷혔다). 번역이 필요한 조각은
     **포맷 문자열 안에** 넣고 그 판을 키로 따로 둔다.
     """
     ko = _CATALOG.get(_FALLBACK, {}).get(key)
@@ -650,14 +651,6 @@ register({
 register({
     "ko": {
         # 자동 재개(AR) 설명 팝업
-        "ar.state_on": "켜짐(ON)", "ar.state_off": "꺼짐(OFF)",
-        "ar.line1": "자동 재개(AR)이 현재 {state} 입니다.",
-        "ar.line_b1": "• Claude 가 5시간 사용 한도로 멈추면, 리셋 시각 직후 자동으로",
-        "ar.line_b2": "  작업을 이어갑니다('continue' 입력을 그 패널에 주입).",
-        "ar.line_b3": "• 활성 패널 기준으로 켜고 끕니다(단축키 prefix+R 과 동일).",
-        "ar.off": "끄기", "ar.on": "켜기",
-        "ar.toggle_line": "[a] AR {act}   ·   닫기: Esc 또는 바깥 클릭.",
-        "ar.title": "자동 재개 (AR · Autoresume)",
         # restart 재확인(드라이런 FAIL)
         "restart.label_all": "전체 재시작", "restart.label_server": "서버 재시작",
         "restart.fail_header": "드라이런 FAIL — {label} 안전 점검에서 문제가 있습니다:",
@@ -706,14 +699,6 @@ register({
         "ui.notice_close": " {message}  ⏎ 닫기 ",
     },
     "en": {
-        "ar.state_on": "ON", "ar.state_off": "OFF",
-        "ar.line1": "Autoresume (AR) is currently {state}.",
-        "ar.line_b1": "• When Claude stops at the 5-hour usage limit, right after the",
-        "ar.line_b2": "  reset it resumes work (injects 'continue' into that pane).",
-        "ar.line_b3": "• Toggled per active pane (same as prefix+R).",
-        "ar.off": "off", "ar.on": "on",
-        "ar.toggle_line": "[a] AR {act}   ·   close: Esc or click outside.",
-        "ar.title": "Autoresume (AR)",
         "restart.label_all": "full restart", "restart.label_server": "server restart",
         "restart.fail_header": "Dry-run FAIL — {label} safety check found problems:",
         "restart.fail_item": "  [FAIL] {lbl}",

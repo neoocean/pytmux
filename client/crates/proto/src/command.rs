@@ -354,15 +354,8 @@ pub enum Command {
     /// 플러그인이 없으면 아무도 안 집고 **조용히 끝난다**(delete-to-disable). 파이썬
     /// 클라도 같은 자리에서 같은 일을 한다 — 키는 무동작이 되고 모드만 바뀐다.
     JumpPrompt { direction: &'static str },
-    /// 토큰리밋 **자동재개**를 뒤집는다(`prefix R` — 파이썬 `p_R`).
-    ///
-    /// 인자를 안 싣는 것이 곧 "뒤집어라"다(`set_plugin_enabled` 와 달리 값을 안 보낸다 —
-    /// 서버가 지금 값을 갖고 있고 파이썬 클라도 인자 없이 부른다).
-    ///
-    /// `jump_prompt` 와 같은 자리다 — 표가 아니라 **claude-code 플러그인**이 소유하는
-    /// 이름이라, 플러그인이 없으면 아무도 안 집고 조용히 끝난다(delete-to-disable).
-    SetAutoresume,
-    /// 프롬프트 단위 클리어 토글(claude-code 플러그인 — 자동재개와 같은 자리).
+    /// 프롬프트 단위 클리어 토글(claude-code 플러그인 — `jump_prompt` 와 같은 자리:
+    /// 표가 아니라 플러그인이 소유하는 이름이라, 플러그인이 없으면 조용히 끝난다).
     SetPromptClear,
     /// 스크롤백 검색(`search`). 검색은 **서버가 한다** — 스크롤백은 서버에 있고
     /// (`jump_prompt` 와 같은 이유), 서버가 맞은 줄로 스크롤을 옮겨 새 프레임을
@@ -531,7 +524,6 @@ impl Command {
             Command::SetPluginEnabled { .. } => "set_plugin_enabled",
             Command::SetPaneTitle { .. } => "set_pane_title",
             Command::JumpPrompt { .. } => "jump_prompt",
-            Command::SetAutoresume => "set_autoresume",
             Command::SetPromptClear => "set_prompt_clear",
             Command::Search { .. } => "search",
             Command::SearchAll { .. } => "search_all",
@@ -654,7 +646,6 @@ impl Command {
             Command::SetPaneTitle { title } => json!({ "title": title }),
             Command::JumpPrompt { direction } => json!({ "direction": direction }),
             // 인자를 안 싣는 것이 곧 토글이다(서버가 지금 값을 갖고 있다).
-            Command::SetAutoresume => json!({}),
             Command::SetPromptClear => json!({}),
             Command::SetCapture => json!({}),
             Command::Search { query, down } => {
@@ -849,7 +840,6 @@ impl Command {
             Command::SetPluginEnabled { name: "clock".into(), on: false },
             Command::SetPaneTitle { title: "build".into() },
             Command::JumpPrompt { direction: "up" },
-            Command::SetAutoresume,
             Command::SetPromptClear,
             Command::Search { query: None, down: false },
             Command::SetCapture,
@@ -1334,13 +1324,13 @@ mod tests {
             Command::SetPluginEnabled { .. } => 37,
             Command::SetPaneTitle { .. } => 38,
             Command::JumpPrompt { .. } => 60,
-            Command::SetAutoresume => 61,
             Command::SetPromptClear => 62,
             Command::Search { .. } => 63,
             Command::SetCapture => 64,
             Command::SearchAll { .. } => 71,
             Command::SearchGoto { .. } => 72,
-            Command::DebugStats => 73,
+            // 61 은 pytmux-526 이 걷은 `SetAutoresume` 의 자리였다 — 맨 끝(73)을 옮겼다.
+            Command::DebugStats => 61,
             // 플러그인 액션은 **이름이 곧 명령**이라 변형 하나에 여러 이름이 실린다 —
             // 자리는 하나면 충분하다(이 표는 "변형을 빠짐없이 훑었나"를 재는 것이다).
             Command::PluginToggle { .. } => 65,
@@ -1350,7 +1340,7 @@ mod tests {
     }
 
     /// `variant_index` 가 돌려주는 값의 가짓수. 변형을 늘리면 여기도 늘려야 한다.
-    const VARIANT_COUNT: usize = 74;
+    const VARIANT_COUNT: usize = 73;
 
     #[test]
     fn all_covers_every_variant() {
@@ -1836,7 +1826,6 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         Action::JumpPrompt { up } => Some(Command::JumpPrompt {
             direction: if up { "up" } else { "down" },
         }),
-        Action::ToggleAutoresume => Some(Command::SetAutoresume),
         Action::TogglePromptClear => Some(Command::SetPromptClear),
         // 반복은 곧장 명령이다 — 검색어는 서버가 기억한다(`Pane.search_query`).
         Action::SearchAgain { down } => Some(Command::Search { query: None, down }),
@@ -1911,9 +1900,6 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
         // 창 문맥이 필요하다(글자면 그대로, 그림이면 임시 파일 경로). 뷰가 읽은 뒤에야
         // `paste` 하나가 만들어진다 — 작성창(`ShowCompose`)과 **같은 자리**다.
         Action::PasteClipboard => None,
-        // 판을 여는 것은 **클라 안의 일**이다 — 뒤집는 명령(`set_autoresume`)은 그 판
-        // 안에서 `a` 를 눌렀을 때 난다(`ToggleAutoresume` 이 이미 그 명령을 든다).
-        Action::ShowAutoresume => None,
         // 화면을 여는 것은 **클라 안의 일**이다 — 서버는 이 클라가 무엇을 덮어 보이는지
         // 알 필요가 없다(플랜 화면과 같은 자리).
         Action::ShowKeys | Action::ShowTabs => None,

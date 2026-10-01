@@ -2838,39 +2838,35 @@ async def test_screen_prompt_reflects_remote_injected():
         await teardown(srv, task, sock)
 
 
-async def test_autoresume_schedules_on_limit_reset():
-    """§10 토큰 리밋 자동재개: 리밋 해제 시각 안내가 뜨면 _maybe_schedule_resume 가
-    parse_reset_delay 로 지연을 계산해 _fire_resume 타이머를 건다. serverclaude 믹스인
-    분리 후 parse_reset_delay import 누락 회귀를 막는 가드(이 경로는 리밋 화면에서만
-    실행돼 기존 스위트가 커버하지 않았다)."""
+async def test_limit_screen_injects_nothing_now_that_auto_resume_is_gone():
+    """pytmux-526(R4): 토큰리밋 자동재개를 걷었다 — Claude Code CLI 2.1.234 부터 CLI 가
+    한도 리셋 뒤 스스로 이어 간다(`autoContinueAtUsageLimit`, 기본 true). 둘이 함께 있으면
+    서로 방해한다: CLI 는 대기 중 들어온 프롬프트를 돌리고 대기를 버리므로, 리셋 시각에
+    우리가 치던 'continue' 가 CLI 의 대기를 끝낸다.
+
+    호출부 단언: 옛 opts 가 대역외 확인을 켜 두었어도(읽고 버린다) 리셋 시각이 적힌 한도
+    화면이 원시 스트림(serverpty 경로)과 스캔 양쪽으로 들어와도 ① 타이머가 안 서고
+    ② pty 로 아무 글도 안 가며 ③ status 에 카운트다운(`claude_pending`)·`autoresume` 이
+    안 실린다. 한도 **상태** 판정은 남는다(배지·`claude-limit` 훅이 쓴다)."""
     srv, task, sock = await server_only()
     try:
+        srv.plugins.server_opts_init(srv, {"plugin_opts": {"claude_resume_verify": "strict"}})
+        assert getattr(srv, "claude_resume_verify", None) is None
         sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        scheduled = []
-
-        class _FakeLoop:
-            def call_later(self, delay, fn, *a):
-                scheduled.append((delay, fn, a))
-        srv.loop = _FakeLoop()
-
-        # parse_reset_delay 가 잡는 문구(리밋+해제시각) → 지연 계산·예약
-        srv._maybe_schedule_resume(p, "usage limit reached — resets at 3:00pm")
-        assert p._resume_pending is True, "리밋 안내 시 예약 플래그"
-        assert scheduled, "resume 타이머가 걸려야 함"
-        delay, fn, _ = scheduled[0]
-        assert delay > 0 and fn == srv._fire_resume, (delay, fn)
-
-        # 이미 예약된 상태면 중복 예약 안 함
-        srv._maybe_schedule_resume(p, "usage limit reached — resets at 3:00pm")
-        assert len(scheduled) == 1, "중복 예약 방지"
-
-        # 리밋 신호 없는 일반 출력은 예약하지 않음(scanbuf 도 비워 이전 리밋 잔상 제거)
-        p._resume_pending = False
-        p._scanbuf = ""
-        scheduled.clear()
-        srv._maybe_schedule_resume(p, "normal shell output, nothing here")
-        assert not scheduled and p._resume_pending is False
+        win = sess.active_window
+        p = win.active_pane
+        writes = []
+        p.pty.write = lambda b: writes.append(b)
+        banner = (b"\x1b[2J\x1b[HClaude usage limit reached. Your limit will reset "
+                  b"at 3pm.\r\n? for shortcuts\r\n")
+        srv._ingest_slice(p, banner)          # 원시 스트림 경로(옛 자동재개 트리거 자리)
+        srv._scan_claude(sess, win)
+        assert p._claude == "limit", p._claude
+        assert not hasattr(p, "autoresume") and not hasattr(p, "_resume_handle")
+        assert writes == [], writes
+        st = srv._status_msg(sess, full=True)
+        assert "claude_pending" not in st and "autoresume" not in st, sorted(st)
+        assert srv.plugins.server_pending(srv, p) is None
     finally:
         await teardown(srv, task, sock)
 
@@ -3132,13 +3128,10 @@ async def test_auto_retry_cancelled_on_pane_close():
         p = sess.active_window.active_pane
         cancelled = []
         hr = types.SimpleNamespace(cancel=lambda: cancelled.append("retry"))
-        hs = types.SimpleNamespace(cancel=lambda: cancelled.append("resume"))
         p._retry_handle, p._retry_pending = hr, True
-        p._resume_handle, p._resume_pending = hs, True
         srv.plugins.pane_closing(srv, p)
-        assert "retry" in cancelled and "resume" in cancelled
+        assert cancelled == ["retry"], cancelled
         assert p._retry_handle is None and p._retry_pending is False
-        assert p._resume_handle is None and p._resume_pending is False
     finally:
         await teardown(srv, task, sock)
 
@@ -4711,37 +4704,6 @@ async def test_handle_control():
         await teardown(srv, task, sock)
 
 
-async def test_fire_resume_rechecks_limit_state():
-    """_fire_resume 는 발화 직전 화면이 여전히 limit 일 때만 'continue' 를 주입한다(#6).
-    예약~발화 사이에 사용자가 재개했거나(화면이 limit 아님) parse_reset_delay 오탐이면
-    주입을 건너뛰어 작업 중인 Claude 에 끼어들지 않는다."""
-    srv, task, sock = await server_only()
-    try:
-        sess = srv.ensure_default_session(80, 24)
-        p = sess.active_window.active_pane
-        p.resume_msg = "continue"
-        real = p.pty
-        writes = []
-
-        class _Spy:
-            def write(self, b):
-                writes.append(b)
-        try:
-            p.pty = _Spy()
-            # ① 화면이 limit 아님(셸 프롬프트) → 주입 안 함
-            p.feed(b"\x1b[2J\x1b[H$ ls -la\r\n")
-            srv._fire_resume(p)
-            assert writes == [], "limit 아니면 주입 안 함"
-            # ② 화면이 limit → continue 주입
-            p.feed(b"\x1b[2J\x1b[Husage limit reached, resets at 3pm\r\n")
-            srv._fire_resume(p)
-            assert writes and b"continue" in writes[0], "limit 이면 continue 주입"
-        finally:
-            p.pty = real
-    finally:
-        await teardown(srv, task, sock)
-
-
 async def test_clear_resets_token_session():
     """/clear 자동 주입(_pc_advance doc→clear) 시 토큰 누계가 새 세션으로 끊긴다(#5).
     절감 자동화가 돌수록 doc/clear 토큰이 사용자 누계에 합산되던 구조적 오차를 막는다."""
@@ -5949,7 +5911,7 @@ async def test_status_static_opts_only_on_full_c4():
         periodic = srv._status_msg(sess, full=False)
         for k in STATIC:
             assert k not in periodic, f"주기 status 가 정적 옵션 {k} 를 실음(C4 위반)"
-        for k in ("single_border", "claude_pending"):
+        for k in ("single_border", "claude_retry"):
             assert k in periodic, f"주기 status 에 동적/낙관 필드 {k} 누락"
     finally:
         await teardown(srv, task, sock)

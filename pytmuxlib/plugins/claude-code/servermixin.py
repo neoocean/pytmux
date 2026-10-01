@@ -37,7 +37,7 @@ from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_prompt, claude_prompt_marks, claude_perm_mode,
                      claude_state, claude_usage,
                      claude_welcome, ctx_window_tokens, parse_inline_limit,
-                     parse_reset_delay, parse_usage, screen_tail_key,
+                     parse_usage, screen_tail_key,
                      track_repeat)
 from pytmuxlib.model import Pane, Session, Tab
 
@@ -184,7 +184,7 @@ class ServerClaudeMixin:
     # ── 메서드 인덱스(LLM 부분 Read 용 — 이 단일 클래스는 큰 단일 클래스라 `grep '^    def '`
     #    의 class 축이 무력하다. 섹션→**앵커 메서드명**(정확한 위치는 그 이름을 `grep -n`
     #    으로 확정 — 행수/행범위는 드리프트가 잦아 일부러 안 적는다, 코드검수 2026-07-10):
-    #    · 토큰 리밋 자동 재개/재시도      _maybe_schedule_resume … _fire_retry
+    #    · 전송 에러 자동 재시도            _maybe_schedule_retry … _fire_retry
     #    · 프롬프트 클리어/규칙 주입(#9/#27) set_prompt_clear … _pc_advance
     #    · 세션 상태·모델·auto 모드         _reset_token_session … set_claude_perm_mode
     #    · ★ 화면 스캔 상태기계             _scan_claude(단일 최대 메서드)
@@ -195,178 +195,13 @@ class ServerClaudeMixin:
     #    · 프롬프트 추적·토큰 DB(usagedb)   _track_prompt … _log_tokens
     #    · 트랜스크립트 회계(usage_xc)      _xc_resolve_path … _xc_totals_for_status
     #    · 토큰 디버그·스냅샷·종료 이월      set_token_debug … set_claude_turn_warn
-    # ---- 토큰 리밋 자동 재개 ----
-    def _maybe_schedule_resume(self, pane: Pane, newtext: str):
-        pane._scanbuf = (pane._scanbuf + newtext)[-4000:]
-        if pane._resume_pending:
-            return
-        delay = parse_reset_delay(pane._scanbuf)
-        if delay is not None:
-            pane._resume_pending = True
-            # 해제 시각 +5초 버퍼 후 재개 메시지 입력. 핸들을 들고 있다가 busy 복귀
-            # 시 취소한다(M12 _cancel_resume — 사용자가 먼저 재개한 작업 보호).
-            pane._resume_handle = self.loop.call_later(
-                delay + 5, self._fire_resume, pane)
-
-    def _cancel_resume(self, pane: Pane):
-        """무장된 자동재개 예약을 취소한다(busy 복귀·세션 종료 시, M12). 발화직전
-        재확인(#6)이 limit 이탈을 이미 막지만, 예약 자체를 일찍 거둬 헤더
-        카운트다운도 즉시 사라지게 한다. 핸들이 없으면 무동작."""
-        h = getattr(pane, "_resume_handle", None)
-        if h is not None:
-            h.cancel()
-            pane._resume_handle = None
-        pane._resume_pending = False
-
-    # F3 옵션B(설계 F3_SCRAPE_FORGERY_DESIGN_2026-07-18 §5): 자동재개는 **화면 텍스트**
-    # 하나로 발화하는데, 그 텍스트는 Claude 가 스스로 출력할 수 있다 — 즉 모델(또는
-    # 모델에게 그렇게 시킨 문서/도구 출력)이 가짜 리밋 배너를 그려 주입을 유발할 수 있고,
-    # 실측으로 재현됐다. in-band 방어(본문 필터)는 원리적으로 실패하므로 **막는 대신
-    # 관측 가능하게** 만든다: ① 주입할 때마다 사용자에게 알림 ② 같은 리셋 창에서
-    # 반복 주입을 막는 쿨다운. 위조를 없애지는 못하지만 **사일런트 조작**이 사라진다.
-    _RESUME_COOLDOWN = 15 * 60.0     # 초 — 같은 패널 재주입 최소 간격(리셋 창 ≥1h)
-    # F3 옵션A(같은 설계 §3): **대역외** 확인. 진짜 5h 리밋은 계정이 실제로 할당량을
-    # 소진했다는 뜻이라, 그 세션의 트랜스크립트(`~/.claude/*.jsonl` → usage_xc)에 최근
-    # 창 사용량이 **무겁게** 남는다. 위조 배너는 저사용 세션에서도 뜬다. 그래서 "최근
-    # 창 실사용이 0에 가까운데 리밋 배너" 만 위조로 보고 억제하는 **약한 하한 게이트**다
-    # (플랜별 cap 추정이 필요 없어 오억제 위험이 가장 낮다 — 설계가 고른 형태).
-    #   창 = 5h(리밋 창), weak = 그 창의 4항목 Σ 가 _RESUME_VERIFY_WEAK 미만이면 억제,
-    #   strict = _RESUME_VERIFY_STRICT 미만이면 억제(진짜 리밋이면 수십만 토큰이 남는다).
-    # **회계가 붙지 않은 세션(행 0)에서는 판단하지 않는다** — 그걸 위조로 읽으면 진짜
-    # 리밋에서 Claude 를 못 깨운다(체감 회귀 = 이 기능을 켜지 못하게 만드는 실패).
-    _RESUME_VERIFY_WINDOW = 5 * 3600.0
-    _RESUME_VERIFY_WEAK = 5_000        # "거의 0"
-    _RESUME_VERIFY_STRICT = 100_000    # 진짜 5h 리밋 도달의 보수적 하한
-
-    def _xc_window_usage(self, pane: Pane, window_sec: float = None) -> dict | None:
-        """패널의 Claude 세션이 **최근 창에서 실제로 쓴 양**(usage_xc 기준) 또는 None.
-
-        세션 식별자는 트랜스크립트 파일명(= `sessionId`)에서 얻는다 — 이미 패널에
-        캐시된 `_xc_path`(`_xc_resolve_path`)라 새 탐색 비용이 없다. 경로를 아직 못
-        잡았거나 DB/스키마가 없으면 **None**(=판단 불가)을 돌려 호출부가 게이트를
-        건너뛰게 한다. best-effort: 어떤 예외도 자동재개를 막지 않는다."""
-        try:
-            path = getattr(pane, "_xc_path", None) or self._xc_resolve_path(pane)
-            if not path:
-                return None
-            sid = os.path.basename(path).rsplit(".", 1)[0]
-            if not sid:
-                return None
-            conn = self._tokens_db_conn()
-            fn = getattr(usagedb, "xc_session_window", None)
-            if conn is None or fn is None:
-                return None
-            win = float(window_sec or self._RESUME_VERIFY_WINDOW)
-            out = fn(conn, sid, time.time() - win)
-            out["session"] = sid
-            return out
-        except Exception:       # noqa: BLE001 — 확인 실패는 '판단 불가'로 접는다
-            return None
-
-    def _resume_verify_blocks(self, pane: Pane):
-        """F3 옵션A 게이트: 자동재개를 **억제해야 하면** 사유 dict, 아니면 None.
-
-        `claude_resume_verify` = off(기본·현행 동작 그대로) | weak | strict.
-        억제 조건은 셋이 **모두** 참일 때만: ①옵션이 off 아님 ②그 세션에 회계 행이
-        있음(rows>0 — 없으면 판단 불가라 통과) ③최근 5h 창 Σ 가 임계 미만.
-        판단 불가(경로 미해석·DB 없음·예외)는 **언제나 통과**다 — 이 게이트가 틀리는
-        쪽은 '위조를 놓침'(옵션 B 가 가시화로 받아냄)이어야 하고, 절대
-        '진짜 리밋을 못 깨움'이면 안 된다."""
-        from . import norm_resume_verify
-        mode = norm_resume_verify(getattr(self, "claude_resume_verify", "off"))
-        if mode == "off":
-            return None
-        u = self._xc_window_usage(pane)
-        if not u or u.get("rows", 0) <= 0:
-            return None                     # 회계 미부착 → 판단 포기(통과)
-        need = (self._RESUME_VERIFY_STRICT if mode == "strict"
-                else self._RESUME_VERIFY_WEAK)
-        if int(u.get("win_full", 0)) >= need:
-            return None
-        return {"mode": mode, "used": int(u.get("win_full", 0)), "need": need}
-
-    def _fire_resume(self, pane: Pane):
-        pane._resume_pending = False
-        pane._resume_handle = None
-        pane._scanbuf = ""
-        # 발화 직전 재확인(#6): 화면이 **여전히 limit 상태**일 때만 주입한다. 예약과
-        # 발화 사이(수 분~수 시간)에 사용자가 직접 재개했거나 화면이 busy/idle 로
-        # 돌아갔다면, 'continue' 주입이 작업 중인 Claude 에 끼어들어 작업을 망친다.
-        # parse_reset_delay 가 transcript 의 우연한 시각 숫자로 오탐했을 때도 막아 준다.
-        if pane.pty is None:
-            return
-        if claude_state(screen_text(pane.screen)) != "limit":
-            return
-        # F3-B ② 쿨다운: 위조 배너를 반복해 그리면 주입이 그만큼 반복된다. 진짜 리밋의
-        # 리셋 창은 최소 1시간이라 15분 상한은 정상 자동재개를 **한 번도** 막지 않는다
-        # (막으면 그게 더 큰 손해라 여기서 보수적으로 잡는다).
-        now = self.loop.time() if getattr(self, "loop", None) else 0.0
-        last = getattr(pane, "_resume_fired_at", None)
-        if last is not None and (now - last) < self._RESUME_COOLDOWN:
-            self._notice_resume(pane, throttled=True)
-            return
-        # F3-A 대역외 하한 게이트(기본 off — 켠 사람에게만 발효). 쿨다운 **뒤**에 두는
-        # 이유: 쿨다운은 비용 0 이고, 이 게이트는 DB 를 읽는다(발화 경로에서만 1회).
-        blocked = self._resume_verify_blocks(pane)
-        if blocked is not None:
-            # 억제는 `_resume_fired_at` 를 **건드리지 않는다** — 억제가 쿨다운을 소모하면
-            # 그 뒤 진짜 리밋 발화가 쿨다운에 걸려 죽는다. 대신 억제 **알림**만 같은
-            # 간격으로 접어(위조 배너를 계속 그리는 상대가 알림을 폭주시키지 못하게)
-            # 첫 억제와 그 뒤 15분마다 한 번씩 알린다.
-            last_b = getattr(pane, "_resume_blocked_at", None)
-            if last_b is None or (now - last_b) >= self._RESUME_COOLDOWN:
-                pane._resume_blocked_at = now
-                self._notice_resume(pane, throttled=False, blocked=blocked)
-            return
-        pane._resume_fired_at = now
-        try:
-            pane.pty.write((pane.resume_msg + "\r").encode("utf-8"))
-        except OSError:
-            return
-        self._notice_resume(pane, throttled=False)
-
-    def _notice_resume(self, pane: Pane, throttled: bool, blocked=None):
-        """자동재개 주입(또는 쿨다운 차단·대역외 억제)을 사용자에게 알린다(F3-B ①).
-
-        지금까지 주입은 **아무 흔적도 남기지 않았다** — 화면에 'continue' 가 찍히는 것이
-        전부라, 그게 내가 시킨 건지 무엇이 시킨 건지 사후에 알 길이 없었다. 서버발
-        표면이라 문구를 여기서 만들지 않고 **키+인자**로 보낸다(클라가 번역 —
-        [[server-pushed-surface-cannot-call-t]]). 알림 실패가 재개를 막으면 안 되므로
-        전 경로 best-effort."""
-        try:
-            note = getattr(self, "_notice_msg", None)
-            if note is None:
-                return
-            if blocked is not None:
-                # F3-A: 억제는 **반드시 보인다**. 조용히 안 깨우면 사용자는 "자동재개가
-                # 고장났다" 로 읽고(체감 회귀와 구분 불가) 옵션을 다시 끄게 된다.
-                msg = note(
-                    "ccmsg.resume_unverified",
-                    "자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — 리밋 배너가 "
-                    "위조로 의심됨(패널 {pane}, claude-resume-verify {mode})",
-                    severity="warn", pane=pane.id, used=blocked.get("used", 0),
-                    need=blocked.get("need", 0), mode=blocked.get("mode", ""))
-            elif throttled:
-                # ⚠ 갈래마다 **키와 원문을 리터럴로** 적는다. 종전에는 둘을 변수에 담아
-                # 한 번만 불렀는데, 그러면 "서버가 무슨 글을 내보내나"를 소스에서 세는
-                # 도구(`client/scripts/gen_server_strings.py`)가 이 두 줄을 못 본다 —
-                # 실려는 나가는데 영어 표에는 안 들어가 영어 사용자에게 한국어로 뜬다
-                # (2026-08-02o 실측). 한 줄 줄이는 것보다 세어지는 편이 낫다.
-                msg = note("ccmsg.resume_throttled",
-                           "자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})",
-                           severity="warn", pane=pane.id,
-                           msg=getattr(pane, "resume_msg", ""))
-            else:
-                msg = note("ccmsg.resume_injected",
-                           "자동재개: '{msg}' 주입(패널 {pane})",
-                           severity="info", pane=pane.id,
-                           msg=getattr(pane, "resume_msg", ""))
-            for c in list(getattr(self, "clients", ())):
-                if getattr(c, "session", None) is not None:
-                    # 맨 create_task 금지(pytmux-410 · 검수 2026-09-05 S-4) — 서버가 든다.
-                    self._spawn(self._send_to(c, dict(msg)), "autoresume_notice")
-        except Exception:       # noqa: BLE001 — 알림이 자동재개를 죽이면 안 된다
-            pass
+    # ---- 토큰 리밋 자동 재개 — 걷었다(pytmux-526) ----
+    # Claude Code CLI 2.1.234 부터 CLI 가 한도 리셋 뒤 세션을 스스로 이어 간다
+    # (`autoContinueAtUsageLimit`, 기본 true). 둘이 함께 있으면 서로 방해한다 — CLI 는
+    # 대기 중에 프롬프트가 들어오면 대기를 버리고 그 프롬프트를 돌리므로, 리셋 시각에
+    # 우리가 치던 'continue' 가 CLI 의 대기를 끝낸다. 그래서 화면 스크랩 + 키 주입으로
+    # 하던 이 기능(예약·쿨다운·대역외 확인·알림·카운트다운)을 통째로 걷었다.
+    # 계획 = 트래커 문서 `pytmux/claude_code_native_retirement_plan_2026-10-01` §4 R4.
 
     def _notice_fullscreen_off(self):
         """claude 가 스스로 끈 fullscreen 을 **한 번** 말한다(pytmux-415 ⑶).
@@ -439,7 +274,7 @@ class ServerClaudeMixin:
 
     # ---- 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청 2026-06-12,
     # 지속화 2026-06-15) ----
-    # 사용량 5h 리밋(autoresume, reset 시각 대기)과 별개로, 전송 에러로 멈추면 "계속" 을
+    # 사용량 5h 리밋(CLI 가 스스로 이어 간다 — pytmux-526)과 별개로, 전송 에러로 멈추면 "계속" 을
     # 주입해 이어가게 한다. 처음 두 번은 빠르게(1·2분) 재시도해 일시적 blip 을 즉시 털고,
     # 이후엔 **5분 케이던스로 무기한** 반복한다 — 진행 중이던 작업이 지속 outage(529
     # overloaded 등)에도 영영 멈춰 있지 않게(사용자 요청 2026-06-15: "5분에 한 번씩
@@ -473,8 +308,8 @@ class ServerClaudeMixin:
     def _fire_retry(self, pane: Pane):
         """백오프 만료: 화면이 **여전히** 전송 에러로 멈춰 있으면 "계속"+Enter 를
         주입한다. 그새 Claude 가 스스로 재시도해 busy/idle 로 돌아갔거나 화면이 바뀌었으면
-        (에러 해소) 주입하지 않는다(작업 중 끼어들기 방지 — autoresume _fire_resume 와
-        같은 발화직전 재확인). 주입에 성공하면 _retry_attempts 를 올려 백오프를 전진한다
+        (에러 해소) 주입하지 않는다(작업 중 끼어들기 방지 — 발화직전 재확인).
+        주입에 성공하면 _retry_attempts 를 올려 백오프를 전진한다
         (상한 없음 — 3차부터 5분 케이던스로 무기한 반복)."""
         pane._retry_pending = False
         pane._retry_handle = None
@@ -520,21 +355,6 @@ class ServerClaudeMixin:
                 self._cancel_retry(p)
         self._save_opts()
         return self.claude_auto_retry
-
-    def set_autoresume(self, sess: Session, value=None, msg: str | None = None):
-        win = sess.active_window
-        if not win or not win.active_pane:
-            return
-        p = win.active_pane
-        if msg is not None:
-            p.resume_msg = msg
-            return
-        p.autoresume = (not p.autoresume) if value is None else bool(value)
-        if p.autoresume and not p._resume_pending:
-            # 켜는 순간 이미 화면에 떠 있는 리밋 안내도 즉시 검사
-            rows, _ = p.render(False)
-            text = "\n".join("".join(s[0] for s in r) for r in rows)
-            self._maybe_schedule_resume(p, text)
 
     # ---- 프롬프트 점프(esc ctrl+↑/↓) ----
     def claude_jump_prompt(self, sess: Session, direction="up") -> bool:
@@ -632,7 +452,7 @@ class ServerClaudeMixin:
         return self.prompt_clear_message
 
     def _pc_inject(self, pane: Pane, text: str):
-        """패널 안 Claude 에게 한 줄 입력+Enter 주입(자동재개 _fire_resume 와 동일 경로).
+        """패널 안 Claude 에게 한 줄 입력+Enter 주입.
         프롬프트 추적/히스토리를 거치지 않아 사용자 프롬프트와 섞이지 않는다."""
         if pane.pty is None:
             return
@@ -852,28 +672,6 @@ class ServerClaudeMixin:
             self.claude_auto_redraw = norm_redraw_mode(value)
         self._save_opts()
         return self.claude_auto_redraw
-
-    def set_claude_resume_verify(self, value=None):
-        """F3 옵션A — 자동재개 발화 전 **대역외 확인** 3-state. plugin_opts 영속,
-        기본 `"off"`(현행 동작 그대로). 모드:
-          - off    : 확인 없음. 화면 텍스트만으로 발화(종전 동작).
-          - weak   : 그 세션의 최근 5h 실사용(usage_xc Σ)이 `_RESUME_VERIFY_WEAK`
-                     (5k 토큰) 미만이면 **억제**하고 warn 알림. 진짜 리밋은 반드시
-                     무거운 사용을 동반하므로 오억제가 거의 없다.
-          - strict : 같은 판정을 `_RESUME_VERIFY_STRICT`(100k) 로 — 위조를 더 잡지만
-                     짧은 세션이 리밋에 걸린 경우(계정 전역 소진)를 오억제할 수 있다.
-        **회계가 안 붙은 세션(usage_xc 행 0)에서는 모드와 무관하게 통과**한다 —
-        판단 불가를 위조로 읽으면 진짜 리밋에서 Claude 를 못 깨운다. value 미지정/""=
-        다음 모드로 순환. 설계 = F3_SCRAPE_FORGERY_DESIGN_2026-07-18 §3 옵션 A."""
-        from . import RESUME_VERIFY_MODES, norm_resume_verify
-        cur = norm_resume_verify(getattr(self, "claude_resume_verify", "off"))
-        if value is None or value == "":
-            self.claude_resume_verify = RESUME_VERIFY_MODES[
-                (RESUME_VERIFY_MODES.index(cur) + 1) % len(RESUME_VERIFY_MODES)]
-        else:
-            self.claude_resume_verify = norm_resume_verify(value)
-        self._save_opts()
-        return self.claude_resume_verify
 
     # 박스(프롬프트 테두리) 모서리 글리프 — 깨짐 감지(_claude_corruption_signal)용.
     _BOX_TOP = ("╭", "┌", "┏")      # 둥근/각/굵은 좌상단(우상단도 함께 옴)
@@ -1608,26 +1406,20 @@ class ServerClaudeMixin:
         return changed
 
     def _scan_retry_gates(self, p, txt, new_cl) -> None:
-        """자동 재개(M12)·전송 에러 자동 재시도 예약의 게이트 phase.
+        """전송 에러 자동 재시도 예약의 게이트 phase.
 
         `_scan_claude` 에서 추출(로드맵 #1 God-분할, 동작 불변). 재시도 게이트는 new_cl 이
         아니라 **_hdr_claude**(디바운스된 '이 패널은 Claude') 로 판정한다 — API 에러 화면은
         idle/busy footer 가 없어 claude_state=None 일 수 있고, 셸이 우연히 'API Error' 를
         찍어도 오발화하면 안 되기 때문이다. 예약만 다루므로 changed 를 바꾸지 않는다.
         """
-        # M12: limit 이탈 시 무장된 자동재개 예약을 취소(사용자가 먼저 재개
-        # 했거나 화면이 전환됨). _fire_resume 도 발화직전 limit 재확인으로
-        # 막지만(#6), 예약을 일찍 거둬 헤더 카운트다운도 즉시 사라지게 한다.
-        if new_cl != "limit" and p._resume_handle is not None:
-            self._cancel_resume(p)
         # 전송 에러(API error/rate limit/overloaded) 자동 재시도(요청): 에러로
         # 멈추면 1분 뒤 "계속" 주입을 예약하고, 에러 해소(busy 복귀 등) 시 취소한다.
         # 게이트는 new_cl 이 아니라 **_hdr_claude**(이 패널이 Claude 임 — 디바운스):
         # API 에러 화면은 idle/busy footer 가 없어 claude_state=None 일 수 있고,
         # Claude 아닌 셸이 우연히 "API Error" 를 찍어도 오발화하지 않게 한다.
-        # 5h 사용량 배너("usage limit reached")는 claude_api_error 에 안 잡히고,
-        # "rate limit exceeded" 처럼 둘 다 걸리는 경우만 autoresume 가 이미 재개를
-        # 무장(_resume_pending)했으면 양보해 중복 주입을 막는다(reset 시각으로 다룸).
+        # 5h 사용량 배너("usage limit reached")는 claude_api_error 에 안 잡히고, 한도
+        # 뒤 이어 가기는 CLI 가 스스로 한다(pytmux-526 — 우리 자동재개는 걷었다).
         # ⓐ Claude 가 **스스로 재시도 중**이면 그 화면은 「에러로 멈췄다」가 아니라
         #    「아직 안 끝났다」다(pytmux-477 ④). 예약을 걷지도 **카운터를 리셋하지도**
         #    않는다 — 리셋하면 그 뒤 진짜로 굳었을 때 백오프가 1분부터 다시 시작해
@@ -1636,12 +1428,12 @@ class ServerClaudeMixin:
             if not p._self_retry:
                 p._self_retry = True
             self._maybe_schedule_retry(p)
-        elif p._hdr_claude and claude_api_error(txt) and not p._resume_pending:
+        elif p._hdr_claude and claude_api_error(txt):
             p._self_retry = False
             self._maybe_schedule_retry(p)
         else:
             p._self_retry = False
-            # 에러 아님(해소·busy/idle 복귀·autoresume 양보·non-Claude) → 무장
+            # 에러 아님(해소·busy/idle 복귀·non-Claude) → 무장
             # 예약 취소 + 연속 재시도 카운터 리셋(다음 새 에러는 다시 1분부터, #9 H3).
             if p._retry_handle is not None:
                 self._cancel_retry(p)
@@ -2486,22 +2278,6 @@ class ServerClaudeMixin:
                 buf += ch
             i += 1
         pane._inbuf = buf[-500:]
-
-    def _pending_action(self, pane):
-        """카운트다운: 무장된 자동재개 예약의 남은 초(ETA)를 반환한다(없으면 None).
-        클라 상태줄 배지가 "곧 자동재개가 일어난다(입력 시 취소)"를 사용자에게 보이게
-        한다 — 비가역 동작의 발견성·취소권 보장. 발화 시각은 asyncio 타이머 핸들의
-        when()(loop.time 기준)에서 얻는다 — 클램프해 음수/만료는 0 으로."""
-        if pane is None or self.loop is None:
-            return None
-        h = getattr(pane, "_resume_handle", None)
-        if h is None:
-            return None
-        try:
-            eta = max(0, int(round(h.when() - self.loop.time())))
-        except (AttributeError, RuntimeError, TypeError):
-            return None
-        return {"kind": "resume", "eta": eta}
 
     def _retry_action(self, pane):
         """재시도가 **도는 중**임을 표면에 낼 값(없으면 None) — `{n, eta, self}`.

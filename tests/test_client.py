@@ -1137,7 +1137,7 @@ async def test_command_list_and_autocomplete():
         catmap = dict(scr._all_cats)
         assert "Claude" in catmap and "모니터" in catmap, list(catmap)
         claude_names = [n for n, _ in catmap["Claude"]]
-        for nm in ("claude-auto-yes", "auto-retry", "auto-resume",
+        for nm in ("claude-auto-yes", "auto-retry", "auto-token-on-exit",
                    "claude-token-log", "prompt-clear"):
             assert nm in claude_names, (nm, claude_names)
         mon_names = [n for n, _ in catmap["모니터"]]
@@ -6678,44 +6678,6 @@ async def test_open_warn_info_popup_content():
         app.open_claude_warn_info()
         await wait_until(pilot, lambda: len(app.screen_stack) == n)
         assert len(app.screen_stack) == n, "경고 없으면 팝업 안 띄움"
-    await _with_app(body)
-
-
-async def test_status_ar_badge_click_opens_autoresume_info():
-    """상태줄 AR(자동재개) 배지가 autoresume 켜졌을 때 클릭존(_ar_zone)으로 등록되고,
-    클릭하면 자동 재개 켜고 끄기 팝업(open_autoresume_info)을 연다(요청)."""
-    async def body(app, pilot, srv):
-        from textual import events
-        app.status.autoresume = True
-        app.status.render_line(0)
-        az = app.status._ar_zone
-        assert az is not None, "AR 배지 클릭존 등록"
-        called = []
-        app.open_autoresume_info = lambda: called.append(True)
-        y = app.status.size.height - 1
-        cx = (az[0] + az[1]) // 2
-        ev = events.MouseDown(app.status, cx, y, 0, 0, 1, False, False, False)
-        app.status.on_mouse_down(ev)
-        assert called == [True], called
-    await _with_app(body)
-
-
-async def test_open_autoresume_info_popup_toggles():
-    """open_autoresume_info: 현재 상태를 보여 주는 InfoScreen 을 띄우고, [a] 키로
-    set_autoresume 를 보내 토글한다(원격제어 팝업과 같은 hide_key 패턴)."""
-    async def body(app, pilot, srv):
-        app.status.autoresume = True
-        sent = []
-        app.send_cmd = lambda c, **kw: sent.append(c)
-        app.open_autoresume_info()
-        await wait_mounted(pilot, "InfoScreen")
-        scr = app.screen_stack[-1]
-        assert scr.__class__.__name__ == "InfoScreen", scr.__class__.__name__
-        assert any("AR" in ln for ln in scr._lines), scr._lines
-        await pilot.press("a")               # 토글 키 → set_autoresume + 닫힘
-        await wait_until(pilot, lambda: "set_autoresume" in sent)
-        assert "set_autoresume" in sent, sent
-        assert app.screen_stack[-1] is not scr, "[a] 후 팝업 닫힘"
     await _with_app(body)
 
 

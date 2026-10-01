@@ -365,9 +365,9 @@ class Pane:
         self.rect = (0, 0, cols, rows)
         self.parent: Split | None = None
         self.title = "shell"
-        # 토큰 리밋 자동 재개(토글). 메시지·예약 보류 등 나머지 자동재개 상태와
         # Claude 거동 필드 전반은 claude-code 플러그인이 pane_init 으로 설치한다(S4).
-        self.autoresume = False
+        # (토큰 리밋 자동재개 토글 `autoresume` 은 pytmux-526 에서 걷었다 — CLI 가 한도
+        #  리셋 뒤 스스로 이어 간다. 옛 재시작 스냅샷의 그 칸은 읽고 버린다.)
         self._activity = False   # 마지막 검사 이후 출력 있었음
         self._bell = False       # 마지막 검사 이후 BEL 수신
         # Claude 스캔 dirty 게이팅(B1): feed 마다 _feed_seq 증가(코어). _scan_claude
@@ -481,14 +481,14 @@ class Pane:
     # 작업 보존 재시작(re-exec)용 직렬화 — docs/internal/RESTART_SCENARIO.md ⓑ/ⓓ.
     # setattr 로 그대로 복원 가능한 JSON 가능 스칼라/딕트 필드 목록. PTY 식별자
     # (child_pid·master_fd)와 크기·화면 스냅샷은 export_state 가 별도로 다룬다.
-    # Claude 거동 필드(_claude·_claude_usage·_scanbuf·_resume_pending·resume_msg·
+    # Claude 거동 필드(_claude·_claude_usage·
     # last_prompt·_claude_session_id·prompt_clear_mode·
     # pending_prompts·토큰 누계 _tok_state/_session_tokens)의 직렬화는 claude-code
     # 플러그인이 pane_serialize/pane_restore 훅으로 담당한다(S4/S5 — export_state 가
     # 'plugin_state' 키로 불투명하게 담는다). 여기 남는 건 코어가 직접 쓰는 계정/리네임/
     # 토글 필드뿐이다.
     _RESUME_FIELDS = (
-        "title", "autoresume", "_claude_account", "_claude_account_full",
+        "title", "_claude_account", "_claude_account_full",
         "_claude_account_manual",
         "_pending_rename",   # 재시작 중 보류된 탭→세션 리네임도 idle 경계에서 발동
         "bracketed",

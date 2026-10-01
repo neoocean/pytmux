@@ -69,7 +69,6 @@
     "select_window": "full",
     "set_auto_rename": "full",
     "set_auto_token_on_exit": "full",
-    "set_autoresume": "full",
     "set_border_status": "full",
     "set_buffer": "handled",
     "set_capture": "full",
@@ -78,7 +77,6 @@
     "set_claude_auto_retry": "full",
     "set_claude_auto_yes": "full",
     "set_claude_perm_mode": "handled",
-    "set_claude_resume_verify": "full",
     "set_claude_turn_warn": "full",
     "set_coalesce": "full",
     "set_exit_empty": "full",
@@ -298,10 +296,6 @@
     "set_auto_token_on_exit": [
       "value"
     ],
-    "set_autoresume": [
-      "msg",
-      "value"
-    ],
     "set_border_status": [
       "value"
     ],
@@ -326,9 +320,6 @@
     "set_claude_perm_mode": [
       "id",
       "target"
-    ],
-    "set_claude_resume_verify": [
-      "value"
     ],
     "set_claude_turn_warn": [
       "long_sec",

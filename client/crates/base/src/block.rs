@@ -208,7 +208,6 @@ impl BlockList {
             | Action::TogglePin
             | Action::PasteBuffer
             | Action::PasteClipboard
-            | Action::ShowAutoresume
             | Action::ShowKeys
             | Action::ShowTabs
             | Action::ShowTree
@@ -287,7 +286,6 @@ impl BlockList {
             | Action::JumpPrompt { .. }
             | Action::ShowCompose
             | Action::ShowInfoTabs
-            | Action::ToggleAutoresume
             | Action::SetLang(_)
             | Action::TogglePromptClear
             | Action::SearchScrollback

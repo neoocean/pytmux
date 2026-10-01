@@ -111,8 +111,6 @@ pub static EN: &[(&str, &str)] = &[
     ("  ◀ 현재", "  ◀ current"),
     (" …", " …"),
     (" ⏎", " ⏎"),
-    (" ⏳ {label} {eta}s(입력=취소) ", " ⏳ {label} {eta}s (input=cancel) "),
-    (" ⏳ 자동재개 {eta}s(입력=취소) ", " ⏳ auto-resume {eta}s (input=cancel) "),
     // ⚠ **`mdir` 의 판 넷은 지금 두 벌이 있다.** 아래 셋(F10 없는 안내 · 빈 디렉터리 ·
     //    항목 초과)이 지금 정본이 «실제로 보내는» 것이고, `F10 트리` 가 든 안내와
     //    `… · {counts}` 판은 CL 71589·71578 이 냈다가 **CL 71673 이 되돌려 버린** 세상의
@@ -234,8 +232,6 @@ pub static EN: &[(&str, &str)] = &[
     ("새 이름 — {name}", "New name — {name}"),
     ("아무 곳", "anywhere"),
     ("앞부분만 보입니다(뒤는 잘렸습니다)", "Only the beginning is shown (the rest is cut)"),
-    ("약하게", "weak"),
-    ("엄격", "strict"),
     ("완료마다", "each turn"),
     ("원격 제어(Remote Control)", "Remote Control"),
     ("원본이 없습니다", "The source is gone"),
@@ -253,10 +249,6 @@ pub static EN: &[(&str, &str)] = &[
     ("이진 파일이라 안 보입니다", "Binary file — not shown"),
     ("읽기 실패: {err}", "Read failed: {err}"),
     ("자기 안으로는 못 옮깁니다", "Cannot move into itself"),
-    ("자동재개", "auto-resume"),
-    ("자동재개 억제: 방금 주입한 뒤라 건너뜀(패널 {pane})", "Auto-resume suppressed: injected too recently (pane {pane})"),
-    ("자동재개 억제: 최근 5h 실사용 {used}토큰(<{need}) — 리밋 배너가 위조로 의심됨(패널 {pane}, claude-resume-verify {mode})", "Auto-resume suppressed: only {used} tokens used in the last 5h (<{need}) — limit banner looks forged (pane {pane}, claude-resume-verify {mode})"),
-    ("자동재개: '{msg}' 주입(패널 {pane})", "Auto-resume: injected '{msg}' (pane {pane})"),
     // pytmux-477 — 재시도가 도는 중임을 말하는 표면 셋(배지 둘 + 알림 하나).
     (" ↻ 재시도 {n}회 · {eta}s ", " ↻ retry ×{n} · {eta}s "),
     (" ↻ 재시도 {n}회 ", " ↻ retry ×{n} "),

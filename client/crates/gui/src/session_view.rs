@@ -1327,11 +1327,6 @@ impl SessionView {
                         }));
                     }
                 }
-                // 자동 재개 판에서 `a` 를 눌렀다(pytmux-183) — 정본 `hide_cb` 와 같은 일:
-                // 뒤집는 명령을 보낸다(판은 core 가 이미 닫았다).
-                ScreenKey::Chosen(_) if screen_before == Some(Screen::Autoresume) => {
-                    self.apply_action(Action::ToggleAutoresume);
-                }
                 // 플러그인이 준 목록에서 골랐다 — **그 줄의 뜻**을 되돌려준다(P4).
                 ScreenKey::Chosen(row) if screen_before == Some(Screen::PluginView) => {
                     self.plugin_view_chosen(row);
@@ -1851,12 +1846,6 @@ impl SessionView {
             }
             Action::ShowCursor => {
                 self.screens.open(Screen::Cursor);
-                return true;
-            }
-            // 좌하단 `[자동재개]` 표식을 눌러 여는 판(pytmux-183). **뒤집지 않는다** —
-            // 그 이유는 `Screen::Autoresume` 문서에 있다.
-            Action::ShowAutoresume => {
-                self.screens.open(Screen::Autoresume);
                 return true;
             }
             // 패널로 **바이트를 보내는** 액션이다(키 입력과 같은 길). 명령이 아니다.
@@ -4993,7 +4982,7 @@ impl SessionView {
             .with_spacing(4.);
         // ★ 모드 배지는 **여기 없다**(§10-21ⓖ) — 하단 상태줄로 내려갔다(정본이 시스템
         //   배지를 두는 자리, 감시류가 2026-07-30 에 같은 이유로 먼저 내려간 그 자리다).
-        // 세션 전역 표식(줌·동기화·자동재개…)은 탭바 **앞**에 붙는다 — 탭 뒤에 붙이면
+        // 세션 전역 표식(줌·동기화…)은 탭바 **앞**에 붙는다 — 탭 뒤에 붙이면
         // 탭이 많을 때 화면 밖으로 밀려 나가는데, 그중 `[동기화]` 는 **모르고 치면 모든
         // 패널에 같은 명령이 도는** 상태라 안 보이면 안 된다(패리티 G6). 감시류
         // ([벨감시]·[활동감시])는 여기가 아니라 하단 상태줄이다(파이썬 정본의 시스템
@@ -5405,7 +5394,7 @@ impl SessionView {
             .finish()
     }
 
-    /// 시스템 표식 칩 하나(pytmux-183) — 줌·동기화·자동재개·프롬프트클리어.
+    /// 시스템 표식 칩 하나(pytmux-183) — 줌·동기화·프롬프트클리어.
     ///
     /// **자동재개만 눌린다.** 정본이 클릭존을 둔 것이 `AR` 하나이기 때문이고
     /// (`clientwidgets.py` 의 `_ar_zone`), 나머지에 우리 마음대로 붙이면 정본에 없는
@@ -8237,7 +8226,6 @@ impl SessionView {
         base::MenuToggles {
             zoom: flags.zoomed,
             sync: flags.sync,
-            autoresume: flags.autoresume,
             prompt_clear: flags.prompt_clear,
             toggle_pin: tabs.tabs.iter().find(|t| t.active).is_some_and(|t| t.pinned),
         }
@@ -9675,10 +9663,6 @@ impl SessionView {
             // 서버 줄 + 클라 줄 + 빌드 이름(§10-21ⓐ3). 줄을 짓는 것은 판정이라
             // proto 가 한다 — 뷰가 지으면 두 클라가 다른 말을 하기 시작한다.
             Screen::Version => proto::info::version_lines(&self.state)
-                .into_iter()
-                .fold(column, |c, row| c.with_child(self.text(row, 13., palette::FG))),
-            // 자동 재개 설명(pytmux-183) — 줄은 proto 가 짓는다(정본과 **같은 글**).
-            Screen::Autoresume => proto::info::autoresume_lines(&self.state)
                 .into_iter()
                 .fold(column, |c, row| c.with_child(self.text(row, 13., palette::FG))),
         };

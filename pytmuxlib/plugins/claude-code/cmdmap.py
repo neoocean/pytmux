@@ -57,18 +57,6 @@ def redraw_arg(args):
     return "idle" if v is True else "off" if v is False else None
 
 
-def verify_arg(args):
-    """`claude-resume-verify` 3-state. strict/weak/off 명시면 그 모드,
-    on→weak, off→off, 무인자/toggle→None(서버가 순환). `redraw_arg` 와 동형."""
-    s = " ".join(a for a in args if a).lower()
-    if any(k in s for k in ("strict", "엄격")):
-        return "strict"
-    if any(k in s for k in ("weak", "약")):
-        return "weak"
-    v = onoff(args)
-    return "weak" if v is True else "off" if v is False else None
-
-
 def pc_queue_arg(args):
     """`prompt-clear-queue` 의 갈래 — `(액션, 인자)` 이거나 `None`(무인자 = 화면).
 
@@ -86,10 +74,6 @@ def pc_queue_arg(args):
 #: 인자 함수는 `args`(낱말 목록)를 받아 **그 액션이 실제로 읽는 칸**의 dict 를 돌려준다 —
 #: 칸 이름이 액션마다 다르다는 사실이 이 표의 존재 이유의 절반이다.
 _TABLE = {
-    ("auto-resume", "autoresume"):
-        ("set_autoresume", lambda a: {"value": onoff(a)}),
-    ("auto-resume-message", "autoresume-message"):
-        ("set_autoresume", lambda a: {"msg": " ".join(a)}),
     ("claude-usage", "usage", "refresh-usage"):
         ("refresh_usage", lambda a: {}),
     ("claude-token-sync",):
@@ -107,8 +91,6 @@ _TABLE = {
         ("set_auto_token_on_exit", lambda a: {"value": onoff(a)}),
     ("claude-auto-redraw", "auto-redraw"):
         ("set_claude_auto_redraw", lambda a: {"value": redraw_arg(a)}),
-    ("claude-resume-verify", "resume-verify"):
-        ("set_claude_resume_verify", lambda a: {"value": verify_arg(a)}),
     ("auto-retry", "retry"):
         ("set_claude_auto_retry", lambda a: {"value": onoff(a)}),
     ("claude-auto-yes", "auto-yes"):

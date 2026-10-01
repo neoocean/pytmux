@@ -914,16 +914,17 @@ fn a_notice_is_not_dropped_on_the_floor() {
 
 #[test]
 fn a_notice_with_ingredients_is_rebuilt_in_our_own_locale() {
-    // 서버가 미는 알림도 **자리가 있으면** 원문이 키가 못 된다(`자동재개: '{msg}'
-    // 주입(패널 {pane})`). 서버가 같이 싣는 `key`+`kw` 는 정본 클라의 도메인 키라
-    // 우리 표(한국어 원문이 키)로는 아무것도 못 찾는다 — `i18n` 재료를 읽어야 한다.
+    // 서버가 미는 알림도 **자리가 있으면** 원문이 키가 못 된다(`전송 에러 자동 재시도:
+    // '{msg}' 주입({n}회째 · 패널 {pane})`). 서버가 같이 싣는 `key`+`kw` 는 정본 클라의
+    // 도메인 키라 우리 표(한국어 원문이 키)로는 아무것도 못 찾는다 — `i18n` 재료를
+    // 읽어야 한다. (종전 예시였던 자동재개 알림은 pytmux-526 에서 기능째 걷었다.)
     let msg: ServerMessage = serde_json::from_value(serde_json::json!({
         "t": "notice", "sev": "info",
-        "text": "자동재개: 'continue' 주입(패널 3)",
-        "key": "ccmsg.resume_injected",
-        "kw": {"pane": 3, "msg": "continue"},
-        "i18n": {"text": {"fmt": "자동재개: '{msg}' 주입(패널 {pane})",
-                          "args": {"pane": "3", "msg": "continue"}}}
+        "text": "전송 에러 자동 재시도: '계속' 주입(2회째 · 패널 3)",
+        "key": "ccmsg.retry_injected",
+        "kw": {"pane": 3, "msg": "계속", "n": 2},
+        "i18n": {"text": {"fmt": "전송 에러 자동 재시도: '{msg}' 주입({n}회째 · 패널 {pane})",
+                          "args": {"pane": "3", "msg": "continue", "n": "2"}}}
     }))
     .unwrap();
     // ★ 로케일을 **받는 순간**에 건다 — 알림은 도착할 때 글이 되고 그 뒤로는 String 이다
@@ -933,7 +934,7 @@ fn a_notice_with_ingredients_is_rebuilt_in_our_own_locale() {
     base::i18n::with_locale("en", || state.apply(msg));
     let shown = state.notices().next().expect("알림이 안 쌓였다").text.clone();
     assert_eq!(
-        shown, "Auto-resume: injected 'continue' (pane 3)",
+        shown, "Transmission-error auto-retry: injected 'continue' (#2 · pane 3)",
         "서버가 지은 한국어가 그대로 샜다 — notice 의 i18n 재료를 안 읽는 것이다"
     );
 }
