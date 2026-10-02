@@ -132,28 +132,40 @@ pub enum SetHook {
 
 /// `set-hook` 의 인자를 읽는다 — `<이벤트> <명령…>` 또는 `-u <이벤트>`.
 ///
-/// 정본과 같은 규칙: `-u` 가 **어디 있든** 그 다음 낱말이 지울 이벤트고, 그 밖에는
-/// `-` 로 시작하는 낱말을 전부 버린 뒤 첫째가 이벤트·나머지가 명령이다. 명령은 낱말을
-/// 다시 공백으로 이어 붙인다(그래서 `run-shell echo hi` 가 통째로 남는다).
+/// 정본과 같은 규칙: 이벤트 이름 **앞의** `-` 낱말만 깃발이고(`-u` 면 지우기), 이름 뒤는
+/// 원문 그대로 명령이다(그래서 `run-shell "echo hi"` 가 따옴표째 남는다).
 pub fn parse_set_hook(args: &str) -> Option<SetHook> {
-    let words: Vec<&str> = args.split_whitespace().collect();
-    if let Some(at) = words.iter().position(|w| *w == "-u") {
-        let event = words.get(at + 1)?;
-        return Some(SetHook::Unset {
-            event: (*event).to_owned(),
-        });
+    // ★ 깃발(`-g`·`-u` …)은 **이벤트 이름 앞의 것만**이다(pytmux-536 · 정본
+    //   `clientcmd.parse_set_hook` 와 같은 규칙). 종전에는 `-` 로 시작하는 낱말을 어디서든
+    //   걸러 내 명령 안의 `run-shell -b …` 의 `-b` 가 사라졌다.
+    //   명령은 이름 뒤의 **원문 그대로**다 — 따옴표를 지키므로 발화 때 다시 쪼개도 같은
+    //   명령이 된다.
+    let mut rest = args.trim_start();
+    let mut unset = false;
+    loop {
+        let (word, tail) = match rest.split_once(char::is_whitespace) {
+            Some((w, t)) => (w, t.trim_start()),
+            None => (rest, ""),
+        };
+        if word.is_empty() {
+            return None;
+        }
+        if word.starts_with('-') {
+            if word == "-u" {
+                unset = true;
+            }
+            rest = tail;
+            continue;
+        }
+        if unset {
+            return Some(SetHook::Unset { event: word.to_owned() });
+        }
+        let command = tail.trim_end();
+        if command.is_empty() {
+            return None;
+        }
+        return Some(SetHook::Set { event: word.to_owned(), command: command.to_owned() });
     }
-    let plain: Vec<&str> = words
-        .into_iter()
-        .filter(|w| !w.starts_with('-'))
-        .collect();
-    if plain.len() < 2 {
-        return None;
-    }
-    Some(SetHook::Set {
-        event: plain[0].to_owned(),
-        command: plain[1..].join(" "),
-    })
 }
 
 /// 가장자리를 재는 자. 상태가 아니라 **전이**를 본다(모듈 문서 참조).

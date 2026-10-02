@@ -191,6 +191,7 @@ pub static EN: &[(&str, &str)] = &[
     ("대량 출력 시 alt-screen 풀스크린 리페인트 합치기 on/off — ssh 반응성(coalesce-repaints on|off|toggle)", "Coalesce alt-screen full repaints on heavy output on/off — ssh responsiveness (coalesce-repaints on|off|toggle)"),
     ("독립 드라이런 — 실행 없이 안전성(re-exec·직렬화·fd·relaunch) 점검 팝업(별칭 restart-dry-run)", "Standalone dry-run — check safety (re-exec·serialize·fd·relaunch) without running, popup (alias restart-dry-run)"),
     ("레이아웃 불러오기 → 새 탭 (이름)", "Load layout → new tab (name)"),
+    ("저장한 레이아웃 목록 → 골라서 현재 탭에 불러오기 (별칭 list-layouts)", "Saved layouts → pick one to load into the current tab (alias list-layouts)"),
     ("레이아웃 불러오기 → 현재 탭 덮어쓰기 (이름)", "Load layout → overwrite current tab (name)"),
     ("레이아웃 프리셋 (even-h/v, main-h/v, tiled)", "Layout preset (even-h/v, main-h/v, tiled)"),
     ("마우스 제스처 도움말 팝업(헤더 드래그 swap·탭 드래그·Shift+선택 등, 별칭 mouse)", "Mouse gesture help popup (header-drag swap·tab drag·Shift+select etc., alias mouse)"),

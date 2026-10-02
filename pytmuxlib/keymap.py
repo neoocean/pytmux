@@ -363,6 +363,21 @@ def load_config(path: str | None = None) -> dict:
                         # 제거(기본 on). 런타임 `strip-box-drawing` 명령이 세션 우선.
                         cfg["strip_box_drawing"] = val.lower() in (
                             "on", "true", "1", "yes")
+                    elif opt in ("alt-scroll", "alt_scroll"):
+                        # 휠을 pytmux 스크롤백으로(대체 스크롤 1007 끔 · 기본 on).
+                        # `:settings` 가 이 줄을 쓰는데 로더에 짝이 없어 다음 기동에
+                        # 기본값으로 돌아갔다(pytmux-534). GUI `config.rs` 와 같은 뜻.
+                        cfg["disable_alt_scroll"] = val.lower() in (
+                            "on", "true", "1", "yes")
+                    elif opt in ("net-rtt-threshold", "net_rtt_threshold"):
+                        # 응답성 저하(빨간 외곽선) 판정 임계, 초(기본 0.4). 느린 원격
+                        # 링크에서 늘 빨갛다면 올린다(pytmux-535 — 클라가 읽는 키를
+                        # 아무도 안 채웠다). 0.05~10 클램프, 파싱 실패는 무시.
+                        try:
+                            cfg["net_rtt_threshold"] = max(
+                                0.05, min(10.0, float(val)))
+                        except ValueError:
+                            pass
                 elif parts[0] == "bind" and len(parts) >= 3:
                     # 키를 Textual 표기로 정규화해 저장한다 — 런타임 매칭 토큰이
                     # event.key(ctrl+x 등)이므로 raw "C-x" 로 두면 절대 안 먹는다.
@@ -409,6 +424,8 @@ _OPT_ALIASES = {
     "copy-unwrap": ("copy_unwrap",),
     "set-clipboard": ("set_clipboard",),
     "strip-box-drawing": ("strip_box_drawing",),
+    "alt-scroll": ("alt_scroll",),
+    "net-rtt-threshold": ("net_rtt_threshold",),
     "lang": ("language",),
 }
 

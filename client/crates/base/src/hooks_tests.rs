@@ -187,3 +187,27 @@ fn every_argument_command_names_a_prompt_we_can_actually_answer() {
         assert!(!name.contains(' '), "{name} 에 공백이 있으면 첫 낱말로 못 찾는다");
     }
 }
+
+#[test]
+fn only_dashes_before_the_event_are_flags() {
+    // pytmux-536 — 종전에는 `-` 낱말을 어디서든 걸러 명령 안의 `-b` 가 사라졌다.
+    assert_eq!(
+        parse_set_hook("-g alert-bell run-shell -b notify.sh"),
+        Some(SetHook::Set {
+            event: String::from("alert-bell"),
+            command: String::from("run-shell -b notify.sh"),
+        })
+    );
+}
+
+#[test]
+fn the_command_keeps_its_quotes() {
+    // 발화 때 다시 쪼개도 `run-shell` 이 받는 인자가 하나여야 한다(정본과 같은 결과).
+    assert_eq!(
+        parse_set_hook(r#"claude-limit run-shell "notify.sh $PYTMUX_ACCOUNT""#),
+        Some(SetHook::Set {
+            event: String::from("claude-limit"),
+            command: String::from(r#"run-shell "notify.sh $PYTMUX_ACCOUNT""#),
+        })
+    );
+}

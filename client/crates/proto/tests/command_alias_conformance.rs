@@ -184,8 +184,6 @@ fn what_we_still_cannot_take_is_named_with_a_reason() {
     let (_, left) = expected();
     let want: BTreeSet<String> = [
         // 팔레트에 그 줄이 없다(별칭이 아니라 **없는 명령**이다).
-        "layout-list",
-        "list-layouts",
         "zoom",
         // 이름으로 다시 가르는 갈래 — 접으면 다른 일을 한다.
         "monitor-bell",

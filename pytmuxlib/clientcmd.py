@@ -54,6 +54,33 @@ from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
 from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
 
 
+def parse_set_hook(args):
+    """`set-hook` 의 인자(이미 shlex 로 쪼갠 토큰)를 해석한다.
+
+    돌려주는 것: ``("-u", 이름)`` = 훅 지우기 · ``(이름, 명령)`` = 걸기 · ``None`` = 할 일 없음.
+
+    ★ 명령은 **다시 쪼갤 수 있는 꼴**(`shlex.join`)로 담는다(pytmux-536). 종전에는 토큰을
+    공백으로 이어 붙여 따옴표가 사라졌고, 발화 때 `_run_command` 가 다시 쪼개면
+    `run-shell "notify.sh $X"` 가 `notify.sh` 한 낱말만 돌았다. 설정 파일의 `hook` 줄은
+    원문을 담으므로 같은 줄이 그쪽에서만 의도대로 돌았다 — 이제 둘이 같은 명령을 낸다.
+    깃발(`-g`·`-u` …)은 **훅 이름 앞의 것만** 깃발이다 — 명령 안의 `-b` 같은 인자를
+    깃발로 읽어 버리면 그 명령이 바뀐다."""
+    i = 0
+    unset = False
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] == "-u":
+            unset = True
+        i += 1
+    if i >= len(args):
+        return None
+    name, rest = args[i], args[i + 1:]
+    if unset:
+        return ("-u", name)
+    if not rest:
+        return None
+    return (name, shlex.join(rest))
+
+
 class _CommandMixin:
     # §5.4 명령 실행 클러스터(프롬프트 수명·셸 우회·명령 디스패치) — 모듈 레벨 분리, PytmuxApp 은 MRO 로 상속
 
@@ -810,8 +837,9 @@ class _CommandMixin:
             self.send_cmd("set_coalesce", value=val)
         elif c == "win-mouse-motion":
             # win-mouse-motion [on|off|toggle] — Windows 마우스 모션(any-motion)
-            # 패스스루(HANDOFF §10-H). 기본 OFF: ConPTY 가 주입 SGR 모션을 소비 못 해
-            # 프롬프트에 누출되므로 Windows 패널엔 any-motion 을 광고하지 않는다.
+            # 패스스루(HANDOFF §10-H). 기본 ON(정본 Unix 와 같게) — 종전 기본 OFF 의
+            # 근거였던 ConPTY SGR 누출이 Windows 실기에서 재 보니 없었다(근거 표는
+            # server.py 의 `win_mouse_motion` 초기화 주석). 되돌리려면 off.
             # 서버 내부 동작이라 클라 상태 변화 없음. 서버가 opts.json 영속·재방송.
             arg = args[0].lower() if args else "toggle"
             val = (arg == "on") if arg in ("on", "off") else None
@@ -918,12 +946,13 @@ class _CommandMixin:
         elif c in ("show-options", "show"):
             self.show_options()
         elif c == "set-hook":
-            if "-u" in args and len(args) >= 2:
-                self.hooks.pop(args[args.index("-u") + 1], None)
+            parsed = parse_set_hook(args)
+            if parsed is None:
+                pass
+            elif parsed[0] == "-u":
+                self.hooks.pop(parsed[1], None)
             else:
-                opts = [a for a in args if not a.startswith("-")]
-                if len(opts) >= 2:
-                    self.hooks[opts[0]] = " ".join(opts[1:])
+                self.hooks[parsed[0]] = parsed[1]
         elif c in ("display-message", "display", "displaym"):
             self.display_message(" ".join(args) if args else "")
         elif c in ("debug-stats", "debug-stat"):

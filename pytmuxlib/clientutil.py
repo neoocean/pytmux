@@ -1044,6 +1044,8 @@ COMMANDS = [
     ("layout-save", "현재 탭 레이아웃 저장 (이름)", "레이아웃"),
     ("layout-load", "레이아웃 불러오기 → 현재 탭 덮어쓰기 (이름)", "레이아웃"),
     ("layout-load-new", "레이아웃 불러오기 → 새 탭 (이름)", "레이아웃"),
+    ("layout-list", "저장한 레이아웃 목록 → 골라서 현재 탭에 불러오기 (별칭 list-layouts)",
+     "레이아웃"),
     ("monitor-activity", "활동 모니터링 [on|off]", "모니터"),
     ("monitor-bell", "벨 모니터링 [on|off]", "모니터"),
     # capture-output 은 plugins/rec 로 이전(레지스트리 commands 로 병합).
@@ -1118,7 +1120,7 @@ _SET_OPTION_NAMES = (
     "status", "status-bg", "status-fg", "status-left", "status-right",
     "status-format", "status-position", "status-interval", "mode-keys",
     "set-titles", "set-titles-string", "tab-bar", "default-path",
-    "remote-title", "claude-command",
+    "remote-title", "claude-command", "strip-box-drawing",
 )
 
 # `set <옵션> <값>` 의 선택지(enum/bool) — 값 자동완성(ghost)·후보 추천(↑↓)용.
@@ -1138,6 +1140,7 @@ SET_OPTION_CHOICES = {
     "remote-title": REMOTE_TITLE_CHOICES,
     "status": ("on", "off"),
     "set-titles": ("on", "off"),
+    "strip-box-drawing": ("on", "off"),
 }
 
 COMPLETIONS = [
@@ -1580,6 +1583,7 @@ i18n.register({
         "cmd.layout-save": "Save current tab layout (name)",
         "cmd.layout-load": "Load layout → overwrite current tab (name)",
         "cmd.layout-load-new": "Load layout → new tab (name)",
+        "cmd.layout-list": "Saved layouts → pick one to load into the current tab (alias list-layouts)",
         "cmd.monitor-activity": "Activity monitoring [on|off]",
         "cmd.monitor-bell": "Bell monitoring [on|off]",
         "cmd.settings": "Unified settings screen (all settings in one place)",

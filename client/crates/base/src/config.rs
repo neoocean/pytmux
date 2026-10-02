@@ -161,6 +161,12 @@ pub struct Config {
     /// **TUI 만의 설정이다** — GUI 는 호스트 단말이 없고 winit 에서 진짜 휠을 받는다.
     /// 그래도 설정 파일은 두 클라가 공유하므로(G5 결정 3) 값은 양쪽 다 읽고 보인다.
     pub alt_scroll: bool,
+    /// 응답성 저하(빨간 외곽선) 판정 임계, 초(파이썬 `net_rtt_threshold`, 기본 0.4).
+    ///
+    /// 느린 원격 링크에서 늘 빨갛다면 올린다. 두 클라가 같은 설정 파일 줄
+    /// `set net-rtt-threshold <초>` 를 읽는다(pytmux-535 — 종전에는 정본도 이 값을
+    /// 아무 데서도 못 바꿨다). 0.05~10 으로 묶는다.
+    pub net_rtt_threshold: f64,
     /// 창(또는 단말) 제목을 세션 상태로 갱신할까(파이썬 `set-titles`, 기본 꺼짐).
     ///
     /// 왜 기본이 꺼짐인가: 제목은 **바깥 것**이다. 탭 이름을 쓰는 단말 사용자에게 우리가
@@ -411,6 +417,7 @@ impl Default for Config {
             copy_unwrap: true,
             set_clipboard: true,
             alt_scroll: true,
+            net_rtt_threshold: 0.4,
             set_titles: false,
             set_titles_string: "#S:#I:#W".to_owned(),
             binds: Vec::new(),
@@ -632,6 +639,14 @@ impl Config {
                 "copy-unwrap" => config.copy_unwrap = on_off(value),
                 "set-clipboard" => config.set_clipboard = on_off(value),
                 "alt-scroll" => config.alt_scroll = on_off(value),
+                // 못 읽는 값이면 기본 그대로(정본 `keymap.load_config` 와 같은 규칙).
+                "net-rtt-threshold" => {
+                    if let Ok(secs) = value.trim().parse::<f64>()
+                        && secs.is_finite()
+                    {
+                        config.net_rtt_threshold = secs.clamp(0.05, 10.0);
+                    }
+                }
                 "set-titles" => config.set_titles = on_off(value),
                 // 빈 값도 뜻이 있다("제목을 비운다") — 되돌리기로 바꾸지 않는다.
                 "set-titles-string" => config.set_titles_string = value.to_owned(),

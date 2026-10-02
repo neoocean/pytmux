@@ -662,6 +662,7 @@ pub static COMMAND_ALIASES: &[(&str, &str)] = &[
     ("last-window", "last-tab"),
     ("list-binds", "list-keys"),
     ("list-buffers", "choose-buffer"),
+    ("list-layouts", "layout-list"),
     ("load-tab-layout", "layout-load"),
     ("lsb", "choose-buffer"),
     ("lsk", "list-keys"),
@@ -1452,6 +1453,9 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("layout-save", "레이아웃", Action::SaveTabLayout),
     pe("layout-load", "레이아웃", Action::LoadTabLayout(false)),
     pe("layout-load-new", "레이아웃", Action::LoadTabLayout(true)),
+    // 정본 `layout-list` 는 이름 없는 `layout-load` 와 같은 일을 한다(목록 → 현재 탭).
+    // 정본 COMMANDS 에 줄이 없어 팔레트에도 없던 것을 pytmux-537 ② 가 같이 냈다.
+    pe("layout-list", "레이아웃", Action::LoadTabLayout(false)),
     pe("save-layout", "레이아웃", Action::SaveLayout),
     pe("restore-layout", "레이아웃", Action::RestoreLayout),
     pe("clear-history", "복사/버퍼", Action::ClearHistory),

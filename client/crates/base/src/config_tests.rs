@@ -1272,3 +1272,22 @@ fn the_blink_period_is_written_as_an_integer() {
         250
     );
 }
+
+// ── net-rtt-threshold(pytmux-535) — 응답성 저하 판정 임계 ─────────────────────────
+
+#[test]
+fn net_rtt_threshold_defaults_to_the_python_value() {
+    assert_eq!(Config::default().net_rtt_threshold, 0.4);
+}
+
+#[test]
+fn net_rtt_threshold_is_read_from_the_config_file_and_clamped() {
+    // 정본 `keymap.load_config` 와 같은 줄 · 같은 묶음(0.05~10) · 같은 밑줄 철자.
+    assert_eq!(Config::parse("set net-rtt-threshold 1.5\n").net_rtt_threshold, 1.5);
+    assert_eq!(Config::parse("set net_rtt_threshold 0.8\n").net_rtt_threshold, 0.8);
+    assert_eq!(Config::parse("set net-rtt-threshold 999\n").net_rtt_threshold, 10.0);
+    assert_eq!(Config::parse("set net-rtt-threshold 0\n").net_rtt_threshold, 0.05);
+    // 못 읽는 값은 기본 그대로다.
+    assert_eq!(Config::parse("set net-rtt-threshold abc\n").net_rtt_threshold, 0.4);
+    assert_eq!(Config::parse("set net-rtt-threshold NaN\n").net_rtt_threshold, 0.4);
+}

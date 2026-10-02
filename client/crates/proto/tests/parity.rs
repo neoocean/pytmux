@@ -149,6 +149,7 @@ static COMMANDS: &[Item] = &[
     i("last-tab", Done, "prefix l · esc shift-G"),
     i("layout-load", Done, "팔레트 → 이름 입력(현재 탭 덮어쓰기)"),
     i("layout-load-new", Done, "팔레트 → 이름 입력(새 탭)"),
+    i("layout-list", Done, "팔레트 → 저장 목록에서 골라 현재 탭(별칭 list-layouts · pytmux-537)"),
     i("layout-save", Done, "팔레트 → 이름 입력"),
     i("list-commands", Done, "팔레트로 간다(commands 와 같은 곳) — 86/87 + 설명"),
     i("list-keys", Done, "esc ? (도움말 화면)"),
@@ -442,7 +443,8 @@ static TABLES_ONLY: &[&[Item]] = &[COMMANDS, PREFIX_KEYS, ESC_KEYS, SETTINGS, SC
 /// 이 칸을 진짜로 재는 것(=표면 189개를 GUI 기준으로 전수 확인)이 **Rust TUI 퇴역의
 /// 문턱**이다(같은 문서 §5 의 S3). 그때까지 이 숫자를 "GUI 가 다 된다"로 읽지 말 것.
 static SCORE: &[(&str, usize, usize)] = &[
-    ("commands", 89, 0),
+    // 89 → 90: `layout-list` 이 정본 COMMANDS 에 줄을 얻고 GUI 팔레트도 받는다(pytmux-537 ②).
+    ("commands", 90, 0),
     // 32 → 31: prefix R(토큰리밋 자동재개)를 정본·GUI 둘 다에서 걷었다(pytmux-526).
     ("prefix_keys", 31, 0),
     ("esc_keys", 20, 0),
@@ -781,14 +783,17 @@ static MEASURED_SCORE: &[(&str, usize, usize)] = &[
     // 92 → 188: 정본 별칭 96 을 `base::COMMAND_ALIASES` 로 받는다([[pytmux-470]]).
     // 팔레트에 **뜨는** 89 는 그대로다 — 별칭은 찾는 길이지 보여 주는 이름이 아니다.
     //
-    // 남는 일곱은 **별칭 문제가 아니다**(그래서 이 표에 남는다):
-    //   · `zoom` · `layout-list` · `list-layouts` — 그 갈래에 팔레트 이름이 하나도 없다
-    //     (별칭이 아니라 **팔레트에 줄이 없는 명령**이다).
+    // 188 → 190: `layout-list`(+별칭 `list-layouts`)가 정본 COMMANDS 와 팔레트에 같이
+    // 줄을 얻었다(pytmux-537 ②).
+    //
+    // 남는 다섯은 **별칭 문제가 아니다**(그래서 이 표에 남는다):
+    //   · `zoom` — 그 갈래에 팔레트 이름이 하나도 없다(별칭이 아니라 **팔레트에 줄이
+    //     없는 명령**이다).
     //   · `monitor-bell` · `pin` · `unpin` · `setw` — 정본이 그 이름으로 **다시 가르는**
     //     갈래다. 접으면 `unpin` 이 pin 을 한다 — `command_alias_conformance.rs` 의
     //     `a_name_that_dispatches_on_itself_is_never_folded` 가 그 위험을 못박는다.
-    // 그 일곱은 각자 팔레트 줄이 필요하다(작다 · 뒤 CL).
-    ("client_cmds", 188, 195),
+    // 그 다섯은 각자 팔레트 줄이 필요하다(작다 · 뒤 CL).
+    ("client_cmds", 190, 195),
     // ★ **첫 회차에 여덟이 공백으로 보였는데 오라클이 틀린 것이었다**(pytmux-455).
     //   `j`/`k`·`ctrl+u`·`ctrl+v` 류는 정본에서도 `mode-keys`(vi·emacs) 에 딸린 키인데
     //   기본값만 물었다 — 셋 다 물으니 전수다. 「없다」로 적었으면 있는 것을 다시

@@ -25,6 +25,7 @@
     "kill-tab": "탭",
     "lang": "설정/기타",
     "last-tab": "탭",
+    "layout-list": "레이아웃",
     "layout-load": "레이아웃",
     "layout-load-new": "레이아웃",
     "layout-save": "레이아웃",
@@ -116,6 +117,7 @@
     "kill-tab": "탭 삭제 (= kill-window)",
     "lang": "UI 언어 전환 (lang ko|en) — 한국어/영어",
     "last-tab": "직전 탭",
+    "layout-list": "저장한 레이아웃 목록 → 골라서 현재 탭에 불러오기 (별칭 list-layouts)",
     "layout-load": "레이아웃 불러오기 → 현재 탭 덮어쓰기 (이름)",
     "layout-load-new": "레이아웃 불러오기 → 새 탭 (이름)",
     "layout-save": "현재 탭 레이아웃 저장 (이름)",
@@ -207,6 +209,7 @@
     "kill-tab": "Delete tab (= kill-window)",
     "lang": "Switch UI language (lang ko|en) — Korean/English",
     "last-tab": "Last (previous) tab",
+    "layout-list": "Saved layouts → pick one to load into the current tab (alias list-layouts)",
     "layout-load": "Load layout → overwrite current tab (name)",
     "layout-load-new": "Load layout → new tab (name)",
     "layout-save": "Save current tab layout (name)",
@@ -435,6 +438,7 @@
     "status-left",
     "status-position",
     "status-right",
+    "strip-box-drawing",
     "tab-bar"
   ],
   "screens": [

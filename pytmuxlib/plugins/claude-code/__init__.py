@@ -122,7 +122,7 @@ COMMAND_OPTIONS = {
 i18n.register({
     "ko": {f"cmd.{n}": d for n, d, *_ in COMMANDS},
     "en": {
-        "cmd.claude-settings": "Claude settings popup — auto-token-on-exit·per-prompt clear·long-turn/repeat warnings (alias claude-settings, token-settings)",
+        "cmd.claude-settings": "Claude settings popup — auto-token-on-exit·per-prompt clear·long-turn/repeat warnings",
         "cmd.claude-token-log": "Token usage popup — period (h/d/w/m)·session views + measured limits·5h window (alias token-usage, click status usage)",
         "cmd.claude-token-period": "Claude token usage by period (hour/day/week/month) — totals with bars (alias token-period)",
         "cmd.claude-token-sessions": "Claude token usage by session — totals with bars (alias token-sessions)",

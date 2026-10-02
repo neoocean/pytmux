@@ -2064,6 +2064,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
             elif name in ("claude-command", "claude_command"):
                 # `esc c` 가 새 탭에서 실행할 명령(pytmux-137).
                 self.claude_command = val.strip()
+            elif name in ("strip-box-drawing", "strip_box_drawing"):
+                # 설정 파일 줄·런타임 명령은 됐는데 `:set strip-box-drawing` 만 조용히
+                # 무시됐다(pytmux-537 ①). 값 해석·알림은 런타임 명령 한 곳이 쥔다.
+                on = val.strip().lower() in ("on", "true", "1", "yes")
+                self._run_command("strip-box-drawing " + ("on" if on else "off"))
 
         def apply_setting(self, desc, value):
             """:settings 화면의 한 설정을 런타임 적용 + 영속한다(흩어진 적용 로직을

@@ -3918,7 +3918,11 @@ impl SessionView {
                         if let Some(ts) = ts {
                             let now = self.pinger.now();
                             if now >= ts {
-                                self.state.rtt_mut().sample(now, now - ts);
+                                // 임계는 설정 파일 값이다(pytmux-535 · 정본 `net_rtt_threshold`).
+                                // 표본마다 다시 실어 `source-file` 로 바꾼 값도 바로 먹는다.
+                                let rtt = self.state.rtt_mut();
+                                rtt.threshold = self.config.net_rtt_threshold;
+                                rtt.sample(now, now - ts);
                             }
                         }
                         if matches!(self.screens.top(), Some(Screen::InfoTabs)) {
