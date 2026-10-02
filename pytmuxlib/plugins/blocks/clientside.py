@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from pytmuxlib import i18n
 
-from .segment import row_span
+from .segment import row_span, sticky_at
 
 #: `app` 에 붙는 필드 이름. 플러그인 네임스페이스를 지켜 코어 필드와 안 섞이게 한다.
 _BLOCKS = "pane_blocks"
@@ -39,6 +39,10 @@ _PICK = "_block_pick"
 
 #: 코어가 모르는 이 모드의 이름. `app.mode` 가 이 값이면 키는 전부 우리 것이다.
 MODE = "block"
+
+#: 이번 프레임에 그린 **스티키 바**(pytmux-520) — `{패널 id: (행, x0, x1, 시작 행)}`.
+#: 클릭 판정이 읽는다. 그리는 자리와 누르는 자리가 같은 값을 보게 하려는 것이다.
+_STICKY = "_block_sticky"
 
 
 # ---- 상태 ────────────────────────────────────────────────────────────────────
@@ -175,9 +179,65 @@ def _is_claude(app, pane_id):
 
 
 def handle_command(app, c, args):
-    if c != "select-blocks":
+    if c == "select-blocks":
+        enter(app)
+        return True
+    if c == "summary":
+        open_summary(app)
+        return True
+    return False
+
+
+# ---- 요약 판(pytmux-538) ─────────────────────────────────────────────────────
+#: 블록의 **부류 표식** — 네이티브 클라의 `proto::blocks::Tone`/`badge()` 와 같은 표다.
+#: 두 클라의 요약 판에 같은 블록이 다른 글자로 서면 그것이 갈림이다.
+def _badge(block):
+    state = str(block.get("state") or "")
+    exit_code = block.get("exit")
+    if state == "turn":
+        return "❯"
+    if state == "running":
+        return "···"
+    if state == "done":
+        if exit_code is None:
+            return "??"
+        return "ok" if exit_code == 0 else "err"
+    return "…"
+
+
+def summary_lines(app, pane):
+    """요약 판의 줄들 — 머리줄 한 줄 + 블록마다 한 줄(오래된 것이 위 · 최근이 아래).
+
+    네이티브 클라의 `render_summary` 와 같은 재료다(`footer::head` 의 머리줄 ·
+    `render_block` 의 표식 + 명령 + cwd). 저쪽은 꼬리 다섯만 그리지만 이 판은 굴릴 수
+    있어 **전부** 싣는다 — 잘라 내면 「블록이 안 생긴다」와 구분이 안 되는 그 증상이다."""
+    blocks = blocks_of(app, pane)
+    lines = [i18n.t("blocks.summary_head", n=len(blocks))]
+    for b in blocks:
+        cmd = str(b.get("cmd") or "") or i18n.t("blocks.summary_no_cmd")
+        cwd = str(b.get("cwd") or "")
+        line = f"{_badge(b):<3} {cmd}"
+        if cwd:
+            line += f"   {cwd}"
+        lines.append(line)
+    return lines
+
+
+def open_summary(app):
+    """`summary` — 활성 패널의 블록 목록을 읽는 판(범용 `InfoScreen`)으로 띄운다.
+
+    고르는 판이 아니라 **훑는 판**이다(네이티브 클라의 `Screen::Summary` 가 그렇다 —
+    아무 키나 닫고 ↑↓ 가 굴린다). 블록이 없으면 판 대신 한 줄로 말한다(`enter` 와 같은
+    처방 — 빈 판은 「고장났다」로 읽힌다)."""
+    pane = app.layout.get("active")
+    if pane is None:
         return False
-    enter(app)
+    if not blocks_of(app, pane):
+        app.display_message(i18n.t("blocks.none_claude" if _is_claude(app, pane)
+                                   else "blocks.none_shell"), severity="warn")
+        return False
+    from pytmuxlib.clientscreens import InfoScreen
+    app.push_screen(InfoScreen(summary_lines(app, pane), title=i18n.t("blocks.summary_title")))
     return True
 
 
@@ -254,6 +314,111 @@ def copy_selected(app):
 
 # ---- 그림 ────────────────────────────────────────────────────────────────────
 def client_render(app, cells, W, H):
+    """스티키 바(위로 굴린 패널의 「지금 보는 출력의 프롬프트」)와 고른 블록의 강조."""
+    _render_sticky(app, cells, W, H)
+    _render_pick(app, cells, W, H)
+
+
+def _render_sticky(app, cells, W, H):
+    """위로 굴린 패널마다 뷰포트 첫 줄이 **안에 있는 블록**의 명령(프롬프트)을 그 패널
+    첫 줄에 띠로 얹는다(pytmux-520 · 사용자 제보 2026-09-26: *"위로 스크롤하면 이전
+    프롬프트가 보이고 클릭하면 그 자리까지 스크롤"*).
+
+    # 규칙은 `segment.sticky_at` 한 자리다
+
+    라이브면 없다(바가 라이브 글을 가리면 안 된다) · 첫 줄이 곧 프롬프트 줄이면 없다
+    (두 번 보이지 않게). GUI 는 같은 함수의 짝(`proto::blocks::sticky_at`)으로 같은 답을
+    낸다 — 픽스처가 둘을 맞댄다.
+
+    # 모드와 무관하다
+
+    고른 블록의 강조(`_render_pick`)는 블록 모드에서만이지만 이 띠는 **굴린 상태**의
+    표식이라 모드를 안 본다 — 휠로 올린 사람이 그 모드에 있을 리 없다.
+
+    띠의 모양은 프롬프트 이력 미리보기 바(`claude-prompt-history/render.py`)와 같다 —
+    순백 볼드 / `primary-darken-2`. 같은 뜻(「이 프롬프트」)의 띠가 두 모양이면 어느
+    쪽이 무엇인지 사람이 가려야 한다.
+    """
+    bars = {}
+    setattr(app, _STICKY, bars)
+    table = getattr(app, _BLOCKS, None)
+    if not table:
+        return
+    layout = getattr(app, "layout", None) or {}
+    if not layout.get("panes"):
+        return
+    style = None
+    for pane_id, wire in table.items():
+        if not wire:
+            continue
+        scroll = (getattr(app, "pane_scroll", None) or {}).get(pane_id) or 0
+        top = (getattr(app, "pane_top", None) or {}).get(pane_id)
+        if not scroll or top is None:
+            continue
+        rect = _pane_rect(app, pane_id)
+        if rect is None:
+            continue
+        px, py, pw, ph = rect
+        if pw < 4 or ph < 1 or not (0 <= py < H):
+            continue
+        bottom = _live_bottom(app, pane_id)
+        index = sticky_at(wire, top, scroll, bottom)
+        if index is None:
+            continue
+        span = row_span(wire, index, bottom)
+        if span is None:
+            continue
+        cmd = str(wire[index].get("cmd") or "")
+        if style is None:
+            from rich.style import Style
+            from pytmuxlib.clientutil import theme_color
+            style = Style(color="#FFFFFF", bold=True,
+                          bgcolor=theme_color(app, "primary-darken-2"))
+        from pytmuxlib.clientutil import _char_cells
+        x1 = min(px + pw, W)
+        for gx in range(max(0, px), x1):
+            cells[py][gx] = (" ", style)
+        # `▲` = 「이 프롬프트는 위에 있다 · 누르면 거기로」. 좌우 한 칸 여백.
+        gx = px + 1
+        used = 0
+        budget = max(0, pw - 2)
+        for ch in "▲ " + cmd:
+            wch = _char_cells(ch)
+            if used + wch > budget:
+                break
+            if 0 <= gx < W:
+                cells[py][gx] = (ch, style)
+                if wch == 2 and 0 <= gx + 1 < W:
+                    cells[py][gx + 1] = ("", style)
+            gx += wch
+            used += wch
+        bars[pane_id] = (py, max(0, px), x1, span[0])
+
+
+def client_click(app, x, y, button=1):
+    """캔버스 왼쪽 클릭 — 스티키 바 위면 그 프롬프트 줄이 첫 줄에 오게 굴린다
+    (pytmux-520). 소비했으면 True.
+
+    Δ 는 `top − 시작 행`(과거 방향이 +, `send_scroll` 의 부호) — 바가 가리키는 블록의
+    시작 줄이 뷰포트 첫 줄이 된다. 자리는 **이번 프레임에 그린 그 값**(`_STICKY`)이라
+    그린 곳과 누르는 곳이 어긋날 수 없다.
+    """
+    if button != 1:
+        return False
+    bars = getattr(app, _STICKY, None) or {}
+    for pane_id, (row, x0, x1, start) in bars.items():
+        if y != row or not (x0 <= x < x1):
+            continue
+        top = (getattr(app, "pane_top", None) or {}).get(pane_id)
+        send = getattr(app, "send_scroll", None)
+        if top is None or send is None:
+            return False
+        send(pane_id, delta=top - start)
+        return True
+    return False
+
+
+def _render_pick(app, cells, W, H):
     """고른 블록을 **뷰포트에 걸친 부분만** 반전으로 얹는다.
 
     드래그 선택 강조와 같은 모양(같은 `_with_reverse`)이라 두 강조가 한 화면에서

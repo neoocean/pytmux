@@ -382,8 +382,11 @@ async def test_turning_a_chooser_advances_and_the_client_keeps_its_place():
     spec = turn("next", ss._MC_CTX_KEY)
     assert spec["rows"][0]["cols"][0] == after, "컨텍스트를 돌렸는데 모델이 움직였다"
     assert spec["rows"][1]["cols"][0] != cc.CTX_CHOICES[0][0], spec["rows"][1]
-    # 대조군 — 고르개가 아닌 줄에서는 아무것도 안 돈다(판은 그대로 다시 준다).
-    same = turn("next", "세션")
+    # 대조군 — 고르개가 아닌 줄의 → 는 값을 **안 돌리고** 이웃 탭(모델)을 연다
+    # (pytmux-516 · 종전에는 판을 그대로 다시 줬다 — 그 자리에 뜻이 생겼다).
+    jumped = turn("next", "세션")
+    assert jumped["id"] == ss._HUB[1][2], ("고르개 밖 줄의 → 가 이웃 판을 안 열었다", jumped["id"])
+    same = ss.open_spec(srv, None, "limits", state=state)
     assert same["rows"][0]["cols"][0] == after, "엉뚱한 줄의 → 가 값을 돌렸다"
     assert same["rows"][1]["cols"][0] == spec["rows"][1]["cols"][0], same["rows"][1]
 
@@ -2026,3 +2029,30 @@ async def test_every_hub_panel_carries_the_tab_strip_and_only_itself_is_active()
     panel = ss.open_spec(srv, None, "claude-settings")
     assert not panel.get("tabs"), panel.get("tabs")
 
+
+
+async def test_every_family_panel_advertises_tab_cycling_and_the_limits_arrows_cycle_off_the_chooser():
+    """pytmux-516 — 띠가 있는 판은 `Tab` 으로 이웃 탭에 간다고 꼬리줄이 말해야 하고
+    (←→ 에 다른 뜻이 있는 기간·모델은 `Tab` 만), 한도 판의 ←→ 는 고르개 밖의 줄에서
+    **이웃 판**을 연다(정본 `TokenLogScreen.on_key` 와 같은 표)."""
+    import importlib
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    srv = _TokenSrv()
+    for _key, _label, sid in ss._HUB:
+        spec = ss.open_spec(srv, None, sid if sid != "claude-usage-panel" else "limits")
+        assert "Tab" in spec["hint"], f"{sid} 꼬리줄이 Tab 순환을 안 알린다: {spec['hint']}"
+    # 이웃 — 띠의 차례로 감긴다.
+    sids = [sid for _k, _l, sid in ss._HUB]
+    assert ss._hub_neighbor(sids[0], True) == ss._HUB[1][0]
+    assert ss._hub_neighbor(sids[0], False) == ss._HUB[-1][0], "앞으로 감겨야"
+    assert ss._hub_neighbor("no-such-panel", True) is None
+    # 한도 판 · 고르개 밖의 줄에서 `next` → 다음 판(모델)의 스펙이 온다.
+    spec = ss.action(srv, None, {"id": "claude-usage-panel", "do": "next", "row": 3,
+                                 "input": "limit:5h"})
+    assert spec is not None and spec["id"] == ss._HUB[1][2], \
+        f"고르개 밖 줄의 → 가 이웃 판을 안 열었다: {spec and spec['id']}"
+    # 고르개 줄에서 `next` 는 종전대로 값만 돌리고 판은 한도 그대로다(대조군).
+    spec = ss.action(srv, None, {"id": "claude-usage-panel", "do": "next", "row": 0,
+                                 "input": ss._MC_MODEL_KEY})
+    assert spec is not None and spec["id"] == "claude-usage-panel", \
+        "고르개 줄의 → 가 판을 옮겼다"

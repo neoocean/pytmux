@@ -322,8 +322,11 @@ def revoke_device(conn, vault_id: str, device_id: str, now: float) -> bool:
 
 def list_devices(conn, vault_id: str) -> list:
     """살아 있는 기기만. 폐기는 삭제이므로 목록에 잔해가 남지 않는다."""
+    # `host_id` 도 싣는다(pytmux-517) — 기기 **라벨을 이벤트의 `host` 에 붙이는 열쇠**다.
+    # 이벤트 와이어는 host_id 만 나르고(화이트리스트 직렬화 · 의도된 것) 라벨은 여기
+    # 레지스트리에만 있어, 둘을 잇는 칸이 없으면 머신 탭이 32자 uuid 를 찍는다.
     return [dict(r) for r in conn.execute(
-        "SELECT device_id, label, created, last_seen FROM device"
+        "SELECT device_id, label, created, last_seen, host_id FROM device"
         " WHERE vault_id=? AND revoked IS NULL ORDER BY created", (vault_id,))]
 
 

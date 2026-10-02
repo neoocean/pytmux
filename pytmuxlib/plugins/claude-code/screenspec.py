@@ -79,15 +79,15 @@ i18n.register({
         "pscreen.spec_detail_empty": "보여 줄 플랜도 거부도 없다",
         "pscreen.spec_settings_hint": "↑↓ 이동 · Enter 바꾸기 · Esc 닫기",
         "pscreen.spec_model_title": "Claude 모델·컨텍스트",
-        "pscreen.spec_model_hint": "↑↓ 이동 · Enter 적용(/model 주입) · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_model_hint": "↑↓ 이동 · Enter 적용(/model 주입) · Tab 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_model_now": "지금",
         # 정본 `[한도]` 탭의 맨 위 두 줄(pytmux-130 · `TokenLogScreen._mc_row_text`).
         "pscreen.spec_mc_model": "모델",
         "pscreen.spec_mc_ctx": "컨텍스트",
         "pscreen.spec_period_title": "토큰 사용량 · 기간별",
-        "pscreen.spec_period_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_period_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_sessions_title": "토큰 사용량 · 세션별",
-        "pscreen.spec_sessions_hint": "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_sessions_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_bucket_hour": "시간 단위로 보기",
         "pscreen.spec_bucket_day": "일 단위로 보기",
         "pscreen.spec_bucket_week": "주 단위로 보기",
@@ -98,21 +98,21 @@ i18n.register({
         "pscreen.spec_goto_warns": "Claude 경고 이력 →",
         "pscreen.spec_goto_daily": "일별 집계 →",
         "pscreen.spec_warns_title": "Claude 경고 이력",
-        "pscreen.spec_warns_hint": "↑↓ 이동 · Enter 날짜 펼침·접힘 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_warns_hint": "↑↓ 이동 · Enter 날짜 펼침·접힘 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_warns_empty": "쌓인 Claude 경고가 없습니다.",
         "pscreen.spec_warns_nodb": "이 서버는 경고 이력을 안 쌓습니다(claude-code 플러그인 필요).",
         "pscreen.spec_goto_model": "모델·컨텍스트 고르기 →",
         "pscreen.spec_goto_limits": "한도(/usage) 보기 →",
         "pscreen.spec_goto_settings": "시나리오 설정 →",
         "pscreen.spec_machines_title": "토큰 사용량 · 머신별 (Σ{tok})",
-        "pscreen.spec_machines_hint": "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_machines_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_machines_empty": "아직 다른 머신에서 온 기록이 없습니다(동기화를 켜면 채워집니다).",
         "pscreen.spec_pcq_title": "프롬프트 단위 클리어 큐",
         "pscreen.spec_pcq_hint": "c 비우기 · Esc 닫기",
         "pscreen.spec_pcq_empty": "(큐가 비어 있습니다 — `:prompt-clear-queue <명령>` 으로 쌓습니다)",
         "pscreen.spec_tklog_title": "토큰 사용량(추정) · 일별",
         "pscreen.spec_tklog_title_sum": "토큰 사용량(추정) · 일별 · Σ{tok}",
-        "pscreen.spec_tklog_hint": "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_tklog_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "pscreen.spec_tklog_empty": "기록된 토큰 사용량이 없습니다",
         "pscreen.spec_tklog_nodb": "토큰 DB 를 열 수 없습니다",
         "pscreen.spec_tklog_col_tok": "토큰",
@@ -134,14 +134,14 @@ i18n.register({
         "pscreen.spec_detail_empty": "No plan or denial to show",
         "pscreen.spec_settings_hint": "↑↓ move · Enter change · Esc close",
         "pscreen.spec_model_title": "Claude model/context",
-        "pscreen.spec_model_hint": "↑↓ move · Enter apply (injects /model) · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_model_hint": "↑↓ move · Enter apply (injects /model) · Tab tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_model_now": "now",
         "pscreen.spec_mc_model": "Model",
         "pscreen.spec_mc_ctx": "Context",
         "pscreen.spec_period_title": "Token usage · by period",
-        "pscreen.spec_period_hint": "↑↓ move · Enter/←→ expand·collapse · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_period_hint": "↑↓ move · Enter/←→ expand·collapse · Tab tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_sessions_title": "Token usage · by session",
-        "pscreen.spec_sessions_hint": "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_sessions_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_bucket_hour": "Show by hour",
         "pscreen.spec_bucket_day": "Show by day",
         "pscreen.spec_bucket_week": "Show by week",
@@ -152,21 +152,21 @@ i18n.register({
         "pscreen.spec_goto_warns": "Claude warning history →",
         "pscreen.spec_goto_daily": "Daily totals →",
         "pscreen.spec_warns_title": "Claude warning history",
-        "pscreen.spec_warns_hint": "↑↓ move · Enter expand/collapse a day · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_warns_hint": "↑↓ move · Enter expand/collapse a day · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_warns_empty": "No Claude warnings recorded.",
         "pscreen.spec_warns_nodb": "This server keeps no warning history (needs the claude-code plugin).",
         "pscreen.spec_goto_model": "Pick model/context →",
         "pscreen.spec_goto_limits": "Show limits (/usage) →",
         "pscreen.spec_goto_settings": "Scenario settings →",
         "pscreen.spec_machines_title": "Token usage · by machine (Σ{tok})",
-        "pscreen.spec_machines_hint": "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_machines_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_machines_empty": "No records from other machines yet (turn sync on to fill this).",
         "pscreen.spec_pcq_title": "Per-prompt clear queue",
         "pscreen.spec_pcq_hint": "c clear · Esc close",
         "pscreen.spec_pcq_empty": "(the queue is empty — add with `:prompt-clear-queue <command>`)",
         "pscreen.spec_tklog_title": "Token usage (estimated) · by day",
         "pscreen.spec_tklog_title_sum": "Token usage (estimated) · by day · Σ{tok}",
-        "pscreen.spec_tklog_hint": "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_tklog_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "pscreen.spec_tklog_empty": "No token usage recorded",
         "pscreen.spec_tklog_nodb": "Cannot open the token DB",
         "pscreen.spec_tklog_col_tok": "tokens",
@@ -573,10 +573,15 @@ def _machine_rows(server):
         return [], i18n.t("pscreen.spec_tklog_nodb")
     by_host = usagedb.xc_totals_by_host(conn) or {}
     top = max(by_host.values()) if by_host else 0
+    # 이름은 한 함수가 푼다(pytmux-517) — 정본 머신 탭·상태줄 Σ 분해와 같은 라벨·같은 축약.
+    # 종전에는 여기만 32자 전문을 찍었다(제보 첨부의 `91ddca94d1f4…` 가 그것이다).
+    _labels = getattr(usagedb, "host_labels", None)
+    labels = _labels(conn) if _labels else {}
     rows = []
     for host, tok in sorted(by_host.items(), key=lambda kv: -kv[1]):
         label = (i18n.t("pscreen.tklog_host_local")
-                 if host == getattr(usagedb, "LOCAL_HOST", "<local>") else str(host))
+                 if host == getattr(usagedb, "LOCAL_HOST", "<local>")
+                 else usagedb.host_label(labels, host))
         rows.append((label, int(tok), (tok / top) if top else 0.0))
     return rows, ("" if rows else i18n.t("pscreen.spec_machines_empty"))
 
@@ -916,6 +921,21 @@ def _goto_of(sid):
         if target == sid:
             return key
     return None
+
+
+def _hub_neighbor(current_sid, forward=True):
+    """띠에서 지금 판의 **이웃 판**으로 가는 열쇠(`goto:*`) — 끝에서 감는다(pytmux-516).
+
+    액션 탭(`_HUB_ACTIONS` · 시나리오)은 순환의 한 자리가 아니다 — 그것은 뷰가 아니라
+    겹쳐 뜨는 판이다(그 표의 머리말). GUI 의 `PluginScreen::tab_neighbor` 와 **같은
+    규칙**이고, 정본 `TokenLogScreen._cycle_tab` 은 제가 가진 뷰 다섯을 같은 차례로 돈다.
+    모르는 판이면 `None`."""
+    sids = [sid for _key, _label, sid in _HUB]
+    if current_sid not in sids:
+        return None
+    i = sids.index(current_sid)
+    j = (i + (1 if forward else -1)) % len(sids)
+    return _HUB[j][0]
 
 
 def _hub_rows(current_sid):
@@ -1507,11 +1527,16 @@ def action(server, sess, req):
     if sid == "claude-usage-panel":
         state = req.get("state")
         if do in ("prev", "next"):
-            # 고르개 한 칸(pytmux-130). 다른 줄에서는 아무 일도 안 하되 **판은 다시
-            # 준다** — 안 주면 그 키가 「먹통」으로 보인다(정본도 소비만 하고 판을 둔다).
-            _mc_turn(server, sess, state, str(picked or ""),
-                     1 if do == "next" else -1)
-            return _limits_spec(server, sess, row, state)
+            # 고르개 한 칸(pytmux-130). 고르개가 **아닌** 줄의 ←→ 는 **이웃 탭**이다
+            # (pytmux-516 · 정본 `TokenLogScreen.on_key` 와 같은 표 — 한도 모드에서
+            # 모델·컨텍스트 밖의 줄에서 누른 ←→ 가 뷰를 돈다). 종전에는 소비만 하고
+            # 판을 다시 줬다(「먹통」으로 보이지 않게) — 이제 그 자리에 뜻이 생겼다.
+            if _mc_turn(server, sess, state, str(picked or ""),
+                        1 if do == "next" else -1):
+                return _limits_spec(server, sess, row, state)
+            jumped = _hub_open(server, sess,
+                               _hub_neighbor("claude-usage-panel", do == "next"), state)
+            return jumped if jumped is not None else _limits_spec(server, sess, row, state)
         if do == "apply":
             # 고르개 줄에서의 `Enter` = **적용**(정본 `_mc_apply` 와 같은 길 — 활성
             # 패널에 `/model <인자>` 를 친다). 정본은 팝업을 **안 닫는다**: 연속 조정을

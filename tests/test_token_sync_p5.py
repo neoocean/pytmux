@@ -265,7 +265,8 @@ async def test_host_tab_shows_machine_breakdown():
             rows = scr._host_rows()
             assert [r[0] for r in rows][0] == i18n_t_local(S)
             assert rows[0][1] == 60 and abs(rows[0][2] - 60.0) < 1e-9
-            assert rows[1][0] == "a1b2c3d4e5f6"[:12]
+            # 이름을 모르면 축약 id — 상태줄 Σ 분해·GUI 판과 **같은 길이**(pytmux-517).
+            assert rows[1][0] == "a1b2c3d4e5f6"[:usagedb.HOST_ABBREV]
             # 다시 누르면 기간 뷰로 복귀(다른 뷰 탭과 같은 토글 규약).
             await pilot.press("o")
             await pilot.pause(0.3)
@@ -312,4 +313,40 @@ async def test_xc_growth_measures_recent_rate():
     empty = usagedb.connect(":memory:")
     assert usagedb.xc_growth(empty, now=now)["rows"] == 0
     empty.close()
+    conn.close()
+
+
+async def test_the_three_display_layers_resolve_the_same_machine_name():
+    """pytmux-517 — 정본 머신 탭(`_host_rows`) · 상태줄 Σ 분해(`host_text`) · GUI 머신
+    판(서버 `_machine_rows`)이 **같은 함수**로 이름을 푼다: 라벨이 있으면 라벨, 없으면
+    같은 축약. 종전에는 셋이 `[:12]`·`[:8]`·전문으로 **세 가지로** 찍었다."""
+    import importlib
+    S = _screens()
+    ss = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    uh = importlib.import_module("pytmuxlib.plugins.claude-code.usagehead")
+    host = "91ddca94d1f44dc281efe8b64e76cbe1"
+    labels = {host: "alienware"}
+    # ① 정본 머신 탭
+    scr = S.TokenLogScreen.__new__(S.TokenLogScreen)
+    scr._xc_hosts = {usagedb.LOCAL_HOST: 60, host: 40, "deadbeefcafe0000": 5}
+    scr._xc_host_labels = labels
+    names = [r[0] for r in scr._host_rows()]
+    assert names[1] == "alienware" and names[2] == "deadbeef", names
+    # ② 상태줄 Σ 분해
+    txt = uh.host_text(scr._xc_hosts, labels)
+    assert "alienware" in txt and "deadbeef" in txt and host not in txt, txt
+    # ③ GUI 머신 판 — 서버가 DB 에서 라벨을 읽어 같은 이름을 싣는다.
+    conn = usagedb.connect(":memory:")
+    usagedb.insert_xc_many(conn, [_rec("a:1", _TS, input=60)])
+    usagedb.insert_xc_many(conn, [_rec("b:1", _TS, input=40, host=host)])
+    usagedb.insert_xc_many(conn, [_rec("c:1", _TS, input=5, host="deadbeefcafe0000")])
+    usagedb.set_host_labels(conn, labels)
+
+    class Srv:
+        def _tokens_db_conn(self):
+            return conn
+    rows, _note = ss._machine_rows(Srv())
+    got = [r[0] for r in rows]
+    assert got[1] == "alienware" and got[2] == "deadbeef", got
+    assert host not in got
     conn.close()

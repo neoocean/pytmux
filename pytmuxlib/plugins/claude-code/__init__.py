@@ -192,7 +192,7 @@ i18n.register({
         "cusage.hint": "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         # 정본 `[한도]` 탭의 꼬리줄(pytmux-371 ④) — 맨 위 두 줄이 고르개라 `←→`·Enter 가
         # 그 판 안의 뜻을 갖는다. 종전 문구(`cusage.hint`)는 그것을 안 말했다.
-        "cusage.hint_mc": "↑↓ 이동(모델·컨텍스트) · ←→ 값 · Enter 적용 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "cusage.hint_mc": "↑↓ 이동(모델·컨텍스트) · ←→ 값 · Tab 탭 · Enter 적용 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "ccmsg.no_warn": "표시할 Claude 경고가 없습니다(이미 해소됨).",
         "ccmsg.rc_title": "원격 제어(Remote Control)",
         "ccmsg.rc_body":
@@ -224,7 +224,7 @@ i18n.register({
             "No /usage limit data — run /usage in a Claude panel first",
         "ccmsg.usage_title": "Claude usage limit (/usage)",
         "cusage.hint": "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
-        "cusage.hint_mc": "↑↓ move (model·context) · ←→ value · Enter apply · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "cusage.hint_mc": "↑↓ move (model·context) · ←→ value · Tab tabs · Enter apply · Esc close · p session · l limit · o machine · s scenario · u /usage",
         "ccmsg.no_warn": "No Claude warning to show (already cleared).",
         "ccmsg.rc_title": "Remote Control",
         "ccmsg.rc_body":
@@ -723,6 +723,7 @@ def _on_token_log_msg(app, msg):
         model=getattr(app.status, "claude_model", None),
         xc_totals=msg.get("xc_totals"),
         xc_hosts=msg.get("xc_hosts"),
+        xc_host_labels=msg.get("xc_host_labels"),
         xc_cov=msg.get("xc_cov"),
         warn_history=msg.get("warn_history"),
         remote=getattr(app, "_token_log_remote", False),
@@ -1550,6 +1551,10 @@ class _ClaudeCodePlugin:
             # 한 항목뿐이라 팝업이 뷰 자체를 감춘다(잡음 0).
             _xbh = getattr(usagedb, "xc_totals_by_host", None)
             xc_hosts = _xbh(conn) if (conn is not None and _xbh) else {}
+            # 그 머신들의 **이름**(pytmux-517) — 동기화가 받아 둔 라벨. 없으면 빈 dict 이고
+            # 표시층이 축약 id 를 보인다(`usagedb.host_label`).
+            _xhl = getattr(usagedb, "host_labels", None)
+            xc_host_labels = _xhl(conn) if (conn is not None and _xhl) else {}
             # 사용자 결정 2026-07-25(설계 §10.2-4): 계정 미상 행은 **별항 분리**다.
             # 분리만 하고 숨기면 "계정 합 < 총합" 이 미궁이 되고 P3 백필 커버리지 저하도
             # 안 보이므로, 미상 비중을 팝업 Σ 줄에 노출한다(`_unknown_text`).
@@ -1564,6 +1569,7 @@ class _ClaudeCodePlugin:
                     "active_session": active_sid,
                     "xc_totals": xc_totals,
                     "xc_hosts": xc_hosts,
+                    "xc_host_labels": xc_host_labels,
                     "xc_cov": xc_cov,
                     "warn_history": warn_hist}
         return None

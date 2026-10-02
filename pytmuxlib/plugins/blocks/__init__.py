@@ -109,9 +109,14 @@ def clear_blocks_dirty(pane):
 COMMANDS = [
     ("select-blocks", "블록(명령 + 그 출력) 하나를 골라 복사(↑↓ 이동 · Ctrl+C 복사)",
      "복사/버퍼"),
+    # 네이티브 클라의 `summary`(`base::PALETTE` · 분류 `설정/기타`)와 같은 이름·같은
+    # 분류다(pytmux-538 · 449 ⑴ 의 «판은 뒤 CL»). 저쪽은 블록에 Claude 항목(Tier D
+    # 트랜스크립트)을 더해 보이는데 그 항목은 정본에 짝이 없어 **블록 목록만** 낸다.
+    ("summary", "블록 요약 판 — 활성 패널의 블록 목록(↑↓ 스크롤 · 아무 키나 닫기)",
+     "설정/기타"),
 ]
-NOARG = {"select-blocks"}
-PANE_SCOPED = {"select-blocks"}
+NOARG = {"select-blocks", "summary"}
+PANE_SCOPED = {"select-blocks", "summary"}
 
 
 class _BlocksPlugin:
@@ -166,6 +171,10 @@ class _BlocksPlugin:
     def client_render(self, app, cells, W, H):
         from .clientside import client_render
         client_render(app, cells, W, H)
+
+    def client_click(self, app, x, y, button):
+        from .clientside import client_click
+        return client_click(app, x, y, button)
 
     def client_statusbar_badges(self, app, status, segs, w, w0=None):
         from .clientside import client_statusbar_badges

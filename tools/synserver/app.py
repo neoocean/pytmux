@@ -151,7 +151,7 @@ class SyncApp:
             if route == ("POST", "/v1/devices"):
                 return self._device_add(headers, body)
             if route == ("GET", "/v1/devices"):
-                return self._device_list(headers)
+                return self._device_list(headers, query)
             if route == ("DELETE", "/v1/devices/self"):
                 return self._device_self_revoke(method, path, headers, body)
             if method == "DELETE" and path.startswith("/v1/devices/"):
@@ -483,7 +483,23 @@ class SyncApp:
             out["key_nonce"] = wa.b64u_encode(bytes(paired["key_nonce"] or b""))
         return self._json(200, out)
 
-    def _device_list(self, headers):
+    def _device_list(self, headers, query=""):
+        """같은 vault 의 기기 목록 — 두 길이다.
+
+        - **브라우저 세션**(등록 페이지): 종전 그대로 전부(기기 id · 폐기 단추의 재료).
+        - **기기 서명**(pytmux-517): 다른 머신의 **이름**을 받으려는 기기. 돌려주는 것은
+          `host_id`·`label`·`last_seen` 셋뿐이다 — 기기 id·공개키는 이 갈래의 물음이
+          아니고, 실어 주면 한 기기의 키 하나로 다른 기기의 폐기 자리를 알게 된다.
+          같은 vault 안이라야 하는 것은 이벤트와 같다(`_device_auth` 가 vault 를 준다).
+        """
+        if headers.get("x-sync-device"):
+            dev = self._device_auth("GET", "/v1/devices", headers, b"", query=query)
+            if dev is None:
+                return self._bad_auth("signature")
+            peers = [{"host_id": d.get("host_id"), "label": d.get("label"),
+                      "last_seen": d.get("last_seen")}
+                     for d in sdb.list_devices(self.conn, dev["vault_id"])]
+            return self._json(200, {"devices": peers})
         vault_id = self._session_vault(headers)
         if not vault_id:
             return self._bad_auth("session")

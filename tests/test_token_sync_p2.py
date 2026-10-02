@@ -1055,3 +1055,36 @@ async def test_enroll_is_atomic_on_key_conflict():
     finally:
         syncrypto.aes_gcm_open = real_open
     assert len(sdb.list_devices(app.conn, vault)) == before, "실패한 등록이 남았다"
+
+
+async def test_pull_labels_stores_peer_names_and_tolerates_a_server_without_the_route():
+    """pytmux-517 — 한 바퀴 뒤 다른 머신의 **이름**이 `host_label` 표에 서고(자기 것은
+    안 담는다), 그 길이 없는 옛 서버(404)에서는 **조용히** 빈 dict 다 — 회계(`pull`)와
+    갈라져 있어 한 바퀴의 성패를 안 흔든다."""
+    app, clock = _server()
+    cookie, _vault, _auth = _enroll(app)
+    a = Machine(app, clock, _pair_code(app, cookie))
+    b = Machine(app, clock, _pair_code(app, cookie))
+    # 등록 때 보낸 라벨은 hostname 이다 — 시험에서는 서버 쪽 레코드를 직접 이름 짓는다.
+    app.conn.execute("UPDATE device SET label=? WHERE host_id=?",
+                     ("alienware", b.cli.host_id))
+    app.conn.commit()
+    got = a.cli.pull_labels()
+    assert got == {b.cli.host_id: "alienware"}, got
+    assert usagedb.host_labels(a.conn) == {b.cli.host_id: "alienware"}
+    assert usagedb.host_label(usagedb.host_labels(a.conn), b.cli.host_id) == "alienware"
+    # 모르는 host 는 지어내지 않고 축약 id 다 — 세 표시층이 같은 길이로.
+    assert usagedb.host_label({}, "91ddca94d1f44dc281efe8b64e76cbe1") == "91ddca94"
+    # 옛 서버 — 그 길이 없다(404). 조용히 빈 dict 이고 표는 그대로다.
+    real = a.cli.transport
+
+    def old_server(method, path, query="", body=b"", headers=None):
+        if path == "/v1/devices" and method == "GET":
+            return 404, {}, b'{"error":"not_found"}'
+        return real(method, path, query, body, headers)
+    a.cli.transport = old_server
+    assert a.cli.pull_labels() == {}
+    assert usagedb.host_labels(a.conn) == {b.cli.host_id: "alienware"}
+    # 한 바퀴(`_sync_once`)는 그 실패를 삼킨다.
+    out = tokensync._sync_once(a.cli)
+    assert "pull" in out

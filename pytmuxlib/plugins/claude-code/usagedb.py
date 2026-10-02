@@ -134,6 +134,14 @@ CREATE TABLE IF NOT EXISTS sync_export (
   last_ts    REAL
 );
 
+-- 다른 머신의 **이름**(pytmux-517). `usage_xc.host`(host_id)에 붙일 라벨 — 동기화 서버의
+-- 기기 레지스트리에서 받아 둔다(`tokensync.pull_labels`). 없으면 표시층이 축약 id 로 보인다.
+CREATE TABLE IF NOT EXISTS host_label (
+  host_id TEXT PRIMARY KEY,
+  label   TEXT,
+  seen    REAL
+);
+
 CREATE TABLE IF NOT EXISTS account_alias (
   acct_id TEXT PRIMARY KEY,
   account TEXT,
@@ -617,6 +625,51 @@ def set_export_cursor(conn, kind: str, last_rowid: int, last_ts=None) -> None:
         "last_ts=excluded.last_ts",
         (kind, int(last_rowid), last_ts))
     conn.commit()
+
+
+def set_host_labels(conn, labels, now=None) -> int:
+    """다른 머신의 이름을 갈아 끼운다 — `{host_id: label}`. 빈 라벨은 안 담는다(이름이
+    없는 기기는 「모른다」가 맞고, 빈 문자열을 담으면 그것이 이름처럼 보인다). 담은 수."""
+    import time as _t
+    n = 0
+    for host_id, label in (labels or {}).items():
+        if not host_id or not label:
+            continue
+        conn.execute("INSERT INTO host_label (host_id, label, seen) VALUES (?, ?, ?)"
+                     " ON CONFLICT(host_id) DO UPDATE SET label=excluded.label,"
+                     " seen=excluded.seen",
+                     (str(host_id), str(label)[:64], float(now if now is not None
+                                                             else _t.time())))
+        n += 1
+    conn.commit()
+    return n
+
+
+def host_labels(conn) -> dict:
+    """`{host_id: label}` 전부. 표시층이 **한 번 읽어** 줄마다 쓴다(줄마다 질의하지 않는다)."""
+    try:
+        return {r["host_id"]: r["label"] for r in
+                conn.execute("SELECT host_id, label FROM host_label").fetchall()
+                if r["label"]}
+    except Exception:            # noqa: BLE001 — 구판 DB(표 없음)도 머신 탭은 떠야 한다
+        return {}
+
+
+#: 이름을 모르는 호스트를 **얼마나** 줄여 보일까. 셋(정본 머신 탭 · 상태줄 Σ 분해 ·
+#: GUI 머신 판)이 같은 길이라야 같은 머신이 세 자리에서 세 이름으로 안 보인다.
+HOST_ABBREV = 8
+
+
+def host_label(labels, host_id) -> str:
+    """표시용 머신 이름 — 라벨이 있으면 그것, 없으면 **지어내지 않고** 축약 id.
+
+    ⛔ 세 표시층(정본 `_host_rows` · `usagehead.host_text` · 서버 `_machine_rows`)이 전부
+    이 한 함수를 지난다 — 종전에는 셋이 `h[:12]`·`h[:8]`·전문으로 **세 가지로** 찍었다
+    (pytmux-517 실측). 로컬(`LOCAL_HOST`)은 호출부가 먼저 가른다(「이 머신」은 로케일 말이다).
+    """
+    h = str(host_id or "")
+    name = (labels or {}).get(h)
+    return str(name) if name else h[:HOST_ABBREV]
 
 
 def get_sync_remote(conn, remote: str):

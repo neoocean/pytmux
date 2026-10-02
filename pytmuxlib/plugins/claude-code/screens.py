@@ -99,7 +99,7 @@ i18n.register({
         #  부르고, 서버는 이 파일을 안 읽는다. pytmux-419 ②)
         # §10-D P6: 트랜스크립트 실측 Σ(캐시 읽기/쓰기 분리) + 스크랩 활동 보조신호.
         # 계정 미상 비중(사용자 결정 2026-07-25 — 미상은 별항, 그 몫을 보인다).
-        "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · p세션 · l한도 u/usage · Esc닫기",
+        "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · p세션 · l한도 u/usage · Esc닫기",
         # (계층 트리의 요일·시각 접미사·구역 구분선·"이 머신" 다섯은 `__init__.py`
         #  로 갔다 — 그 글을 짓는 것은 서버이고, 서버는 이 파일을 안 읽는다.)
         "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
@@ -159,7 +159,7 @@ i18n.register({
     },
     "en": {
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
-        "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · p session · l limit u /usage · Esc close",
+        "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · Tab tabs · p session · l limit u /usage · Esc close",
         "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
         "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
         "pscreen.tklog_limit_title": "Token usage · Model/Context · Limit (/usage)",
@@ -624,7 +624,8 @@ class TokenLogScreen(ModalScreen):
                  daily=None, daily_pct=None, hourly_pct=None,
                  hourly_week_pct=None, active_session=None, initial_mode=None,
                  model=None, xc_totals=None, warn_history=None, remote=False,
-                 remote_host=None, xc_hosts=None, xc_cov=None, hourly=None):
+                 remote_host=None, xc_hosts=None, xc_cov=None, hourly=None,
+                 xc_host_labels=None):
         super().__init__()
         # 원격(remote-attach) 탭을 보는 중에 토큰 배지(분홍)를 눌러 연 팝업인지 표시
         # (사용자 요청 2026-06-23). 로컬 팝업(accent 오렌지 테두리)과 한눈에 구분되게
@@ -644,6 +645,8 @@ class TokenLogScreen(ModalScreen):
         # 머신이 하나뿐(=동기화 미사용·아직 안 받음)이면 분해할 게 없으므로 [o] 탭
         # 자체를 감춘다 — 켜지도 않은 기능의 빈 뷰가 보이면 잡음이다.
         self._xc_hosts = xc_hosts or {}
+        # 그 머신들의 이름(pytmux-517) — 서버가 동기화로 받아 둔 라벨. 없으면 축약 id.
+        self._xc_host_labels = xc_host_labels or {}
         # 계정 귀속 커버리지 {"total","known","unknown","pct"}(usagedb.xc_account_
         # coverage). 사용자 결정 2026-07-25(설계 §10.2-4): 미상 계정은 **별항 분리**이고,
         # 그 몫이 얼마인지 Σ 줄에 보인다 — P3 백필 커버리지가 나빠지는 걸 사람이 눈으로
@@ -1447,8 +1450,11 @@ class TokenLogScreen(ModalScreen):
         total = sum(hosts.values()) or 1
         rows = []
         for h, v in sorted(hosts.items(), key=lambda kv: (-kv[1], kv[0])):
+            # 이름은 **한 함수**가 푼다(pytmux-517 · `usagedb.host_label`) — 상태줄 Σ 분해와
+            # GUI 머신 판이 같은 함수를 지나므로 같은 머신이 세 이름으로 안 보인다.
             label = (i18n.t("pscreen.tklog_host_local") if h == _LOCAL_HOST
-                     else h[:12])
+                     else usagehead.usagedb.host_label(
+                         getattr(self, "_xc_host_labels", None), h))
             rows.append((label, v, 100.0 * v / total))
         return rows
 
@@ -1459,7 +1465,8 @@ class TokenLogScreen(ModalScreen):
         동기화를 켜면 Σ 가 계정 전역으로 뛰는데(다른 머신 몫이 합쳐진다), 그게 어디서
         왔는지 보이지 않으면 "왜 갑자기 늘었나" 를 사람이 풀 수 없다. 비중 큰 순으로
         `⇅ 이 머신 62% · a1b2 38%` 처럼 붙인다(`⇅` = 동기화된 값이라는 표식)."""
-        return usagehead.host_text(self._xc_hosts)
+        return usagehead.host_text(self._xc_hosts,
+                                   getattr(self, "_xc_host_labels", None))
 
     def _unknown_text(self) -> str:
         """Σ 뒤에 붙는 **미상 계정 비중**(`· 미상 12%`). 사용자 결정 2026-07-25
@@ -1480,7 +1487,8 @@ class TokenLogScreen(ModalScreen):
         cache 구조를 못 본다. 실측이 없으면(구버전 서버/빈 usage_xc) 종전 스크랩 ~Σ
         (+표시창 n) 폴백."""
         return usagehead.sigma_text(self._total_all, win, self._xc,
-                                    self._xc_hosts, self._xc_cov)
+                                    self._xc_hosts, self._xc_cov,
+                                    getattr(self, "_xc_host_labels", None))
 
     async def _refresh(self):
         self._sync_tabs()
@@ -1917,6 +1925,51 @@ class TokenLogScreen(ModalScreen):
         self._warn_mode = False
         return was
 
+    # ── 탭 순환(pytmux-516) ───────────────────────────────────────────────────
+    #
+    # 띠(`#tktabs`)의 차례 그대로다 — 기간 · 세션 · 머신(둘 이상일 때만) · 한도 · 경고.
+    # 띠 끝의 `/usage`·`시나리오` 는 뷰가 아니라 **액션**이라 순환의 자리가 아니다
+    # (GUI 쪽 `screenspec._HUB_ACTIONS` 머리말과 같은 판단). GUI 는 띠의 자료
+    # (`tabs`)에서 같은 규칙으로 이웃을 고른다(`PluginScreen::tab_neighbor`).
+
+    def _tab_names(self):
+        """순환하는 뷰 이름들, 띠의 차례로. 머신 뷰는 `o` 키와 같은 조건(둘 이상)."""
+        names = ["time", "session"]
+        if self._multi_host():
+            names.append("host")
+        names.extend(["limit", "warn"])
+        return names
+
+    def _current_tab(self):
+        """지금 보고 있는 탭 이름 — 한도·경고 모드는 `_view` 위에 겹치는 뷰라 먼저 본다."""
+        if self._limit_mode:
+            return "limit"
+        if self._warn_mode:
+            return "warn"
+        return self._view
+
+    async def _cycle_tab(self, step):
+        """이웃 탭으로(끝에서 감는다). 판은 그대로 — 내용만 바뀐다."""
+        names = self._tab_names()
+        cur = self._current_tab()
+        i = names.index(cur) if cur in names else 0
+        await self._goto_tab(names[(i + step) % len(names)])
+
+    async def _goto_tab(self, name):
+        """탭 하나로 — 띠의 라벨을 누른 것과 같은 상태 변화(`on_click` 의 갈래들과 같은
+        손이되 **토글이 아니라 목적지**다: 순환은 「그 탭으로 간다」이지 「그 탭을 켰다
+        껐다」가 아니다). 뷰가 바뀌면 트리 펼침 상태도 비운다(§3 재진입 · `p`/`o` 와 같다)."""
+        self._exit_body_modes()
+        if name == "limit":
+            self._limit_mode = True
+        elif name == "warn":
+            self._warn_mode = True
+        else:
+            if self._view != name:
+                self._tree_toggled.clear()
+            self._view = name
+        await self._refresh()
+
     def on_click(self, event: events.Click):
         # 마우스 클릭: 닫기 [x]·서브탭(버킷)·동작 버튼을 위젯 id 로 분기한다. 박스
         # (#tklogbox) 바깥(백드롭)을 클릭/터치하면 팝업을 닫는다(InfoScreen·토큰
@@ -1995,6 +2048,11 @@ class TokenLogScreen(ModalScreen):
             except Exception:
                 return
             if row not in (0, 1):
+                # 고르개가 아닌 줄의 ←→ 는 **이웃 탭**이다(pytmux-516 · 아래 `_cycle_tab`).
+                # 종전에는 소비만 하고 무동작이었다 — 그 자리에 뜻이 생겼다. Enter 는
+                # 종전대로 무동작(적용할 것이 없다).
+                if k != "enter":
+                    await self._cycle_tab(1 if k == "right" else -1)
                 return
             if k == "enter":
                 self._mc_apply()
@@ -2083,6 +2141,20 @@ class TokenLogScreen(ModalScreen):
             # M19: 그림자 /usage 갱신 요청. 결과는 status 로 와 다음 열람부터 반영.
             self.app.send_cmd("refresh_usage")
             self.query_one("#tklogtitle", Label).update(i18n.t("/usage 조회 중… (~수초)"))
+            return
+        # ★ **탭 순환**(pytmux-516 · 사용자 제보 2026-09-26 «좌우 방향키로 다른 탭으로»).
+        #   `Tab`/`Shift+Tab` 은 **늘** 이웃 탭이고, `←`/`→` 는 그 줄에 다른 뜻이 없을 때
+        #   (위 갈래들 — 한도 고르개의 값 · 기간/경고 트리의 펼침·접힘 — 이 먼저 먹는다)
+        #   같은 뜻이다. 종전에는 둘 다 꼬리의 「그 외 키는 닫는다」로 떨어져 **판이
+        #   닫혔다**. GUI 는 `base::screens` 의 `TabCycle` 로 같은 규칙을 같은 CL 에서
+        #   세웠다 — 두 클라가 같은 표를 본다(계획 §3 의 표).
+        if k in ("tab", "shift+tab"):
+            event.stop()
+            await self._cycle_tab(-1 if k == "shift+tab" else 1)
+            return
+        if k in ("left", "right"):
+            event.stop()
+            await self._cycle_tab(1 if k == "right" else -1)
             return
         if k in ("home", "end", "pageup", "pagedown"):
             # 표의 **하이라이트 행 커서**를 직접 옮긴다(사용자 요청 2026-06-18). 기본

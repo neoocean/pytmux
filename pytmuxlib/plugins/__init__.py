@@ -332,6 +332,22 @@ class Registry:
                 return True
         return False
 
+    def client_click(self, app, x, y, button) -> bool:
+        """캔버스 위 **클릭 한 번**(캔버스 셀 좌표)을 플러그인이 코어보다 먼저 받는다.
+        소비한 플러그인이 하나라도 있으면 True — 그러면 코어의 나머지 갈래(선택
+        드래그 시작·앱 전달·패널 포커스)는 안 돈다.
+
+        왜 있나(pytmux-520): 플러그인이 `client_render` 로 캔버스 위에 **누를 수 있는
+        것**을 그리면(블록 스티키 바) 그 자리의 클릭을 받을 길이 코어에 없었다 —
+        그리는 훅은 있고 누르는 훅은 없었다. 밑줄 범위(§10-21ⓧ2)보다는 뒤, 선택
+        드래그보다는 앞이다(호출부 `clientwidgets.on_mouse_down`).
+        """
+        for p in self.plugins:
+            fn = getattr(p, "client_click", None)
+            if fn is not None and fn(app, x, y, button):
+                return True
+        return False
+
     def client_panes_changed(self, app, live_ids):
         """레이아웃이 바뀌어 **살아 있는 패널 집합**이 이것이 됐다.
 

@@ -470,6 +470,13 @@ class MultiplexerView(Widget):
                     i18n.t("span.copied", path=span[3]))
                 event.stop()
                 return
+            # ★ 플러그인이 캔버스 위에 세운 클릭 대상(pytmux-520 · 블록 스티키 바)이
+            #   그다음이다 — 밑줄보다 뒤, 선택 드래그·앱 전달보다 앞. 자리는 플러그인이
+            #   이번 프레임에 그린 그 값이다(`Registry.client_click`).
+            if (self.app.mode in ("normal", "scroll")
+                    and self.app.plugins.client_click(self.app, event.x, event.y, 1)):
+                event.stop()
+                return
         if self.app.mode == "scroll":  # copy-mode: 드래그로 선택
             # 선택 시작 패널을 기억해(§2.4) 이후 드래그/추출을 그 패널 안으로 묶는다.
             p = self._pane_at(event.x, event.y)

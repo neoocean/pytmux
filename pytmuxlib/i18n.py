@@ -190,6 +190,10 @@ register({
         "ui.block_mode_badge": "[block] ",
         "blocks.none_shell": "이 패널에는 블록이 없다 — 셸 통합(OSC 133)이 명령 경계를 알려 줘야 생긴다",
         "blocks.none_claude": "이 패널에는 아직 고를 턴이 없다 — 프롬프트를 한 번 보내면 턴 단위로 골라진다",
+        # 블록 요약 판(pytmux-538 · blocks 플러그인 `summary`)
+        "blocks.summary_head": "▾ 블록 {n}개",
+        "blocks.summary_title": "블록 요약",
+        "blocks.summary_no_cmd": "(명령 미상)",
         "ui.prefix_mode_badge": "[prefix] ",
     },
     "en": {
@@ -205,6 +209,9 @@ register({
         "ui.block_mode_badge": "[block] ",
         "blocks.none_shell": "No blocks in this pane \u2014 shell integration (OSC 133) must report command boundaries",
         "blocks.none_claude": "No turns to pick yet \u2014 send one prompt and turns become selectable",
+        "blocks.summary_head": "\u25be {n} blocks",
+        "blocks.summary_title": "Block summary",
+        "blocks.summary_no_cmd": "(command unknown)",
         "ui.prefix_mode_badge": "[prefix] ",
     },
 })
