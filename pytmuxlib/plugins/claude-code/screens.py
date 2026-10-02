@@ -18,7 +18,7 @@ from rich.text import Text
 from rich.segment import Segment
 from rich.style import Style
 
-from pytmuxlib import i18n
+from pytmuxlib import chromecolor, i18n
 from pytmuxlib.clientutil import REMOTE_PINK, theme_color
 from . import CTX_CHOICES, MODEL_CHOICES, SAVER_ROWS
 from . import hour_suffix as _hour_suffix, weekday_names as _weekday_names
@@ -511,11 +511,13 @@ class _TkTabConnector(Widget):
 
 # 모델 티어 → 막대 색(요청 2026-06-21 — 막대를 모델 구성비로 색 분할). 한 막대가
 # 여러 모델로 쌓이므로 서로 잘 구분되는 색을 고른다. 미상(unknown)은 회색.
+# ⛔ ANSI 이름(`"green"` …)을 쓰지 않는다 — 패널용 ANSI 표(pytmux-205)를 같이 지나
+#    어두워진다(pytmux-542). 위젯 색은 `chromecolor` 의 hex 다.
 _MODEL_BAR_COLORS = {
-    "haiku": "green",
-    "sonnet": "cyan",
-    "opus": "magenta",
-    "fable": "yellow",
+    "haiku": chromecolor.NAMED["green"],
+    "sonnet": chromecolor.NAMED["cyan"],
+    "opus": chromecolor.NAMED["magenta"],
+    "fable": chromecolor.NAMED["yellow"],
     "unknown": "#808080",
 }
 
@@ -533,7 +535,8 @@ _ACTIVE_SESSION_COLOR = "orange1"
 # 없다 — `usagehead.pct_level` 한 벌이고, GUI 는 같은 이름을 제 크롬 의미색으로 푼다
 # (`proto::celltag` → `theme::{OK,WARN,ERROR}`). 색을 서버가 실어 보내면 서버가 UI 를
 # 알게 되므로(설계 §10 위험표) **옮겨 다니는 것은 이름**이다.
-_PCT_COLORS = {"ok": "green", "warn": "yellow", "crit": "red"}
+_PCT_COLORS = {"ok": chromecolor.OK, "warn": chromecolor.WARN,
+               "crit": chromecolor.ERROR}
 
 
 def _pct_style(pct):
@@ -544,7 +547,7 @@ def _pct_style(pct):
     길이 없었다(그 자리는 Textual 을 무는 화면 안이다 — pytmux-419 ② 와 같은 사정).
     """
     level = usagehead.pct_level(pct)
-    color = _PCT_COLORS.get(level, "green")
+    color = _PCT_COLORS.get(level, chromecolor.OK)
     return color, (f"bold {color}" if level != "ok" else color)
 
 
@@ -1018,19 +1021,19 @@ class TokenLogScreen(ModalScreen):
 
         `models`({tier: tok})가 있으면 막대를 **모델 구성비로 색 분할**한다(요청
         2026-06-21) — 왼→오 순으로 Haiku/Sonnet/Opus/Fable 색 띠가 토큰 점유만큼
-        이어져 한 기간의 모델 비중을 가늠한다. 분해가 없으면 종전대로 단일 톤(cyan)
+        이어져 한 기간의 모델 비중을 가늠한다. 분해가 없으면 종전대로 단일 톤(청록)
         — 이 막대는 한도 경고가 아니라 행 사이 **상대 크기** 표시라 임계색(빨/노)을
         쓰지 않아 가장 큰 행이 '위험'으로 오인되지 않게 한다(5h%/1w% 열과 구분)."""
         if not tok or vmax <= 0 or cells <= 0:
             return Text("")
         s = bar(tok, vmax, cells)
         if not models:
-            return Text(s, style="cyan", justify="left")
+            return Text(s, style=chromecolor.NAMED["cyan"], justify="left")
         seq = usagelog._model_cell_sequence(models, len(s))
         t = Text(justify="left")
         for ch, m in zip(s, seq):
             color = (_MODEL_BAR_COLORS.get(m, _MODEL_BAR_COLORS["unknown"])
-                     if m else "cyan")
+                     if m else chromecolor.NAMED["cyan"])
             t.append(ch, style=color)
         return t
 

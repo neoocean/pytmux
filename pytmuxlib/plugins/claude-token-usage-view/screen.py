@@ -18,7 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label, Static
 
-from pytmuxlib import i18n
+from pytmuxlib import chromecolor, i18n
 from pytmuxlib.clientscreens import usage_bar_lines
 from pytmuxlib.clientutil import _CLOCK_FONT, _CLOCK_FONT_ROWS
 
@@ -33,9 +33,11 @@ _TRACK_STYLE = "grey50"   # 빈 부분 회색(배경=검정·채움=흰색과 �
 # 카운트다운 버킷 표와 선택 규칙(`soonest_reset`)은 UI 무의존 `reset.py` 로 옮겼다
 # (2026-08-02f) — 서버가 셀 기여에서 같은 규칙을 써야 해서다. 종전 이름 보존.
 
-# urgency 토큰 → rich 스타일.
-_URGENCY_STYLE = {"red": "bold bright_red", "yellow": "bold yellow",
-                  "cyan": "bold bright_cyan"}
+# urgency 토큰 → rich 스타일. ⛔ ANSI 이름이 아니라 hex 다 — 패널용 ANSI 표(pytmux-205)를
+# 같이 지나 어두워진다(pytmux-542 · `chromecolor` 머리말).
+_URGENCY_STYLE = {"red": f"bold {chromecolor.ERROR}",
+                  "yellow": f"bold {chromecolor.WARN}",
+                  "cyan": f"bold {chromecolor.NAMED['cyan']}"}
 
 
 def big_clock_text(td, style):
@@ -119,7 +121,7 @@ class UsageScreen(ModalScreen):
         lines = usage_bar_lines(usage, min(w - 6, 76), age_sec=age,
                                 right_align=True, track_char=_TRACK)
         if not lines:
-            bars.update(Text(i18n.t("uview.no_data"), style="yellow"))
+            bars.update(Text(i18n.t("uview.no_data"), style=chromecolor.WARN))
             clock.update("")
             return
         bars.update(self._colorize_tracks(lines))
@@ -131,7 +133,7 @@ class UsageScreen(ModalScreen):
         style = _URGENCY_STYLE[urgency(td)]
         out = Text()
         out.append(i18n.t("uview.next_reset", label=label) + "\n",
-                   style="bold cyan")
+                   style=f"bold {chromecolor.NAMED['cyan']}")
         big = big_clock_text(td, style)
         out.append(big if big is not None else Text(fmt_countdown(td), style=style))
         clock.update(out)
