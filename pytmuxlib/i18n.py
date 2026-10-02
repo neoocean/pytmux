@@ -681,6 +681,7 @@ register({
         "restart.fail_header": "드라이런 FAIL — {label} 안전 점검에서 문제가 있습니다:",
         "restart.cannot": "재시작할 수 없다 — {why}. 창을 닫고 pytmux 를 다시 띄우면 새 코드로 뜬다(그때 패널은 사라진다)",
         "restart.cannot_why_unknown": "이 서버는 자기를 다시 띄울 수 없다",
+        "jump.no_scrollback": "뛸 프롬프트가 없다 — 이 패널은 스크롤백이 비어 있다(Claude 가 fullscreen 이면 스티키 바를 누르거나 transcript 모드의 이전·다음 프롬프트 키를 쓴다)",
         "restart.fail_item": "  [FAIL] {lbl}",
         "restart.confirm_q": "그래도 재시작할까요?",
         # restart-check 드라이런 결과 팝업
@@ -730,6 +731,7 @@ register({
         "restart.fail_header": "Dry-run FAIL — {label} safety check found problems:",
         "restart.cannot": "Cannot restart — {why}. Close the window and start pytmux again to run the new code (the panes will be gone then)",
         "restart.cannot_why_unknown": "this server cannot relaunch itself",
+        "jump.no_scrollback": "No prompt to jump to — this pane has no scrollback (in Claude fullscreen, click its sticky bar or use the transcript mode prompt keys)",
         "restart.fail_item": "  [FAIL] {lbl}",
         "restart.confirm_q": "Restart anyway?",
         "restartcheck.safe": "✅ Safe — restart-all can proceed",

@@ -87,6 +87,13 @@ async def test_esc_ctrl_updown_jumps_prompts_and_enters_scroll():
         sent = []
         orig = app.send_cmd
         app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        # 뛸 곳이 있는 패널(스크롤백 40줄)이다 — 스크롤백이 **빈** 패널(Claude fullscreen
+        # 의 대체 화면)에서는 스크롤 모드로 안 들어가고 그 까닭을 말한다(pytmux-544 ·
+        # test_jump_no_scrollback). 종전 이 시험은 갓 띄운 빈 패널로 재서, 바로 그 결함을
+        # 정상 동작으로 못박고 있었다.
+        aid = app.layout.get("active")
+        app.pane_top[aid] = 40
+        app.pane_scroll[aid] = 0
         try:
             await pilot.press("escape")
             assert app.mode == "esc"

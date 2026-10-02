@@ -108,6 +108,11 @@ pub static EN: &[(&str, &str)] = &[
         "Cannot restart — {why}. Close the window and start pytmux again to run the new code (the panes will be gone then)",
     ),
     ("이 서버는 자기를 다시 띄울 수 없다", "this server cannot relaunch itself"),
+    // ── session_view.rs · 프롬프트 점프(pytmux-544 · 정본 `jump.no_scrollback`) ──
+    (
+        "뛸 프롬프트가 없다 — 이 패널은 스크롤백이 비어 있다(Claude 가 fullscreen 이면 스티키 바를 누르거나 transcript 모드의 이전·다음 프롬프트 키를 쓴다)",
+        "No prompt to jump to — this pane has no scrollback (in Claude fullscreen, click its sticky bar or use the transcript mode prompt keys)",
+    ),
     (
         "전체 재시작 — 클라를 다시 띄웠다 (pid {pid})",
         "Full restart — relaunched the client (pid {pid})",

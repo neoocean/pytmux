@@ -60,6 +60,7 @@ i18n.register({
         "ph.multiline_mark": " ⏎",
         "ph.truncated_mark": " …",
         "ph.jump_fail": "그 프롬프트가 스크롤백에 없습니다(회전/재시작으로 사라짐)",
+        "ph.jump_alt": "fullscreen(대체 화면) 패널에서는 그 위치로 못 뜁니다 — Claude 의 스티키 바나 transcript 모드의 이전·다음 프롬프트 키를 쓰세요",
         "ph.lines_set": "프롬프트 미리보기: {n}행",
         # Tier C 스펙 화면의 안내줄 — 정본 팝업(`popup_sub`)과 **조작이 다르다**
         # (스펙엔 +/− 미리보기 행수 조절이 없다)라 문구를 따로 둔다.
@@ -74,6 +75,7 @@ i18n.register({
         "ph.multiline_mark": " ⏎",
         "ph.truncated_mark": " …",
         "ph.jump_fail": "That prompt is no longer in scrollback (rotated out / restarted)",
+        "ph.jump_alt": "Can't jump to it in a fullscreen (alternate screen) pane — use Claude's sticky bar or the transcript mode prompt keys",
         "ph.lines_set": "Prompt preview: {n} rows",
         "ph.spec_hint": "↑↓ move · Enter jump to position · Esc close",
     },
@@ -147,7 +149,7 @@ class _PromptHistoryPlugin:
         from .cmdmap import to_action
         return to_action(name, args)
 
-    def server_command(self, server, client, sess, action, msg):
+    def server_command(self, server, client, sess, action, msg):  # noqa: C901
         if action == "set_ph_max_lines":
             # ★ `n` 이 없으면(무인자 명령) **다음 값으로 순환**한다 — 같은 표의 3-state
             #   토글과 같은 규약(cmdmap 머리말). 종전에는 그 경우 아무 일도 안 났다.
@@ -161,7 +163,11 @@ class _PromptHistoryPlugin:
             from .server import scroll_to_prompt
             ok = scroll_to_prompt(server, sess, int(msg.get("index", 0)))
             # 점프 성공 시 스크롤 변경을 모든 클라에 반영(pane.scroll 은 공유 서버 상태).
-            # 실패(스크롤백서 못 찾음)면 무동작.
+            # 실패는 **요청한 클라에게 말한다**(pytmux-544 — 종전에는 무동작이었고
+            # `ph.jump_fail` 문구는 등록만 되고 쓰이지 않았다).
+            if not ok:
+                server._spawn(server._send_to(client, _jump_failed_notice(server, sess)),
+                              "ph_jump_fail")
             return "broadcast" if ok else "handled"
         return None
 
@@ -187,6 +193,10 @@ class _PromptHistoryPlugin:
                 # 스크롤은 **공유 서버 상태**라 모든 클라가 같이 따라와야 한다
                 # (정본의 `ph_scroll_to` 가 broadcast 를 돌려주는 것과 같은 이유).
                 server._broadcast_session(sess)
+            else:
+                # 못 뛰었으면 닫으면서 그 까닭을 함께 보낸다(목록이면 요청 클라에게 다 간다).
+                return [{"t": "plugin_screen_close", "id": "prompt-history"},
+                        _jump_failed_notice(server, sess)]
             return {"t": "plugin_screen_close", "id": "prompt-history"}
         if req.get("do") == "close":
             return {"t": "plugin_screen_close", "id": "prompt-history"}
@@ -273,3 +283,19 @@ class _PromptHistoryPlugin:
 
 
 PLUGIN = _PromptHistoryPlugin()
+
+
+def _jump_failed_notice(server, sess):
+    """프롬프트 점프가 못 뛰었다는 알림(요청한 클라에게만 간다 · pytmux-544).
+
+    활성 패널이 대체 화면이면(Claude fullscreen) 스크롤백에 그 프롬프트가 있을 수 없으니
+    그 까닭을, 아니면 종전 문구(회전/재시작으로 사라짐)를 쓴다 — 종전에는 실패가 무동작이었고
+    `ph.jump_fail` 은 등록만 되고 쓰이지 않았다."""
+    win = getattr(sess, "active_window", None)
+    pane = getattr(win, "active_pane", None) if win else None
+    alt = bool(getattr(pane, "alt_active", False))
+    # 글은 **카탈로그 키로만** 짓는다 — 서버발 글 픽스처(gen_server_strings)가 그 키로
+    # 「무엇이 소켓으로 나가나」를 세고, GUI 는 그 짝으로 번역한다(리터럴 한국어 금지).
+    key = "ph.jump_alt" if alt else "ph.jump_fail"
+    return server._notice_msg(key, i18n.t("ph.jump_alt") if alt else i18n.t("ph.jump_fail"),
+                              severity="warn")

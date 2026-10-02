@@ -207,6 +207,8 @@ pub static EN: &[(&str, &str)] = &[
     ("규칙을 저장했습니다", "Rule saved"),
     ("그 디렉토리에서 쓸 이름 키워드", "Name keyword to use in that directory"),
     ("그 프롬프트가 스크롤백에 없습니다(회전/재시작으로 사라짐)", "That prompt is no longer in scrollback (rotated out / restarted)"),
+    // pytmux-544 — prompt-history 점프가 대체 화면(Claude fullscreen) 패널에서 못 뛴다.
+    ("fullscreen(대체 화면) 패널에서는 그 위치로 못 뜁니다 — Claude 의 스티키 바나 transcript 모드의 이전·다음 프롬프트 키를 쓰세요", "Can't jump to it in a fullscreen (alternate screen) pane — use Claude's sticky bar or the transcript mode prompt keys"),
     ("기록된 토큰 사용량이 없습니다", "No token usage recorded"),
     ("깨짐감지", "on corruption"),
     ("끔", "off"),

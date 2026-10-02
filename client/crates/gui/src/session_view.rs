@@ -1740,6 +1740,18 @@ impl SessionView {
     }
 
     fn apply_action(&mut self, action: Action) -> bool {
+        // ★ 스크롤백이 **아예 없는** 패널에서 프롬프트 점프는 뛸 곳이 없다(pytmux-544 · 정본
+        //   `clientio` 와 같은 판정). base 는 점프 키에 스크롤 모드로 들어가므로 여기서
+        //   되돌리고 까닭을 말한다 — Claude fullscreen(대체 화면) 패널이 그렇다.
+        if let Action::JumpPrompt { .. } = action
+            && let Some(active) = self.state.active_pane()
+            && self.state.pane_top(active) == Some(0)
+            && self.state.pane_scroll(active).unwrap_or(0) == 0
+        {
+            self.mode.reset();
+            self.state.note_notice(t("뛸 프롬프트가 없다 — 이 패널은 스크롤백이 비어 있다(Claude 가 fullscreen 이면 스티키 바를 누르거나 transcript 모드의 이전·다음 프롬프트 키를 쓴다)"));
+            return true;
+        }
         match action {
             Action::Quit => {
                 self.quit_requested = true;

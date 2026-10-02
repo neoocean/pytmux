@@ -11689,3 +11689,51 @@ fn enter_expands_the_selected_notice_to_its_full_text() {
     assert_eq!(count(&folded), 1, "접힌 상태에서는 목록 줄 하나뿐이어야: {folded:?}");
     assert_eq!(count(&opened), 2, "Enter 로 펼쳤는데 전문 줄이 안 섰다: {opened:?}");
 }
+
+// ── 스크롤백이 빈 패널에서 프롬프트 점프(pytmux-544 · 정본 `jump.no_scrollback`) ──
+
+fn screen_with_top(top: u64) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1, "rows": [[["X", {}]]],
+        "cursor": [0, 0], "wrap": [], "top": top
+    }))
+    .unwrap()
+}
+
+fn jump_after(top: u64) -> (SessionView, Vec<Outgoing>) {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(screen_with_top(top)))).unwrap();
+    view.pump_headless();
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Up, Mods::CTRL);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    (view, out)
+}
+
+fn sent_jump(out: &[Outgoing]) -> bool {
+    out.iter()
+        .any(|o| matches!(o, Outgoing::Command(Command::JumpPrompt { .. })))
+}
+
+#[test]
+fn a_prompt_jump_on_a_pane_without_scrollback_says_why() {
+    // 서버는 대체 화면(Claude fullscreen) 패널의 top·scr 를 0 으로 보낸다. 뛸 곳이 없는데
+    // 스크롤 모드에 가두면 키가 갇히고 아무 일도 안 일어난다(종전 거동).
+    let (view, out) = jump_after(0);
+    assert!(!sent_jump(&out), "뛸 곳이 없는데 보냈다: {out:?}");
+    assert_ne!(view.mode.mode(), InputMode::Scroll, "스크롤 모드에 가뒀다");
+    assert!(
+        view.state.notices().any(|n| n.text.contains("스크롤백")),
+        "까닭을 안 말했다"
+    );
+}
+
+#[test]
+fn a_prompt_jump_with_scrollback_still_goes() {
+    // 대조군 — 스크롤백이 있으면 종전대로 보내고 스크롤 모드로 들어간다.
+    let (view, out) = jump_after(40);
+    assert!(sent_jump(&out), "스크롤백이 있는데 안 뛰었다: {out:?}");
+    assert_eq!(view.mode.mode(), InputMode::Scroll);
+}

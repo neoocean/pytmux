@@ -732,6 +732,17 @@ class _InputMixin:
             # 서버가 무시한다(delete-to-disable — 키는 무동작이 되고 모드만 바뀐다).
             # _exit_esc 로 esc 모드 표시(상태바 cmd_mode·탭바 포커스)를 먼저 정리한
             # 뒤 스크롤 모드로 — mode 만 덮으면 상태바에 esc 표시가 남는다.
+            # ★ 스크롤백이 **아예 없는** 패널이면 뛸 곳이 없다(pytmux-544) — Claude Code 의
+            #   fullscreen 렌더러(대체 화면)가 그렇다: 서버는 그 패널의 `top`·`scr` 를 0 으로
+            #   보낸다. 종전에는 그래도 스크롤 모드로 들어가 키가 pytmux 에 갇혔고(Esc 로
+            #   나와야 했다) 아무 일도 안 일어났다. 들어가지 않고 그 까닭을 말한다.
+            #   판정은 레이아웃이 아니라 **화면 프레임마다 오는 값**으로 한다 — 대체 화면은
+            #   레이아웃 변경 없이 들고 나므로 레이아웃 칸은 낡는다.
+            aid = self.layout.get("active")
+            if not (self.pane_top or {}).get(aid) and not (self.pane_scroll or {}).get(aid):
+                self._exit_esc()
+                self.display_message(i18n.t("jump.no_scrollback"), severity="warn")
+                return
             self._exit_esc()
             self.mode = "scroll"
             self.send_cmd("jump_prompt",
