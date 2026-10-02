@@ -339,12 +339,28 @@ class Registry:
 
         왜 있나(pytmux-520): 플러그인이 `client_render` 로 캔버스 위에 **누를 수 있는
         것**을 그리면(블록 스티키 바) 그 자리의 클릭을 받을 길이 코어에 없었다 —
-        그리는 훅은 있고 누르는 훅은 없었다. 밑줄 범위(§10-21ⓧ2)보다는 뒤, 선택
-        드래그보다는 앞이다(호출부 `clientwidgets.on_mouse_down`).
+        그리는 훅은 있고 누르는 훅은 없었다. 밑줄 범위(§10-21ⓧ2)보다 **앞**, 선택
+        드래그보다도 앞이다(호출부 `clientwidgets.on_mouse_down` · GUI 와 같은 순서 —
+        pytmux-541: 뒤에 두었더니 바 글자가 경로로 잡혀 복사가 일어났다).
         """
         for p in self.plugins:
             fn = getattr(p, "client_click", None)
             if fn is not None and fn(app, x, y, button):
+                return True
+        return False
+
+    def client_hit(self, app, x, y) -> bool:
+        """그 칸을 왼쪽으로 누르면 플러그인이 받는가 — **묻기만** 한다(부작용 없음).
+
+        왜 있나(pytmux-541): 경로 밑줄(§10-21ⓧ2)은 합성된 셀을 읽으므로 플러그인이 그
+        위에 그린 글(블록 스티키 바의 `./build.sh`)도 경로로 잡는다. 그러면 hover 가 바
+        글자에 밑줄을 긋고, 누르면 다른 일(스크롤)이 일어난다 — 밑줄이 거짓말이 된다.
+        코어는 이 물음으로 그 자리를 밑줄 후보에서 뺀다. `client_click` 과 **같은 자리**를
+        말해야 한다(구현은 같은 표를 읽는다).
+        """
+        for p in self.plugins:
+            fn = getattr(p, "client_hit", None)
+            if fn is not None and fn(app, x, y):
                 return True
         return False
 

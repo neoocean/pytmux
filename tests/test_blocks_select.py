@@ -396,6 +396,44 @@ async def test_clicking_the_sticky_bar_scrolls_to_that_prompt():
     await _with_app(body)
 
 
+async def test_clicking_the_command_text_on_the_bar_scrolls_instead_of_copying():
+    """pytmux-541 — 바의 **명령 글자 위**를 누르면 스크롤이다(경로 복사가 아니다).
+
+    종전 오라클은 바 왼쪽 여백(`rect["x"] + 1`, 글자 없음)을 눌러 이 갈래를 못 밟았다.
+    바는 밑줄 탐지가 읽는 셀 위에 그려져서 `./build.sh` 가 경로로 잡혔고, 코어가 밑줄을
+    플러그인 클릭보다 먼저 봐서 스크롤 대신 복사가 일어났다. GUI 는 반대 순서였다."""
+    async def body(app, pilot, srv):
+        blocks = [{"cmd": "ls", "state": "done", "exit": 0, "start": 0, "end": 3},
+                  {"cmd": "./build.sh", "state": "running", "start": 4}]
+        pane = _seed(app, blocks=blocks, top=10, scr=20)
+        app.pane_cwds[pane] = "/home/user/projects/webapp"
+        rect = [p for p in app.layout["panes"] if p["id"] == pane][0]
+        app._composite()
+        row = rect["y"]
+        text = "".join(ch for ch, _ in app.view._cells[row][rect["x"]:rect["x"] + rect["w"]])
+        assert "./build.sh" in text, text
+        x = rect["x"] + text.index("build")
+        # 대조군: 플러그인이 그 칸을 안 받는다고 치면 그 글자는 경로로 풀린다 — 이 장면이
+        # 정말 밑줄 갈래를 밟는다는 증거다(안 밟으면 아래 단언은 공허하다).
+        app.plugins.client_hit = lambda *a: False
+        try:
+            assert app.view._span_at(x, row) is not None, "장면이 경로 갈래를 못 밟는다"
+        finally:
+            del app.plugins.client_hit
+        # 바 위는 밑줄 후보가 아니다(hover 밑줄도 같은 함수를 읽는다).
+        assert app.view._span_at(x, row) is None, "바 글자에 경로 밑줄이 선다"
+        sent, copied = [], []
+        app.send_scroll = lambda pid, **kw: sent.append((pid, kw))
+        app.copy_text = lambda t: copied.append(t)
+        from textual import events
+        ev = events.MouseDown(app.view, x=x, y=row, delta_x=0, delta_y=0, button=1,
+                              shift=False, meta=False, ctrl=False)
+        app.view.on_mouse_down(ev)
+        assert sent == [(pane, {"delta": 6})], f"바를 눌렀는데 안 굴렀다: {sent}"
+        assert copied == [], f"바를 눌렀는데 경로를 복사했다: {copied}"
+    await _with_app(body)
+
+
 # ── 요약 판(pytmux-538 · 449 ⑴ 의 «판은 뒤 CL») ──────────────────────────────────
 
 async def test_summary_opens_a_read_panel_listing_the_blocks_with_the_same_badges():

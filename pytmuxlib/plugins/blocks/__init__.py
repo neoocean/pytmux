@@ -176,6 +176,10 @@ class _BlocksPlugin:
         from .clientside import client_click
         return client_click(app, x, y, button)
 
+    def client_hit(self, app, x, y):
+        from .clientside import client_hit
+        return client_hit(app, x, y)
+
     def client_statusbar_badges(self, app, status, segs, w, w0=None):
         from .clientside import client_statusbar_badges
         return client_statusbar_badges(app, status, segs, w, w0)

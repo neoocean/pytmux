@@ -327,6 +327,10 @@ class MultiplexerView(Widget):
         없으면 그 밑줄이 거짓말이다."""
         if not (0 <= y < len(self._cells)):
             return None
+        # 플러그인이 그 위에 누를 것을 그린 칸(스티키 바)은 밑줄 후보가 아니다 — 거기
+        # 그어 놓으면 누를 때 다른 일이 일어난다(pytmux-541 · `Registry.client_hit`).
+        if self.app.plugins.client_hit(self.app, x, y):
+            return None
         pane = self._pane_at(x, y)
         if not pane:
             return None
@@ -463,18 +467,20 @@ class MultiplexerView(Widget):
         # 선택 드래그가 시작되면 그 밑줄이 거짓말이 된다. 왼쪽 버튼만이다(오른쪽은
         # 패널 메뉴이고, 그건 정본이 이미 하던 일이다).
         if event.button == 1:
+            # ★ 플러그인이 캔버스 위에 세운 클릭 대상(pytmux-520 · 블록 스티키 바)이
+            #   **맨 먼저**다 — 밑줄보다도 앞(pytmux-541). 바는 밑줄 탐지가 읽는 셀 위에
+            #   그려져서, 뒤에 두면 바 글자(`./build.sh`)가 경로로 잡혀 스크롤 대신 복사가
+            #   일어났다. GUI(`handle_mouse_down` 의 `sticky_bar_at`)와 같은 순서다.
+            #   자리는 플러그인이 이번 프레임에 그린 그 값이다(`Registry.client_click`).
+            if (self.app.mode in ("normal", "scroll")
+                    and self.app.plugins.client_click(self.app, event.x, event.y, 1)):
+                event.stop()
+                return
             span = self._span_at(event.x, event.y)
             if span is not None:
                 self.app.copy_text(span[3])
                 self.app.display_message(
                     i18n.t("span.copied", path=span[3]))
-                event.stop()
-                return
-            # ★ 플러그인이 캔버스 위에 세운 클릭 대상(pytmux-520 · 블록 스티키 바)이
-            #   그다음이다 — 밑줄보다 뒤, 선택 드래그·앱 전달보다 앞. 자리는 플러그인이
-            #   이번 프레임에 그린 그 값이다(`Registry.client_click`).
-            if (self.app.mode in ("normal", "scroll")
-                    and self.app.plugins.client_click(self.app, event.x, event.y, 1)):
                 event.stop()
                 return
         if self.app.mode == "scroll":  # copy-mode: 드래그로 선택

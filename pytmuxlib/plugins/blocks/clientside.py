@@ -405,10 +405,9 @@ def client_click(app, x, y, button=1):
     """
     if button != 1:
         return False
-    bars = getattr(app, _STICKY, None) or {}
-    for pane_id, (row, x0, x1, start) in bars.items():
-        if y != row or not (x0 <= x < x1):
-            continue
+    hit = _bar_at(app, x, y)
+    if hit is not None:
+        pane_id, start = hit
         top = (getattr(app, "pane_top", None) or {}).get(pane_id)
         send = getattr(app, "send_scroll", None)
         if top is None or send is None:
@@ -416,6 +415,24 @@ def client_click(app, x, y, button=1):
         send(pane_id, delta=top - start)
         return True
     return False
+
+
+def _bar_at(app, x, y):
+    """(x, y) 가 이번 프레임에 그린 스티키 바 위면 `(pane_id, 시작 행)`, 아니면 None.
+
+    누르는 자리(`client_click`)와 밑줄을 빼는 자리(`client_hit`)가 **같은 표**를 읽게
+    하는 한 곳이다 — 둘이 따로 자리를 재면 언젠가 어긋난다."""
+    bars = getattr(app, _STICKY, None) or {}
+    for pane_id, (row, x0, x1, start) in bars.items():
+        if y == row and x0 <= x < x1:
+            return pane_id, start
+    return None
+
+
+def client_hit(app, x, y):
+    """그 칸을 누르면 `client_click` 이 받는가(pytmux-541 — 코어가 그 자리를 경로 밑줄
+    후보에서 뺀다)."""
+    return _bar_at(app, x, y) is not None
 
 
 def _render_pick(app, cells, W, H):
