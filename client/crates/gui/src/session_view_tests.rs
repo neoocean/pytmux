@@ -11232,3 +11232,162 @@ fn the_duplicate_line_oracle_actually_sees_the_kind_arms() {
     let panel = arms.iter().find(|(k, _)| k == "panel").map(|(_, b)| b.len()).unwrap_or(0);
     assert!(panel > 500, "`\"panel\"` 갈래의 몸통이 {panel}자다 — 자르기가 깨졌다");
 }
+
+// ── 탭 가족 판의 **높이**는 탭을 바꿔도 안 변한다 · pytmux-518 ───────────────────
+//
+// 제보(2026-09-26 · 첨부 셋): 토큰 판의 한도(줄 6)·세션(줄 3)·머신(줄 2)을 오갈 때마다
+// 판 아래 모서리가 움직였다. 폭은 `PanelBox` 가 못박아 같았고 세로만 내용을 탔다 —
+// 목록·표 갈래가 줄 수만큼만 그렸기 때문이다(글 갈래만 `pad_rows` 를 지났다).
+//
+// 재는 것은 **판이 실제로 칠한 면**의 세로다(pytmux-373 의 오라클과 같은 자 —
+// 줄 수만 세면 「줄 수는 같은데 픽셀이 다르다」를 통과시킨다). 가로는 시험 글꼴이 0폭이라
+// 못 잰다(`painted_boxes` 머리말).
+
+/// 가족 판 한 장 — `tabs` 가 있으면 가족이고, 없으면 종전 목록 판(대조군)이다.
+///
+/// `countdown` 이면 한 줄에 **15px 카운트다운**을 싣는다(한도 탭의 `세션 5h` 줄) —
+/// 그 줄이 다른 줄보다 높아 「줄 수는 같은데 픽셀이 다르다」를 만들던 자리다.
+fn family_spec(kind: &str, rows: usize, countdown: bool, tabs: bool) -> ServerMessage {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0) as i64;
+    let mut data: Vec<serde_json::Value> = (0..rows)
+        .map(|i| {
+            serde_json::json!({
+                "key": format!("r{i}"), "label": format!("줄 {i}"), "cols": ["1,000"],
+                "depth": 0, "expand": "",
+                "until": if countdown && i == 0 { now + 3600 } else { 0 }
+            })
+        })
+        .collect();
+    data.push(serde_json::json!({"key": "goto:sessions", "label": "세션별 →", "cols": [], "depth": 0, "expand": ""}));
+    data.push(serde_json::json!({"key": "goto:settings", "label": "시나리오 설정 →", "cols": [], "depth": 0, "expand": ""}));
+    let strip = if tabs {
+        serde_json::json!([
+            {"key": "goto:period", "label": "기간", "active": true, "action": false},
+            {"key": "goto:sessions", "label": "세션", "active": false, "action": false},
+            {"key": "goto:settings", "label": "시나리오", "active": false, "action": true}
+        ])
+    } else {
+        serde_json::json!([])
+    };
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-token-period", "kind": kind, "title": "기간별",
+        "hint": "Esc 닫기", "keys": {"enter": "apply"}, "rows": data, "tabs": strip,
+        "text": "", "note": ""
+    }))
+    .unwrap()
+}
+
+/// 그 스펙을 띄워 한 프레임 그리고 **판 배경면(ELEV)의 높이**를 준다(`info_tabs_panel_height`
+/// 와 같은 자 — 판 배경색은 판 하나만 쓴다).
+fn plugin_panel_height(spec: ServerMessage) -> f32 {
+    painted_scene_setup(vec![layout_tall_pane(), spec], &[], |_| {}, |scene| {
+        let mut hits: Vec<f32> = scene
+            .layers()
+            .flat_map(|layer| layer.rects.iter())
+            .filter_map(|r| match r.background {
+                warpui::elements::Fill::Solid(c) if c == theme::ELEV => {
+                    Some(r.bounds.lower_left().y() - r.bounds.origin().y())
+                }
+                _ => None,
+            })
+            .collect();
+        hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        hits.pop().expect("판 배경(ELEV)이 한 조각도 안 칠해졌다 — 오라클이 죽었다")
+    })
+}
+
+#[test]
+fn a_tabbed_family_panel_keeps_its_height_whatever_the_tab() {
+    // 같은 창에서 줄 6(카운트다운 한 줄 포함)과 줄 2 — 가족이면 판 높이가 같아야 한다.
+    for kind in ["list", "table"] {
+        let tall = plugin_panel_height(family_spec(kind, 6, true, true));
+        let short = plugin_panel_height(family_spec(kind, 2, false, true));
+        assert!(tall > 0., "{kind}: 판이 안 떴다");
+        assert!(
+            (tall - short).abs() < 0.5,
+            "{kind}: 탭을 바꿨더니 판 높이가 {tall} → {short} 로 움직였다 — 가족 판은 예산까지 \
+             채우고(`pad_family_rows`) 줄마다 같은 높이라야 한다(`family_row`)"
+        );
+    }
+}
+
+#[test]
+fn a_panel_without_tabs_still_follows_its_row_count() {
+    // 대조군 — 띠가 없는 목록 판(mdir·ncd·p4changes)은 종전대로 내용만큼이다. 이 단언이
+    // 없으면 위 시험은 「모든 판이 늘 예산 높이」로도 통과하고, 그러면 그 판들의 모양이
+    // 조용히 바뀐 것을 아무도 안 본다.
+    let tall = plugin_panel_height(family_spec("list", 6, false, false));
+    let short = plugin_panel_height(family_spec("list", 2, false, false));
+    assert!(
+        tall > short + 0.5,
+        "띠 없는 목록 판까지 예산 높이가 됐다 — 가족이 아닌 판은 종전대로 줄 수를 따라야 한다 \
+         (줄 6: {tall} · 줄 2: {short})"
+    );
+}
+
+// ── 탭 띠의 **탭 순환** · pytmux-516 ─────────────────────────────────────────────
+//
+// 제보: *"이 화면에서 다른 탭으로 넘어갈 수 없습니다 — 마우스 클릭 또는 좌우 방향키로"*.
+// 키 쪽: `Tab`/`Shift+Tab` 은 늘, `←`/`→` 는 그 줄에 다른 뜻이 없을 때 이웃 탭이다
+// (core 가 `TabCycle` 로 말하고 어느 탭이 이웃인지는 스펙이 안다 — `tab_neighbor`).
+// 정본 `TokenLogScreen.on_key` 에 같은 규칙이 같은 CL 로 섰다.
+
+#[test]
+fn tab_and_arrows_move_to_the_neighbour_tab_of_a_tabbed_panel() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(tabbed_spec()))).unwrap();
+    view.pump_headless();
+    let goes_to = |out: &[Outgoing], key: &str| {
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::PluginAction { act, input, .. })
+            if act == "apply" && input.as_deref() == Some(key)))
+    };
+    // `Tab` — 기간(활성) 의 다음은 세션.
+    view.handle_key(Key::Tab, Mods::NONE);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(goes_to(&out, "goto:sessions"), "Tab 이 다음 탭(세션)으로 안 갔다: {out:?}");
+    assert_eq!(view.screens.top(), Some(Screen::PluginView), "순환이 판을 닫았다");
+    // `←` — 앞 탭. 뷰 탭이 둘뿐이라 감겨서 다시 세션이고, **액션 탭(시나리오)은 건너뛴다**.
+    sent.lock().unwrap().clear();
+    view.handle_key(Key::Left, Mods::NONE);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(goes_to(&out, "goto:sessions"), "← 가 앞 탭으로 안 갔다(감기): {out:?}");
+    assert!(!goes_to(&out, "goto:settings"), "액션 탭(시나리오)으로 순환했다: {out:?}");
+    // `→` 도 같다 — 종전에는 `press_list` 가 삼켜 아무 일도 안 났다(제보의 그 증상).
+    sent.lock().unwrap().clear();
+    view.handle_key(Key::Right, Mods::NONE);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(goes_to(&out, "goto:sessions"), "→ 가 다음 탭으로 안 갔다: {out:?}");
+}
+
+#[test]
+fn a_spec_bound_arrow_still_goes_to_the_plugin_not_the_tab_strip() {
+    // 기간 트리의 `→` 는 **펼침**이다(스펙 `keys`) — 띠가 있어도 그 뜻이 먼저다. 그 키를
+    // 순환으로 뺏으면 pytmux-185 가 세는 갈림이다(정본은 트리에서 → 로 편다).
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    let mut spec = tabbed_spec();
+    if let ServerMessage::PluginScreen(ref mut s) = spec {
+        s.keys.insert("right".into(), "expand".into());
+    }
+    tx.send(LinkEvent::Message(Box::new(spec))).unwrap();
+    view.pump_headless();
+    view.handle_key(Key::Right, Mods::NONE);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::PluginAction { act, .. }) if act == "expand")),
+        "스펙이 묶은 → 가 플러그인으로 안 갔다: {out:?}"
+    );
+    assert!(
+        !out.iter().any(|o| matches!(o, Outgoing::Command(Command::PluginAction { input, .. })
+            if input.as_deref() == Some("goto:sessions"))),
+        "스펙이 묶은 → 를 탭 순환이 가로챘다: {out:?}"
+    );
+}

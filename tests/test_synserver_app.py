@@ -936,3 +936,46 @@ async def test_revoked_device_disappears_from_list():
     body = _rec("e1" * 8).encode()
     h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
     assert _j(app.handle("POST", "/v1/events", headers=h, body=body))[0] == 401
+
+
+async def test_a_device_can_list_its_peers_names_but_only_in_its_own_vault():
+    """pytmux-517 — 기기 서명으로 `GET /v1/devices` 를 부르면 같은 vault 기기들의
+    `host_id`·`label`·`last_seen` **셋만** 온다(기기 id·공개키는 안 온다). 다른 vault 의
+    기기는 안 보인다. 세션 갈래는 종전 그대로다(회귀 0)."""
+    app, clock = _app()
+    cookie_a, _va, _ = _enroll(app)
+    did_a, sk_a = _device(app, cookie_a)
+    # 둘째 기기(같은 vault · 이름 있음) — 등록 때 `label`·`host_id` 를 보낸다.
+    st, out = _j(app.handle("POST", "/v1/pairing", headers=cookie_a, body=b"{}"))
+    assert st == 200, out
+    from cryptography.hazmat.primitives import serialization as ser
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    sk_b = ed25519.Ed25519PrivateKey.generate()
+    pub_b = sk_b.public_key().public_bytes(ser.Encoding.Raw, ser.PublicFormat.Raw)
+    body = json.dumps({"pairing_code": out["code"], "pubkey": wa.b64u_encode(pub_b),
+                       "label": "alienware", "host_id": "ab" * 16}).encode()
+    st, out_b = _j(app.handle("POST", "/v1/devices", body=body))
+    assert st == 200, out_b
+    # 다른 vault 의 기기 하나.
+    cookie_c, _vc, _ = _enroll(app)
+    did_c, sk_c = _device(app, cookie_c)
+    # A 가 기기 서명으로 목록을 받는다 — 같은 vault 둘(A 자신 · B)만, 칸은 셋뿐.
+    h = _signed(app, clock, did_a, sk_a, "GET", "/v1/devices", b"", "")
+    st, got = _j(app.handle("GET", "/v1/devices", "", h, b""))
+    assert st == 200, got
+    rows = got["devices"]
+    assert len(rows) == 2, rows
+    assert all(set(r) == {"host_id", "label", "last_seen"} for r in rows), rows
+    assert {r["label"] for r in rows if r["host_id"] == "ab" * 16} == {"alienware"}
+    # C(다른 vault)가 부르면 제 vault 것만 — A·B 는 안 보인다.
+    h = _signed(app, clock, did_c, sk_c, "GET", "/v1/devices", b"", "")
+    st, got = _j(app.handle("GET", "/v1/devices", "", h, b""))
+    assert st == 200 and len(got["devices"]) == 1, got
+    assert got["devices"][0]["label"] != "alienware"
+    # 서명이 틀리면 거절 — 기기 헤더만 있다고 열리지 않는다.
+    h = _signed(app, clock, did_a, sk_a, "GET", "/v1/devices", b"", "")
+    h["X-Sync-Sig"] = h["X-Sync-Sig"][:-4] + "AAAA"
+    assert _j(app.handle("GET", "/v1/devices", "", h, b""))[0] == 401
+    # 세션 갈래 회귀 0 — 종전처럼 전부(기기 id 포함).
+    st, got = _j(app.handle("GET", "/v1/devices", headers=cookie_a))
+    assert st == 200 and len(got["devices"]) == 2 and "device_id" in got["devices"][0]

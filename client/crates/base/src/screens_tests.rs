@@ -1556,3 +1556,65 @@ fn navigation_keys_do_not_close_a_list_panel() {
     assert_eq!(screens.press(Key::Escape, Mods::NONE), Some(ScreenKey::Closed));
     assert_eq!(screens.top(), None);
 }
+
+// ── 탭 띠가 있는 플러그인 판의 **탭 순환**(pytmux-516) ─────────────────────────
+//
+// 정본 토큰 팝업의 탭 띠(`#tktabs`)가 우리 판 위에 선 뒤(pytmux-130 ⑴) 제보가 왔다 —
+// *"다른 탭으로 못 넘어간다 · 마우스 클릭 또는 좌우 방향키로"*. 키 쪽의 뿌리는
+// `press_list` 의 `_ => Consumed` 였다(←→ 가 **아무 일도 안 났다**). 정본 `TokenLogScreen.on_key`
+// 에 같은 규칙을 **같은 CL** 에서 세웠다(«정본에 먼저, 또는 같은 CL 에 둘 다»).
+
+#[test]
+fn tab_and_arrows_cycle_the_tabs_of_a_tabbed_plugin_panel() {
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    screens.set_plugin_grid(0, 1);
+    screens.set_plugin_tabs(3);
+    screens.select_row(2);
+    assert_eq!(screens.press(Key::Tab, Mods::NONE), Some(ScreenKey::TabCycle(true)));
+    assert_eq!(screens.press(Key::BackTab, Mods::NONE), Some(ScreenKey::TabCycle(false)));
+    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::TabCycle(true)));
+    assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::TabCycle(false)));
+    assert_eq!(screens.top(), Some(Screen::PluginView), "순환이 판을 닫았다");
+    assert_eq!(screens.selected(), 2, "순환이 고른 줄을 옮겼다 — Tab 이 ↓ 로 샜다");
+}
+
+#[test]
+fn a_panel_without_a_tab_strip_keeps_its_old_keys() {
+    // 띠 없음(0)도, 뷰 탭 하나(1)도 순환할 것이 없다 — Tab 은 ↓, ←→ 는 삼킴(종전).
+    for tabs in [0, 1] {
+        let mut screens = Screens::new();
+        screens.open_plugin_view(true);
+        screens.set_plugin_grid(0, 1);
+        screens.set_plugin_tabs(tabs);
+        screens.select_row(2);
+        assert_eq!(screens.press(Key::Tab, Mods::NONE), Some(ScreenKey::Consumed));
+        assert_eq!(screens.selected(), 3, "띠 없는 목록에서 Tab 은 ↓ 다(종전 · 탭 {tabs})");
+        assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::Consumed));
+        assert_eq!(screens.selected(), 3, "띠 없는 목록에서 → 는 삼킨다(pytmux-181 · 탭 {tabs})");
+    }
+}
+
+#[test]
+fn a_multi_column_tabbed_panel_keeps_arrows_for_columns_but_tab_still_cycles() {
+    // 다열 판(mdir)의 ←→ 는 열 이동이다 — 띠가 있어도 그 손이 먼저다. Tab 은 순환.
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    screens.set_plugin_grid(10, 3);
+    screens.set_plugin_tabs(3);
+    screens.select_row(0);
+    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 10, "다열 판의 → 는 열 이동이다 — 띠가 있어도");
+    assert_eq!(screens.press(Key::Tab, Mods::NONE), Some(ScreenKey::TabCycle(true)));
+}
+
+#[test]
+fn a_tabbed_text_panel_cycles_too() {
+    // 글 판(한도 안내 같은 `text`)도 띠가 있으면 같은 손이다 — 판마다 다르면 그것이 갈림이다.
+    let mut screens = Screens::new();
+    screens.open_plugin_view(false);
+    screens.set_plugin_tabs(2);
+    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::TabCycle(true)));
+    assert_eq!(screens.press(Key::BackTab, Mods::NONE), Some(ScreenKey::TabCycle(false)));
+    assert_eq!(screens.top(), Some(Screen::PluginView), "순환이 글 판을 닫았다");
+}

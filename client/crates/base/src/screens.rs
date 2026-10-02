@@ -607,6 +607,12 @@ pub enum ScreenKey {
     /// [`ScreenKey::Applied`] 와 갈라 둔 이유: 저쪽은 "골랐다"(Enter)라 방향이 없다.
     /// 한 값에 방향을 얹으면 목록형 화면들이 쓰는 `Applied` 의 뜻이 흐려진다.
     AppliedDir(usize, bool),
+    /// 플러그인 판의 띠에서 **이웃 탭으로**(`true` = 다음 · `false` = 앞) — 판은 그대로
+    /// 있고 어느 탭이 이웃인지는 **뷰가 안다**(띠는 스펙에 있다 · pytmux-516).
+    ///
+    /// [`ScreenKey::Chosen`] 과 갈라 둔 이유: 저쪽은 줄 번호이고 판을 닫는다. 이건
+    /// 줄이 아니라 **방향**이고 판이 안 닫힌다 — 다음 판이 같은 자리에 선다.
+    TabCycle(bool),
 }
 
 /// 무엇을 묻고 있나. **대답을 어디에 쓸지**가 이 값에 달렸다.
@@ -953,6 +959,14 @@ pub struct Screens {
     /// 뷰가 키를 먹기 **직전에** 넣는다 — 열 수는 창 크기와 함께 변하므로 열 때 한 번
     /// 잡아 두면 리사이즈 뒤의 ←→ 가 엉뚱한 줄로 뛴다.
     plugin_grid: (usize, usize),
+    /// 그 판의 띠에 **뷰 탭**(액션 탭을 뺀 것)이 몇인가 — 둘 이상이면 순환할 것이 있다
+    /// (pytmux-516 · 정본 토큰 팝업의 `#tktabs`). 띠가 없는 판은 `0`.
+    ///
+    /// `plugin_grid` 와 같은 갈림이다: 띠의 내용은 스펙(proto)이 들고 **키의 뜻**은
+    /// 여기서 정한다 — `Tab`/`Shift+Tab` 은 늘 탭 순환이고 `←`/`→` 는 그 줄에 다른
+    /// 뜻이 없을 때(다열 판의 열 이동 · 스펙이 묶은 키 — 그건 뷰가 먼저 본다) 탭 순환.
+    /// 뷰가 키를 먹기 직전에 넣는다(`set_plugin_grid` 와 같은 때).
+    plugin_tabs: usize,
     /// 서버가 부는 **플러그인 표면**(설계 Tier A). 뷰가 매 프레임 옮겨 담는다.
     ///
     /// 왜 화면 상태에 두나: 메뉴의 층·설정의 분류 이동이 **이 목록의 길이와 분류**에
@@ -1564,6 +1578,24 @@ impl Screens {
         // 플러그인이 준 화면 — 목록이면 고르는 화면, 글이면 읽는 화면이다.
         // 그 갈림은 **스펙**에 있고 뷰가 열 때 알려 준다(core 는 스펙을 안 든다).
         if matches!(self.top(), Some(Screen::PluginView)) {
+            // ★ **탭 띠가 있는 판은 `Tab`/`Shift+Tab` 이 탭 순환**이다(pytmux-516 ·
+            //   정본 `TokenLogScreen.on_key` 와 같은 규칙 — 같은 CL 에 둘 다 섰다).
+            //   `←`/`→` 도 그 줄에 다른 뜻이 없으면 같다: 다열 판의 열 이동(아래)이
+            //   먼저이고, 스펙이 묶은 키(기간 트리의 펼침·접힘 · 한도 고르개의 값)는
+            //   뷰가 여기 오기 전에 가로챈다(`key_action`). 그래서 여기 닿은 ←→ 는
+            //   **뜻이 없던 키**다 — 종전에는 `press_list` 가 삼켰다(「아무 일도 안
+            //   난다」가 제보의 그 증상이다).
+            if self.plugin_tabs > 1 {
+                let (_, cols) = self.plugin_grid;
+                let column_move = self.plugin_list && cols > 1;
+                match key {
+                    Key::Tab => return Some(ScreenKey::TabCycle(true)),
+                    Key::BackTab => return Some(ScreenKey::TabCycle(false)),
+                    Key::Right if !column_move => return Some(ScreenKey::TabCycle(true)),
+                    Key::Left if !column_move => return Some(ScreenKey::TabCycle(false)),
+                    _ => {}
+                }
+            }
             if self.plugin_list {
                 // ★ **다열 판은 한 열이 한 묶음**이다(설계 §4.3 `panel` · pytmux-126).
                 //   정본 mdir 의 손 그대로 ←→ 가 한 열, PgUp/PgDn 이 한 판을 건넌다 —
@@ -2125,6 +2157,14 @@ impl Screens {
     /// 사용자는 리사이즈만 했는데 다른 것을 지우게 된다.
     pub fn set_plugin_grid(&mut self, per_col: usize, cols: usize) {
         self.plugin_grid = (per_col, cols.max(1));
+    }
+
+    /// 그 판의 띠에 뷰 탭이 몇인지 넣는다(pytmux-516). 띠가 없으면 `0`.
+    ///
+    /// `set_plugin_grid` 와 같은 때(키를 먹기 직전)에 넣는다 — 띠는 판마다 다르고
+    /// 같은 `PluginView` 변형이 그 판들을 다 맡으므로 열 때 한 번으로는 낡는다.
+    pub fn set_plugin_tabs(&mut self, count: usize) {
+        self.plugin_tabs = count;
     }
 
     /// 서버가 부는 플러그인 표면을 갈아 끼운다(뷰가 상태 변화 때 부른다).

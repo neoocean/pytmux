@@ -26,6 +26,11 @@ pub static EN: &[(&str, &str)] = &[
     // ⛔ 짧은 원문(글자 키가 없는 것)을 지우면 안 된다 — 다른 플러그인 판들이 아직
     //    그 꼬리줄을 쓴다(`mdir`·`ncd` 등). 둘 다 표에 있어야 한다.
     (
+        "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
+    ),
+    (
+        // 띠 밖의 판(`claude-token-usage-view` 등)이 아직 쓰는 종전 꼬리줄 — 그대로 둔다.
         "↑↓ 이동 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
         "↑↓ move · Esc close · p session · l limit · o machine · s scenario · u /usage",
     ),
@@ -37,25 +42,25 @@ pub static EN: &[(&str, &str)] = &[
         // ⚠ `[한도]` 판의 꼬리줄이 갈라졌다(pytmux-130) — 그 판의 맨 위 두 줄이
         //   **모델·컨텍스트 고르개**라 `←→`·`Enter` 가 그 안의 뜻을 갖는다. 위 짧은
         //   원문은 그것을 안 말하므로 지우지 않고 둘 다 표에 둔다(머리말의 그 규율).
-        "↑↓ 이동(모델·컨텍스트) · ←→ 값 · Enter 적용 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
-        "↑↓ move (model·context) · ←→ value · Enter apply · Esc close · p session · \
+        "↑↓ 이동(모델·컨텍스트) · ←→ 값 · Tab 탭 · Enter 적용 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move (model·context) · ←→ value · Tab tabs · Enter apply · Esc close · p session · \
          l limit · o machine · s scenario · u /usage",
     ),
     (
         // ⚠ 기간 판이 **계층 트리**가 되면서 버킷 고르개가 사라졌다(pytmux-371 ①) —
         //   꼬리줄도 그 손을 적는다. 없어진 조작을 광고하면 그것도 거짓말이다.
-        "↑↓ 이동 · Enter/←→ 펼침·접힘 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
-        "↑↓ move · Enter/←→ expand·collapse · Esc close · p session · l limit · \
+        "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move · Enter/←→ expand·collapse · Tab tabs · Esc close · p session · l limit · \
          o machine · s scenario · u /usage",
     ),
     (
-        "↑↓ 이동 · Enter 날짜 펼침·접힘 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
-        "↑↓ move · Enter expand/collapse a day · Esc close · p session · l limit · \
+        "↑↓ 이동 · Enter 날짜 펼침·접힘 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move · Enter expand/collapse a day · Tab/←→ tabs · Esc close · p session · l limit · \
          o machine · s scenario · u /usage",
     ),
     (
-        "↑↓ 이동 · Enter 적용(/model 주입) · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
-        "↑↓ move · Enter apply (injects /model) · Esc close · p session · l limit · \
+        "↑↓ 이동 · Enter 적용(/model 주입) · Tab 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "↑↓ move · Enter apply (injects /model) · Tab tabs · Esc close · p session · l limit · \
          o machine · s scenario · u /usage",
     ),
     // ── claude-code · 기간별·세션별 판(pytmux-371 ①②) ──

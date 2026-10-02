@@ -279,6 +279,33 @@ impl PluginScreen {
         self.rows.iter().position(|r| &r.key == key)
     }
 
+    /// 띠의 **뷰 탭** 수 — 액션 탭(`시나리오` 같은 초록 배지)은 뺀다. 둘 이상이라야
+    /// 순환할 것이 있다(pytmux-516).
+    pub fn cyclable_tabs(&self) -> usize {
+        self.tabs.iter().filter(|t| !t.action).count()
+    }
+
+    /// 지금 탭의 **이웃 탭** 번호(`forward` = 다음 · 아니면 앞) — 액션 탭은 건너뛰고
+    /// 끝에서 감는다. 띠가 없거나 뷰 탭이 하나뿐이거나 활성 탭을 모르면 `None`.
+    ///
+    /// 정본 토큰 팝업의 탭 차례 그대로다(`screenspec._HUB` · 정본은 그중 제가 가진
+    /// 다섯을 돈다). 액션 탭을 건너뛰는 이유는 `_HUB_ACTIONS` 머리말이 적어 뒀다 —
+    /// 그것은 뷰가 아니라 **겹쳐 뜨는 판**이라 순환의 한 자리가 아니다.
+    pub fn tab_neighbor(&self, forward: bool) -> Option<usize> {
+        let views: Vec<usize> =
+            (0..self.tabs.len()).filter(|&i| !self.tabs[i].action).collect();
+        if views.len() < 2 {
+            return None;
+        }
+        let at = views.iter().position(|&i| self.tabs[i].active)?;
+        let next = if forward {
+            (at + 1) % views.len()
+        } else {
+            (at + views.len() - 1) % views.len()
+        };
+        Some(views[next])
+    }
+
     /// 스크롤될 때만 붙는 토막 — 이 클라의 로케일로.
     pub fn say_scroll_hint(&self) -> String {
         i18n_say(&self.i18n, "scroll_hint", &self.scroll_hint)

@@ -569,6 +569,31 @@ class SyncClient:
         return {"rows": last - since, "merged": merged, "rejected": rejected,
                 "xc": xc_new}
 
+    def pull_labels(self) -> dict:
+        """같은 vault 기기들의 **이름**을 받아 둔다(pytmux-517) → `{host_id: label}`.
+
+        `GET /v1/devices` 의 기기 서명 갈래(서버 `_device_list`). ⛔ **옛 서버는 조용히
+        견딘다** — 그 갈래가 없는 서버는 401(세션 없음)이나 404 를 주고, 그때 이름 없음은
+        종전 축약 표시 그대로다. 이름은 꾸밈이지 회계가 아니라 `pull` 의 성패와 **갈라**
+        둔다(`_sync_once` 가 따로 부르고 실패를 삼킨다)."""
+        status, _, resp = self._signed("GET", "/v1/devices")
+        if status != 200:
+            return {}
+        try:
+            devices = json.loads(resp.decode("utf-8", "replace")).get("devices") or []
+        except (ValueError, AttributeError):
+            return {}
+        labels = {}
+        for d in devices:
+            if not isinstance(d, dict):
+                continue
+            host, label = d.get("host_id"), d.get("label")
+            if host and label and str(host) != self.host_id:
+                labels[str(host)] = str(label)
+        if labels:
+            usagedb.set_host_labels(self.conn, labels, now=self._now())
+        return labels
+
     def _open_event(self, ev, k_id, k_enc):
         """이벤트 1건 복호·검증. 조금이라도 어긋나면 None(그 줄만 버린다).
 
@@ -874,6 +899,11 @@ def _sync_once(client) -> dict:
     up = client.push_limits()
     up_xc = client.push_xc()
     down = client.pull()
+    # 이름은 꾸밈이다(pytmux-517) — 못 받아도 한 바퀴는 성공이다.
+    try:
+        client.pull_labels()
+    except Exception:           # noqa: BLE001 — 옛 서버·일시 오류가 회계를 깨면 안 된다
+        pass
     return {"push": up, "push_xc": up_xc, "pull": down,
             "sent": up.get("sent", 0) + up_xc.get("sent", 0),
             "rejected": down.get("rejected", 0)}

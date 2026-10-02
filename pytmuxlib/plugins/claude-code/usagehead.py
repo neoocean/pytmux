@@ -19,7 +19,7 @@
 """
 from pytmuxlib import i18n
 
-from . import usagelog
+from . import usagedb, usagelog
 
 #: 원산지가 이 머신인 적재분에 `usagedb` 가 다는 이름표(`host` 칸이 NULL 인 줄).
 LOCAL_HOST = "<local>"
@@ -75,7 +75,7 @@ def limit_summary(usage):
     return (" · ".join(parts) + " · ") if parts else ""
 
 
-def host_text(xc_hosts):
+def host_text(xc_hosts, labels=None):
     """Σ 뒤에 붙는 **원산지 머신별 비중**(`⇅ 이 머신 62% · a1b2 38%`).
 
     동기화를 켜면 Σ 가 계정 **전역**(다른 머신 포함)으로 뛰는데, 그게 어디서 왔는지
@@ -88,7 +88,9 @@ def host_text(xc_hosts):
     total = sum(hosts.values()) or 1
     parts = []
     for h, v in sorted(hosts.items(), key=lambda kv: (-kv[1], kv[0]))[:4]:
-        name = i18n.t("pscreen.tklog_host_local") if h == LOCAL_HOST else h[:8]
+        # 이름은 한 함수가 푼다(pytmux-517) — 머신 탭·GUI 판과 같은 축약·같은 라벨.
+        name = (i18n.t("pscreen.tklog_host_local") if h == LOCAL_HOST
+                else usagedb.host_label(labels, h))
         parts.append("%s %d%%" % (name, round(100.0 * v / total)))
     return "  ⇅ " + " · ".join(parts)
 
@@ -115,7 +117,7 @@ def unknown_text(xc_cov):
     return "  " + i18n.t("pscreen.tklog_unknown", pct=shown)
 
 
-def sigma_text(total_all, win, xc, xc_hosts, xc_cov):
+def sigma_text(total_all, win, xc, xc_hosts, xc_cov, labels=None):
     """Σ 요약(§10-D P6).
 
     트랜스크립트 실측(`usage_xc` full)이 있으면 그것을 1차 Σ 로 보이고 캐시를 별도로
@@ -132,15 +134,15 @@ def sigma_text(total_all, win, xc, xc_hosts, xc_cov):
                        cr=usagelog._fmt_tokens((xc or {}).get("cache_read", 0)),
                        cc=usagelog._fmt_tokens((xc or {}).get("cache_create", 0)),
                        scrape=usagelog._fmt_tokens(life))
-                + host_text(xc_hosts) + unknown_text(xc_cov))
+                + host_text(xc_hosts, labels) + unknown_text(xc_cov))
     sigma = "~Σ%s" % usagelog._fmt_tokens(life)   # ~ = 추정 라벨(S6 T3)
     if life != win:
         sigma += i18n.t("pscreen.tklog_disp", n=usagelog._fmt_tokens(win))
     return sigma
 
 
-def summary_line(usage, total_all, win, xc, xc_hosts, xc_cov):
+def summary_line(usage, total_all, win, xc, xc_hosts, xc_cov, labels=None):
     """머리줄 **한 줄 전체** — 정본이 `#tktop` 에 넣는 그 문자열과 같다."""
     return limit_summary(usage) + i18n.t(
         "pscreen.tklog_scope",
-        sigma=sigma_text(total_all, win, xc, xc_hosts, xc_cov))
+        sigma=sigma_text(total_all, win, xc, xc_hosts, xc_cov, labels))

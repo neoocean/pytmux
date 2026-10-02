@@ -1287,6 +1287,9 @@ impl SessionView {
         if self.screens.top() == Some(Screen::PluginView) {
             let (per_col, cols) = self.panel_grid();
             self.screens.set_plugin_grid(per_col, cols);
+            // 띠의 뷰 탭 수도 같은 때 넣는다(pytmux-516) — 뜻은 core 가, 띠는 스펙이.
+            let tabs = self.state.plugin_screen().map_or(0, |s| s.cyclable_tabs());
+            self.screens.set_plugin_tabs(tabs);
         }
         if let Some(outcome) = self.screens.press(key, mods) {
             // ★ 정보 팝업은 **자리 맞추기가 먼저다** — `←→` 가 넘긴 자리를 접고 `↑↓` 가
@@ -1330,6 +1333,10 @@ impl SessionView {
                 // 플러그인이 준 목록에서 골랐다 — **그 줄의 뜻**을 되돌려준다(P4).
                 ScreenKey::Chosen(row) if screen_before == Some(Screen::PluginView) => {
                     self.plugin_view_chosen(row);
+                }
+                // 띠의 이웃 탭으로(pytmux-516) — 탭을 **누른 것과 같은 길**이다.
+                ScreenKey::TabCycle(forward) => {
+                    self.plugin_tab_cycle(forward);
                 }
                 // 전역 검색 결과에서 골랐다(pytmux-27) — 그 탭·패널·줄로 뛴다.
                 ScreenKey::Chosen(row) if screen_before == Some(Screen::SearchResults) => {
@@ -4345,6 +4352,60 @@ impl SessionView {
         (self.panel_budget().saturating_sub(lines).max(1), cols)
     }
 
+    /// 탭 가족 판(`tabs` 가 있는 스펙 · 정본 토큰 팝업의 탭들)의 **한 줄** — 글자 크기가
+    /// 줄마다 달라도(카운트다운 15px · 이름 13px · 칸 12px) 높이가 같은 상자.
+    ///
+    /// # 왜 (pytmux-518)
+    ///
+    /// 탭 띠가 서면서(pytmux-130 ⑴) 판 일곱이 **한 창**이 됐는데, 목록·표 갈래의 높이
+    /// 규칙은 판마다 남아 있었다 — 줄 수만큼 그리고 끝. 그래서 한도(줄 6)·세션(줄 3)·
+    /// 머신(줄 2)을 오갈 때마다 판 아래 모서리가 수십 px 씩 움직였다(제보 첨부 셋이 그
+    /// 그림이다). 설정 판(pytmux-369)·상태 판(pytmux-373)이 각각 치른 값과 같은 부류다.
+    ///
+    /// 고치는 길은 둘이 한 벌이다 — ⑴ 남는 줄을 예산까지 채우고([`pad_family_rows`])
+    /// ⑵ **모든 줄의 높이를 같게** 한다(이 함수). ⑴만 하면 15px 카운트다운이 있는 줄과
+    /// 없는 줄의 차이가 그대로 판 높이에 남는다(「줄 수는 같은데 픽셀이 다르다」 —
+    /// pytmux-373 이 적어 둔 그 함정). 가장 큰 글자(15px)의 빈 글자 하나를 줄 끝에 세워
+    /// 높이를 못박는다 — 폭은 없고(빈 글자) 높이만 있다.
+    ///
+    /// `tabs` 가 없는 판(mdir·ncd·p4changes)은 **종전 그대로** — 가족이 아니라 들썩일
+    /// 짝이 없고, 그 판들의 줄 높이를 바꿀 이유가 없다.
+    fn family_row(&self, spec: &proto::session::PluginScreen, line: Flex) -> Box<dyn Element> {
+        if spec.tabs.is_empty() {
+            return line.finish();
+        }
+        line.with_child(self.text("", Self::FAMILY_ROW_PT, palette::DIM)).finish()
+    }
+
+    /// 가족 판의 줄 높이를 정하는 글자 크기 — 판에 오는 가장 큰 글자(카운트다운)와 같다.
+    const FAMILY_ROW_PT: f32 = 15.;
+
+    /// 가족 판의 남는 줄을 **예산까지** 채운다 — 채움 줄도 [`family_row`] 를 지난다
+    /// (그래야 채움 줄과 항목 줄이 같은 높이다 · pytmux-369 의 교훈). `tabs` 가 없으면
+    /// 아무것도 안 한다.
+    fn pad_family_rows(
+        &self,
+        spec: &proto::session::PluginScreen,
+        column: Flex,
+        drawn: usize,
+        budget: usize,
+    ) -> Flex {
+        if spec.tabs.is_empty() {
+            return column;
+        }
+        let mut column = column;
+        for _ in drawn..budget {
+            let line = Flex::row()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(self.text(" ", 13., palette::DIM));
+            column = column.with_child(
+                Container::new(self.family_row(spec, line)).with_uniform_padding(1.).finish(),
+            );
+        }
+        column
+    }
+
     fn pad_rows(&self, column: Flex, drawn: usize, budget: usize) -> Flex {
         let mut column = column;
         for _ in drawn..budget {
@@ -6076,6 +6137,7 @@ impl SessionView {
             "list" => {
                 let selected = self.screens.selected().min(spec.visible_rows().saturating_sub(1));
                 let start = (selected + 1).saturating_sub(budget);
+                let mut drawn = 0usize;
                 for (row, item) in spec.rows.iter().take(spec.visible_rows()).enumerate().skip(start).take(budget) {
                     // 부가 칸(`cols`)은 뒤에 흐리게 — 정본 목록 화면과 같은 짜임이다.
                     // ★ 줄마다 **뜻이 있으면 그 색**으로(pytmux-11·12 A). 정본은 디렉터리를
@@ -6112,7 +6174,7 @@ impl SessionView {
                     for col in item.say_cols() {
                         line = line.with_child(self.text(col, 12., palette::DIM));
                     }
-                    let boxed = Container::new(line.finish()).with_uniform_padding(1.);
+                    let boxed = Container::new(self.family_row(spec, line)).with_uniform_padding(1.);
                     column = column.with_child(self.clickable_panel(
                         row,
                         base::PanelTarget::Row(row),
@@ -6122,7 +6184,9 @@ impl SessionView {
                             boxed.finish()
                         },
                     ));
+                    drawn += 1;
                 }
+                column = self.pad_family_rows(spec, column, drawn, budget);
             }
             "text" => {
                 let mut drawn = 0usize;
@@ -6177,6 +6241,7 @@ impl SessionView {
             "table" => {
                 let selected = self.screens.selected().min(spec.visible_rows().saturating_sub(1));
                 let start = (selected + 1).saturating_sub(budget);
+                let mut drawn = 0usize;
                 for (row, item) in spec.rows.iter().take(spec.visible_rows()).enumerate().skip(start).take(budget) {
                     // 목록과 **같은 규칙**으로 색을 푼다(pytmux-12 A) — mdir 이 이 갈래다.
                     let fg = proto::rowtag::color(&item.tag)
@@ -6281,7 +6346,7 @@ impl SessionView {
                     if let Some(left) = item.countdown(Self::now_secs()) {
                         line = line.with_child(self.text(left, 15., palette::FG));
                     }
-                    let boxed = Container::new(line.finish()).with_uniform_padding(1.);
+                    let boxed = Container::new(self.family_row(spec, line)).with_uniform_padding(1.);
                     column = column.with_child(self.clickable_panel(
                         row,
                         base::PanelTarget::Row(row),
@@ -6291,7 +6356,9 @@ impl SessionView {
                             boxed.finish()
                         },
                     ));
+                    drawn += 1;
                 }
+                column = self.pad_family_rows(spec, column, drawn, budget);
             }
             // ★ **다열 판**(설계 §4.3 · pytmux-126). 표와 같은 자료(`rows`)를 여러 열로
             //   흘려 담고 위아래에 스펙이 준 한 줄씩을 둔다 — 정본 `mdir` 의 모양이다.
@@ -6578,6 +6645,20 @@ impl SessionView {
             return false;
         }
         let Some(row) = self.state.plugin_screen().and_then(|spec| spec.tab_row(i)) else {
+            return false;
+        };
+        self.plugin_view_chosen(row);
+        true
+    }
+
+    /// 띠의 **이웃 탭**으로(pytmux-516 · `Tab`/`Shift+Tab` · 뜻 없는 `←`/`→`) — 어느 탭이
+    /// 이웃인지는 스펙이 안다(`tab_neighbor`), 그 탭으로 가는 길은 누른 것과 같다.
+    pub(crate) fn plugin_tab_cycle(&mut self, forward: bool) -> bool {
+        let Some(row) = self
+            .state
+            .plugin_screen()
+            .and_then(|spec| spec.tab_neighbor(forward).and_then(|i| spec.tab_row(i)))
+        else {
             return false;
         };
         self.plugin_view_chosen(row);

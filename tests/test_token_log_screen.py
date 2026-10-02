@@ -849,3 +849,118 @@ async def test_top_header_stays_one_line():
             assert "Σ" in text, f"Σ 요약 누락: {text!r}"
     finally:
         await teardown(srv, task, sock)
+
+
+# ── 탭 순환(pytmux-516 · 사용자 제보 2026-09-26) ──────────────────────────────────
+#
+# «좌우 방향키로 다른 탭으로». 종전에는 세션·머신 뷰의 ←→ 와 `Tab` 이 꼬리의 「그 외
+# 키는 닫는다」로 떨어져 **판이 닫혔다**. 이제 `Tab`/`Shift+Tab` 은 늘 이웃 탭이고
+# ←→ 는 그 줄에 다른 뜻이 없을 때(한도 고르개 · 기간/경고 트리) 같은 뜻이다.
+# GUI 는 `base::screens` 의 `TabCycle` 로 같은 표를 같은 CL 에서 세웠다.
+
+async def _open_tklog(app, pilot, recs, **kw):
+    """첫 레이아웃이 온 뒤 판을 띄운다 — 고정 `pause` 대신 폴링(대기 규약)."""
+    await wait_until(pilot, lambda: app.layout.get("panes"))
+    app.push_screen(screens.TokenLogScreen(recs, **kw))
+    scr = await _wait_tklog(pilot, app)
+    return scr
+
+
+async def test_tab_cycles_views_in_strip_order_and_wraps():
+    """`Tab` = 기간 → 세션 → 한도 → 경고 → 기간(머신은 둘 이상일 때만). `Shift+Tab` 은 역순.
+    판은 그대로 떠 있다(닫히지 않는다)."""
+    from harness import make_app, server_only, teardown
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            scr = await _open_tklog(app, pilot, _hour_records())
+            assert scr._current_tab() == "time"
+            assert scr._tab_names() == ["time", "session", "limit", "warn"], \
+                "머신이 하나뿐이면 순환에 머신 뷰가 없어야(o 키와 같은 조건)"
+            for expected in ("session", "limit", "warn", "time"):
+                await pilot.press("tab")
+                await wait_until(pilot, lambda e=expected: scr._current_tab() == e)
+                assert scr._current_tab() == expected, f"Tab 뒤 {expected} 이어야"
+                assert app.screen_stack[-1] is scr, "Tab 이 판을 닫았다"
+            await pilot.press("shift+tab")
+            await wait_until(pilot, lambda: scr._current_tab() == "warn")
+            assert scr._current_tab() == "warn", "Shift+Tab 은 역순(감기)"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_arrows_cycle_views_where_they_have_no_other_meaning():
+    """세션 뷰의 →/← 는 이웃 탭이다(종전엔 판을 닫았다). 한도 모드에서 고르개(모델·
+    컨텍스트) 밖의 줄에서 누른 → 도 이웃 탭(경고)이고, 고르개 줄의 → 는 종전대로 값을
+    돌린다(대조군)."""
+    from textual.widgets import DataTable
+    from harness import make_app, server_only, teardown
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            scr = await _open_tklog(app, pilot, _hour_records())
+            await pilot.press("p")
+            await wait_until(pilot, lambda: scr._current_tab() == "session")
+            await pilot.press("right")
+            await wait_until(pilot, lambda: scr._current_tab() == "limit")
+            assert scr._current_tab() == "limit", "세션 뷰의 → 는 다음 탭(한도)"
+            assert app.screen_stack[-1] is scr, "→ 가 판을 닫았다(종전 결함)"
+            # 한도 모드 · 고르개 줄(행 0 = 모델)의 → 는 **값**이다 — 탭은 그대로.
+            table = scr.query_one(DataTable)
+            table.focus()
+            await wait_until(pilot, lambda: table.has_focus)
+            await pilot.press("home")
+            await wait_until(pilot, lambda: table.cursor_coordinate.row == 0)
+            before = scr._mc_msel
+            await pilot.press("right")
+            await wait_until(pilot, lambda: scr._mc_msel != before)
+            assert scr._current_tab() == "limit", "고르개 줄의 → 가 탭을 옮겼다"
+            assert scr._mc_msel != before, "고르개 줄의 → 가 값을 안 돌렸다(종전 결함을 깼다)"
+            # 고르개 밖의 줄(행 2 = 세션 5h 막대)에서 → 는 이웃 탭(경고).
+            await pilot.press("down")
+            await pilot.press("down")
+            await wait_until(pilot, lambda: table.cursor_coordinate.row == 2)
+            await pilot.press("right")
+            await wait_until(pilot, lambda: scr._current_tab() == "warn")
+            assert scr._current_tab() == "warn", "한도 모드 · 고르개 밖 줄의 → 는 다음 탭(경고)"
+            # 세션 뷰의 ← 는 앞 탭(기간).
+            await pilot.press("p")
+            await wait_until(pilot, lambda: scr._current_tab() == "session")
+            await pilot.press("left")
+            await wait_until(pilot, lambda: scr._current_tab() == "time")
+            assert scr._current_tab() == "time", "세션 뷰의 ← 는 앞 탭(기간)"
+    finally:
+        await teardown(srv, task, sock)
+
+
+async def test_arrows_in_the_period_tree_still_fold_not_cycle():
+    """대조군 — 기간 트리의 →/← 는 펼침·접힘이다(정본의 뜻). 순환이 그 키를 뺏으면
+    pytmux-185 가 세는 갈림이다."""
+    from textual.widgets import DataTable
+    from harness import make_app, server_only, teardown
+
+    recs, hourly = _recent_tree_records()
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            scr = await _open_tklog(app, pilot, recs, hourly_pct=hourly)
+            table = scr.query_one(DataTable)
+            table.focus()
+            await wait_until(pilot, lambda: table.has_focus)
+            await pilot.press("home")
+            await wait_until(pilot, lambda: table.cursor_coordinate.row == 0)
+            before = table.row_count
+            # 첫 줄(오늘)은 열자마자 펼쳐져 있다 — `←` 로 접히면 행이 **준다**. 양성 효과를
+            # 기다린다(부정 단언의 정착 대기를 피한다 · 대기 규약).
+            await pilot.press("left")
+            await wait_until(pilot, lambda: table.row_count < before)
+            assert table.row_count < before, "기간 트리의 ← 가 안 접었다"
+            assert scr._current_tab() == "time", "기간 트리의 ← 가 탭을 옮겼다"
+            assert app.screen_stack[-1] is scr
+    finally:
+        await teardown(srv, task, sock)
