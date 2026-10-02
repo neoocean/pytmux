@@ -38,15 +38,37 @@
           상태줄 <strong>토큰 배지 클릭</strong> 또는 <code class="nb">claude-token-log</code>로 엽니다.
           <strong>기간 / 세션 / 한도 / 경고</strong> 노트북 탭과 <strong>[/usage] · [시나리오]</strong> 버튼으로
           구성되고, 상단 요약줄(<code>5h% · 주% · ~Σ</code>)은
-          모든 탭에 공통으로 붙습니다. 탭 사이는 키로도 오갑니다 — <kbd>p</kbd>(세션) · <kbd>l</kbd>(한도).
-          <kbd>u</kbd> 는 숨은 <code>/usage</code> 조회로 한도 값을 새로 받아 오고, <kbd>s</kbd> 는 시나리오 설정
-          (<code class="nb">claude-settings</code>)을 엽니다.
+          모든 탭에 공통으로 붙습니다. 탭 사이는 클릭 말고 키로도 오갑니다.
+        </p>
+        <ul>
+          <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> — 언제나 다음 / 이전 탭으로 옮깁니다. 띠의 차례(기간 · 세션 · 머신 · 한도 · 경고)를
+            따르고 끝에서 처음으로 감깁니다. 판은 닫히지 않고 내용만 바뀝니다.</li>
+          <li><kbd>←</kbd> / <kbd>→</kbd> — 그 줄에 다른 뜻이 없으면 같은 탭 이동입니다.
+            <ul>
+              <li>세션 · 머신 탭에서는 바로 이웃 탭으로 갑니다.</li>
+              <li>기간 · 경고 탭의 트리에서는 종전대로 펼침 · 접힘입니다.</li>
+              <li>한도 탭의 모델 · 컨텍스트 줄에서는 값을 고르고, 그 아래 줄에서는 이웃 탭으로 갑니다.</li>
+            </ul>
+          </li>
+          <li>바로 가기 — <kbd>p</kbd>(세션) · <kbd>l</kbd>(한도) · <kbd>o</kbd>(머신).
+            <kbd>u</kbd> 는 숨은 <code>/usage</code> 조회로 한도 값을 새로 받아 오고, <kbd>s</kbd> 는 시나리오 설정
+            (<code class="nb">claude-settings</code>)을 엽니다.</li>
+        </ul>
+        <p>
+          「<kbd>Tab</kbd> 은 언제나 이웃 탭, <kbd>←</kbd><kbd>→</kbd> 는 그 줄에 다른 뜻이 없을 때 이웃 탭」이라는 규칙은
+          파이썬 클라이언트와 GUI 클라이언트(<code class="nb">pytmux-gui</code>)가 같습니다.
+          GUI 판은 탭을 옮겨도 <strong>판의 높이가 그대로</strong>라 내용이 짧은 탭으로 가도 창이 들썩이지 않습니다.
         </p>
         <p>
           <a href="sync">여러 머신 토큰 동기화</a>로 <strong>다른 컴퓨터 몫이 합쳐진 경우에만</strong>
           <strong>[머신]</strong> 탭이 하나 더 생깁니다(<kbd>o</kbd> 또는 클릭). 어느 컴퓨터가 얼마를 썼는지
           비중 순으로 갈라 보여 주고, 요약줄 <code class="nb">Σ</code> 뒤에도 같은 분해가 붙습니다.
           머신이 하나면 탭도 생기지 않습니다.
+        </p>
+        <p>
+          머신은 <strong>등록할 때 붙인 기기 이름</strong>(보통 그 컴퓨터의 호스트 이름)으로 부릅니다. 이름은 동기화 서버의
+          기기 목록에서 받아 옵니다. 서버가 아직 이름을 내려 주지 않는 판이면 기기 id 의 <strong>앞 8자리</strong>로 보이고,
+          [머신] 탭 · 요약줄 · GUI 의 머신 판이 모두 같은 표기를 씁니다.
         </p>
       </section>
 

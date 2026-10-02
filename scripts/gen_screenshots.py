@@ -428,6 +428,78 @@ async def notice_history(app, pilot):
     await pilot.pause(0.4)
 
 
+def _blocks_shell_zdot():
+    """blocks 장면용 셸 — 셸 통합(OSC 133)을 건 zsh 와 합성 데모 디렉터리.
+
+    블록은 셸이 보낸 신호로만 생기므로 장면마다 그 셸을 새로 띄운다(모듈 머리의
+    `_SHOT_ZDOTDIR` 는 다른 장면과 공유라 거기에 통합을 걸면 15-scrollback 같은 장면에도
+    바가 서 버린다). ⛔ **공개 안전**: 요약 판은 블록의 cwd 를 그대로 보이므로 OSC 7 이
+    실 경로(스크래치 임시 경로 · 실 호스트 이름)를 싣지 않게 `__pytmux_report_cwd` 를
+    합성 경로로 덮는다 — 프롬프트를 합성값으로 고정하는 머리말과 같은 처방이다.
+    """
+    import stat as _stat
+    root = tempfile.mkdtemp(prefix="pytmux-shot-blocks-")
+    demo = os.path.join(root, "webapp")
+    os.makedirs(demo)
+    scripts = {
+        "build.sh": ("#!/bin/sh\n"
+                     "for i in $(seq 1 18); do "
+                     "printf '[%2d/18] compiling src/module_%02d.c\\n' $i $i; done\n"
+                     "echo 'linking webapp ... ok'\n"),
+        "test.sh": ("#!/bin/sh\n"
+                    "echo 'running 42 tests'\n"
+                    "echo 'test_login ............ ok'\n"
+                    "echo 'test_logout ........... ok'\n"
+                    "echo 'test_upload ........... FAILED'\n"
+                    "echo '41 passed, 1 failed'\n"
+                    "exit 1\n"),
+    }
+    for fname, body in scripts.items():
+        p = os.path.join(demo, fname)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.chmod(p, os.stat(p).st_mode | _stat.S_IXUSR)
+    zdot = os.path.join(root, "zdot")
+    os.makedirs(zdot)
+    integ = os.path.join(_UNIT, "pytmuxlib", "plugins", "blocks", "shell-integration.sh")
+    with open(os.path.join(zdot, ".zshrc"), "w", encoding="utf-8") as f:
+        f.write("PROMPT='user@host %1~ %# '\nRPROMPT=''\nunset HISTFILE\n"
+                f"source '{integ}'\n"
+                "__pytmux_report_cwd() { "
+                "__pytmux_osc '7;file://host/home/user/projects/webapp'; }\n"
+                f"cd '{demo}'\nclear\nprintf '\\033[3J'\n")
+    return zdot
+
+
+async def _blocks_session(app, pilot):
+    """셸 통합 셸로 갈아타고 명령 셋(성공 · 실패 · ls)을 친다 — 블록 네 개(마지막은
+    지금 프롬프트)가 생긴다. 갈아타는 줄은 새 셸의 `clear` + `ESC[3J` 로 사라진다."""
+    await _type(pilot, f"exec env ZDOTDIR={_blocks_shell_zdot()} zsh")
+    await pilot.press("enter")
+    await pilot.pause(1.2)
+    for cmd in ("./build.sh", "./test.sh", "ls"):
+        await _type(pilot, cmd)
+        await pilot.press("enter")
+        await pilot.pause(0.8)
+
+
+async def blocks_sticky(app, pilot):
+    """블록 스티키 프롬프트 바(pytmux-520) — 위로 굴린 패널 첫 줄에 「지금 보는 출력의
+    명령」 띠(`▲ ./build.sh`). 첫 줄이 곧 프롬프트 줄이면 바가 안 서므로 출력 **안**까지만
+    굴린다(4줄 — 스크롤백 맨 위는 프롬프트 줄이다)."""
+    await _blocks_session(app, pilot)
+    app.send_scroll(_aid(app), delta=4)
+    await pilot.pause(0.8)
+
+
+async def blocks_summary(app, pilot):
+    """블록 요약 판(`summary` · pytmux-538) — 활성 패널의 블록 목록(표식 · 명령 · cwd)."""
+    from importlib import import_module
+    await _blocks_session(app, pilot)
+    import_module("pytmuxlib.plugins.blocks.clientside").open_summary(app)
+    await pilot.pause(0.6)
+
+
 async def compose_esc(app, pilot):
     # 작성창 ESC 모드(compose_prompt 에서 esc 한 번) — 좌상단 ESC 배지 + 로즈 테두리 +
     # 같은 색 힌트("`:` 명령 · Esc 취소 · 그 외 키 편집 복귀")로 모드 진입을 보여 준다.
@@ -1088,6 +1160,8 @@ SCENES = [
     ("41-compose-prompt", "프롬프트 작성창(ESC→Insert) — 블록 선택 멀티라인·Enter 전송·Ctrl+A 전체선택", compose_prompt),
     ("48-compose-esc", "작성창 ESC 모드(작성창에서 Esc 한 번) — ESC 배지·로즈 테두리·: 명령/Esc 취소 안내", compose_esc),
     ("50-notice-history", "지나간 알림 이력 팝업(≡N 배지) — 등급 기호·반복 접힘·전문 펼침", notice_history),
+    ("53-blocks-sticky", "블록 스티키 프롬프트 바 — 위로 굴린 패널 첫 줄에 ▲ 명령(누르면 그 프롬프트로)", blocks_sticky),
+    ("54-blocks-summary", "블록 요약 판(summary) — 블록마다 표식(ok·err)·명령·cwd", blocks_summary),
 ]
 # Claude 컷(11·12·13·20·22)은 결정적 장면이 아니라 진짜 `claude` 한 세션에서 캡처한다
 # (claude_suite). 실제 API 호출이라 무인자 전체 생성에선 제외하고, `claude-suite` 또는

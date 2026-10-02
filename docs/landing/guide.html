@@ -79,24 +79,43 @@
           <a class="cl-news-more" href="/changes">전체 변경 내역 →</a>
         </div>
         <ul id="cl-news-list">
-          <li><span class="pill stable">Claude</span> <strong>Claude Code 가 이제 스스로 하는 일 넷을 pytmux 에서 걷었습니다.</strong>
-            Claude Code 는 사용량 한도가 풀리면 열린 세션을 <strong>스스로 이어 가고</strong>(2.1.234~), 대화형 세션을 auto 권한 모드로 시작합니다(2.1.284~). 시작 규칙·피드백 문구·원격 제어 자동 연결도 자기 설정으로 다룹니다.
-            겹친 채 두면 서로 방해합니다 — 예를 들어 pytmux 가 한도 리셋 시각에 대신 치던 <span class="inline-code">continue</span> 가 Claude Code 의 대기를 끊어 버립니다. 그래서 다음을 없앴고, 각각 대신 쓸 설정을 가이드에 적었습니다.
-            <br>· 토큰리밋 자동 재개(<span class="inline-code">prefix R</span>·상태줄 <span class="inline-code">AR</span>·<span class="inline-code nb">auto-resume</span>) → Claude Code 의 「Continue automatically at usage limit」(기본 켜짐)
-            <br>· <span class="inline-code nb">auto-launch</span>·<span class="inline-code nb">claude-auto-mode</span> → 기본 auto 모드 · <span class="inline-code">"remoteControlAtStartup": true</span>
-            <br>· <span class="inline-code nb">claude-rules</span> → <span class="inline-code">SessionStart</span> 훅(적어 두었던 규칙은 상태 디렉터리의 <span class="inline-code">…claude-rules.retired.txt</span> 로 한 번 보존됩니다)
-            <br>· <span class="inline-code nb">claude-disable-feedback</span> 플러그인 → <span class="inline-code">"spinnerTipsEnabled": false</span> · <span class="inline-code">"feedbackSurveyRate": 0</span>
-            <br>전송 오류 자동 재시도(<span class="inline-code nb">auto-retry</span>)는 그대로입니다 — Claude Code 는 재시도를 다 쓰면 대화형 턴을 끝내기 때문입니다. 파이썬·GUI 클라이언트 둘 다에 적용됩니다. 자세한 설정은 <a href="/guide/claude">8. Claude Code 연동</a>.</li>
-        <li><span class="pill stable">표시</span> <strong><span class="inline-code nb">:set ambiguous-width</span> 가 언제나 서버까지 맞추고, <span class="inline-code">ESC[3J</span> 가 스크롤백도 비웁니다.</strong>
-          모호폭(한글 환경에서 폭이 애매한 글자) 설정은 클라이언트와 서버가 따로 들고 있는데, 둘이 어긋난 채로 클라이언트 값과 같은 값을 고르면 서버에 아무것도 알리지 않았습니다 — 「바꿨는데 화면이 그대로다」로만 보였습니다. 이제 이 명령은 언제나 <strong>둘을 그 값으로 맞춥니다</strong>(파이썬 클라이언트).
-          <br><span class="inline-code">/clear</span> 류 명령은 화면 지우기(<span class="inline-code">ESC[2J</span>)와 함께 스크롤백 지우기(<span class="inline-code">ESC[3J</span>)를 보내는데, pytmux 가 뒤엣것을 앞엣것과 똑같이 다뤄 <strong>화면은 비었는데 위로 굴리면 옛 대화가 그대로</strong> 나왔습니다. 이제 xterm·tmux 처럼 스크롤백까지 비웁니다. 화면 격자는 서버가 관리하므로 파이썬·GUI 클라이언트 둘 다에 적용됩니다.</li>
-        <li><span class="pill stable">문서</span> <strong>가이드·플러그인 페이지·위키를 지금 코드와 다시 맞추고, 스크린샷을 전부 다시 찍어 내용이 달라진 6장을 갈아 끼웠습니다.</strong>
-          위에서 걷은 기능을 소개하던 문장을 정리하고, <a href="/guide/claude">8장</a>에 남은 Claude 보조 기능을 모은 「설정 팝업과 그 밖의 도움」 절을 새로 넣었습니다.
-          <br>사실과 달랐던 것 — 공유 격자 크기 <span class="inline-code nb">window-size</span> 의 기본은 <span class="inline-code">latest</span>, Windows 마우스 이동 전달은 기본 <span class="inline-code">on</span> 입니다. <a href="/guide/install">2장</a>은 없어진 <span class="inline-code">--native</span> 대신 <span class="inline-code nb">pytmux-gui</span> 를 안내합니다.
-          <br><a href="/guide/config">14장</a>에 설정 파일의 <span class="inline-code">set</span> 줄이 <strong>실제로 읽는 옵션 목록</strong>을 적고, 파일에 적어도 읽히지 않는 옵션에는 <strong>(런타임)</strong> 표시를 달았습니다. <a href="/guide/command">7장</a>의 훅 예시는 따옴표가 지켜지는 설정 파일의 <span class="inline-code">hook</span> 줄로 바꾸고, ESC 모드 표에 <kbd>c</kbd>·<kbd>f</kbd>·<kbd>b</kbd>·<kbd>Shift+ESC</kbd>·<kbd>`</kbd> 를 더했습니다.
-          <br>플러그인 페이지는 명령 표를 실제 명령 목록과 맞췄고(<span class="inline-code nb">claude-usage</span>·<span class="inline-code nb">claude-auto-yes</span>·<span class="inline-code nb">claude-auto-redraw</span> 등), 블록 고르기 키 · 녹화 로그 경로 · 한/영 배지 자리(커서 줄 오른쪽 끝)를 바로잡았습니다.
-          <br>스크린샷은 45장을 새로 찍어 <strong>6장</strong>만 교체했습니다 — 첫 실행 · 메뉴 2장 · 명령 목록 · Claude 설정 팝업 · 설정 팝업에서 걷은 기능의 항목이 빠졌습니다. 나머지는 박혀 있는 시계·날짜만 달랐습니다.</li>
-        </ul>
+        <li><span class="pill stable">Claude</span> <strong>Claude Code 가 이제 스스로 하는 일 넷을 pytmux 에서 걷었습니다.</strong>
+          Claude Code 는 사용량 한도가 풀리면 열린 세션을 <strong>스스로 이어 가고</strong>(2.1.234~), 대화형 세션을 auto 권한 모드로 시작합니다(2.1.284~). 시작 규칙·피드백 문구·원격 제어 자동 연결도 자기 설정으로 다룹니다.
+          겹친 채 두면 서로 방해합니다 — 예를 들어 pytmux 가 한도 리셋 시각에 대신 치던 <span class="inline-code">continue</span> 가 Claude Code 의 대기를 끊어 버립니다. 그래서 다음을 없앴고, 각각 대신 쓸 설정을 가이드에 적었습니다.
+          <ul>
+            <li>토큰리밋 자동 재개(<span class="inline-code">prefix R</span>·상태줄 <span class="inline-code">AR</span>·<span class="inline-code nb">auto-resume</span>) → Claude Code 의 「Continue automatically at usage limit」(기본 켜짐)</li>
+            <li><span class="inline-code nb">auto-launch</span>·<span class="inline-code nb">claude-auto-mode</span> → 기본 auto 모드 · <span class="inline-code">"remoteControlAtStartup": true</span></li>
+            <li><span class="inline-code nb">claude-rules</span> → <span class="inline-code">SessionStart</span> 훅(적어 두었던 규칙은 상태 디렉터리의 <span class="inline-code">…claude-rules.retired.txt</span> 로 한 번 보존됩니다)</li>
+            <li><span class="inline-code nb">claude-disable-feedback</span> 플러그인 → <span class="inline-code">"spinnerTipsEnabled": false</span> · <span class="inline-code">"feedbackSurveyRate": 0</span></li>
+          </ul>
+          전송 오류 자동 재시도(<span class="inline-code nb">auto-retry</span>)는 그대로입니다 — Claude Code 는 재시도를 다 쓰면 대화형 턴을 끝내기 때문입니다. 파이썬·GUI 클라이언트 둘 다에 적용됩니다. 자세한 설정은 <a href="/guide/claude">8. Claude Code 연동</a>.</li>
+        <li><span class="pill stable">토큰</span> <strong>토큰 사용량 판에서 <kbd>Tab</kbd>·<kbd>←</kbd><kbd>→</kbd> 로 탭을 오가고, [머신] 탭이 기기 이름을 씁니다.</strong>
+          지금까지는 판 안에서 다른 탭으로 가는 길이 클릭과 글자 바로 가기(<kbd>p</kbd>·<kbd>l</kbd>·<kbd>o</kbd>)뿐이었습니다. <kbd>Tab</kbd> 은 판을 닫아 버렸고 <kbd>←</kbd><kbd>→</kbd> 도 세션·머신 탭에서는 판을 닫았습니다(GUI 는 두 키를 삼켰습니다).
+          <ul>
+            <li><kbd>Tab</kbd>·<kbd>Shift+Tab</kbd> — 언제나 다음·이전 탭으로 옮기고 끝에서 감깁니다. 판은 닫히지 않습니다.</li>
+            <li><kbd>←</kbd><kbd>→</kbd> — 그 줄에 다른 뜻이 없을 때 이웃 탭입니다. 기간 트리의 펼침·접힘과 한도 탭 모델·컨텍스트 줄의 값 고르기는 그대로입니다.</li>
+            <li>[머신] 탭 · 요약줄 <span class="inline-code">Σ</span> 분해 · GUI 의 머신 판이 같은 이름을 씁니다 — 등록할 때 붙인 기기 이름(보통 호스트 이름)이고, 동기화 서버가 아직 이름을 내려 주지 않으면 셋 다 기기 id 앞 8자리입니다. 종전에는 같은 기기를 세 자리에서 12자 · 8자 · 32자 전체로 다르게 적었습니다.</li>
+            <li>GUI 판은 탭을 옮겨도 높이가 그대로입니다 — 내용이 짧은 탭으로 가면 판이 줄어들던 것을 고쳤습니다.</li>
+          </ul>
+          파이썬·GUI 클라이언트가 같은 규칙을 씁니다. 자세한 것은 <a href="/guide/tokens">9. 토큰 사용량</a>.</li>
+        <li><span class="pill stable">블록</span> <strong>위로 굴리면 패널 첫 줄에 지금 보는 출력의 명령이 붙고, 블록 요약 판이 파이썬 클라이언트에도 생겼습니다.</strong>
+          긴 출력 한가운데서 「이게 무슨 명령의 출력이었지」를 찾으러 다시 위로 굴릴 필요가 없습니다.
+          <ul>
+            <li><strong>스티키 프롬프트 바</strong> — 굴린 패널 첫 줄에 <span class="inline-code">▲ 명령</span> 띠가 붙고(Claude 패널이면 그 답을 끌어낸 프롬프트), 띠를 누르면 그 프롬프트 줄로 건너뜁니다. 파이썬·GUI 클라이언트에 같은 날 들어갔고, 어느 줄에 띠를 세울지는 한 벌의 규칙을 같은 사례 표로 맞대어 잽니다.</li>
+            <li><strong>블록 요약 판</strong>(<span class="inline-code nb">summary</span>) — 활성 패널의 블록을 결과 표식(<span class="inline-code">ok</span>·<span class="inline-code">err</span> 등) · 명령 · 작업 디렉토리로 한 판에 보여 줍니다. GUI 에만 있던 판입니다.</li>
+            <li>그 맞대기가 기존 결함을 하나 잡았습니다 — 파이썬 클라이언트에서 블록을 고르면 <strong>다음 명령의 프롬프트 줄까지 한 줄이 딸려</strong> 강조·복사되던 것을 고쳤습니다.</li>
+            <li>알려진 문제 — 파이썬 클라이언트에서 띠의 명령 글자가 파일 경로처럼 보이면 그 글자를 눌렀을 때 스크롤 대신 경로가 복사됩니다. 고칠 때까지는 띠의 빈 자리를 누르세요.</li>
+          </ul>
+          셸 블록은 셸 통합 설정이 있어야 생깁니다 — <a href="/guide/plugin/blocks">blocks 플러그인</a>.</li>
+        <li><span class="pill stable">GUI</span> <strong>GUI 의 스크롤바를 끌 수 있고, RTT 그래프가 실제 값으로 그려지며, 알림 이력 판이 정본처럼 움직입니다.</strong>
+          <ul>
+            <li><strong>스크롤바</strong> — 보이기만 하던 오른쪽 막대를 잡아 끌어 스크롤하고, 막대 바깥 트랙을 누르면 그 비율 자리로 건너뜁니다.</li>
+            <li><strong>RTT 그래프</strong> — 글자 칸을 8단계로 칠하던 막대를 실제 값에 비례하는 픽셀 막대로 바꿨습니다. 임계는 점선, 측정이 없던 구간은 바닥의 점입니다.</li>
+            <li><strong>알림 이력 판</strong> — 커서로 고르고 <kbd>Enter</kbd> 로 전문을 펼치고 <kbd>c</kbd> 로 복사합니다. 꼬리줄 안내도 「아무 키나 닫기」에서 실제 키(<kbd>↑↓</kbd> · <kbd>Enter</kbd> · <kbd>c</kbd> · <kbd>Esc</kbd>)로 바꿨습니다.</li>
+            <li><strong>상태 판</strong>의 <kbd>PageUp</kbd>·<kbd>PageDown</kbd> 이 정본처럼 5줄씩 움직입니다.</li>
+          </ul>
+          이로써 두 클라이언트가 다르게 구는 자리를 적어 두는 목록(갈림 대장)의 「할 일」이 0 이 됐습니다 — 남은 갈림은 터미널이 못 주는 키 · 픽셀 그림 · OS 창 통합뿐입니다. <a href="gui">GUI 클라이언트 소개</a>.</li>
+      </ul>
       </div>
 
       <section>
@@ -153,7 +172,8 @@
       var doc = new DOMParser().parseFromString(t, 'text/html');
       var sec = doc.querySelector('main section.cl-day');
       var h2 = sec && sec.querySelector('h2');
-      var items = sec ? [].slice.call(sec.querySelectorAll('li')).slice(0, 4) : [];
+      // 직계 항목만 — 하위 목록(들여쓴 li)까지 집으면 그 줄들이 따로 한 항목씩 더 선다.
+      var items = sec ? [].slice.call(sec.querySelectorAll(':scope > ul > li')).slice(0, 4) : [];
       if (!h2 || !items.length) return;
       document.getElementById('cl-news-date').innerHTML = '🛠 최근 수정사항 · ' + h2.innerHTML;
       var ul = document.getElementById('cl-news-list');
