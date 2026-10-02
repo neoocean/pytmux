@@ -117,6 +117,7 @@
     "source-file": "설정/기타",
     "split-window": "패널",
     "strip-box-drawing": "설정/기타",
+    "summary": "설정/기타",
     "swap-pane": "패널",
     "swap-tab": "탭",
     "synchronize-panes": "패널",
@@ -341,6 +342,11 @@
       "name": "select-blocks",
       "desc": "블록(명령 + 그 출력) 하나를 골라 복사(↑↓ 이동 · Ctrl+C 복사)",
       "cat": "복사/버퍼"
+    },
+    {
+      "name": "summary",
+      "desc": "블록 요약 판 — 활성 패널의 블록 목록(↑↓ 스크롤 · 아무 키나 닫기)",
+      "cat": "설정/기타"
     },
     {
       "name": "calendar-mode",
@@ -571,6 +577,7 @@
     "prompts",
     "select-blocks",
     "submitted",
+    "summary",
     "token-machines",
     "token-period",
     "token-sessions",

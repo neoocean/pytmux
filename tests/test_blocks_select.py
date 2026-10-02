@@ -206,7 +206,9 @@ async def test_copy_goes_through_the_same_path_as_a_drag_copy():
         assert sent, "복사가 서버에 아무것도 안 청했다"
         action, kw = sent[-1]
         assert action == "copy_range", action
-        assert (kw["pane"], kw["y0"], kw["y1"]) == (pane, 0, 3), kw
+        # 끝은 와이어 `end`(3) **한 줄 앞**이다 — 그 줄은 다음 프롬프트 줄이라 딸려 오면
+        # 안 된다(`segment.row_span` · 네이티브 클라와 같은 답).
+        assert (kw["pane"], kw["y0"], kw["y1"]) == (pane, 0, 2), kw
         # 블록은 **줄 단위**라 열은 패널 폭 끝까지다.
         assert (kw["x0"], kw["x1"]) == (0, rect["w"] - 1), kw
         assert app._copy_unwrap_geom == (rect["w"], 0), "접힘 되돌리기 기하가 없다"
@@ -285,8 +287,13 @@ async def test_the_row_span_matches_what_the_native_client_computes():
     것과 클립보드에 담기는 것이 조용히 어긋난다. 그래서 판정은 한 함수이고, 그 함수는
     네이티브 클라의 `proto::blocks::row_span` 과 **같은 답**을 내야 한다.
 
-    아래 넷은 그쪽 시험이 든 값 그대로다(`crates/proto/src/blocks.rs` 의 `#[test]`)."""
-    assert row_span([{"start": 10, "end": 15}], 0, 999) == (10, 15)
+    아래 넷은 그쪽 시험이 든 값 그대로다(`crates/proto/src/blocks.rs` 의 `#[test]`).
+
+    ⛔ 첫 값은 종전에 `(10, 15)` 였다 — 와이어 `end` 가 **다음 프롬프트 줄**이라는 사실을
+    정본만 빠뜨려 한 줄이 딸려 왔고, 그쪽 시험(`the_end_row_is_the_next_prompt_so_the_block_
+    stops_one_line_earlier`)은 처음부터 `(10, 14)` 였다. 「같은 값 그대로」라고 적힌 채 둘이
+    달랐던 것이고, 스티키 바 픽스처(pytmux-520)가 그것을 잡았다."""
+    assert row_span([{"start": 10, "end": 15}], 0, 999) == (10, 14)
     # `D`(끝)만 오고 `A`가 아직 안 온 블록은 **다음 블록의 시작 한 줄 앞**까지다.
     assert row_span([{"start": 0}, {"start": 7}], 0, 999) == (0, 6)
     # 마지막 블록은 지금도 자라는 중이라 물어볼 데가 없다 — 지금까지 찬 데까지.
@@ -310,4 +317,119 @@ async def test_deleting_the_plugin_leaves_no_stranded_mode():
             await pilot.press("x")
         assert app.mode == "normal", "아무도 안 받았는데 모드가 남았다"
         assert sent == [], "모드를 푸는 그 키까지 셸에 찍혔다"
+    await _with_app(body)
+
+
+# ── 스티키 바(pytmux-520 · 사용자 제보 2026-09-26) ──────────────────────────────
+#
+# *"화면을 위쪽으로 스크롤해도 이전 프롬프트가 나타나지 않습니다. 위로 한 번 스크롤하면
+# 이전 프롬프트가 보이고 클릭하면 그 프롬프트 위치까지 스크롤 되어야 합니다."*
+# 정본에도 없던 표면이라 **정본에 먼저**(pytmux-185 · INV1) — GUI 는 같은 CL 에서
+# 같은 규칙(`proto::blocks::sticky_at`)으로 선다.
+
+from pytmuxlib.plugins.blocks.segment import sticky_at  # noqa: E402
+
+_TWO = [{"cmd": "ls", "state": "done", "exit": 0, "start": 0, "end": 3},
+        {"cmd": "make", "state": "running", "start": 4}]
+
+
+async def test_sticky_at_names_the_block_the_viewport_starts_inside():
+    """규칙 셋 — 라이브면 없다 · 블록 **안**이면 그 블록 · 첫 줄이 곧 시작 줄이면 없다.
+    아래 값은 GUI 쪽 픽스처(`blocks_sticky.json`)와 같은 사례다."""
+    assert sticky_at(_TWO, 10, 0, 30) is None, "라이브에서는 바가 없다"
+    assert sticky_at(_TWO, 10, 20, 30) == 1, "둘째 블록의 답 가운데가 첫 줄"
+    assert sticky_at(_TWO, 4, 26, 30) is None, "첫 줄이 곧 프롬프트 줄이면 두 번 안 보인다"
+    assert sticky_at(_TWO, 1, 29, 30) == 0, "첫 블록 안"
+    assert sticky_at(_TWO, 2, 28, 30) == 0, "블록의 마지막 줄(end 한 줄 앞)도 안이다"
+    assert sticky_at(_TWO, 3, 27, 30) is None, "어느 블록에도 안 속하는 줄(합성 자료의 틈)"
+    assert sticky_at([], 10, 5, 30) is None
+    assert sticky_at(_TWO, "x", 5, 30) is None, "신뢰 못 할 값에 죽지 않는다"
+
+
+async def test_a_scrolled_pane_shows_the_prompt_it_is_inside_as_a_sticky_bar():
+    """⛔ 호출부까지 — `_composite` 를 돌려 **셀**을 본다. 라이브로 돌아오면 사라진다."""
+    async def body(app, pilot, srv):
+        pane = _seed(app, blocks=_TWO, top=10, scr=20)
+        rect = [p for p in app.layout["panes"] if p["id"] == pane][0]
+        app._composite()
+        row = app.view._cells[rect["y"]][rect["x"]:rect["x"] + rect["w"]]
+        text = "".join(ch for ch, _ in row)
+        assert "make" in text and "▲" in text, f"스티키 바가 없다: {text!r}"
+        assert all(st.bold for _ch, st in row if st is not None), "띠가 한 줄을 통째로 안 칠했다"
+        # 그 아래 줄은 그대로다 — 바는 한 줄이다.
+        below = "".join(ch for ch, _ in app.view._cells[rect["y"] + 1][rect["x"]:rect["x"] + 6])
+        assert "make" not in below
+        # 라이브로 돌아오면 사라진다 — 바가 라이브 글을 가리면 안 된다.
+        app.pane_scroll[pane] = 0
+        app._composite()
+        text2 = "".join(ch for ch, _ in app.view._cells[rect["y"]][rect["x"]:rect["x"] + rect["w"]])
+        assert "make" not in text2, "라이브인데 바가 남았다"
+        # 첫 줄이 곧 프롬프트 줄이면 안 그린다.
+        app.pane_scroll[pane] = 26
+        app.pane_top[pane] = 4
+        app._composite()
+        text3 = "".join(ch for ch, _ in app.view._cells[rect["y"]][rect["x"]:rect["x"] + rect["w"]])
+        assert "▲" not in text3, "프롬프트 줄이 보이는데 바까지 그렸다"
+    await _with_app(body)
+
+
+async def test_clicking_the_sticky_bar_scrolls_to_that_prompt():
+    """바를 누르면 그 프롬프트 줄이 첫 줄에 오게 굴린다 — Δ = top − 시작 행(과거 +).
+    바 밖은 안 먹는다. 코어의 캔버스 클릭이 그 훅을 **실제로 부르는지**까지 본다."""
+    async def body(app, pilot, srv):
+        pane = _seed(app, blocks=_TWO, top=10, scr=20)
+        rect = [p for p in app.layout["panes"] if p["id"] == pane][0]
+        app._composite()
+        sent = []
+        app.send_scroll = lambda pid, **kw: sent.append((pid, kw))
+        assert app.plugins.client_click(app, rect["x"] + 1, rect["y"], 1), "바 위 클릭을 안 먹었다"
+        assert sent == [(pane, {"delta": 10 - 4})], sent
+        assert not app.plugins.client_click(app, rect["x"] + 1, rect["y"] + 1, 1), "바 밖을 먹었다"
+        assert not app.plugins.client_click(app, rect["x"] + 1, rect["y"], 3), "오른쪽 버튼을 먹었다"
+        # 코어 캔버스가 그 훅을 부른다 — 훅만 재면 배선을 지워도 통과한다(공허 통과).
+        sent.clear()
+        from textual import events
+        ev = events.MouseDown(app.view, x=rect["x"] + 1, y=rect["y"], delta_x=0,
+                              delta_y=0, button=1, shift=False, meta=False, ctrl=False)
+        app.view.on_mouse_down(ev)
+        assert sent == [(pane, {"delta": 6})], f"캔버스 클릭이 훅을 안 거쳤다: {sent}"
+    await _with_app(body)
+
+
+# ── 요약 판(pytmux-538 · 449 ⑴ 의 «판은 뒤 CL») ──────────────────────────────────
+
+async def test_summary_opens_a_read_panel_listing_the_blocks_with_the_same_badges():
+    """`summary` 는 활성 패널의 블록을 **읽는 판**(InfoScreen)으로 띄운다 — 네이티브 클라의
+    `Screen::Summary` 와 같은 손(아무 키나 닫기 · ↑↓ 굴리기)이고 표식도 같은 표다
+    (`proto::blocks::badge` — ok · err · ?? · ··· · … · ❯)."""
+    from pytmuxlib.plugins.blocks.clientside import _badge, summary_lines
+    assert _badge({"state": "done", "exit": 0}) == "ok"
+    assert _badge({"state": "done", "exit": 2}) == "err"
+    assert _badge({"state": "done"}) == "??"
+    assert _badge({"state": "running"}) == "···"
+    assert _badge({"state": "prompt"}) == "…"
+    assert _badge({"state": "turn"}) == "❯"
+
+    async def body(app, pilot, srv):
+        pane = _seed(app, blocks=[
+            {"cmd": "ls", "state": "done", "exit": 0, "start": 0, "end": 3, "cwd": "/tmp"},
+            {"cmd": "make", "state": "running", "start": 4}])
+        lines = summary_lines(app, pane)
+        assert lines[0].endswith("2개") or "2" in lines[0], lines[0]
+        assert lines[1].startswith("ok ") and "ls" in lines[1] and "/tmp" in lines[1], lines
+        assert lines[2].startswith("···") and "make" in lines[2], lines
+        assert app._run_command("summary") is not False
+        await wait_until(pilot, lambda: len(app.screen_stack) > 1)
+        scr = app.screen_stack[-1]
+        assert scr.__class__.__name__ == "InfoScreen", scr
+        assert scr._lines == lines
+        # 읽는 판 — 아무 키나 닫는다(정본 InfoScreen · 네이티브 `Screen::Summary` 와 같다).
+        await pilot.press("f5")
+        await wait_until(pilot, lambda: len(app.screen_stack) == 1)
+        # 블록이 없으면 판 대신 한 줄.
+        app._dispatch({"t": "blocks", "pane": pane, "blocks": []})
+        shown = []
+        app.display_message = lambda msg, **kw: shown.append(msg)
+        app._run_command("summary")
+        assert shown and len(app.screen_stack) == 1, shown
     await _with_app(body)

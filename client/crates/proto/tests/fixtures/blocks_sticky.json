@@ -1,0 +1,227 @@
+{
+ "cases": {
+  "live_has_no_bar": {
+   "blocks": [
+    {
+     "cmd": "ls",
+     "state": "done",
+     "exit": 0,
+     "start": 0,
+     "end": 3
+    },
+    {
+     "cmd": "make",
+     "state": "running",
+     "start": 4
+    }
+   ],
+   "top": 10,
+   "scroll": 0,
+   "live_bottom": 30,
+   "expect": null
+  },
+  "inside_second_block": {
+   "blocks": [
+    {
+     "cmd": "ls",
+     "state": "done",
+     "exit": 0,
+     "start": 0,
+     "end": 3
+    },
+    {
+     "cmd": "make",
+     "state": "running",
+     "start": 4
+    }
+   ],
+   "top": 10,
+   "scroll": 20,
+   "live_bottom": 30,
+   "expect": 1
+  },
+  "first_row_is_the_prompt_itself": {
+   "blocks": [
+    {
+     "cmd": "ls",
+     "state": "done",
+     "exit": 0,
+     "start": 0,
+     "end": 3
+    },
+    {
+     "cmd": "make",
+     "state": "running",
+     "start": 4
+    }
+   ],
+   "top": 4,
+   "scroll": 26,
+   "live_bottom": 30,
+   "expect": null
+  },
+  "inside_first_block": {
+   "blocks": [
+    {
+     "cmd": "ls",
+     "state": "done",
+     "exit": 0,
+     "start": 0,
+     "end": 3
+    },
+    {
+     "cmd": "make",
+     "state": "running",
+     "start": 4
+    }
+   ],
+   "top": 1,
+   "scroll": 29,
+   "live_bottom": 30,
+   "expect": 0
+  },
+  "last_row_of_a_block_is_inside": {
+   "blocks": [
+    {
+     "cmd": "ls",
+     "state": "done",
+     "exit": 0,
+     "start": 0,
+     "end": 3
+    },
+    {
+     "cmd": "make",
+     "state": "running",
+     "start": 4
+    }
+   ],
+   "top": 2,
+   "scroll": 28,
+   "live_bottom": 30,
+   "expect": 0
+  },
+  "row_between_blocks_belongs_to_none": {
+   "blocks": [
+    {
+     "cmd": "ls",
+     "state": "done",
+     "exit": 0,
+     "start": 0,
+     "end": 3
+    },
+    {
+     "cmd": "make",
+     "state": "running",
+     "start": 4
+    }
+   ],
+   "top": 3,
+   "scroll": 27,
+   "live_bottom": 30,
+   "expect": null
+  },
+  "empty_list": {
+   "blocks": [],
+   "top": 10,
+   "scroll": 5,
+   "live_bottom": 30,
+   "expect": null
+  },
+  "open_ended_middle_block": {
+   "blocks": [
+    {
+     "cmd": "a",
+     "state": "done",
+     "start": 100,
+     "end": 110
+    },
+    {
+     "cmd": "b",
+     "state": "done",
+     "start": 110
+    },
+    {
+     "cmd": "c",
+     "state": "running",
+     "start": 150
+    }
+   ],
+   "top": 120,
+   "scroll": 40,
+   "live_bottom": 200,
+   "expect": 1
+  },
+  "boundary_between_blocks": {
+   "blocks": [
+    {
+     "cmd": "a",
+     "state": "done",
+     "start": 100,
+     "end": 110
+    },
+    {
+     "cmd": "b",
+     "state": "done",
+     "start": 110
+    },
+    {
+     "cmd": "c",
+     "state": "running",
+     "start": 150
+    }
+   ],
+   "top": 149,
+   "scroll": 11,
+   "live_bottom": 200,
+   "expect": 1
+  },
+  "growing_last_block": {
+   "blocks": [
+    {
+     "cmd": "a",
+     "state": "done",
+     "start": 100,
+     "end": 110
+    },
+    {
+     "cmd": "b",
+     "state": "done",
+     "start": 110
+    },
+    {
+     "cmd": "c",
+     "state": "running",
+     "start": 150
+    }
+   ],
+   "top": 180,
+   "scroll": 20,
+   "live_bottom": 200,
+   "expect": 2
+  },
+  "above_every_block": {
+   "blocks": [
+    {
+     "cmd": "a",
+     "state": "done",
+     "start": 100,
+     "end": 110
+    },
+    {
+     "cmd": "b",
+     "state": "done",
+     "start": 110
+    },
+    {
+     "cmd": "c",
+     "state": "running",
+     "start": 150
+    }
+   ],
+   "top": 50,
+   "scroll": 150,
+   "live_bottom": 200,
+   "expect": null
+  }
+ }
+}

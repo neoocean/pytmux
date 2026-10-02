@@ -94,6 +94,9 @@ pub static EN: &[(&str, &str)] = &[
     ("링크를 열지 못했다: {url}", "Could not open the link: {url}"),
     ("경로를 복사했다: {path}", "Copied the path: {path}"),
     ("경로를 복사하지 못했다: {path}", "Could not copy the path: {path}"),
+    // ── session_view.rs · 알림 이력 `c`(pytmux-539) ──
+    ("알림을 복사했다: {n}자", "Copied the notice ({n} chars)"),
+    ("알림을 복사하지 못했다", "Could not copy the notice"),
     // ── session_view.rs · 재시작(§10-21ⓓ3) ──
     (
         "재시작 안전성 점검 중… (부작용 없는 드라이런)",

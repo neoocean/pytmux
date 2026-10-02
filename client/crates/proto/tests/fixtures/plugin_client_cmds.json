@@ -36,6 +36,7 @@
     "prompt-history",
     "prompt-history-lines",
     "select-blocks",
+    "summary",
     "usage-panel",
     "usage-view"
   ],
@@ -94,6 +95,7 @@
     "prompt-clear-message",
     "prompt-history-lines",
     "select-blocks",
+    "summary",
     "usage-view"
   ]
 }

@@ -82,6 +82,32 @@ pub struct GraphCell {
     pub on_threshold: bool,
 }
 
+/// 칸마다 막대의 **픽셀 높이**(pytmux-519 · 허용 갈림 ⓑ) — `total_px` 가 그래프 전체
+/// 높이일 때. 측정 없는 칸은 `None`, 측정값은 최소 `1.0` 으로 띄운다(「0 에 가까움」과
+/// 「측정 없음」을 가르는 것은 글자 그래프의 그 규칙 그대로다).
+///
+/// # 왜 [`graph_cells`] 와 따로인가
+///
+/// 저쪽은 글자 그래프의 **1/8 양자화**를 든다 — TUI 가 그릴 수 있는 가장 고운 눈금이고
+/// 정본 픽스처가 그 값을 못박는다. GUI 는 픽셀이라 그 눈금에 묶일 이유가 없고, 제보
+/// (2026-09-26)는 바로 그 계단이 *"TUI 에서 가져온 그래프 그대로"* 로 보인다는 것이었다.
+/// 값의 **출처**(버킷 최대 · `vmax` 자동 스케일)는 같다 — [`GraphData`] 한 벌에서 나온다.
+pub fn bar_px(data: &GraphData, total_px: f32) -> Vec<Option<f32>> {
+    data.buckets
+        .iter()
+        .map(|b| b.map(|v| ((v / data.vmax) as f32 * total_px).max(1.0).min(total_px)))
+        .collect()
+}
+
+/// 임계선의 **픽셀 높이**(바닥에서) — 스케일 안에 있을 때만. 글자 그래프가 `┄` 줄을
+/// 두는 조건과 같다(`0 < thr ≤ vmax`).
+pub fn threshold_px(data: &GraphData, total_px: f32) -> Option<f32> {
+    if data.threshold <= 0.0 || data.threshold > data.vmax {
+        return None;
+    }
+    Some((data.threshold / data.vmax) as f32 * total_px)
+}
+
 /// 그래프를 **칸 격자**로 편다 — `[줄][칸]`. 줄 0 이 맨 위다.
 ///
 /// 두 소비자가 이 한 벌을 쓴다: 글자 그래프([`render_graph_lines`])와 GUI 의 막대.

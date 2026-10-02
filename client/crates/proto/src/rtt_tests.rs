@@ -81,3 +81,36 @@ fn old_samples_fall_out_of_the_window() {
     let lines = hist.graph_lines(WINDOW + 10.0, 48, 5).expect("표본이 있다");
     assert!(lines.iter().any(|l| l.contains("표본 1개")), "{lines:?}");
 }
+
+// ── 픽셀 높이(pytmux-519 · GUI 실값 차트) ─────────────────────────────────────
+
+fn data_for(buckets: Vec<Option<f64>>, thr: f64, vmax: f64) -> GraphData {
+    GraphData { buckets, threshold: thr, vmax, peak: vmax, avg: 0.0, count: 1, has_gaps: false }
+}
+
+#[test]
+fn bar_pixels_are_proportional_to_the_value_not_quantized_to_eighths() {
+    // 값 1.0(=vmax) 는 꼭대기, 0.5 는 절반, 0.077(612ms 중 47ms 꼴)은 그 비율 — 1/8 칸이
+    // 아니라 **픽셀**이다. 측정 없음은 `None`, 0 에 가까운 측정은 최소 1px.
+    let d = data_for(vec![Some(1.0), Some(0.5), Some(0.077), None, Some(0.0001)], 0.4, 1.0);
+    let px = bar_px(&d, 80.0);
+    assert_eq!(px[0], Some(80.0));
+    assert_eq!(px[1], Some(40.0));
+    assert!((px[2].unwrap() - 6.16).abs() < 0.01, "{:?}", px[2]);
+    assert_eq!(px[3], None, "측정 없음은 막대가 아니다");
+    assert_eq!(px[4], Some(1.0), "0 에 가까운 측정은 최소 1px 로 띄운다");
+    // 상한을 넘기지 않는다(vmax 가 peak 라 넘길 일은 없지만 산수가 그것을 지킨다).
+    let d = data_for(vec![Some(2.0)], 0.4, 1.0);
+    assert_eq!(bar_px(&d, 80.0), vec![Some(80.0)]);
+}
+
+#[test]
+fn the_threshold_line_sits_at_its_fraction_and_only_inside_the_scale() {
+    let d = data_for(vec![Some(1.0)], 0.4, 1.0);
+    assert_eq!(threshold_px(&d, 100.0), Some(40.0));
+    // 임계가 스케일 위(정상 — peak < 임계)면 선이 화면 밖이라 없다(글자 그래프의 `┄` 조건).
+    let d = data_for(vec![Some(0.1)], 0.4, 0.1);
+    assert_eq!(threshold_px(&d, 100.0), None);
+    let d = data_for(vec![Some(1.0)], 0.0, 1.0);
+    assert_eq!(threshold_px(&d, 100.0), None);
+}

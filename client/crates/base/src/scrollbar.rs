@@ -81,9 +81,94 @@ pub fn list_fraction(visible: usize, total: usize, first: usize) -> Option<(f64,
 /// 막대가 사라지는데, 그러면 "어디쯤인가"를 말하려고 그린 것이 아무 말도 안 한다.
 pub const MIN_THUMB: f64 = 0.06;
 
+// ── 끌기·점프의 산수(pytmux-521) ────────────────────────────────────────────────
+//
+// 위 머리말의 「조작용 스크롤바는 걷었다」는 **칸을 먹고 탭을 받던** 열의 이야기다. 여기
+// 더하는 것은 그 막대를 **마우스로 잡는 손**이다 — 칸을 안 먹고 그림도 안 바뀐다(그리는
+// 자리는 그대로 [`overlay_fraction`] 이다). 제보(2026-09-26): *"스크롤바를 마우스로
+// 드래그해 화면을 스크롤 할 수 있어야 합니다"*. 정본에는 막대가 없으므로 허용 갈림 ⓑ 다.
+//
+// 산수가 여기 있는 이유는 위와 같다 — 트랙 `h` 칸이 전체 `top + scroll + h` 행을 대표하고,
+// 그 환산을 뷰가 각자 하면 썸이 가리키는 자리와 화면이 보여 주는 자리가 조용히 갈린다.
+
+/// 썸을 **`dy` 칸** 끌었을 때 스크롤이 얼마나 변해야 하나 — 과거 방향이 `+`(서버
+/// `Pane.scroll_by` 와 같은 부호). 아래로(`dy > 0`) 끌면 라이브 쪽이라 `-` 다.
+///
+/// 한 칸 = 전체 행 / 트랙 칸 수. 반올림은 「끌었는데 한 줄도 안 움직인다」를 피하려는
+/// 것이 아니라(그건 `dy` 가 0 일 때뿐이다) 환산을 **대칭**으로 두려는 것이다 — 올림이면
+/// 왕복이 한 줄씩 어긋난다.
+pub fn drag_delta(h: usize, top: usize, scroll: usize, dy: i64) -> i64 {
+    if h == 0 {
+        return 0;
+    }
+    let total = (top + scroll + h) as f64;
+    -((dy as f64) * total / h as f64).round() as i64
+}
+
+/// 트랙의 **그 비율**(`0.0` = 맨 위 … `1.0` = 맨 아래)을 눌렀을 때 거기로 가는 Δ.
+///
+/// 비율은 [`overlay_fraction`] 이 썸을 두는 자리와 같은 자다 — 트랙 위쪽이 스크롤
+/// 최대(가장 옛날)이고 아래가 라이브다. 그래서 목표 스크롤은 `max_scroll × (1 − 비율)`.
+pub fn jump_delta(h: usize, top: usize, scroll: usize, frac: f64) -> i64 {
+    let _ = h;
+    let max_scroll = (top + scroll) as f64;
+    let target = (max_scroll * (1.0 - frac.clamp(0.0, 1.0))).round() as i64;
+    target - scroll as i64
+}
+
+/// 트랙 `h` 칸 위에서 썸이 차지하는 **칸 범위** `[시작, 끝)` — 그릴 때와 잡을 때가
+/// 같은 자리라야 「보이는 썸을 잡았는데 안 잡힌다」가 없다. 막대가 없으면 `None`.
+pub fn thumb_rows(h: usize, top: usize, scroll: usize) -> Option<(usize, usize)> {
+    let (start, len) = overlay_fraction(h, top, scroll)?;
+    let a = (start * h as f64).floor() as usize;
+    let b = ((start + len) * h as f64).ceil() as usize;
+    Some((a.min(h), b.clamp(a.min(h) + 1, h)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── 끌기·점프(pytmux-521) ─────────────────────────────────────────────────
+
+    #[test]
+    fn dragging_the_thumb_down_moves_toward_live_and_up_toward_the_past() {
+        // 트랙 10칸 · 전체 100행(옛 90 + 보이는 10) → 한 칸 = 10행.
+        assert_eq!(drag_delta(10, 90, 0, 1), -10, "아래로 한 칸 = 라이브 쪽 10행");
+        assert_eq!(drag_delta(10, 45, 45, -2), 20, "위로 두 칸 = 과거 쪽 20행");
+        assert_eq!(drag_delta(10, 90, 0, 0), 0);
+        assert_eq!(drag_delta(0, 90, 0, 3), 0, "트랙이 없으면 0 — 0 으로 나누지 않는다");
+        // 왕복은 대칭이다 — 올림이면 한 줄씩 어긋난다.
+        assert_eq!(drag_delta(7, 50, 0, 3) + drag_delta(7, 50, 0, -3), 0);
+    }
+
+    #[test]
+    fn clicking_the_track_jumps_to_that_fraction() {
+        // max_scroll 90 · 지금 라이브(0) · 트랙 맨 위를 누르면 가장 옛날(+90).
+        assert_eq!(jump_delta(10, 90, 0, 0.0), 90);
+        // 트랙 맨 아래 = 라이브. 이미 라이브면 0.
+        assert_eq!(jump_delta(10, 90, 0, 1.0), 0);
+        // 가운데 — 스크롤 45 가 목표. 지금 90(가장 옛날)이면 -45.
+        assert_eq!(jump_delta(10, 0, 90, 0.5), -45);
+        // 비율은 0..1 로 접는다.
+        assert_eq!(jump_delta(10, 90, 0, 7.0), 0);
+    }
+
+    #[test]
+    fn the_thumb_rows_are_where_the_bar_is_drawn() {
+        // 그리는 자(`overlay_fraction`)와 같은 비율에서 칸으로 편다 — 라이브면 맨 아래.
+        let (a, b) = thumb_rows(20, 100, 0).unwrap();
+        assert_eq!(b, 20, "라이브의 썸은 트랙 끝에 닿는다");
+        assert!(a < b);
+        // 가장 옛날이면 맨 위에서 시작한다.
+        let (a, _) = thumb_rows(20, 0, 100).unwrap();
+        assert_eq!(a, 0);
+        // 막대가 없으면 잡을 것도 없다.
+        assert_eq!(thumb_rows(20, 0, 0), None);
+        // 최소 한 칸은 된다 — 한 칸짜리 썸도 잡힌다.
+        let (a, b) = thumb_rows(3, 1000, 0).unwrap();
+        assert!(b > a);
+    }
 
     // ── 표시용 막대(§10-21ⓨ2) ────────────────────────────────────────────────
 

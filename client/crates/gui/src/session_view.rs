@@ -605,6 +605,16 @@ pub struct SessionView {
     // ── 마우스(P7) · 스플리터(§4.2) ─────────────────────────────────────────
     /// 지금 끌고 있는 분할 경계의 id. 놓으면 비운다.
     dragging: Option<i64>,
+    /// 지금 잡고 끄는 **스크롤바 썸**(pytmux-521). 놓으면 비운다.
+    ///
+    /// 끌기의 산수는 core 가 든다(`base::scrollbar::drag_delta`) — 잡은 순간의 자리·
+    /// 스크롤을 여기 두고, 움직인 칸수를 그 산수에 넣어 **상대 Δ** 로 보낸다(서버의
+    /// 스크롤 명령은 절대 위치가 없다 · `Scroll::by`).
+    sb_drag: Option<SbDrag>,
+    /// 시험이 읽는 **마지막으로 복사한 글**(pytmux-539) — 헤드리스에서는 OS 클립보드를
+    /// 되읽을 수 없고, 되읽어도 그것이 이 창의 것인지 알 수 없다.
+    #[cfg(test)]
+    copied_for_test: Option<String>,
     /// 마우스가 올라와 있는 분할 경계의 id(N3 — 스플리터 바 강조·커서 모양).
     divider_hover: Option<i64>,
     /// 마우스가 올라와 있는 **뜻이 있는 범위**(§10-21ⓥ2·ⓧ2) — 링크·경로.
@@ -871,6 +881,9 @@ impl SessionView {
             fullscreen_requested: false,
             paste_requested: false,
             dragging: None,
+            sb_drag: None,
+            #[cfg(test)]
+            copied_for_test: None,
             divider_hover: None,
             span_hover: None,
             press: None,
@@ -1284,6 +1297,13 @@ impl SessionView {
         // ★ 다열 판(설계 §4.3 `panel`)의 ←→·PgUp/PgDn 은 **열/판 단위**다. 그 기하는
         //   칸 예산이 정하므로 그리는 쪽만 알고, 뜻은 core 가 든다(`set_plugin_grid`).
         //   ⚠ **열 때가 아니라 여기서** 넣는다 — 창이 바뀌면 열당 줄 수가 함께 바뀐다.
+        // 알림 이력의 커서는 **목록 길이로 접는다**(pytmux-539) — `End` 가 두고 간
+        // `usize::MAX` 위에서 `↑` 가 헛돌지 않게(목록 판의 `clamp` 와 같은 규약).
+        if self.screens.top() == Some(Screen::Notices) {
+            let n = self.state.notices().len();
+            let row = self.screens.selected().min(n.saturating_sub(1));
+            self.screens.select_row(row);
+        }
         if self.screens.top() == Some(Screen::PluginView) {
             let (per_col, cols) = self.panel_grid();
             self.screens.set_plugin_grid(per_col, cols);
@@ -1338,6 +1358,11 @@ impl SessionView {
                 ScreenKey::TabCycle(forward) => {
                     self.plugin_tab_cycle(forward);
                 }
+                // 알림 이력의 `c`(pytmux-539) — 고른 알림의 **전문**을 클립보드로.
+                ScreenKey::CopyRow(row) if screen_before == Some(Screen::Notices) => {
+                    self.copy_notice(row);
+                }
+                ScreenKey::CopyRow(_) => {}
                 // 전역 검색 결과에서 골랐다(pytmux-27) — 그 탭·패널·줄로 뛴다.
                 ScreenKey::Chosen(row) if screen_before == Some(Screen::SearchResults) => {
                     self.search_result_chosen(row);
@@ -2912,6 +2937,30 @@ impl SessionView {
             return false;
         }
         let (x, y) = at;
+        // ★ **스크롤바**(pytmux-521 · 허용 갈림 ⓑ — 정본에는 막대가 없다)가 맨 먼저다.
+        //   막대는 테두리 열 위에 얹히는데(`scroll_hints`) 그 열은 `pane_at` 이 패널로
+        //   답하는 자리라, 뒤에 두면 썸을 잡으려던 누름이 드래그 복사가 된다.
+        //   막대가 **보일 때만** 잡힌다 — 안 보이면 그 열은 종전대로 테두리다.
+        if let Some((pane, hit)) = self.scrollbar_hit(x, y) {
+            match hit {
+                ScrollbarHit::Thumb { top, scroll, h } => {
+                    self.sb_drag = Some(SbDrag { pane, grab_y: y, top, scroll, h });
+                }
+                ScrollbarHit::Track { delta } => {
+                    if delta != 0 {
+                        self.push_scroll(pane, delta);
+                    }
+                }
+            }
+            return true;
+        }
+        // ★ **스티키 바**(pytmux-520)는 그다음 — 그 줄을 누르면 그 프롬프트로 굴린다.
+        //   오버레이 존보다 앞인 이유: 바는 패널 첫 줄을 **덮고** 있어 그 밑의 존을
+        //   누를 길이 없고, 보이는 것이 누르는 것이다.
+        if let Some((pane, delta)) = self.sticky_bar_at(x, y) {
+            self.push_scroll(pane, delta);
+            return true;
+        }
         // ★ 오버레이가 광고한 자리(달력의 `‹`/`›`)가 먼저다 — 화살표를 그려 놓고
         // 클릭이 안 먹으면 그 화살표가 거짓말이 된다. **뜻은 우리가 모른다**: 서버가
         // 준 이름을 그대로 되돌려 보내고, 다음 셀 프레임이 답이다.
@@ -3101,6 +3150,22 @@ impl SessionView {
 
     /// 끌고 있다. 경계선이면 비율을, 패널 위면 선택을 늘린다.
     pub fn handle_mouse_drag(&mut self, at: Option<(u16, u16)>) -> bool {
+        // 썸을 끄는 중(pytmux-521) — 움직인 칸수를 core 의 산수에 넣어 Δ 를 보낸다.
+        // 캔버스 밖으로 나가도(`None`) 잡은 것은 그대로다(놓을 때 푼다).
+        if let Some(d) = self.sb_drag {
+            let Some((_, y)) = at else {
+                return false;
+            };
+            let dy = y as i64 - d.grab_y as i64;
+            let want = (d.scroll as i64 + base::scrollbar::drag_delta(d.h, d.top, d.scroll, dy))
+                .clamp(0, (d.top + d.scroll) as i64);
+            let cur = self.state.pane_scroll(d.pane).unwrap_or(0) as i64;
+            let delta = want - cur;
+            if delta != 0 {
+                self.push_scroll(d.pane, delta);
+            }
+            return true;
+        }
         if self.tab_drag.is_some() {
             // 드롭 대상 표시만 갱신한다 — 판정은 뗄 때 한 번이다(TUI 와 같다).
             let over = self.hovered_tab();
@@ -3172,6 +3237,123 @@ impl SessionView {
         true
     }
 
+    /// 그 칸이 **보이는 스크롤바** 위인가(pytmux-521) — 썸이면 잡을 재료를, 트랙이면
+    /// 거기로 가는 Δ 를 준다. 막대가 없는 패널의 같은 열은 `None`(종전대로 테두리).
+    ///
+    /// 자리는 그리는 쪽(`scroll_hints`)과 **같은 값**에서 나온다 — 열은 `boxrect` 의 끝
+    /// 열, 썸의 칸은 `base::scrollbar::thumb_rows`(그리는 비율과 같은 자). 둘이 갈리면
+    /// 「보이는 썸을 잡았는데 안 잡힌다」가 된다.
+    fn scrollbar_hit(&self, x: u16, y: u16) -> Option<(i64, ScrollbarHit)> {
+        for pane in self.state.panes() {
+            let [bx, _, bw, _] = pane.boxrect?;
+            if x != bx + bw.saturating_sub(1) || y < pane.y || y >= pane.y + pane.h {
+                continue;
+            }
+            let h = pane.h as usize;
+            let top = self.state.pane_top(pane.id)?;
+            let scroll = self.state.pane_scroll(pane.id)?;
+            let (a, b) = base::scrollbar::thumb_rows(h, top, scroll)?;
+            let rel = (y - pane.y) as usize;
+            if (a..b).contains(&rel) {
+                return Some((pane.id, ScrollbarHit::Thumb { top, scroll, h }));
+            }
+            let frac = (rel as f64 + 0.5) / h as f64;
+            let delta = base::scrollbar::jump_delta(h, top, scroll, frac);
+            return Some((pane.id, ScrollbarHit::Track { delta }));
+        }
+        None
+    }
+
+    /// 그 패널의 **스티키 블록**(pytmux-520) — `(블록 번호, 그 시작 줄로 가는 Δ)`.
+    /// 라이브이거나 첫 줄이 어느 블록 안도 아니면 `None`. 규칙은 proto 한 자리다
+    /// (`proto::blocks::sticky_at` · 정본 `segment.sticky_at` 과 같은 답).
+    fn sticky_for(&self, pane: i64) -> Option<(usize, i64)> {
+        let scroll = self.state.pane_scroll(pane)?;
+        if scroll == 0 {
+            return None;
+        }
+        let top = self.state.pane_top(pane)?;
+        let bottom = self.state.pane_live_bottom(pane)?;
+        let blocks = self.state.blocks(pane);
+        let index = proto::blocks::sticky_at(blocks, top, scroll, bottom)?;
+        let start = blocks.get(index)?.start_row;
+        Some((index, top as i64 - start as i64))
+    }
+
+    /// 그 칸이 어느 패널의 **스티키 바** 위인가 — 바는 패널 첫 줄 전폭이다.
+    fn sticky_bar_at(&self, x: u16, y: u16) -> Option<(i64, i64)> {
+        let pane = self.state.pane_at(x, y)?;
+        let (_, py, _, _) = self.state.pane_rect(pane)?;
+        if y != py {
+            return None;
+        }
+        let (_, delta) = self.sticky_for(pane)?;
+        Some((pane, delta))
+    }
+
+    /// 그 패널을 `delta` 행 굴린다(과거 방향이 `+` · 서버 `Pane.scroll_by` 와 같은 부호).
+    fn push_scroll(&mut self, pane: i64, delta: i64) {
+        let delta = delta.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        self.pending.push(Outgoing::Scroll(Scroll::by(delta).for_pane(Some(pane))));
+    }
+
+    /// 위로 굴린 패널마다 **지금 보는 출력의 프롬프트**를 패널 첫 줄에 띠로(pytmux-520).
+    ///
+    /// 정본은 같은 규칙으로 셀을 덮어 그린다(`plugins/blocks/clientside.py`). 여기서는
+    /// 캔버스 **위**에 띠를 띄운다 — 달력·썸네일과 같은 층(판 아래). 라이브에서는 절대
+    /// 없다(바가 라이브 글을 가리면 안 된다 — 규칙 함수의 첫 줄이 그것이다).
+    fn sticky_bars(&self) -> Vec<Box<dyn Element>> {
+        if self.screens.top().is_some() {
+            return Vec::new();
+        }
+        let Some(layout) = self.state.layout() else {
+            return Vec::new();
+        };
+        let Some((cw, ch)) = self.cell_px.get() else {
+            return Vec::new();
+        };
+        let Some(cv) = self.canvas_px.get() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for pane in &layout.panes {
+            let Some((index, _)) = self.sticky_for(pane.id) else {
+                continue;
+            };
+            let Some(block) = self.state.blocks(pane.id).get(index) else {
+                continue;
+            };
+            let cols = (pane.w as usize).saturating_sub(2);
+            let text = format!("▲ {}", footer::elide(block.command_text(), cols));
+            let bar = Container::new(
+                Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(self.text(text, 12., palette::FG))
+                    .finish(),
+            )
+            .with_horizontal_padding(4.)
+            .with_background_color(palette::SELECTED_BG)
+            .with_border(Border::bottom(1.).with_border_color(theme::FOCUS))
+            .finish();
+            let sized = ConstrainedBox::new(bar)
+                .with_width(pane.w as f32 * cw)
+                .with_height(ch)
+                .finish();
+            out.push(
+                Align::new(
+                    Container::new(sized)
+                        .with_padding_left(cv.left + pane.x as f32 * cw)
+                        .with_padding_top(cv.top + pane.y as f32 * ch)
+                        .finish(),
+                )
+                .top_left()
+                .finish(),
+            );
+        }
+        out
+    }
+
     /// 버튼 없이 움직였다(N3). 분할 경계 위인지만 본다 — 강조가 바뀔 때만 다시 그린다.
     pub fn handle_mouse_move(&mut self, at: Option<(u16, u16)>) -> bool {
         let alive = self.config.mouse && self.screens.top().is_none();
@@ -3210,6 +3392,9 @@ impl SessionView {
 
     /// 놓았다. **여기서 클릭과 드래그가 갈린다.**
     pub fn handle_mouse_up(&mut self, at: Option<(u16, u16)>) -> bool {
+        if self.sb_drag.take().is_some() {
+            return true;
+        }
         if let Some(src) = self.tab_drag.take() {
             self.tab_drag_over = None;
             self.drop_tab(src, at);
@@ -7464,17 +7649,22 @@ impl SessionView {
         ((first..first + proto::rtt::GRAPH_H).collect(), first)
     }
 
-    /// 그래프 한 줄 — 축 글자 + **막대들**.
+    /// 그래프 한 줄 — 축 **값** 글자 + 실값 차트의 한 밴드(pytmux-519).
     ///
-    /// 축(`600 ┤`)은 글자로 남긴다: 그것은 값이지 그림이 아니고, 숫자를 그림으로 바꾸면
-    /// 정확한 값을 잃는다(사용량 막대와 같은 판단 · pytmux-461).
+    /// 축의 숫자는 글자로 남긴다: 그것은 값이지 그림이 아니고, 숫자를 그림으로 바꾸면
+    /// 정확한 값을 잃는다(사용량 막대와 같은 판단 · pytmux-461). 글자 그래프의 `┤`·`┄`
+    /// 는 선으로 대신한다 — 그 글자가 폴백 글꼴에서 와 축과 어긋나던 바로 그것이다.
+    ///
+    /// 막대는 **픽셀**이다(`proto::rtt::bar_px` — 1/8 양자화 없음). 줄마다 제 밴드를
+    /// 그리고 아래 틈만큼 더 내려 그려 한 막대로 이어진다(`rtt_chart::RttSlice` 머리말).
+    /// 틈은 줄 상자의 패딩(위아래 1px)과 줄 간격이다 — 그 둘이 바뀌면 여기도 바뀌어야
+    /// 막대가 안 끊긴다(`RTT_ROW_GAP`).
     fn rtt_spark_row(&self, line: &str, row: usize) -> Box<dyn Element> {
-        // 축은 글자 그래프가 만든 그 줄의 **앞 여섯 칸**이다(`{vmax:>4} ┤`).
-        let axis: String = line.chars().take(6).collect();
+        let label: String = line.chars().take(4).collect();
         let mut out = Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::End)
-            .with_child(self.mono_row(&axis, 13., palette::DIM));
+            .with_child(self.mono_row(&format!("{label} "), 13., palette::DIM));
         let Some(data) = self.state.rtt().graph_data(
             self.pinger.now(),
             proto::rtt::GRAPH_W,
@@ -7482,48 +7672,31 @@ impl SessionView {
         ) else {
             return out.finish();
         };
-        let grid = proto::rtt::graph_cells(&data, proto::rtt::GRAPH_W, proto::rtt::GRAPH_H);
-        let Some(cells) = grid.get(row) else {
-            return out.finish();
-        };
-        // 한 칸의 픽셀 크기는 **잰 값**을 쓴다 — 못 재면 글자 줄로 물러선다(자리를
-        // 지어내면 축과 어긋나고, 그것이 이 변경이 없애려던 그 증상이다).
+        // 한 칸의 픽셀 크기는 **잰 값**을 쓴다 — 못 재면 기본값으로 물러선다(자리를
+        // 지어내면 축과 어긋나고, 그것이 N13 이 없애려던 그 증상이다).
         let (cw, ch) = self.cell_px.get().unwrap_or((8., 16.));
-        for cell in cells {
-            let bar: Box<dyn Element> = if cell.eighths > 0 {
-                let h = (ch * cell.eighths as f32 / 8.).max(1.);
-                ConstrainedBox::new(
-                    Container::new(Empty::new().finish())
-                        .with_background_color(if cell.on_threshold {
-                            theme::WARN
-                        } else {
-                            theme::OK
-                        })
-                        .finish(),
-                )
-                .with_width(cw)
-                .with_height(h)
-                .finish()
-            } else if cell.on_threshold {
-                // 임계선 — 글자 그래프의 `┄` 자리다(1px 점선 대신 한 줄).
-                ConstrainedBox::new(
-                    Container::new(Empty::new().finish())
-                        .with_background_color(theme::BORDER)
-                        .finish(),
-                )
-                .with_width(cw)
-                .with_height(1.)
-                .finish()
-            } else {
-                ConstrainedBox::new(Empty::new().finish())
-                    .with_width(cw)
-                    .with_height(1.)
-                    .finish()
-            };
-            out = out.with_child(bar);
-        }
+        let rows = proto::rtt::GRAPH_H as f32;
+        let total = rows * ch + (rows - 1.) * Self::RTT_ROW_GAP;
+        let band_bottom = (proto::rtt::GRAPH_H - 1 - row) as f32 * (ch + Self::RTT_ROW_GAP);
+        let gap_below = if band_bottom > 0. { Self::RTT_ROW_GAP } else { 0. };
+        out = out.with_child(
+            crate::rtt_chart::RttSlice::new(
+                proto::rtt::bar_px(&data, total),
+                proto::rtt::threshold_px(&data, total),
+                band_bottom,
+                ch,
+                gap_below,
+                cw,
+                (theme::OK, theme::WARN, theme::BORDER, palette::DIM),
+            )
+            .finish(),
+        );
         out.finish()
     }
+
+    /// 그래프 줄 사이의 **틈**(px) — 줄 상자 패딩 위아래(`panel_row_box` 의 1 + 1) +
+    /// 줄 간격(`PANEL_ROW_SPACING`). 막대가 이 틈을 건너 이어진다.
+    const RTT_ROW_GAP: f32 = 2. + Self::PANEL_ROW_SPACING;
 
     /// 판 **가로 가득**을 차지하는 한 줄 — 고른 줄·단추의 배경이 글자 폭에서 끊기지
     /// 않게 한다(정본 `#itbody ListItem Label { width: 1fr }`).
@@ -8195,18 +8368,19 @@ impl SessionView {
 
     /// 알림 이력(패리티 G6c). 새것이 위다.
     fn render_notices(&self, column: Flex) -> Flex {
-        if self.state.notices().len() == 0 {
+        let total = self.state.notices().len();
+        if total == 0 {
             return column.with_child(self.text(t("아직 알림이 없다"), 13., palette::DIM));
         }
-        let budget = self.panel_budget();
+        let budget = self.panel_budget().saturating_sub(1);
+        // ★ **커서가 있는 읽기 판**이다(pytmux-539 · 정본 `NoticeHistoryScreen` 의 ListView).
+        //   고른 줄은 띠로, `Enter` 로 펼친 줄은 그 아래에 전문을 접어 보인다(판 폭 안에서
+        //   접힌다 — `hint_text` 의 soft wrap). 굴리기는 커서의 부수 효과다(목록 판과 같다).
+        let selected = self.screens.selected().min(total.saturating_sub(1));
+        let start = (selected + 1).saturating_sub(budget);
         let mut column = column;
         let mut drawn = 0usize;
-        for notice in self
-            .state
-            .notices()
-            .skip(self.screens.scroll())
-            .take(budget.saturating_sub(1))
-        {
+        for (row, notice) in self.state.notices().enumerate().skip(start).take(budget) {
             drawn += 1;
             let color = match notice.severity {
                 proto::session::Severity::Error => theme::ERROR,
@@ -8216,10 +8390,45 @@ impl SessionView {
             };
             // 채움 줄과 **같은 상자**다(pytmux-373 ⑴) — 안 씌우면 알림이 하나 늘 때마다
             // 판이 2px 씩 자란다.
-            column = column.with_child(self.panel_row_box(self.text(notice.line(), 13., color)));
+            let boxed = self.panel_row_box(self.text(notice.line(), 13., color));
+            column = column.with_child(if row == selected {
+                Container::new(Self::full_row(boxed))
+                    .with_background_color(palette::SELECTED_BG)
+                    .finish()
+            } else {
+                boxed
+            });
+            if self.screens.notice_open(row) {
+                column = column.with_child(
+                    Container::new(self.hint_text(notice.text.clone(), self.ui_font, 12., color))
+                        .with_padding_left(24.)
+                        .finish(),
+                );
+            }
         }
         // ⓥ — 끝에 가까워져 남은 줄이 적어도 판은 그대로다.
-        self.pad_rows(column, drawn, budget.saturating_sub(1))
+        self.pad_rows(column, drawn, budget)
+    }
+
+    /// 알림 이력의 `c` — 고른 알림의 **전문**을 클립보드로(pytmux-539 · 정본
+    /// `NoticeHistoryScreen.on_key` 의 `c` 와 같은 손). 잘린 오류 문구를 그대로 붙여 넣어
+    /// 찾으라는 것이 정본이 적어 둔 까닭이다.
+    fn copy_notice(&mut self, row: usize) {
+        let Some(text) = self.state.notices().nth(row).map(|n| n.text.clone()) else {
+            return;
+        };
+        #[cfg(test)]
+        {
+            self.copied_for_test = Some(text.clone());
+        }
+        if clip::copy(&text) {
+            self.state.note_notice(tf(
+                "알림을 복사했다: {n}자",
+                &[("n", text.chars().count().to_string().as_str())],
+            ));
+        } else {
+            self.state.note_error(t("알림을 복사하지 못했다").to_owned());
+        }
     }
 
     /// F10 메뉴(패리티 G1d · 계층은 레이아웃 맞추기 ⑪). 파이썬 `MENU_ITEMS` 와 **같은
@@ -11134,6 +11343,10 @@ impl View for SessionView {
         for overlay in self.calendar_overlays() {
             body = body.with_child(overlay);
         }
+        // 스티키 프롬프트 바(pytmux-520) — 달력과 같은 층(캔버스 위·판 아래).
+        for bar in self.sticky_bars() {
+            body = body.with_child(bar);
+        }
         // 붙여넣은 그림의 썸네일(pytmux-472) — 캔버스 위·판 아래(달력과 같은 순서).
         if let Some(thumb) = self.pasted_thumb_element() {
             body = body.with_child(thumb);
@@ -11874,6 +12087,27 @@ const THUMB_MARGIN: f32 = 12.;
 /// 성공·실패 **양쪽 다 붙인다**(정본과 같다). 실패했다고 아무것도 안 붙이면 사용자는
 /// 스크린샷을 다시 찍는 수밖에 없는데, 로컬 경로라도 손에 쥐면 스스로 옮길 수 있다 —
 /// 다만 그것이 원격에서 안 열린다는 **경고와 함께** 준다.
+/// 잡은 스크롤바 썸(pytmux-521) — 잡은 순간의 자리와 스크롤. 끌기의 산수는 core 다.
+#[derive(Debug, Clone, Copy)]
+struct SbDrag {
+    pane: i64,
+    /// 잡은 캔버스 행.
+    grab_y: u16,
+    /// 잡은 순간의 `top`·`scroll`·패널 높이 — `drag_delta` 의 재료.
+    top: usize,
+    scroll: usize,
+    h: usize,
+}
+
+/// 스크롤바의 어디를 눌렀나(pytmux-521).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ScrollbarHit {
+    /// 썸 — 잡고 끈다.
+    Thumb { top: usize, scroll: usize, h: usize },
+    /// 트랙 — 그 비율로 **점프**한다(Δ 는 core 가 셈했다).
+    Track { delta: i64 },
+}
+
 struct RemoteImage {
     /// 붙일 경로. 성공이면 원격 자리, 실패면 이 상자의 자리다.
     path: String,

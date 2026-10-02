@@ -241,8 +241,8 @@ static CONTRACTS: &[Contract] = &[
          그 밖의 키는 무시한다(이 축이 재는 F5 도 그 «그 밖»이다). `Screens::press` 의 \
          Notices 분기를 Esc 만 닫게 고쳤다(pytmux-273 ②)"),
         "지나간 알림. F5 같은 제 것 아닌 키는 이제 정본처럼 무시한다(고쳐졌다 — 종전엔 \
-         아무 키나 닫았다). ⚠ `c`(전문 복사)·`Enter`(펼치기)는 **아직 없다** — 그 둘은 \
-         이 축(닫기 여부) 밖의 별도 기능 공백으로 남는다",
+         아무 키나 닫았다). `c`(전문 복사)·`Enter`(펼치기)·커서 이동도 이제 있다 \
+         (pytmux-539 · `press_notices`)",
     ),
     c(
         Screen::Menu,
@@ -308,9 +308,7 @@ static CONTRACTS: &[Contract] = &[
          돌리고(판 유지) 아니면 닫는다 — 셋 다 정본 `InfoTabsScreen.on_key` 를 열어 맞췄다 \
          (pytmux-373 ⑵⑶⑷). 종전에는 ↑↓ 가 글 굴리기였고 `[x]` 가 아예 없었다. \
          `Home`·`End`·`space` 도 정본과 같은 팔에 뒀다. \
-         ⚠ **한 칸 남았다 — `PageUp`/`PageDown` 의 «몇 줄»은 안 쟀다**: 정본은 5줄이고 \
-         우리는 판 공통 상수 `PAGE`(10)다. 그 상수를 이 판만 다르게 하는 것이 옳은지가 \
-         아직 판단이 안 서서 안 건드렸다. \
+         `PageUp`/`PageDown` 도 정본과 같은 **5줄**이다(pytmux-539 · `INFO_TABS_PAGE`). \
          ⛔ **usage limit 팝업(pytmux-184)은 이 판이 아니다** — \
          GUI 에서 그것은 `PluginView` 의 글 판이다(그 줄을 볼 것)",
     ),
@@ -337,8 +335,12 @@ static CONTRACTS: &[Contract] = &[
     c(
         Screen::Summary,
         Closes,
-        Allowed(Ground::NativeOnly),
-        "블록·Claude 요약 판 — 정본에 짝이 없다(§10-21ⓓ)",
+        Same("screen_key_conformance — 정본은 이 판을 범용 `InfoScreen` 에 띄운다 \
+         (`blocks` 플러그인 `summary` · pytmux-538). `canon_class` 가 `InfoScreen` 이라 \
+         그 시험이 이 판도 눌러 본다 — 아무 키나 닫고 ↑↓·PgUp/PgDn·Home/End 가 굴린다"),
+        "블록·Claude 요약 판. **손은 정본과 같고 항목이 갈린다** — 저쪽은 블록 목록이고 \
+         이쪽은 거기에 Claude 항목(Tier D)을 더한다(정본에 짝이 없는 표현). 종전엔 \
+         «정본에 짝이 없다»로 `Allowed(NativeOnly)` 였다(§10-21ⓓ)",
     ),
     c(
         Screen::SearchResults,
@@ -387,7 +389,8 @@ static CONTRACTS: &[Contract] = &[
 // 그건 화면이 아니라 키라 이 축이 아니라 갈림 대장이 센다.
 // 같다 24→23: `Autoresume` 줄이 사라졌다(pytmux-526) — 정본·GUI 둘 다에서 자동재개 판을
 // 걷었다(Claude Code CLI 가 한도 리셋 뒤 스스로 이어 간다).
-static SCORE: (usize, usize, usize, usize) = (23, 2, 0, 0);
+// 같다 23→24 · 허용 2→1: `Summary` 가 정본에도 섰다(pytmux-538 · 범용 `InfoScreen`).
+static SCORE: (usize, usize, usize, usize) = (24, 1, 0, 0);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4). **지금은 0 이다**(pytmux-454).
 ///

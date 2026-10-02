@@ -11391,3 +11391,253 @@ fn a_spec_bound_arrow_still_goes_to_the_plugin_not_the_tab_strip() {
         "스펙이 묶은 → 를 탭 순환이 가로챘다: {out:?}"
     );
 }
+
+// ── 스크롤바 끌기·트랙 점프 · pytmux-521 ───────────────────────────────────────
+//
+// 제보: *"화면 오른쪽 아래 스크롤바를 마우스로 드래그해 화면을 스크롤 할 수 있어야 합니다"*.
+// 막대는 표시 전용이었다(`scroll_hints`). 이제 **보일 때만** 잡힌다 — 썸은 끌고(`sb_drag`),
+// 트랙은 그 비율로 점프한다. 산수는 core(`base::scrollbar::{drag_delta, jump_delta,
+// thumb_rows}`)이고 여기서는 **큐에 무엇이 실리나**를 잰다(마우스 경로 오라클).
+
+/// `scrolled_view` 와 같되 **나간 것**(`sent`)도 돌려준다.
+fn scrolled_view_with_sent(top: usize, scroll: usize) -> (SessionView, Sent) {
+    let (link, tx, sent) = ServerLink::detached("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 10, "active": 1,
+        "panes": [{"id": 1, "x": 1, "y": 1, "w": 78, "h": 8, "title": "sh",
+                   "active": true, "box": [0, 0, 80, 10]}]
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(layout))).unwrap();
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1, "rows": [[["x", {}]]], "cursor": [0, 0], "wrap": [],
+        "top": top, "scr": scroll
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(screen))).unwrap();
+    view.pump_headless();
+    (view, sent)
+}
+
+fn scroll_deltas(sent: &Sent) -> Vec<(Option<i64>, Option<i32>)> {
+    sent.lock()
+        .unwrap()
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::Scroll(s) => Some((s.pane, s.delta)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn grabbing_the_thumb_then_dragging_sends_a_proportional_scroll() {
+    // 트랙 8칸 · top 100 · scroll 50. 썸의 칸은 core 가 정한다 — 그리는 자와 같은 자.
+    let (mut view, sent) = scrolled_view_with_sent(100, 50);
+    let (a, _b) = base::scrollbar::thumb_rows(8, 100, 50).expect("막대가 있어야 한다");
+    let col = 79u16; // `box` [0,0,80,10] 의 끝 열
+    let y = 1 + a as u16;
+    assert!(view.handle_mouse_down((col, y), false), "썸을 눌렀는데 안 먹었다");
+    assert!(view.sb_drag.is_some(), "썸을 잡았는데 끌기 상태가 안 섰다");
+    assert!(view.press.is_none(), "썸 누름이 선택 드래그로 샜다");
+    view.pump_headless();
+    assert!(scroll_deltas(&sent).is_empty(), "누르기만 했는데 굴렀다");
+    // 두 칸 아래로 — 라이브 쪽(-). 값은 core 의 산수 그대로다.
+    assert!(view.handle_mouse_drag(Some((col, y + 2))));
+    view.pump_headless();
+    let want = base::scrollbar::drag_delta(8, 100, 50, 2);
+    assert!(want < 0, "아래로 끌었는데 과거 쪽으로 셈했다: {want}");
+    assert_eq!(scroll_deltas(&sent), vec![(Some(1), Some(want as i32))]);
+    // 놓으면 끝 — 그 뒤의 이동은 끌기가 아니다.
+    assert!(view.handle_mouse_up(Some((col, y + 2))));
+    assert!(view.sb_drag.is_none());
+}
+
+#[test]
+fn clicking_the_track_jumps_there_and_a_bare_border_column_is_still_a_border() {
+    let (mut view, sent) = scrolled_view_with_sent(100, 50);
+    let (a, b) = base::scrollbar::thumb_rows(8, 100, 50).unwrap();
+    // 썸 밖의 트랙 칸 하나 — 맨 위가 썸이면 맨 아래를, 아니면 맨 위를 누른다.
+    let rel = if a == 0 { 7 } else { 0 };
+    assert!(!(a..b).contains(&rel), "트랙 칸을 못 골랐다");
+    assert!(view.handle_mouse_down((79, 1 + rel as u16), false));
+    assert!(view.sb_drag.is_none(), "트랙 클릭이 끌기가 됐다");
+    view.pump_headless();
+    let want = base::scrollbar::jump_delta(8, 100, 50, (rel as f64 + 0.5) / 8.);
+    assert_eq!(scroll_deltas(&sent), vec![(Some(1), Some(want as i32))]);
+    // 막대가 **없는** 패널(라이브)의 같은 열은 종전대로 테두리다 — 누름이 선택 경로로 간다.
+    let (mut live, sent) = scrolled_view_with_sent(0, 0);
+    live.handle_mouse_down((79, 3), false);
+    live.pump_headless();
+    assert!(live.sb_drag.is_none());
+    assert!(scroll_deltas(&sent).is_empty(), "막대 없는 열을 눌렀는데 굴렀다");
+}
+
+// ── 스티키 프롬프트 바 · pytmux-520 ────────────────────────────────────────────
+//
+// 제보: *"위로 스크롤하면 이전 프롬프트가 보이고 클릭하면 그 프롬프트 위치까지 스크롤"*.
+// 규칙은 proto 한 자리(`sticky_at` · 정본 `segment.sticky_at` 과 픽스처로 맞댄다)이고,
+// 여기서는 **그려지나**(글자 양성)와 **누르면 무엇이 나가나**를 잰다.
+
+fn two_blocks() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "blocks", "pane": 1,
+        "blocks": [
+            {"cmd": "ls", "state": "done", "exit": 0, "start": 0, "end": 3},
+            {"cmd": "make", "state": "running", "start": 4}
+        ]
+    }))
+    .unwrap()
+}
+
+fn scrolled_screen(top: usize, scroll: usize) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1, "rows": [[["x", {}]]], "cursor": [0, 0], "wrap": [],
+        "top": top, "scr": scroll
+    }))
+    .unwrap()
+}
+
+fn layout_boxed() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 10, "active": 1,
+        "panes": [{"id": 1, "x": 1, "y": 1, "w": 78, "h": 8, "title": "sh",
+                   "active": true, "box": [0, 0, 80, 10]}]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_scrolled_pane_shows_the_prompt_it_is_inside_as_a_sticky_bar() {
+    // 둘째 블록의 답 가운데(top 10)가 첫 줄 → `▲ make`. 라이브에서는 없다.
+    let painted = painted_after_setup(
+        vec![layout_boxed(), two_blocks(), scrolled_screen(10, 20)],
+        &[],
+        measured,
+    );
+    assert!(
+        painted.iter().any(|t| t.contains("▲ make")),
+        "스크롤했는데 스티키 바가 없다: {painted:?}"
+    );
+    let live = painted_after_setup(vec![layout_boxed(), two_blocks(), scrolled_screen(0, 0)], &[], measured);
+    assert!(!live.iter().any(|t| t.contains("▲ ")), "라이브인데 바가 떴다: {live:?}");
+    // 첫 줄이 곧 프롬프트 줄이면 없다 — 두 번 보이지 않게.
+    let at_prompt = painted_after_setup(vec![layout_boxed(), two_blocks(), scrolled_screen(4, 26)], &[], measured);
+    assert!(!at_prompt.iter().any(|t| t.contains("▲ ")), "프롬프트 줄이 보이는데 바까지 떴다");
+}
+
+#[test]
+fn clicking_the_sticky_bar_scrolls_to_that_prompt() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_boxed()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(two_blocks()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(scrolled_screen(10, 20)))).unwrap();
+    view.pump_headless();
+    // 패널 첫 줄(y=1) 아무 칸 — Δ = top − 시작 행 = 10 − 4 = 6(과거 +).
+    assert!(view.handle_mouse_down((5, 1), false), "바를 눌렀는데 안 먹었다");
+    view.pump_headless();
+    assert_eq!(scroll_deltas(&sent), vec![(Some(1), Some(6))]);
+    // 둘째 줄은 바가 아니다 — 종전 경로(누름 미결).
+    sent.lock().unwrap().clear();
+    view.handle_mouse_down((5, 2), false);
+    view.pump_headless();
+    assert!(scroll_deltas(&sent).is_empty(), "바 밖을 눌렀는데 굴렀다");
+}
+
+// ── RTT 실값 차트 · pytmux-519 ──────────────────────────────────────────────────
+//
+// 제보: *"TUI 에서 가져온 그래프 그대로 … 실제 값을 표현하도록"*. 막대 높이는 이제 픽셀이다
+// (`proto::rtt::bar_px` · 단위 시험이 비례를 잰다). 여기서는 **그려지나**를 잰다 — 막대가
+// 칸마다 서고, 임계를 넘은 표본은 경고색이며, 임계 점선이 긋힌다.
+
+#[test]
+fn the_rtt_chart_paints_a_bar_per_bucket_and_a_dashed_threshold() {
+    use std::collections::BTreeSet;
+    // 표본 다섯을 서로 다른 버킷(600초 간격)에 — 그중 하나(500ms)가 임계(400ms)를 넘는다.
+    let (bars_ok, bars_warn, dashes) = painted_scene_setup(
+        vec![layout_tall_pane()],
+        &[],
+        |view| {
+            let now = view.pinger.now();
+            for (i, ms) in [12., 500., 8., 90., 30.].iter().enumerate() {
+                view.state.rtt_mut().sample(now - i as f64 * 600., ms / 1000.);
+            }
+            view.apply_action_for_test(base::Action::ShowInfoTabs);
+            view.panel_click(base::PanelTarget::InfoTab(0));
+        },
+        |scene| {
+            let rects: Vec<_> = scene.layers().flat_map(|l| l.rects.iter()).collect();
+            let xs = |color: ColorU, min_h: f32| -> BTreeSet<i64> {
+                rects
+                    .iter()
+                    .filter(|r| matches!(r.background, warpui::elements::Fill::Solid(c) if c == color))
+                    .filter(|r| r.bounds.height() >= min_h)
+                    .map(|r| r.bounds.origin().x().round() as i64)
+                    .collect()
+            };
+            let dashes = rects
+                .iter()
+                .filter(|r| matches!(r.background, warpui::elements::Fill::Solid(c) if c == theme::WARN))
+                .filter(|r| (r.bounds.height() - 1.).abs() < 0.01 && r.bounds.width() <= 3.01)
+                .count();
+            (xs(theme::OK, 1.), xs(theme::WARN, 2.), dashes)
+        },
+    );
+    assert_eq!(bars_ok.len(), 4, "임계 아래 표본 넷이 각자 막대라야 한다: {bars_ok:?}");
+    assert_eq!(bars_warn.len(), 1, "임계를 넘은 표본 하나가 경고색 막대라야 한다: {bars_warn:?}");
+    assert!(dashes >= 4, "임계 점선이 안 긋혔다(토막 {dashes})");
+}
+
+
+// ── 알림 이력 · pytmux-539 — `c` 가 전문을 복사하고 `Enter` 가 펼친다 ─────────────
+
+fn view_with_two_notices() -> (SessionView, Sent) {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.state.note_notice("첫째 알림 — 짧다".to_owned());
+    view.state.note_error("둘째 알림 — 아주 긴 오류 문구라 목록에서는 한 줄로 잘리고 Enter 로 펼쳐야 다 보인다".to_owned());
+    view.apply_action_for_test(base::Action::ShowNotices);
+    (view, sent)
+}
+
+#[test]
+fn c_copies_the_selected_notice_text_and_the_panel_stays() {
+    let (mut view, _sent) = view_with_two_notices();
+    // 목록은 **최신이 위**다(정본과 같다 · `push_front`) — `↓` 한 번이면 둘째 줄 = 먼저 난 알림.
+    view.handle_key(Key::Down, Mods::NONE);
+    view.handle_key(Key::Char('c'), Mods::NONE);
+    let copied = view.copied_for_test.clone().expect("c 가 아무것도 안 복사했다");
+    assert!(copied.contains("첫째 알림"), "고른 줄이 아니라 다른 글을 복사했다: {copied}");
+    assert_eq!(view.screens.top(), Some(Screen::Notices), "c 가 판을 닫았다");
+}
+
+#[test]
+fn enter_expands_the_selected_notice_to_its_full_text() {
+    // 펼치기 전후를 같은 차림에서 잰다 — 펼친 뒤에만 전문 줄이 하나 더 선다. 목록은
+    // **최신이 위**라 첫 줄(커서 0)이 긴 오류 알림이다.
+    let texts = |keys: &[Key]| -> Vec<String> {
+        painted_scene_setup(
+            vec![layout_one_pane()],
+            &[],
+            {
+                let keys = keys.to_vec();
+                move |v| {
+                    v.state.note_notice("첫째 알림 — 짧다".to_owned());
+                    v.state.note_error("둘째 알림 — 아주 긴 오류 문구".to_owned());
+                    v.apply_action_for_test(base::Action::ShowNotices);
+                    for k in &keys {
+                        v.handle_key(*k, Mods::NONE);
+                    }
+                }
+            },
+            |scene| scene.painted_texts().map(|t| t.text.clone()).collect(),
+        )
+    };
+    let folded = texts(&[]);
+    let opened = texts(&[Key::Enter]);
+    let count = |v: &[String]| v.iter().filter(|t| t.contains("아주 긴 오류 문구")).count();
+    assert_eq!(count(&folded), 1, "접힌 상태에서는 목록 줄 하나뿐이어야: {folded:?}");
+    assert_eq!(count(&opened), 2, "Enter 로 펼쳤는데 전문 줄이 안 섰다: {opened:?}");
+}

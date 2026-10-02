@@ -1618,3 +1618,51 @@ fn a_tabbed_text_panel_cycles_too() {
     assert_eq!(screens.press(Key::BackTab, Mods::NONE), Some(ScreenKey::TabCycle(false)));
     assert_eq!(screens.top(), Some(Screen::PluginView), "순환이 글 판을 닫았다");
 }
+
+
+// ── 알림 이력의 손(pytmux-539) — 커서 · `c` 복사 · `Enter` 펼치기 · InfoTabs 5줄 ────
+
+#[test]
+fn the_notice_history_has_a_cursor_and_copies_and_expands_without_closing() {
+    let mut screens = Screens::new();
+    screens.open(Screen::Notices);
+    screens.select_row(0);
+    assert_eq!(screens.press(Key::Down, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 1, "↓ 가 커서를 안 옮겼다");
+    // `c` — 그 줄을 복사하라(판은 그대로).
+    assert_eq!(screens.press(Key::Char('c'), Mods::NONE), Some(ScreenKey::CopyRow(1)));
+    assert_eq!(screens.top(), Some(Screen::Notices), "c 가 판을 닫았다");
+    // `Enter` — 펼치고, 또 누르면 접는다. 판은 그대로.
+    assert!(!screens.notice_open(1));
+    assert_eq!(screens.press(Key::Enter, Mods::NONE), Some(ScreenKey::Consumed));
+    assert!(screens.notice_open(1), "Enter 가 안 펼쳤다");
+    assert_eq!(screens.press(Key::Enter, Mods::NONE), Some(ScreenKey::Consumed));
+    assert!(!screens.notice_open(1), "두 번째 Enter 가 안 접었다");
+    assert_eq!(screens.top(), Some(Screen::Notices), "Enter 가 판을 닫았다");
+    // 제 것 아닌 키는 여전히 무시(pytmux-273 ②) · `Esc` 만 닫고 펼침을 비운다.
+    assert_eq!(screens.press(Key::Function(5), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.top(), Some(Screen::Notices));
+    screens.press(Key::Enter, Mods::NONE);
+    assert_eq!(screens.press(Key::Escape, Mods::NONE), Some(ScreenKey::Closed));
+    assert!(!screens.notice_open(1), "닫았는데 펼침이 남았다");
+    // Home/End/PgUp/PgDn 도 커서다(정본 `_NoticeList` 가 스크롤 바인딩을 커서로 덮는다).
+    let mut screens = Screens::new();
+    screens.open(Screen::Notices);
+    screens.select_row(7);
+    screens.press(Key::Home, Mods::NONE);
+    assert_eq!(screens.selected(), 0);
+    screens.press(Key::End, Mods::NONE);
+    assert_eq!(screens.selected(), usize::MAX, "End 는 뷰가 자르는 상한값이다");
+}
+
+#[test]
+fn the_info_tabs_page_is_five_rows_like_the_canon() {
+    // 정본 `InfoTabsScreen.on_key` — `for _ in range(5): lv.action_cursor_down()`.
+    let mut screens = Screens::new();
+    screens.open(Screen::InfoTabs);
+    screens.select_row(0);
+    assert_eq!(screens.press(Key::PageDown, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 5, "PageDown 이 다섯 줄이 아니다");
+    assert_eq!(screens.press(Key::PageUp, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 0);
+}

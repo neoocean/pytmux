@@ -91,10 +91,6 @@ const fn p(name: &'static str, cat: &'static str, class: Class, why: &'static st
     Row { axis: Axis::Palette, name, class, why, cat }
 }
 
-/// ⑴ 블록 표면 · ⑶ `esc q` 를 든 이슈([[pytmux-449]]). (⑵ ClaudeDetail 은
-/// pytmux-468 로 정본에도 났고 우리 쪽 전용 판은 걷었다 — 남은 줄은 esc `v` 하나다.)
-const DECIDE: &str = "pytmux-449";
-
 /// **GUI 에만 있는 표면 전수.** 축·이름순.
 pub static LEDGER: &[Row] = &[
     // ── 팔레트 ────────────────────────────────────────────────────────────────
@@ -171,14 +167,10 @@ pub static LEDGER: &[Row] = &[
         Class::SameFeature("set_options:status"),
         "기능은 정본에도 있다 — 저쪽 입구는 `set status` 이고 팔레트 이름이 없을 뿐이다",
     ),
-    p(
-        "summary",
-        "설정/기타",
-        Class::Todo(DECIDE),
-        "블록 목록 + Claude 항목 요약 판(§10-21ⓓ). ★ 앞 절반이던 `select-blocks` 는 \
-         **정본에 섰다**(pytmux-469 · 이 대장에서 빠졌다) — 남은 것은 그 목록을 **판으로** \
-         보여 주는 절반이고, 사람이 「고르기·복사 먼저, 판은 뒤 CL」로 정했다",
-    ),
+    // `summary` 는 **정본에도 섰다**(pytmux-538 · 449 ⑴ 의 «판은 뒤 CL») — `blocks` 플러그인이
+    // 같은 이름을 팔레트에 싣고 범용 `InfoScreen` 으로 띄우므로 이 대장에서 빠졌다(`select-blocks`
+    // 가 pytmux-469 로 빠진 것과 같다). 우리 판이 블록에 Claude 항목(Tier D)을 더해 보이는 것은
+    // 표현의 차이이지 기능의 차이가 아니다(블록 목록이 이 판의 기능이다).
     // ── 설정 ──────────────────────────────────────────────────────────────────
     //
     // 일곱 줄이 **한 근거**다: 정본은 캔버스를 직접 안 그린다. 글꼴도 커서도 주인이
@@ -238,12 +230,8 @@ pub static LEDGER: &[Row] = &[
          줄의 어휘를 재는 자는 따로 셋이다(`plugin_screen_conformance` · \
          `tests/test_plugin_do_wiring.py` · `screen_row_conformance`)",
     ),
-    r(
-        Axis::Screen,
-        "Summary",
-        Class::Todo(DECIDE),
-        "위 팔레트 `summary` 와 같은 줄이다 — 판과 그 이름이 함께 정해진다",
-    ),
+    // `Summary` 화면도 같은 이유로 빠졌다 — `canon_class` 가 `InfoScreen` 이라 「정본에 없는
+    // 화면」이 아니다(pytmux-538).
     // ── esc 키 ────────────────────────────────────────────────────────────────
     //
     // ★ **뿌리가 갈렸다**(pytmux-466 · 449 ⑶ · 사람 결정 «표를 가른다»). 종전에는

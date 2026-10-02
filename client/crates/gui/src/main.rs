@@ -33,6 +33,7 @@ use warpui::{AssetProvider, platform};
 mod console;
 mod mono_font;
 mod root_view;
+mod rtt_chart;
 mod session_view;
 mod ime;
 mod splitter;

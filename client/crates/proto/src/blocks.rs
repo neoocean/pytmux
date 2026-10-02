@@ -178,6 +178,28 @@ pub fn row_span(blocks: &[Block], index: usize, live_bottom: usize) -> Option<(u
     Some((start, end))
 }
 
+/// 뷰포트 첫 줄 `top` 이 **어느 블록의 안**에 있나 — 스티키 바가 보일 블록의 번호
+/// (pytmux-520). 없으면 `None`.
+///
+/// 규칙 셋이고 정본 `plugins/blocks/segment.sticky_at` 과 **같은 답**이다(픽스처
+/// `blocks_sticky.json` 이 둘을 맞댄다):
+///
+/// - 라이브(`scroll == 0`)면 없다 — 바가 라이브 글을 가리면 안 된다.
+/// - 첫 줄이 블록의 **안**(시작 다음 줄부터 끝까지)이면 그 블록 — 「지금 보는 출력이
+///   어느 명령(프롬프트) 것인가」가 이 바의 물음이다.
+/// - 첫 줄이 곧 그 블록의 시작 줄이면 없다 — 프롬프트가 이미 보이는데 한 번 더
+///   보이면 어느 쪽이 글인지 모른다.
+///
+/// 끝은 [`row_span`] 이 정한다 — 여기서 다시 세지 않는다.
+pub fn sticky_at(blocks: &[Block], top: usize, scroll: usize, live_bottom: usize) -> Option<usize> {
+    if scroll == 0 || blocks.is_empty() {
+        return None;
+    }
+    (0..blocks.len()).rev().find(|&i| {
+        row_span(blocks, i, live_bottom).is_some_and(|(y0, y1)| y0 < top && top <= y1)
+    })
+}
+
 /// 와이어 형태. 값이 없는 필드는 서버가 보내지 않는다.
 ///
 /// 숫자 필드를 `Value` 로 받는 이유: **한 필드가 이상하면 그 필드만 버려야 하고, 프레임

@@ -352,7 +352,9 @@ impl Screen {
             // 런타임 계측도 **읽는 판**이고, 정본이 범용 `InfoScreen` 으로 띄우므로
             // 자리도 그 클래스 기본(`align: center top`)이다 — 앵커 픽스처가 그것을
             // 정본에서 뽑아 대조한다(pytmux-457).
-            | Screen::DebugStats => Anchor::Top,
+            | Screen::DebugStats
+            // 요약도 **읽는 판**이다 — 정본은 범용 `InfoScreen`(위 자리)에 띄운다(pytmux-538).
+            | Screen::Summary => Anchor::Top,
             // 읽는 판인데 **짧아서** 가운데인 예외 — 정본도 이 둘만 `center=True` 다
             // (위 「예외」 · §10-21ⓐ3·ⓓ3). 재시작 점검은 그 위에 **고르는 판**이기도
             // 하다(단추가 있다) — 가운데가 두 번 맞는 자리다.
@@ -372,8 +374,6 @@ impl Screen {
             // 플러그인이 준 판도 **고르러 여는 판**이다(목록이든 글이든 그 흐름의 안이다).
             | Screen::PluginView
             | Screen::Settings
-            // 요약은 **훑는 판**이다 — 목록이라 고르러 여는 판과 같은 자리가 맞다.
-            | Screen::Summary
             // 검색 결과도 **고르러 여는 판**이다(목록 → Enter 로 그 자리로).
             | Screen::SearchResults
             // 커서 판도 **고르는 판**이다 — 설정 화면과 같은 손이니 같은 자리다.
@@ -476,8 +476,9 @@ impl Screen {
             // 정본은 이 표도 범용 `InfoScreen` 에 띄운다
             // (`clientcmd.py` → `InfoScreen(clientdiag.render(...), title="debug-stats")`).
             | Screen::DebugStats => "InfoScreen",
-            // 정본에 짝이 없다 — 이 구역은 GUI 만 갖고 있던 것이다(§10-21ⓓ).
-            Screen::Summary => return None,
+            // 정본은 이 판도 범용 `InfoScreen` 에 띄운다(pytmux-538 · `blocks` 플러그인
+            // `summary` → `InfoScreen(summary_lines(...))`). 종전엔 «정본에 짝이 없다»였다.
+            Screen::Summary => "InfoScreen",
             // 정본에 짝이 없다 — 정본의 커서는 **호스트 단말의 하드웨어 커서**라
             // 모양·색·깜빡임을 저쪽이 가질 수가 없다(`pytmux-161` · `SETTINGS_OURS`
             // 가 같은 근거를 설정 다섯에 대해 적는다). 판이 있을 리도 없다.
@@ -613,6 +614,10 @@ pub enum ScreenKey {
     /// [`ScreenKey::Chosen`] 과 갈라 둔 이유: 저쪽은 줄 번호이고 판을 닫는다. 이건
     /// 줄이 아니라 **방향**이고 판이 안 닫힌다 — 다음 판이 같은 자리에 선다.
     TabCycle(bool),
+    /// **그 줄의 글을 복사하라** — 판은 그대로(알림 이력의 `c` · pytmux-539 · 정본
+    /// `NoticeHistoryScreen.on_key` 의 `c`). 무엇이 그 줄인지는 뷰가 안다(알림 목록은
+    /// 상태에 있다).
+    CopyRow(usize),
 }
 
 /// 무엇을 묻고 있나. **대답을 어디에 쓸지**가 이 값에 달렸다.
@@ -967,6 +972,10 @@ pub struct Screens {
     /// 뜻이 없을 때(다열 판의 열 이동 · 스펙이 묶은 키 — 그건 뷰가 먼저 본다) 탭 순환.
     /// 뷰가 키를 먹기 직전에 넣는다(`set_plugin_grid` 와 같은 때).
     plugin_tabs: usize,
+    /// 알림 이력에서 **펼친 줄들**(pytmux-539 · 정본 `NoticeHistoryScreen._expanded`).
+    /// `Enter` 로 토글, 판을 닫으면 비운다(다음에 열 때 옛 펼침이 되살아나면 그것은
+    /// 「내가 안 한 일」로 보인다).
+    notice_open: std::collections::BTreeSet<usize>,
     /// 서버가 부는 **플러그인 표면**(설계 Tier A). 뷰가 매 프레임 옮겨 담는다.
     ///
     /// 왜 화면 상태에 두나: 메뉴의 층·설정의 분류 이동이 **이 목록의 길이와 분류**에
@@ -1668,6 +1677,11 @@ impl Screens {
         if self.top().is_some_and(Self::is_list) {
             return Some(self.press_list(key));
         }
+        // 알림 이력은 **커서가 있는 읽기 판**이다(pytmux-539) — 굴리는 판도 고르는 판도
+        // 아닌 셋째 손이라 따로 둔다.
+        if matches!(self.top(), Some(Screen::Notices)) {
+            return Some(self.press_notices(key));
+        }
         match key {
             Key::Up => {
                 self.scroll = self.scroll.saturating_sub(1);
@@ -1699,6 +1713,7 @@ impl Screens {
                             | Screen::RestartCheck
                             | Screen::Hooks
                             | Screen::DebugStats
+                            | Screen::Summary
                     )
                 ) =>
             {
@@ -1715,6 +1730,7 @@ impl Screens {
                             | Screen::RestartCheck
                             | Screen::Hooks
                             | Screen::DebugStats
+                            | Screen::Summary
                     )
                 ) =>
             {
@@ -1727,9 +1743,6 @@ impl Screens {
                 self.close_top();
                 Some(ScreenKey::Closed)
             }
-            // `Notices` 는 정본 `NoticeHistoryScreen` 처럼 **아무 키나 안 닫는다**
-            // (pytmux-273 ②) — `escape`(위에서 처리) 만 닫고, 그 밖은 삼킨다.
-            _ if matches!(self.top(), Some(Screen::Notices)) => Some(ScreenKey::Consumed),
             // 나머지(InfoScreen 계열 등)는 정본 그대로 아무 키나 닫는다(규칙 2).
             _ => {
                 self.close_top();
@@ -1833,11 +1846,11 @@ impl Screens {
                 ScreenKey::Consumed
             }
             Key::PageUp => {
-                self.selected = self.selected.saturating_sub(PAGE);
+                self.selected = self.selected.saturating_sub(INFO_TABS_PAGE);
                 ScreenKey::Consumed
             }
             Key::PageDown => {
-                self.selected = self.selected.saturating_add(PAGE);
+                self.selected = self.selected.saturating_add(INFO_TABS_PAGE);
                 ScreenKey::Consumed
             }
             Key::Home => {
@@ -2165,6 +2178,63 @@ impl Screens {
     /// 같은 `PluginView` 변형이 그 판들을 다 맡으므로 열 때 한 번으로는 낡는다.
     pub fn set_plugin_tabs(&mut self, count: usize) {
         self.plugin_tabs = count;
+    }
+
+    /// 알림 이력에서 그 줄이 **펼쳐져** 있나(pytmux-539).
+    pub fn notice_open(&self, row: usize) -> bool {
+        self.notice_open.contains(&row)
+    }
+
+    /// 알림 이력의 키(pytmux-539) — 정본 `NoticeHistoryScreen` 과 같은 손.
+    ///
+    /// 정본은 `ListView` 라 **커서**가 있고(`↑↓`·`PgUp/PgDn`·`Home/End` — `_NoticeList`
+    /// 가 스크롤 바인딩을 커서 이동으로 덮는다), `c` 가 고른 알림의 전문을 복사하며
+    /// `Enter` 가 그 줄을 펼치고 접는다(`on_list_view_selected`). `Esc` 만 닫고 그 밖의
+    /// 키는 **무시한다**(pytmux-273 ②). 종전 우리 판은 커서 없이 굴리기만 했고 `c`·`Enter`
+    /// 가 없었다 — `interaction.rs` 가 「닫기 여부 축 밖의 기능 공백」으로 적어 둔 그 둘이다.
+    fn press_notices(&mut self, key: Key) -> ScreenKey {
+        match key {
+            Key::Up => {
+                self.selected = self.selected.saturating_sub(1);
+                ScreenKey::Consumed
+            }
+            Key::Down => {
+                self.selected = self.selected.saturating_add(1);
+                ScreenKey::Consumed
+            }
+            Key::PageUp => {
+                self.selected = self.selected.saturating_sub(PAGE);
+                ScreenKey::Consumed
+            }
+            Key::PageDown => {
+                self.selected = self.selected.saturating_add(PAGE);
+                ScreenKey::Consumed
+            }
+            Key::Home => {
+                self.selected = 0;
+                ScreenKey::Consumed
+            }
+            Key::End => {
+                // 끝이 몇 번째인지는 뷰가 안다(`press_list` 와 같은 규약).
+                self.selected = usize::MAX;
+                ScreenKey::Consumed
+            }
+            Key::Enter => {
+                let row = self.selected;
+                if !self.notice_open.remove(&row) {
+                    self.notice_open.insert(row);
+                }
+                ScreenKey::Consumed
+            }
+            Key::Char('c') => ScreenKey::CopyRow(self.selected),
+            Key::Escape => {
+                self.notice_open.clear();
+                self.close_top();
+                ScreenKey::Closed
+            }
+            // 정본은 모르는 키를 무시한다(pytmux-273 ②) — 닫지 않는다.
+            _ => ScreenKey::Consumed,
+        }
     }
 
     /// 서버가 부는 플러그인 표면을 갈아 끼운다(뷰가 상태 변화 때 부른다).
@@ -2724,6 +2794,12 @@ pub const CONFIRM_NO: usize = 1;
 /// 페이지 키가 움직이는 줄 수. 화면 높이를 아는 것은 뷰지만, 그 값을 물어 오게 하면
 /// 두 뷰가 다른 값을 쓰기 시작한다 — 읽는 화면이라 고정값으로 충분하다.
 const PAGE: usize = 10;
+
+/// 정보 팝업(`InfoTabs`)의 `PageUp`/`PageDown` 한 번에 **몇 줄** — 정본 `InfoTabsScreen.on_key`
+/// 가 `action_cursor_up/down` 을 다섯 번 부른다(`for _ in range(5)`). 판 공통 상수(`PAGE`)와
+/// 갈라 두는 이유는 그 판만 정본이 다른 수를 쓰기 때문이다(pytmux-539 · 종전엔 10 이었고
+/// `interaction.rs` 가 「안 쟀다」로 적어 뒀다).
+const INFO_TABS_PAGE: usize = 5;
 
 #[cfg(test)]
 #[path = "screens_tests.rs"]

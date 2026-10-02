@@ -373,11 +373,49 @@ def row_span(wire, index, live_bottom):
     if start is None:
         return None
     end = _wire_row(block.get("end"))
-    if end is None:
+    if end is not None:
+        # ⛔ 와이어의 `end` 는 **다음 프롬프트가 뜬 줄**이다(`_on_prompt_start` 가 직전
+        #    블록의 `end_row = row` 를 적고 **같은 `row`** 로 새 블록을 연다) — 곧 이
+        #    블록의 마지막 줄이 아니라 그 **다음** 줄이다. 그대로 쓰면 강조와 복사에
+        #    다음 프롬프트 한 줄이 딸려 온다. 네이티브 클라(`proto::blocks::row_span`)는
+        #    처음부터 한 줄 앞을 끝으로 썼고, 이 어긋남은 스티키 바의 적합성 픽스처
+        #    (pytmux-520 · `blocks_sticky.json`)가 두 답을 맞대면서 드러났다.
+        end = end - 1
+    else:
         nxt = wire[index + 1] if index + 1 < len(wire) else None
         nxt_start = _wire_row(nxt.get("start")) if isinstance(nxt, dict) else None
         end = (nxt_start - 1) if nxt_start is not None else live_bottom
     return (start, max(start, end))
+
+
+def sticky_at(wire, top, scroll, live_bottom):
+    """뷰포트 첫 줄 `top` 이 **어느 블록의 안**에 있나 — 스티키 바가 보일 블록의 번호
+    (pytmux-520). 없으면 `None`.
+
+    규칙 셋이고 전부 **한 자리**다(GUI `proto::blocks::sticky_at` 과 같은 답 — 픽스처
+    `blocks_sticky.json` 이 둘을 맞댄다):
+
+    - 라이브(`scroll == 0`)면 없다 — 바가 라이브 글을 가리면 안 된다.
+    - 첫 줄이 블록의 **안**(시작 다음 줄부터 끝까지)이면 그 블록. 「지금 보는 출력이
+      어느 명령(프롬프트) 것인가」가 이 바의 물음이다.
+    - 첫 줄이 곧 그 블록의 시작 줄이면 없다 — 프롬프트가 이미 보이는데 바로 한 번 더
+      보이면 어느 쪽이 글인지 모른다.
+
+    끝은 `row_span` 이 정한다(그 셋 갈래 그대로) — 여기서 다시 세지 않는다.
+    """
+    if not isinstance(scroll, int) or scroll <= 0 or not wire:
+        return None
+    if not isinstance(top, int):
+        return None
+    # 뒤에서부터 — 보통 보고 있는 자리는 최근 쪽이고, 블록은 겹치지 않아 첫 적중이 답이다.
+    for index in range(len(wire) - 1, -1, -1):
+        span = row_span(wire, index, live_bottom)
+        if span is None:
+            continue
+        y0, y1 = span
+        if y0 < top <= y1:
+            return index
+    return None
 
 
 def _wire_row(value):
