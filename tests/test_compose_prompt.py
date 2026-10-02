@@ -91,9 +91,12 @@ async def test_esc_ctrl_updown_jumps_prompts_and_enters_scroll():
         # 의 대체 화면)에서는 스크롤 모드로 안 들어가고 그 까닭을 말한다(pytmux-544 ·
         # test_jump_no_scrollback). 종전 이 시험은 갓 띄운 빈 패널로 재서, 바로 그 결함을
         # 정상 동작으로 못박고 있었다.
+        # ⚠ 값을 손으로 심지 않는다 — 서버의 화면 프레임이 곧 실제 값(빈 셸 = 0)으로
+        #   덮어써 첫 시도가 붉었다(2026-10-02 실측). 셸에 진짜 스크롤백을 만든다.
         aid = app.layout.get("active")
-        app.pane_top[aid] = 40
-        app.pane_scroll[aid] = 0
+        app.send_input(b"seq 1 120\r")
+        assert await wait_until(pilot, lambda: (app.pane_top or {}).get(aid, 0) > 0,
+                                timeout=10.0), "셸이 스크롤백을 안 만들었다"
         try:
             await pilot.press("escape")
             assert app.mode == "esc"

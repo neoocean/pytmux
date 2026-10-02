@@ -235,6 +235,19 @@ HERMETIC_CONFIG = hermetic.isolate_config()
 #   영향 없다(이 pop 은 셸에서 물려받은 것만 거둔다).
 os.environ.pop("NO_COLOR", None)
 
+# 같은 위생 축(2026-10-02 · pytmux/pytmux-546): 시험 서버의 **토큰 동기화를 이 상자의 실
+# 서버로 못 나가게** 한다. claude-code 플러그인의 기본값이 `token_sync="server"` + 실 주소라
+# 시험 서버마다 동기화 작업자가 돈다. `PYTMUX_TOKENS_DB` 없이 띄운 시험 서버(서브프로세스
+# 서버 · teardown 이 그 변수를 거둔 뒤의 작업자)는 토큰 DB 를 **플러그인 디렉터리**에 짓고,
+# 그 디렉터리의 **실 등록 자료**(sync_device.key · sync_vault.key)로 서명할 수 있다 — 즉 시험
+# DB 의 행이 사용자의 실 동기화 계정으로 올라갈 수 있었다(2026-10-02 에 그 디렉터리에서
+# `claude-tokens-<소켓>.db` 89개를 셌다). 닫힌 로컬 포트를 주면 작업자는 즉시 「못 닿음」
+# (SyncUnreachable — 조용히 처리되는 갈래)으로 끝난다. `https://` 인 이유: 기본 주소의
+# 모양을 재는 시험(test_token_sync_p2)이 그 접두를 본다.
+# ⚠ 이것은 **네트워크만** 막는다 — 같은 작업자가 네트워크 전에 하는 DB 일(백필)의 결함은
+#   pytmux-546 이 따로 쫓는다.
+os.environ["PYTMUX_TOKEN_SYNC_URL"] = "https://127.0.0.1:9"
+
 # 같은 위생 축(2026-07-31): 코드 버전 조회를 **서브프로세스 없이** 고정한다. 서버·클라는
 # 기동 때마다 `version.code_version()`(p4 `#have` → git → unknown)을 부르는데, p4/git 이
 # 느리거나 불통인 워크스테이션에선 호출당 4.5~5.2초(둘 다 1.5s 타임아웃 + 프로세스 생성)를
