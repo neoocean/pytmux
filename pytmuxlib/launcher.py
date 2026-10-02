@@ -53,6 +53,10 @@ _WAIT_POLL_BACKOFF = 1.6     # 폴 간격 지수 증가율(interval 상한까지
 # 원격(stdio-proxy) 자동 기동 대기 예산: 500*0.02 = 10s. 로컬 기본(4s)보다 넉넉하되
 # serverremote 의 핸드셰이크 readline 타임아웃(15s) 안에 든다.
 _REMOTE_START_POLLS = 500
+# 「인증을 거부한 기존 서버」가 스스로 토큰을 다시 게시하기를 기다리는 예산(pytmux-543):
+# 100*0.02 = 2s. 거절 한 번이 서버의 자가 점검을 부르고(serverio.handle_client), 그 점검은
+# 어긋남을 다시 보기 전에 0.3s 숨을 고른다(serverpersist._ENDPOINT_RECHECK_DELAY).
+_HEAL_WAIT_POLLS = 100
 
 
 def wait_server(sock_path: str, *, polls: int = 200, interval: float = 0.02) -> bool:
@@ -103,6 +107,23 @@ def wait_server_authed(sock_path: str, *, polls: int = 200,
             return False
         time.sleep(min(delay, interval))
         delay *= _WAIT_POLL_BACKOFF
+
+
+def existing_server_usable(sock_path: str) -> bool:
+    """probe 가 붙은 기존 서버를 **그대로 써도 되나**(pytmux-543).
+
+    `auth_failed` 는 두 경우가 있다 — ⑴ 토큰 파일이 OS 정리 작업(macOS `tmp_cleaner`
+    · Linux `systemd-tmpfiles`)에 지워졌을 뿐인 **살아 있는** 서버, ⑵ 정말로 죽어 가는
+    좀비. 종전에는 둘을 가리지 않고 새 서버로 교체했고, ⑴ 이면 그 교체가 사용자의
+    탭 전부를 **고아**로 만들었다(앱은 계속 도는데 어느 클라도 다시 못 붙는다 —
+    실측 2026-10-02 playground). 이제 그 거절이 서버의 자가 점검을 부르므로(⑴ 이면 같은
+    토큰이 곧 다시 게시된다) 짧은 예산 안에서 인증을 다시 확인하고, 그래도 안 될 때만
+    False(= 교체)다. `auth_failed` 가 아닌 오류(proto 불일치 등)는 종전대로 True — 정상
+    서버를 가로채지 않고 클라가 처리한다."""
+    reply = control_request(sock_path, {"t": "list"})
+    if not (isinstance(reply, dict) and reply.get("error") == "auth_failed"):
+        return True
+    return wait_server_authed(sock_path, polls=_HEAL_WAIT_POLLS)
 
 
 def server_boot_log(sock_path: str) -> str:
@@ -546,6 +567,11 @@ def run_stdio_proxy(sock_path: str) -> int:
             report_server_start_failure(
                 sock_path, "pytmux: 서버 자동 기동 실패(인증 대기 시한 초과)")
             return 1
+    elif not server_auth_ok(sock_path):
+        # 떠 있는데 인증이 안 된다 — 토큰 파일이 정리 작업에 지워졌을 수 있다(pytmux-543).
+        # 위 거절이 서버의 자가 점검을 불렀으니 잠깐 기다렸다가 다시 게시된 토큰을 알린다.
+        # 여기서는 교체하지 않는다: 원격 측 교체는 그 머신 사용자의 탭을 고아로 만든다.
+        wait_server_authed(sock_path, polls=_HEAL_WAIT_POLLS)
     import socket as _socket
     sock = ipc.control_socket(sock_path)
     if sock is None:
@@ -791,10 +817,15 @@ def run_start_server(sock_path: str) -> int:
         print(f"pytmux: 서버가 이미 실행 중입니다: {sock_path}")
         return 0
     if ipc.probe(sock_path):
-        # listen 은 하는데 인증이 안 되는 좀비(토큰 분실/불일치) — attach 경로와 같은
-        # 판정으로 새 서버를 띄워 소켓 경로를 원자 교체한다.
-        print("pytmux: 기존 서버가 인증을 거부합니다(좀비 서버로 추정) — "
-              "새 서버로 교체합니다.", file=sys.stderr)
+        # listen 은 하는데 인증이 안 된다. 위 거절이 서버의 자가 점검을 불렀으니
+        # (pytmux-543) 토큰만 지워졌던 살아 있는 서버면 곧 붙는다 — 그러면 교체하지
+        # 않는다(교체는 그 서버의 탭을 고아로 만든다). 그래도 안 될 때만 좀비로 본다.
+        if wait_server_authed(sock_path, polls=_HEAL_WAIT_POLLS):
+            print(f"pytmux: 서버가 이미 실행 중입니다(지워진 인증 토큰을 다시 "
+                  f"게시했습니다): {sock_path}")
+            return 0
+        print("pytmux: 기존 서버가 인증을 거부하고 스스로 복구하지도 못했습니다"
+              "(좀비 서버로 추정) — 새 서버로 교체합니다.", file=sys.stderr)
     try:
         spawn_server(sock_path)
     except Exception as e:                   # 실행파일/권한 등 spawn 자체 실패
@@ -996,10 +1027,14 @@ def main(argv=None):
         # os.replace 가 소켓 경로를 새 서버로 원자 교체 — 좀비는 고아 inode 에
         # 남지만 새 연결은 새 서버로 간다). auth_failed 만 좁게 본다: proto 불일치
         # 등 다른 error 는 정상 서버를 가로채지 않도록 그대로 attach 해 클라가 처리.
-        reply = control_request(sock_path, {"t": "list"})
-        if isinstance(reply, dict) and reply.get("error") == "auth_failed":
-            print("pytmux: 기존 서버가 인증을 거부합니다(토큰 분실/불일치로 추정"
-                  "되는 좀비 서버) — 새 서버로 교체합니다.", file=sys.stderr)
+        # ⚠ 그 교체는 기존 서버의 탭을 **고아**로 만든다(앱은 계속 돈다 · 다시 못 붙는다).
+        # 토큰이 정리 작업에 지워졌을 뿐인 살아 있는 서버는 거절 한 번에 스스로 같은
+        # 토큰을 다시 게시하므로, 교체는 그 자가 복구를 기다린 뒤에도 안 될 때뿐이다
+        # (pytmux-543 · `existing_server_usable`).
+        if not existing_server_usable(sock_path):
+            print("pytmux: 기존 서버가 인증을 거부하고 스스로 복구하지도 못했습니다"
+                  "(좀비 서버로 추정) — 새 서버로 교체합니다. 기존 서버의 탭은 이 "
+                  "경로로 다시 붙을 수 없습니다.", file=sys.stderr)
             need_spawn = True
     if need_spawn:
         spawn_server(sock_path)

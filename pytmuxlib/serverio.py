@@ -1572,6 +1572,10 @@ class ServerIOMixin:
             tok = first.get("token")
             if not isinstance(tok, str) or not hmac.compare_digest(
                     tok, self.auth_token):
+                # 같은 UID(위 F2 를 지났다)가 내 토큰을 못 댔다 — 가장 흔한 까닭은 토큰
+                # 파일이 OS 정리 작업에 지워진 것이다(pytmux-543). 엔드포인트를 아직 쥐고
+                # 있으면 같은 토큰을 곧바로 다시 게시해, 재시도하는 클라가 붙게 한다.
+                self._heal_endpoint_soon("auth_failed")
                 try:
                     await write_msg(writer, {"t": "error", "error": "auth_failed"})
                 except (OSError, ConnectionError):
@@ -2105,6 +2109,10 @@ class ServerIOMixin:
             autoname = asyncio.create_task(self._autorename_loop())
             usage = asyncio.create_task(self._usage_loop())
             liveness = asyncio.create_task(self._liveness_loop())
+            # 게시 파일 지키기(pytmux-543): 토큰·pid 파일은 /tmp 의 일반 파일이라 OS 정리
+            # 작업(macOS tmp_cleaner 3일)에 지워진다 — 지워지면 다음 attach 가 이 서버를
+            # 「좀비」로 보고 교체해 탭들이 고아가 된다. 엔드포인트를 쥔 동안 지킨다.
+            keeper = asyncio.create_task(self._endpoint_keeper_loop())
             # 플러그인 소유 장기 작업(주기·의미는 플러그인이 안다 — 토큰 동기화 워커
             # 등). 코어는 태스크 하나를 띄우고 종료 시 취소하는 것만 한다.
             background = asyncio.create_task(self.plugins.server_background(self))
@@ -2122,6 +2130,7 @@ class ServerIOMixin:
             autoname.cancel()
             usage.cancel()
             liveness.cancel()
+            keeper.cancel()
             background.cancel()
         finally:
             self._remove_signal_handlers(signals)
