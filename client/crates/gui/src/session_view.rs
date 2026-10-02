@@ -7277,6 +7277,24 @@ impl SessionView {
         let Some(kind) = self.pending_restart.take() else {
             return false;
         };
+        // ★ 서버가 **자기를 다시 띄울 수 없으면** 「그래도 할까」를 묻지 않는다(pytmux-514).
+        //   예를 눌러도 서버의 `restart_server` 가 아무 일도 안 하고 끝나, 사용자는 재시작했다고
+        //   믿는데 옛 코드가 그대로 돈다(Windows 에서 pty-host 연결에 실패한 서버가 그렇다).
+        //   까닭(서버가 실어 보낸 `host_fail`)과 할 일을 말하고 멈춘다 — 정본 `restart.cannot`.
+        if !self.state.restart_probe().reexec {
+            let why = self
+                .state
+                .restart_check_field("host_fail")
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| t("이 서버는 자기를 다시 띄울 수 없다").to_string());
+            self.state.note_error(tf(
+                "재시작할 수 없다 — {why}. 창을 닫고 pytmux 를 다시 띄우면 새 코드로 뜬다(그때 패널은 사라진다)",
+                &[("why", &why)],
+            ));
+            return true;
+        }
         let (safe, rows) =
             restart::evaluate(self.state.restart_probe(), restart::relaunch_ok(), kind);
         if safe {

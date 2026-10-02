@@ -2087,7 +2087,11 @@ class ServerIOMixin:
                 self._pty_host = await ptyhostmgr.ensure_connected(
                     self.loop, self.sock_path)
                 if self._pty_host is None:
-                    self._log_error("ptyhost_connect")
+                    # 사유를 싣는다(pytmux-514) — 종전 기록은 라벨과 `NoneType: None` 뿐이었다.
+                    self._log_error(
+                        "ptyhost_connect",
+                        ptyhostmgr.last_failure(self.sock_path) or "reason unknown",
+                        exc=False)
                 else:
                     # host 연결 끊김(크래시 등) 감지 → 재연결 시도(P6).
                     self._pty_host._on_lost = self._on_host_lost

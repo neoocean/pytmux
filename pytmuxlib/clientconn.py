@@ -494,6 +494,13 @@ class _RestartVersionMixin:
         안전하면 곧장 실행, FAIL 이면 재시작 여부를 재확인 팝업으로 묻는다."""
         kind = self._pending_restart
         self._pending_restart = None
+        # ★ 서버가 자기를 다시 띄울 수 없으면 묻지 않는다(pytmux-514) — 예를 눌러도 서버의
+        #   `restart_server` 가 아무 일도 안 하고 끝나, 재시작했다고 믿는데 옛 코드가 그대로
+        #   돈다. 까닭(서버가 실은 `host_fail`)과 할 일을 말하고 멈춘다(GUI 와 같은 판정).
+        if not m.get("reexec_supported"):
+            why = str(m.get("host_fail") or "") or i18n.t("restart.cannot_why_unknown")
+            self.display_message(i18n.t("restart.cannot", why=why), severity="error")
+            return
         safe, checks = _restart_check_eval(
             m, _client_relaunch_ok(), kind)
         if safe:

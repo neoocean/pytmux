@@ -9,7 +9,7 @@ import json
 import os
 import time
 
-from . import ipc, proc, pty_backend, version
+from . import ipc, proc, ptyhostmgr, pty_backend, version
 from .model import Pane, Session, Split, Tab, Window
 from .protocol import MIN_H, MIN_W, write_msg
 
@@ -972,6 +972,10 @@ class ServerPersistMixin:
             # 원격일 수 있어 **클라의 OS 로 대신 못 판단한다** — 그래서 서버가 적는다.
             "server_os": "windows" if pty_backend.IS_WINDOWS else "posix",
             "host_mode": host_mode,
+            # 재기동을 못 하는 Windows 서버라면 **왜** pty-host 를 못 쥐었나(pytmux-514).
+            # 두 클라가 이 값을 그대로 보여 준다 — 기술 진단이라 번역하지 않는다.
+            "host_fail": ((ptyhostmgr.last_failure(self.sock_path) or "")
+                          if (pty_backend.IS_WINDOWS and not host_mode) else ""),
             "has_sessions": bool(self.sessions),
             "panes": n, "panes_with_fd": with_fd,
             "serialize_ok": serialize_ok, "serialize_err": serialize_err,

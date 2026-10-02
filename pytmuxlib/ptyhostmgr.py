@@ -198,11 +198,13 @@ def _spawn_host(sock_path: str) -> bool:
         proc.spawn_detached(argv)
         _spawned_hosts.add(sock_path)
         return True
-    except Exception:
+    except Exception as e:
         _release_spawn_lock(sock_path)
         # M7: 종전엔 무로깅 suppress 라 spawn 실패 시 6초 폴링 낭비 후 인프로세스
         # 폴백하면서 원인이 0 로그였다. 실패를 stderr 에 남기고 False 를 돌려
         # ensure_connected 가 헛된 폴링을 건너뛰게 한다(폴백 자체는 그대로).
+        # (데몬의 stderr 는 /dev/null 이라 사유를 따로 쥔다 — pytmux-514)
+        _note_failure(sock_path, f"spawning pty-host failed: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -336,20 +338,41 @@ def shutdown_host_sync(sock_path: str, *, idle_only: bool = False) -> bool:
             s.close()
 
 
+# sock_path → 마지막 연결 실패의 **사유**(pytmux-514). 종전에는 실패가 라벨만 남아
+# (`[ptyhost_connect]` + `NoneType: None`) 「왜 못 붙었나」가 어디에도 없었다 — 포트파일
+# 없음·시한 초과·spawn 실패·인증 거절이 전부 같은 줄이었다. 글은 **기술 진단**이라 영어다
+# (서버가 재시작 드라이런 회신 `host_fail` 로도 싣는다 — 번역 대상이 아니다).
+_LAST_FAILURE: dict[str, str] = {}
+
+
+def _note_failure(sock_path: str, why: str) -> None:
+    _LAST_FAILURE[sock_path] = why
+
+
+def last_failure(sock_path: str) -> str | None:
+    """그 엔드포인트에서 마지막으로 pty-host 에 못 붙은 까닭. 붙었거나 시도 전이면 None."""
+    return _LAST_FAILURE.get(sock_path)
+
+
 async def _try_connect(loop, sock_path: str, timeout: float
                        ) -> ptyhostclient.PtyHostClient | None:
     endpoint = await _connect_endpoint(sock_path)
     if endpoint is None:
+        _note_failure(sock_path, "endpoint not published yet (no portfile/socket)")
         return None
     client = ptyhostclient.PtyHostClient(loop)
     try:
         token = _read_host_token(sock_path)
         await asyncio.wait_for(client.connect(endpoint, token=token), timeout)
+        _LAST_FAILURE.pop(sock_path, None)
         return client
-    except Exception:
-        with contextlib.suppress(Exception):
-            await client.close()
-        return None
+    except asyncio.TimeoutError:
+        _note_failure(sock_path, f"connect to {endpoint} timed out after {timeout:g}s")
+    except Exception as e:
+        _note_failure(sock_path, f"connect to {endpoint} failed: {type(e).__name__}: {e}")
+    with contextlib.suppress(Exception):
+        await client.close()
+    return None
 
 
 async def ensure_connected(loop, sock_path: str
@@ -381,6 +404,9 @@ async def ensure_connected(loop, sock_path: str
             if client is not None:
                 return client
             if loop.time() >= deadline:
+                _note_failure(sock_path, f"pty-host did not come up within "
+                                         f"{_CONNECT_BUDGET:g}s — last attempt: "
+                                         f"{_LAST_FAILURE.get(sock_path, 'unknown')}")
                 return None
             await asyncio.sleep(min(delay, _CONNECT_POLL_CAP))
             delay *= _CONNECT_POLL_BACKOFF

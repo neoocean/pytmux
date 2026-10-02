@@ -679,6 +679,8 @@ register({
         # restart 재확인(드라이런 FAIL)
         "restart.label_all": "전체 재시작", "restart.label_server": "서버 재시작",
         "restart.fail_header": "드라이런 FAIL — {label} 안전 점검에서 문제가 있습니다:",
+        "restart.cannot": "재시작할 수 없다 — {why}. 창을 닫고 pytmux 를 다시 띄우면 새 코드로 뜬다(그때 패널은 사라진다)",
+        "restart.cannot_why_unknown": "이 서버는 자기를 다시 띄울 수 없다",
         "restart.fail_item": "  [FAIL] {lbl}",
         "restart.confirm_q": "그래도 재시작할까요?",
         # restart-check 드라이런 결과 팝업
@@ -726,6 +728,8 @@ register({
     "en": {
         "restart.label_all": "full restart", "restart.label_server": "server restart",
         "restart.fail_header": "Dry-run FAIL — {label} safety check found problems:",
+        "restart.cannot": "Cannot restart — {why}. Close the window and start pytmux again to run the new code (the panes will be gone then)",
+        "restart.cannot_why_unknown": "this server cannot relaunch itself",
         "restart.fail_item": "  [FAIL] {lbl}",
         "restart.confirm_q": "Restart anyway?",
         "restartcheck.safe": "✅ Safe — restart-all can proceed",

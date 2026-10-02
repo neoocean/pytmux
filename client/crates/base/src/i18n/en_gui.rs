@@ -102,6 +102,12 @@ pub static EN: &[(&str, &str)] = &[
         "재시작 안전성 점검 중… (부작용 없는 드라이런)",
         "Checking restart safety… (dry run, no side effects)",
     ),
+    // ── session_view.rs · 재시작을 못 하는 서버(pytmux-514 · 정본 `restart.cannot`) ──
+    (
+        "재시작할 수 없다 — {why}. 창을 닫고 pytmux 를 다시 띄우면 새 코드로 뜬다(그때 패널은 사라진다)",
+        "Cannot restart — {why}. Close the window and start pytmux again to run the new code (the panes will be gone then)",
+    ),
+    ("이 서버는 자기를 다시 띄울 수 없다", "this server cannot relaunch itself"),
     (
         "전체 재시작 — 클라를 다시 띄웠다 (pid {pid})",
         "Full restart — relaunched the client (pid {pid})",

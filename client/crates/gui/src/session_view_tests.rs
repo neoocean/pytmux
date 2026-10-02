@@ -4279,9 +4279,26 @@ fn the_gui_does_not_scrape_a_shell_pane() {
 // 직접 넣어(게이트를 안 지나) 이것을 못 본다 — 그 사실을 알고 여기 둔다.
 
 fn restart_check(safe: bool) -> ServerMessage {
+    // 실패 쪽은 **재기동은 되는데 다른 점검이 붉은** 서버다 — 그래야 「확인하면 진행」이 뜻을
+    // 갖는다. 재기동 자체가 안 되는 서버는 아래 `restart_check_unsupported` 다(pytmux-514).
     serde_json::from_value(serde_json::json!({
         "t": "restart_check",
-        "reexec_supported": safe,
+        "reexec_supported": true,
+        "has_sessions": true,
+        "serialize_ok": safe,
+        "panes": 1,
+        "panes_with_fd": 1,
+    }))
+    .unwrap()
+}
+
+/// 재기동 자체를 못 하는 서버(Windows · pty-host 연결 실패 → in-process 폴백).
+fn restart_check_unsupported(host_fail: &str) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "restart_check",
+        "reexec_supported": false,
+        "server_os": "windows",
+        "host_fail": host_fail,
         "has_sessions": true,
         "serialize_ok": true,
         "panes": 1,
@@ -4344,9 +4361,40 @@ fn a_green_dry_run_lets_the_restart_through() {
 }
 
 #[test]
+fn a_server_that_cannot_relaunch_says_why_instead_of_asking() {
+    // pytmux-514 — 재기동을 못 하는 서버에 「그래도 할까」를 물으면, 예를 눌러도 서버가 아무
+    // 일도 안 하고 끝나 「재시작했다」는 거짓 믿음만 남는다. 묻지 않고 까닭을 말한다.
+    let mut keys = palette("restart-server");
+    keys.push((Key::Char('y'), Mods::NONE)); // 확인 화면이 떴다면 «예» 가 됐을 키
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    for (key, mods) in &keys[..keys.len() - 1] {
+        view.handle_key(*key, *mods);
+        view.pump_headless();
+    }
+    tx.send(LinkEvent::Message(Box::new(restart_check_unsupported(
+        "connect: TimeoutError",
+    ))))
+    .unwrap();
+    view.pump_headless();
+    assert!(view.screens.top().is_none(), "확인 화면을 띄웠다 — 예를 눌러도 아무 일도 안 일어난다");
+    view.handle_key(Key::Char('y'), Mods::NONE);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(!has_restart(&out), "재기동을 못 하는 서버에 재시작을 보냈다: {out:?}");
+    // 상태줄 한 줄(`last_error`)은 다음 키에 걷히므로 **알림 이력**에서 본다.
+    assert!(
+        view.state
+            .notices()
+            .any(|n| n.text.contains("connect: TimeoutError")),
+        "까닭을 안 말했다"
+    );
+}
+
+#[test]
 fn a_failing_dry_run_blocks_the_restart_until_it_is_confirmed() {
-    // ★ 이 상자가 정확히 그 경우다 — Windows 서버는 re-exec 를 못 한다
-    // (`reexec_supported: false`, 2026-07-30 실측). 그때 조용히 진행하면 되돌릴 수 없다.
+    // 재기동은 되는데 다른 점검(여기서는 직렬화)이 붉은 서버 — 조용히 진행하면 되돌릴 수 없다.
     let out = sent_after_then(
         vec![layout_one_pane()],
         &palette("restart-server"),
