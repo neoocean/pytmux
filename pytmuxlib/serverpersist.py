@@ -19,6 +19,17 @@ from .protocol import MIN_H, MIN_W, write_msg
 #: (검수 2026-09-05 S-1). 왕복 실측은 0.00~0.02s 이고 attach 예산은 4.0s 다.
 _EVICT_ASK_TIMEOUT = 2.0
 
+#: 게시 파일 지키기(pytmux-543)의 주기(초). macOS `tmp_cleaner` 는 접근·수정·변경
+#: 시각이 **모두** 3일(하루 단위 내림이라 실제로는 4일째 0시) 넘은 `/tmp` 의 일반 파일을
+#: 지우고, Linux `systemd-tmpfiles` 는 기본 10일이다. 30분이면 어느 쪽에도 한참 못 미친다.
+_ENDPOINT_KEEP_INTERVAL = 30 * 60
+#: 인증 실패가 부르는 자가 점검의 최소 간격(초) — 같은 순간의 재시도 폭주가 점검을
+#: 겹쳐 띄우지 않게. attach 의 자가 복구 대기 예산(`launcher._HEAL_WAIT_POLLS`)보다 짧다.
+_ENDPOINT_HEAL_MIN_GAP = 1.0
+#: 토큰이 어긋나 보일 때 다시 보기 전의 숨 고르기(초). 새 주인은 `write_token` → bind →
+#: `os.replace` 차례로 엔드포인트를 가져가므로, 그 사이에 본 «어긋남»은 내 것이 아니다.
+_ENDPOINT_RECHECK_DELAY = 0.3
+
 
 class ServerPersistMixin:
     # ---- 레이아웃 영속(저장/복원) ----
@@ -228,6 +239,133 @@ class ServerPersistMixin:
                 f.write(f"{os.getpid()}\n")
         except OSError:
             self._log_error("publish_server_pid")
+
+    # ---- 게시 파일 지키기(pytmux/pytmux-543) --------------------------------
+    #
+    # 서버는 토큰·pid 파일을 **기동 때 한 번** 쓰고 다시 보지 않았다. 그런데 그 파일들은
+    # `/tmp/pytmux-<uid>/` 의 **일반 파일**이라 OS 정리 작업의 대상이다 — macOS 15 의
+    # `com.apple.tmp_cleaner`(매일 0시)가 `find /tmp -type f -atime +3 -mtime +3 -ctime +3
+    # -delete` 를 돈다. 소켓은 `-type f` 가 아니라 살아남는다. 그래서 며칠 붙어 쓰던
+    # 서버는 **소켓은 살아 있는데 토큰이 없는** 상태가 된다.
+    #
+    # 실측(2026-10-02 · playground): 09-27 09:25 에 뜬 서버의 토큰·pid 파일이 10-02 0시에
+    # 지워졌고(같은 디렉터리의 `sshwrap.tok`·`autossh` 가 같은 규칙으로 지워졌다가 00:36
+    # 에 다시 생긴 것이 증거), 08:08 ssh attach 가 `auth_failed` 를 받아 「좀비」로 보고
+    # **새 서버로 교체**했다. 옛 서버는 경로 없는 소켓을 쥔 채 탭의 앱들을 계속 돌렸고,
+    # pid 파일도 없어 새 주인의 거두기(pytmux-435)조차 닿지 않았다.
+    #
+    # ⇒ 엔드포인트를 **아직 쥐고 있는** 서버가 자기 게시 파일을 지킨다: 시각을 새로
+    #   고치고(정리 작업의 나이 조건을 끊는다), 없거나 다르면 메모리의 값으로 다시 쓴다.
+    # ⛔ 엔드포인트를 뺏긴 서버는 **아무것도 안 쓴다** — 새 주인의 토큰을 덮으면 그
+    #   주인에게 붙던 모든 클라가 `auth_failed` 로 끊긴다.
+
+    def _endpoint_still_mine(self) -> bool:
+        """지금 이 엔드포인트에 답하는 것이 나인가(unix=소켓 inode · TCP=포트파일)."""
+        if ipc.is_tcp(self.sock_path):
+            try:
+                kind = ipc.parse_endpoint(self.resolved_endpoint)
+            except (TypeError, ValueError):
+                return False
+            if kind[0] != "tcp":
+                return False
+            return ipc._read_portfile(ipc.portfile_for(self.sock_path)) == kind[2]
+        if self._sock_ino is None:
+            return False
+        try:
+            return os.stat(self.sock_path).st_ino == self._sock_ino
+        except OSError:
+            return False
+
+    def _endpoint_touch_paths(self) -> list:
+        """시각을 새로 고칠 게시 파일들 — 토큰 · pid · 소켓(TCP 면 포트파일) · ssh 래퍼."""
+        paths = [ipc.token_path(self.sock_path), ipc.server_pidfile(self.sock_path)]
+        paths.append(ipc.portfile_for(self.sock_path) if ipc.is_tcp(self.sock_path)
+                     else self.sock_path)
+        state_dir = ipc.default_state_dir()
+        paths.append(os.path.join(state_dir, "sshwrap.tok"))
+        wd = os.path.join(state_dir, "sshwrap")
+        with contextlib.suppress(OSError):
+            paths.extend(os.path.join(wd, n) for n in sorted(os.listdir(wd)))
+        return paths
+
+    def _keep_sshwrap_token(self) -> bool:
+        """`sshwrap.tok` 이 지워졌으면 **패널들이 이미 가진 값**으로 되살린다(돌려준 값 =
+        다시 썼나).
+
+        지워진 뒤 다음 패널 기동이 `sshwrap.load_or_create_token` 으로 **새 값**을 만들면,
+        그 뒤 패널과 서버 캐시(`_sshwrap_tok`)가 어긋나 ssh 중첩 자동 승격의 출처 검증이
+        조용히 실패한다(같은 실측에서 00:36 에 새 값이 생겼다). 캐시가 아직 없으면 지금
+        파일에서 채운다 — 파일이 있는 동안 채워 두어야 지워졌을 때 되살릴 값이 있다."""
+        from . import sshwrap
+        tok = getattr(self, "_sshwrap_tok", None)
+        path = os.path.join(ipc.default_state_dir(), "sshwrap.tok")
+        if tok is None:
+            if os.path.exists(path):
+                self._sshwrap_token()          # 캐시를 파일 값으로 채운다
+            return False
+        if not tok or os.path.exists(path):
+            return False
+        with ipc.private_atomic(path) as f:
+            f.write(tok)
+        sshwrap.ensure_wrapper_dir(ipc.default_state_dir())
+        return True
+
+    async def _keep_endpoint_files(self, why: str = "periodic") -> str:
+        """게시 파일을 지킨다(위 절). 진단용 낱말을 돌려준다 — `"no-token"`(인증을 안
+        쓰는 서버) · `"not-mine"`(엔드포인트를 뺏겼다 — 아무것도 안 썼다) · `"kept"`
+        (시각만 새로 고쳤다) · `"republished:<무엇>"`(다시 썼다)."""
+        if getattr(self, "auth_token", None) is None:
+            return "no-token"
+        if not self._endpoint_still_mine():
+            return "not-mine"
+        fixed = []
+        if ipc.read_token(self.sock_path) != self.auth_token:
+            await asyncio.sleep(_ENDPOINT_RECHECK_DELAY)
+            if not self._endpoint_still_mine():
+                return "not-mine"
+            if ipc.read_token(self.sock_path) != self.auth_token:
+                try:
+                    ipc.write_token(self.sock_path, self.auth_token)
+                    fixed.append("token")
+                except OSError:
+                    self._log_error("endpoint_keeper_token")
+        if ipc.read_server_pid(self.sock_path) != os.getpid():
+            self._publish_server_pid()
+            fixed.append("pid")
+        try:
+            if self._keep_sshwrap_token():
+                fixed.append("sshwrap.tok")
+        except OSError:
+            self._log_error("endpoint_keeper_sshwrap")
+        for path in self._endpoint_touch_paths():
+            with contextlib.suppress(OSError):
+                os.utime(path)                 # atime·mtime = 지금 (ctime 은 덤으로)
+        if fixed:
+            self._log_error(
+                "endpoint_keeper",
+                f"{why}: 사라졌거나 달라진 게시 파일을 다시 썼다 — {', '.join(fixed)}")
+            return "republished:" + ",".join(fixed)
+        return "kept"
+
+    async def _endpoint_keeper_loop(self):
+        """[`_keep_endpoint_files`] 를 주기적으로 돈다(serve 가 띄운다)."""
+        while self.running:
+            await asyncio.sleep(_ENDPOINT_KEEP_INTERVAL)
+            try:
+                await self._keep_endpoint_files("periodic")
+            except Exception:
+                self._log_error("endpoint_keeper")
+
+    def _heal_endpoint_soon(self, why: str) -> None:
+        """인증 실패가 부르는 자가 점검(빈도 제한). 토큰 파일이 정리 작업에 지워졌을
+        뿐인 서버라면 이 한 번으로 같은 토큰이 다시 게시되고, 재시도하는 클라가 붙는다
+        — attach 는 그 사이를 기다린다(`launcher.existing_server_usable`)."""
+        now = time.monotonic()
+        if now - getattr(self, "_endpoint_heal_ts", float("-inf")) \
+                < _ENDPOINT_HEAL_MIN_GAP:
+            return
+        self._endpoint_heal_ts = now
+        self._spawn(self._keep_endpoint_files(why), "endpoint_heal")
 
     # 거두기는 **두 걸음**이고, 그 사이에 bind 가 들어간다. 왜 가르나 —
     #
