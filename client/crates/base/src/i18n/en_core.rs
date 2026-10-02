@@ -354,6 +354,8 @@ pub static EN: &[(&str, &str)] = &[
     ("상태", "Status"),
     // ── screens.rs — Screen::hint ──
     ("(아무 키나 닫기 · ↑↓ 스크롤)", "(any key closes · ↑↓ scroll)"),
+    // 알림 이력(pytmux-539) — Esc 만 닫고 커서·펼치기·복사가 있다.
+    ("(↑↓ 이동 · Enter 펼치기 · c 복사 · Esc 닫기)", "(↑↓ move · Enter expand · c copy · Esc close)"),
     ("(Tab/↑↓ 고르기 · Enter 전환 · Esc 취소)", "(Tab/↑↓ choose · Enter switch · Esc cancel)"),
     ("(↑↓ 고르기 · Enter 이동 · Esc 취소)", "(↑↓ choose · Enter go · Esc cancel)"),
     ("(↑↓ 고르기 · Enter 붙여넣기 · Esc 취소)", "(↑↓ choose · Enter paste · Esc cancel)"),

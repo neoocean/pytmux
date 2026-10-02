@@ -531,7 +531,11 @@ impl Screen {
             // 안내도 스펙이 준다(플러그인이 자기 키를 안다) — 이건 폴백이다.
             Screen::PluginView => "(↑↓ 이동 · Enter 실행 · Esc 닫기)",
             Screen::Menu => "(↑↓ 고르기 · → 하위 · ← 뒤로 · Enter 실행 · Esc 취소)",
-            Screen::Notices | Screen::Hooks => "(아무 키나 닫기 · ↑↓ 스크롤)",
+            // 알림 이력은 `Esc` 만 닫고(pytmux-273 ②) 커서·`Enter` 펼치기·`c` 복사가 있다
+            // (pytmux-539). 종전 꼬리줄 「아무 키나 닫기」는 273 뒤로 거짓말이었다 — 후 화면
+            // (539 첨부)이 그 줄을 보여 줬다.
+            Screen::Notices => "(↑↓ 이동 · Enter 펼치기 · c 복사 · Esc 닫기)",
+            Screen::Hooks => "(아무 키나 닫기 · ↑↓ 스크롤)",
             Screen::Layouts => "(↑↓ 고르기 · Enter 적용 · Esc 취소)",
             Screen::Options => "(↑↓ 줄 · ←→ 값 · Enter 실행 · Esc 취소)",
             Screen::Version => "(아무 키나 닫기)",
