@@ -695,6 +695,13 @@ def main(argv):
                 if attempt == TEST_RETRIES or (hung and n_hung > TEST_TIMEOUT_RETRIES):
                     break
                 print(f"  retry {label} (시도 {attempt + 1} 실패: {last_exc})")
+                # ★ 그 시도의 실패 사유를 **리포트에도** 남긴다(pytmux-505). 재시도로
+                #   통과한 건(flaky)은 `result` 줄에 사유가 없어서, 간헐 실패의 유일한
+                #   증거(예: longrun 이 싣는 「자란 종류 상위」)가 화면 출력과 함께 사라졌다 —
+                #   `check_all` 은 그 화면을 남기지 않는다. 소비자(--report·tracker_tests)는
+                #   모르는 kind 를 건너뛰므로 이 줄은 회계를 안 바꾼다.
+                rep.emit("retry", label=label, attempt=attempt + 1,
+                         reason=str(last_exc)[:4000])
             secs = round(time.monotonic() - t0, 3)
             if was_skipped:
                 skipped += 1

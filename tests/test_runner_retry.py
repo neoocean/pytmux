@@ -51,8 +51,7 @@ def _run_control(**extra):
     ⛔ `PYTMUX_TEST_REPORT=off` 는 필수다 — 안 끄면 이 서브프로세스가 `reports/testrun.jsonl`
        에 「1 failed」 런을 한 줄 더 쌓고, 그것이 트래커로 흘러 **없는 결함**이 된다.
     """
-    env = dict(os.environ, PYTMUX_TEST_RETRY_CONTROL="1", PYTMUX_TEST_REPORT="off",
-               **extra)
+    env = dict(os.environ, PYTMUX_TEST_RETRY_CONTROL="1", PYTMUX_TEST_REPORT="off")
     env.pop("NO_COLOR", None)          # Textual 무채색 필터(CLAUDE.md §테스트)
     # 부모가 재판정 자식으로 돌고 있으면 그 값이 새어 아래 시험이 통째로 무의미해진다.
     env.pop("PYTMUX_TEST_ADJUDICATING", None)
@@ -124,3 +123,21 @@ async def test_the_load_stall_retry_survived_the_fix():
     """
     assert run.TEST_RETRIES >= 1, "일반 재시도가 꺼졌다 — 재판정의 전제가 사라진다"
     assert run.TEST_TIMEOUT_RETRIES >= 1, "부하 스톨 복구용 타임아웃 재시도가 꺼졌다"
+
+
+async def test_a_retried_attempt_leaves_its_reason_in_the_report(tmp_path=None):
+    """재시도한 시도의 실패 사유가 리포트의 `retry` 줄로 남는다(pytmux-505).
+
+    flaky 로 끝난 건은 `result` 줄에 사유가 없다 — 그래서 간헐 실패의 증거가 화면과 함께
+    사라졌다(`check_all` 은 화면을 안 남긴다). 진짜 러너를 임시 리포트 경로로 돌려 그 줄을
+    읽는다(실 `reports/testrun.jsonl` 은 안 건드린다)."""
+    import json
+    import tempfile
+    path = os.path.join(tmp_path or tempfile.mkdtemp(), "report.jsonl")
+    _run_control(PYTMUX_TEST_REPORT=path, PYTMUX_TEST_ADJUDICATE="off")
+    recs = [json.loads(ln) for ln in open(path, encoding="utf-8") if ln.strip()]
+    retries = [r for r in recs if r.get("kind") == "retry"]
+    assert retries, f"retry 줄이 없다: {[r.get('kind') for r in recs]}"
+    assert all(r.get("label") and r.get("attempt") >= 1 for r in retries), retries
+    assert any(r.get("reason") for r in retries), retries
+
