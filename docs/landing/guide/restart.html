@@ -68,8 +68,8 @@
         <p>
           클라↔서버 IPC 지연이 커지면 패널 외곽선을 <strong>빨간색</strong>으로 표시하고, 고착되면
           <code>reconnect</code>(별칭 <code>resync</code>; 또는 워치독 자동)으로 <strong>실행 중 셸/Claude 를
-          죽이지 않고</strong> IPC 만 다시 세워 반응성을 회복합니다. 지연 판정 문턱은 <strong>0.4초로 고정</strong>돼
-          있습니다(지금은 바꾸는 설정이 없습니다).
+          죽이지 않고</strong> IPC 만 다시 세워 반응성을 회복합니다. 지연 판정 문턱은 기본 <strong>0.4초</strong>이고
+          설정 파일의 <code class="nb">set net-rtt-threshold &lt;초&gt;</code>(0.05~10)로 바꿉니다 — 파이썬·GUI 클라이언트가 같은 줄을 읽습니다.
         </p>
         <p>
           빨간 외곽선과 워치독 자동 재접속은 클라이언트가 <strong>다른 머신의 서버에 TCP 로 직접</strong> 붙었을 때만

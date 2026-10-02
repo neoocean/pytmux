@@ -234,8 +234,8 @@
           Claude Code 의 Notification 훅 <code>quota_auto_resume_fired</code> 가 알립니다.)
           <code class="nb">run-shell</code> 로 부른 셸 명령이 그대로 물려받으므로 설정 파일에
           <code class="nb">hook claude-limit run-shell "notify.sh $PYTMUX_ACCOUNT"</code> 한 줄로 적어 두면 됩니다.
-          (명령 프롬프트의 <code class="nb">set-hook</code> 으로 같은 줄을 걸면 따옴표가 풀린 채 저장돼
-          <code class="nb">run-shell</code> 이 첫 단어 <code>notify.sh</code> 만 실행합니다.)
+          명령 프롬프트의 <code class="nb">set-hook claude-limit run-shell "notify.sh $PYTMUX_ACCOUNT"</code> 로 걸어도
+          따옴표가 지켜져 같은 명령으로 돕니다.
           Claude 훅은 <a href="/guide/plugins">claude-code 플러그인</a>이 있을 때만 발화합니다(디렉토리를 지우면 함께 사라집니다).
         </p>
       </section>

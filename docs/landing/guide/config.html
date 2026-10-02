@@ -30,8 +30,7 @@
           조정합니다. <code>:settings</code> 에서 바꾼 <strong>파일 설정</strong>은 설정 파일에 자동으로 되쓰기 되고
           (주석·바인딩 보존), <strong>서버 옵션</strong>(<code class="nb">window-size</code>·<code class="nb">vt-parser</code>·
           <code class="nb">exit-empty</code> 등)은 서버가 <code>opts.json</code> 에 영속합니다 — 어느 쪽이든 다시 켤 때 유지됩니다.
-          예외가 있습니다: <code class="nb">alt-scroll</code> 은 설정 파일에 적히기는 하지만 시작할 때 그 줄을 읽지 않아
-          다시 켜면 기본값(on)으로 돌아오고, <code class="nb">automatic-rename</code>·<code class="nb">monitor-activity</code>·
+          예외가 있습니다: <code class="nb">automatic-rename</code>·<code class="nb">monitor-activity</code>·
           <code class="nb">monitor-bell</code>·<code class="nb">synchronize-panes</code>·<code class="nb">pane-border-status</code> 는
           <strong>지금 보고 있는 탭에만</strong> 걸리는 상태라 <code>opts.json</code> 에 남지 않습니다.
         </p>
@@ -64,7 +63,8 @@
           <code class="nb">mode-keys</code> · <code class="nb">remote-title</code> · <code class="nb">tab-bar</code> · <code class="nb">set-titles</code> ·
           <code class="nb">set-titles-string</code> · <code class="nb">default-path</code> · <code class="nb">claude-command</code> ·
           <code class="nb">ambiguous-width</code> · <code>lang</code>(<code>language</code>) · <code class="nb">inactive-dim</code> ·
-          <code class="nb">inactive-dim-ratio</code> · <code class="nb">strip-box-drawing</code>.
+          <code class="nb">inactive-dim-ratio</code> · <code class="nb">strip-box-drawing</code> · <code class="nb">alt-scroll</code> ·
+          <code class="nb">net-rtt-threshold</code>.
           아래 표에서 <strong>(런타임)</strong> 으로 표시한 옵션과 «동작 · 고급» 표의 옵션은 파일에 적어도 읽지 않으니,
           실행 중에 명령 프롬프트나 <code>:settings</code> 로 바꿉니다.
         </div>
@@ -81,7 +81,8 @@
             <tr><td><code>mouse-drag-threshold</code></td><td><code>1~20</code> (3)</td><td>드래그로 인정할 최소 이동 칸수 — 짧은 클릭이 드래그로 오인돼 클립보드가 바뀌는 것을 막습니다(1=예전 감도)</td></tr>
             <tr><td><code>copy-unwrap</code></td><td><code>on|off</code> (on)</td><td>마우스로 긁어 복사할 때 <strong>앱이 접은</strong> 줄바꿈과 그에 딸린 들여쓰기를 펴서, 여러 줄로 보이던 명령을 바로 붙여넣을 수 있게 합니다</td></tr>
             <tr><td><code>set-clipboard</code></td><td><code>on|off</code> (on)</td><td>패널 안 앱이 OSC 52 로 보낸 복사를 이 클라이언트의 OS 클립보드에 반영</td></tr>
-            <tr><td><code>alt-scroll</code> (런타임)</td><td><code>on|off</code> (on)</td><td>on=pytmux 가 휠 스크롤백 처리 / off=터미널 기본. <code>:settings</code> 에서 바꾸면 설정 파일에 <code class="nb">set alt-scroll</code> 줄이 적히지만 시작할 때 그 줄을 읽지 않아, 다시 켜면 on 으로 돌아옵니다</td></tr>
+            <tr><td><code>alt-scroll</code></td><td><code>on|off</code> (on)</td><td>on=pytmux 가 휠 스크롤백 처리 / off=터미널 기본</td></tr>
+            <tr><td><code>net-rtt-threshold</code></td><td>초 (0.4)</td><td>클라↔서버 왕복 지연이 이 값을 넘으면 패널 외곽선을 빨갛게 합니다(0.05~10 · <a href="/guide/restart">재시작·재접속</a>). 느린 원격 링크에서 늘 빨갛다면 올립니다</td></tr>
             <tr><td><code>mode-keys</code></td><td><code>vi|emacs</code> (vi)</td><td>복사/스크롤 모드 키 스타일</td></tr>
             <tr><td><code>ambiguous-width</code></td><td><code>auto|narrow|wide</code> (auto)</td><td>CJK 모호폭 셀 크기(단말 자동 감지)</td></tr>
             <tr><td><code>tab-bar</code></td><td><code>always|auto</code> (always)</td><td>상단 탭바: 항상 / 2개 이상일 때만</td></tr>
@@ -185,8 +186,8 @@ hook alert-bell run-shell "afplay /System/Library/Sounds/Ping.aiff"</div>
           <strong>표시 · 입력 · 동작 · 상태줄 · 고급 · 키</strong> 카테고리(+ 플러그인의 Claude 카테고리)로
           묶어 보여 줍니다. 여기서 바꾼 값은 파일 설정이면 설정 파일에, 서버 옵션이면 서버 <code>opts.json</code> 에
           각각 자동 반영됩니다(지금 탭에만 걸리는 <code class="nb">automatic-rename</code>·<code>monitor-*</code>·
-          <code class="nb">synchronize-panes</code>·<code class="nb">pane-border-status</code> 는 <code>opts.json</code> 에 남지 않고,
-          <code class="nb">alt-scroll</code> 은 파일에 적히지만 다음 시작 때 읽히지 않습니다). UI 언어는 <code>lang ko|en</code>
+          <code class="nb">synchronize-panes</code>·<code class="nb">pane-border-status</code> 는 <code>opts.json</code> 에 남지 않습니다).
+          UI 언어는 <code>lang ko|en</code>
           (별칭 <code>language</code>)으로 즉시 바꾸며, 선택은 클라이언트에 저장됩니다.
         </p>
         <figure>

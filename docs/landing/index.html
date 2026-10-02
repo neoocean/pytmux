@@ -80,6 +80,17 @@
         <a class="cl-news-more" href="changes">전체 변경 내역 →</a>
       </div>
       <ul id="cl-news-list">
+        <li><span class="pill stable">설정</span> <strong>설정 화면에서 바꾼 값과 프롬프트로 건 명령이 «적힌 그대로» 먹습니다.</strong>
+          설정 화면·설정 파일·명령 프롬프트가 같은 옵션을 서로 다르게 다루던 자리를 맞췄습니다(파이썬·GUI 클라이언트).
+          <ul>
+            <li><span class="inline-code nb">alt-scroll</span> — <span class="inline-code">:settings</span> 에서 바꾸면 설정 파일에 적히는데 다음 시작 때 그 줄을 안 읽어 기본값으로 돌아왔습니다. 이제 남습니다.</li>
+            <li><span class="inline-code nb">net-rtt-threshold</span> — 빨간 외곽선(응답 지연) 문턱을 설정 파일의 <span class="inline-code nb">set net-rtt-threshold &lt;초&gt;</span> 로 바꿀 수 있습니다(기본 0.4초 · 0.05~10). 느린 원격 링크에서 늘 빨갛다면 올립니다.</li>
+            <li><span class="inline-code nb">set-hook</span> — 명령 프롬프트로 건 훅이 따옴표를 잃어 <span class="inline-code">run-shell "notify.sh $PYTMUX_ACCOUNT"</span> 가 첫 낱말만 돌았습니다. 이제 설정 파일의 <span class="inline-code">hook</span> 줄과 같은 명령으로 돕니다.</li>
+            <li><span class="inline-code nb">:set strip-box-drawing on|off</span> 가 조용히 무시되던 것, <span class="inline-code nb">layout-list</span> 가 명령 목록·자동완성에 안 뜨던 것을 고쳤습니다.</li>
+          </ul>
+          설정 화면이 파일에 쓰는 줄은 이제 전부 다음 시작 때 다시 읽히는지 시험이 하나씩 잽니다 — <a href="/guide/config">14. 설정</a>.</li>
+        <li><span class="pill stable">토큰</span> <strong>토큰 사용량 판의 경고 빨강이 다시 읽힙니다.</strong>
+          패널 앱의 표준 색을 바로잡던 변경(8월)이 판 자체의 막대·사용률 글자까지 어둡게 만들어, 5시간 한도 97% 같은 경고 값이 판 바탕 위에서 거의 안 보였습니다(대비 1.4:1). 판의 의미색을 GUI 와 같은 색으로 고정해 경고 글자가 4.5:1 이상으로 읽힙니다. 패널 안 앱의 색은 그대로입니다. 토큰 판 스크린샷 3장(기간 · 세션 · 한도)을 다시 찍었습니다 — <a href="/guide/tokens">9. 토큰 사용량</a>.</li>
         <li><span class="pill stable">Claude</span> <strong>Claude Code 가 이제 스스로 하는 일 넷을 pytmux 에서 걷었습니다.</strong>
           Claude Code 는 사용량 한도가 풀리면 열린 세션을 <strong>스스로 이어 가고</strong>(2.1.234~), 대화형 세션을 auto 권한 모드로 시작합니다(2.1.284~). 시작 규칙·피드백 문구·원격 제어 자동 연결도 자기 설정으로 다룹니다.
           겹친 채 두면 서로 방해합니다 — 예를 들어 pytmux 가 한도 리셋 시각에 대신 치던 <span class="inline-code">continue</span> 가 Claude Code 의 대기를 끊어 버립니다. 그래서 다음을 없앴고, 각각 대신 쓸 설정을 가이드에 적었습니다.
@@ -105,7 +116,7 @@
             <li><strong>스티키 프롬프트 바</strong> — 굴린 패널 첫 줄에 <span class="inline-code">▲ 명령</span> 띠가 붙고(Claude 패널이면 그 답을 끌어낸 프롬프트), 띠를 누르면 그 프롬프트 줄로 건너뜁니다. 파이썬·GUI 클라이언트에 같은 날 들어갔고, 어느 줄에 띠를 세울지는 한 벌의 규칙을 같은 사례 표로 맞대어 잽니다.</li>
             <li><strong>블록 요약 판</strong>(<span class="inline-code nb">summary</span>) — 활성 패널의 블록을 결과 표식(<span class="inline-code">ok</span>·<span class="inline-code">err</span> 등) · 명령 · 작업 디렉토리로 한 판에 보여 줍니다. GUI 에만 있던 판입니다.</li>
             <li>그 맞대기가 기존 결함을 하나 잡았습니다 — 파이썬 클라이언트에서 블록을 고르면 <strong>다음 명령의 프롬프트 줄까지 한 줄이 딸려</strong> 강조·복사되던 것을 고쳤습니다.</li>
-            <li>알려진 문제 — 파이썬 클라이언트에서 띠의 명령 글자가 파일 경로처럼 보이면 그 글자를 눌렀을 때 스크롤 대신 경로가 복사됩니다. 고칠 때까지는 띠의 빈 자리를 누르세요.</li>
+            <li>(저녁에 고침) 파이썬 클라이언트에서 띠의 명령 글자가 파일 경로처럼 보이면 그 글자를 눌렀을 때 스크롤 대신 경로가 복사되던 것 — 이제 띠는 어디를 눌러도 그 프롬프트로 가고, 띠 글자에는 경로 밑줄도 긋지 않습니다(GUI 와 같은 순서).</li>
           </ul>
           셸 블록은 셸 통합 설정이 있어야 생깁니다 — <a href="/guide/plugin/blocks">blocks 플러그인</a>.</li>
         <li><span class="pill stable">GUI</span> <strong>GUI 의 스크롤바를 끌 수 있고, RTT 그래프가 실제 값으로 그려지며, 알림 이력 판이 정본처럼 움직입니다.</strong>
@@ -116,6 +127,29 @@
             <li><strong>상태 판</strong>의 <kbd>PageUp</kbd>·<kbd>PageDown</kbd> 이 정본처럼 5줄씩 움직입니다.</li>
           </ul>
           이로써 두 클라이언트가 다르게 구는 자리를 적어 두는 목록(갈림 대장)의 「할 일」이 0 이 됐습니다 — 남은 갈림은 터미널이 못 주는 키 · 픽셀 그림 · OS 창 통합뿐입니다. <a href="gui">GUI 클라이언트 소개</a>.</li>
+        <li><span class="pill stable">표시</span> <strong><span class="inline-code nb">:set ambiguous-width</span> 가 언제나 서버까지 맞추고, <span class="inline-code">ESC[3J</span> 가 스크롤백도 비웁니다.</strong>
+          <ul>
+            <li>모호폭(한글 환경에서 폭이 애매한 글자) 설정은 클라이언트와 서버가 따로 들고 있는데, 둘이 어긋난 채로 클라이언트 값과 같은 값을 고르면 서버에 아무것도 알리지 않았습니다 — 「바꿨는데 화면이 그대로다」로만 보였습니다. 이제 이 명령은 언제나 <strong>둘을 그 값으로 맞춥니다</strong>(파이썬 클라이언트).</li>
+            <li><span class="inline-code">/clear</span> 류 명령은 화면 지우기(<span class="inline-code">ESC[2J</span>)와 함께 스크롤백 지우기(<span class="inline-code">ESC[3J</span>)를 보내는데, pytmux 가 뒤엣것을 앞엣것과 똑같이 다뤄 <strong>화면은 비었는데 위로 굴리면 옛 대화가 그대로</strong> 나왔습니다. 이제 xterm·tmux 처럼 스크롤백까지 비웁니다. 화면 격자는 서버가 관리하므로 파이썬·GUI 클라이언트 둘 다에 적용됩니다.</li>
+          </ul></li>
+        <li><span class="pill stable">문서</span> <strong>가이드·플러그인 페이지·위키를 지금 코드와 다시 맞추고(새벽·오후 두 차례), 스크린샷을 다시 찍어 내용이 달라진 것을 갈아 끼우고 새 그림을 더했습니다.</strong>
+          <ul>
+            <li><strong>새벽 갱신</strong> — 위에서 걷은 기능을 소개하던 문장을 정리하고, <a href="/guide/claude">8장</a>에 남은 Claude 보조 기능을 모은 「설정 팝업과 그 밖의 도움」 절을 새로 넣었습니다.
+              <ul>
+                <li>사실과 달랐던 것 — 공유 격자 크기 <span class="inline-code nb">window-size</span> 의 기본은 <span class="inline-code">latest</span>, Windows 마우스 이동 전달은 기본 <span class="inline-code">on</span> 입니다. <a href="/guide/install">2장</a>은 없어진 <span class="inline-code">--native</span> 대신 <span class="inline-code nb">pytmux-gui</span> 를 안내합니다.</li>
+                <li><a href="/guide/config">14장</a>에 설정 파일의 <span class="inline-code">set</span> 줄이 <strong>실제로 읽는 옵션 목록</strong>을 적고, 파일에 적어도 읽히지 않는 옵션에는 <strong>(런타임)</strong> 표시를 달았습니다. <a href="/guide/command">7장</a>의 훅 예시는 따옴표가 지켜지는 설정 파일의 <span class="inline-code">hook</span> 줄로 바꾸고, ESC 모드 표에 <kbd>c</kbd>·<kbd>f</kbd>·<kbd>b</kbd>·<kbd>Shift+ESC</kbd>·<kbd>`</kbd> 를 더했습니다.</li>
+                <li>플러그인 페이지는 명령 표를 실제 명령 목록과 맞췄고(<span class="inline-code nb">claude-usage</span>·<span class="inline-code nb">claude-auto-yes</span>·<span class="inline-code nb">claude-auto-redraw</span> 등), 블록 고르기 키 · 녹화 로그 경로 · 한/영 배지 자리(커서 줄 오른쪽 끝)를 바로잡았습니다.</li>
+                <li>스크린샷은 45장을 새로 찍어 <strong>6장</strong>만 교체했습니다 — 첫 실행 · 메뉴 2장 · 명령 목록 · Claude 설정 팝업 · 설정 팝업에서 걷은 기능의 항목이 빠졌습니다. 나머지는 박혀 있는 시계·날짜만 달랐습니다.</li>
+              </ul>
+            </li>
+            <li><strong>오후 갱신</strong> — 위의 토큰·블록·GUI 변화를 가이드와 위키 매뉴얼에 옮겼습니다.
+              <ul>
+                <li><a href="/guide/tokens">9장</a>에 탭 이동 키와 머신 이름을, <a href="/guide/plugin/blocks">blocks 플러그인 페이지</a>에 스티키 프롬프트 바 · 요약 판 · 결과 표식 표를, <a href="/guide/scrollback">5장</a>에 스티키 바 안내를 더했습니다. <a href="gui">GUI 소개</a>에는 「최근에 맞춘 것」 절을 새로 냈습니다.</li>
+                <li>위키 매뉴얼은 토큰 판 탭 표가 없어진 탭(계정 · 대사)과 옛 키를 아직 싣고 있어 지금 탭과 키로 고쳤고, 스티키 프롬프트 바 · 블록 요약 판 절과 블록 명령 표를 더했습니다.</li>
+                <li>스크린샷은 토큰 판 꼬리줄에 <kbd>Tab</kbd> 안내가 붙어 2장(기간 · 세션)을 교체했고, 스티키 프롬프트 바 · 블록 요약 판(파이썬 클라이언트)과 GUI 의 스티키 바 컷을 새로 넣었습니다.</li>
+              </ul>
+            </li>
+          </ul></li>
       </ul>
     </div>
     <div class="cta" style="margin-top:24px;">
