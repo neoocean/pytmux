@@ -360,7 +360,9 @@ async def test_account_first_seen_latched_not_overwritten():
         sess, win, p = await _claude_pane(srv)
 
         def scan(text):
-            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            # 실 PTY 는 줄 끝을 CR+LF 로 낸다(onlcr). 맨 LF 는 열을 안 되돌려서
+            # (pytmux-511 이 LNM 을 끈 뒤) 줄이 계단처럼 밀려 배지가 잘렸다(pytmux-513).
+            p.feed(b"\x1b[2J\x1b[H" + text.replace("\n", "\r\n").encode())
             srv._scan_claude(sess, win)
 
         # 새 세션 진입(None→idle) + 첫 계정 라벨
@@ -393,7 +395,9 @@ async def test_fmt_unknown_warning_surfaces_and_clears():
         srv._fg_is_claude = lambda pane: True     # ground-truth: Claude 실행 중
 
         def scan(text):
-            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            # 실 PTY 는 줄 끝을 CR+LF 로 낸다(onlcr). 맨 LF 는 열을 안 되돌려서
+            # (pytmux-511 이 LNM 을 끈 뒤) 줄이 계단처럼 밀려 배지가 잘렸다(pytmux-513).
+            p.feed(b"\x1b[2J\x1b[H" + text.replace("\n", "\r\n").encode())
             srv._scan_claude(sess, win)
 
         # 파서가 못 읽는 화면(claude_state None) + Claude fg → 포맷 미인식
@@ -471,7 +475,9 @@ async def test_fmt_unknown_throttles_fg_check():
         srv._fg_is_claude = lambda pane: (calls.append(1), True)[1]
 
         def scan(text):
-            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            # 실 PTY 는 줄 끝을 CR+LF 로 낸다(onlcr). 맨 LF 는 열을 안 되돌려서
+            # (pytmux-511 이 LNM 을 끈 뒤) 줄이 계단처럼 밀려 배지가 잘렸다(pytmux-513).
+            p.feed(b"\x1b[2J\x1b[H" + text.replace("\n", "\r\n").encode())
             srv._scan_claude(sess, win)
 
         scan("garbled a")       # 첫 미인식 → fg 검사 1회
@@ -505,7 +511,9 @@ async def test_model_latch_kept_on_transient_flap_reset_on_real_restart():
         srv._usage = {"model": "sonnet-5"}         # 프로브 기본값(별도 세션)
 
         def scan(text):
-            p.feed(b"\x1b[2J\x1b[H" + text.encode())
+            # 실 PTY 는 줄 끝을 CR+LF 로 낸다(onlcr). 맨 LF 는 열을 안 되돌려서
+            # (pytmux-511 이 LNM 을 끈 뒤) 줄이 계단처럼 밀려 배지가 잘렸다(pytmux-513).
+            p.feed(b"\x1b[2J\x1b[H" + text.replace("\n", "\r\n").encode())
             srv._scan_claude(sess, win)
 
         idle_badge = ("output line\n⏵⏵ auto mode on (shift+tab to cycle)\n"

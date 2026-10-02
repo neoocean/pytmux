@@ -58,6 +58,26 @@ async def _live_objects():
     return len(gc.get_objects())
 
 
+def _type_counts():
+    """산 객체를 **종류별로** 센다(모듈까지 붙인 이름 — 같은 이름의 다른 클래스를 안 섞는다).
+
+    ★ 실패할 때 「무엇이 자랐나」를 이름으로 남기려고 있다(pytmux-505). 그 실패는 전체
+    스위트에서만 간헐적으로 나고(격리·26모듈 재현은 2026-10-02 에 초록), 종전 메시지는
+    **개수만** 적어서 다음 사람이 같은 조합을 다시 찾아 계측부터 해야 했다."""
+    from collections import Counter
+    gc.collect()
+    c = Counter()
+    for o in gc.get_objects():
+        t = type(o)
+        c[f"{t.__module__}.{t.__qualname__}"] += 1
+    return c
+
+
+def _top_growth(before, after, n=8):
+    grown = (after - before).most_common(n)
+    return ", ".join(f"{k} +{v}" for k, v in grown) or "(종류별 증가 없음)"
+
+
 async def _cycle(pilot):
     """사용자가 하루에 수백 번 하는 일 — 팔레트를 열고 닫는다."""
     await pilot.press("escape", "question_mark")
@@ -94,9 +114,11 @@ async def test_reopening_a_modal_screen_saturates_instead_of_accumulating():
             for _ in range(WARMUP):
                 await _cycle(pilot)
             warm = await _live_objects()
+            warm_types = _type_counts()
             for _ in range(WINDOW):
                 await _cycle(pilot)
             after = await _live_objects()
+            after_types = _type_counts()
     finally:
         await teardown(srv, task, sock)
 
@@ -106,7 +128,8 @@ async def test_reopening_a_modal_screen_saturates_instead_of_accumulating():
         f"누적이다. 다음 {WINDOW}회에 +{after - warm}개 = 사이클당 {per_cycle:.0f}개 "
         f"(상한 {MAX_GROWTH_PER_CYCLE}). 파이썬 GC 는 산 객체를 전부 훑으므로 이 증가는 "
         f"곧 단일 스레드 루프의 «정지»가 되고, 며칠이면 사람 눈에 보인다 "
-        f"(pytmux-382 · 문서 pytmux/pytmux-382-measured-2026-08-25)")
+        f"(pytmux-382 · 문서 pytmux/pytmux-382-measured-2026-08-25). "
+        f"자란 종류 상위: {_top_growth(warm_types, after_types)} (pytmux-505)")
 
 
 async def test_the_strip_cache_count_is_a_multiple_of_the_strip_count():

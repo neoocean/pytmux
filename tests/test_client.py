@@ -593,16 +593,16 @@ async def test_ambiguous_width_always_notifies_the_server(tmp_path=None):
                 # ⑴ 실제로 바뀌는 전환은 당연히 통지한다(대조군 — 이게 없으면 ⑵ 가
                 #    「통지 경로가 아예 살아 있나」를 못 가른다).
                 app._apply_ambiguous_wide(True)
-                await pilot.pause(0.3)
+                await wait_until(pilot, lambda: [m for m in sent if m["wide"] is True])
                 assert [m for m in sent if m["wide"] is True], \
                     "바뀌는 전환조차 통지가 안 갔다 — 통지 경로 자체가 죽었다"
                 # ⑵ 클라가 **이미** narrow 인데 narrow 를 다시 걸어도 통지가 가야 한다.
                 app._apply_ambiguous_wide(False)
-                await pilot.pause(0.3)
+                await wait_until(pilot, lambda: [m for m in sent if m["wide"] is False])
                 assert cellwidth.ambiguous_wide() is False
                 sent.clear()
                 app._apply_ambiguous_wide(False)       # 같은 값 재적용
-                await pilot.pause(0.3)
+                await wait_until(pilot, lambda: [m for m in sent if m["wide"] is False])
                 assert [m for m in sent if m["wide"] is False], (
                     "클라 값이 같다고 서버에 안 알렸다 — 서버가 wide 면 사용자가 "
                     "이 명령으로 영영 못 고친다(pytmux-507)")
