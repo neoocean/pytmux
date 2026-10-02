@@ -1174,11 +1174,13 @@ class ServerIOMixin:
         tr = getattr(c.writer, "transport", None)
         if tr is not None:
             try:
-                if tr.get_write_buffer_size() > _CLIENT_WRITE_HIGH_WATER:
-                    self._drop_slow_client(c)
-                    return
+                buffered = tr.get_write_buffer_size()
             except Exception:
-                pass
+                buffered = None
+            if buffered is not None and buffered > _CLIENT_WRITE_HIGH_WATER:
+                self._drop_slow_client(
+                    c, f"송신 버퍼 {buffered}B > 상한 {_CLIENT_WRITE_HIGH_WATER}B")
+                return
         # lock 획득 자체도 타임아웃으로 감싼다: _send_full 등이 먹통 클라의 drain 에서
         # write_lock 을 오래 쥐면(무제한 drain) 여기 acquire 가 무한 대기해 flush 루프
         # 전체가 프리즈한다. 타임아웃 시 클라를 떨구면 writer.close 로 쥔 쪽 drain 이
@@ -1186,22 +1188,45 @@ class ServerIOMixin:
         try:
             await asyncio.wait_for(c.write_lock.acquire(), _CLIENT_WRITE_TIMEOUT)
         except asyncio.TimeoutError:
-            self._drop_slow_client(c)
+            self._drop_slow_client(
+                c, f"write_lock 을 {_CLIENT_WRITE_TIMEOUT:g}초 안에 못 잡았다"
+                   "(다른 쓰기가 그 클라의 drain 에 묶여 있다)")
             return
         try:
             await asyncio.wait_for(
                 write_frames(c.writer, frames), _CLIENT_WRITE_TIMEOUT)
-        except (asyncio.TimeoutError, OSError, ConnectionError):
-            self._drop_slow_client(c)
+        except asyncio.TimeoutError:
+            self._drop_slow_client(
+                c, f"프레임 write+drain 이 {_CLIENT_WRITE_TIMEOUT:g}초를 넘었다")
+        except (OSError, ConnectionError) as e:
+            self._drop_slow_client(c, f"쓰기 실패: {type(e).__name__}: {e}")
         finally:
             c.write_lock.release()
 
-    def _drop_slow_client(self, c: ClientConn):
+    def _drop_slow_client(self, c: ClientConn, why: str = ""):
         """느린 소비자를 브로드캐스트 대상에서 즉시 제거하고 연결을 닫는다(H-2).
-        handle_client 의 finally 가 곧 reader 정리를 마저 한다(close 는 멱등)."""
+        handle_client 의 finally 가 곧 reader 정리를 마저 한다(close 는 멱등).
+
+        ★ 기록은 **진단 한 줄**이지 트레이스백이 아니다(pytmux-515). 이 함수는 대개
+        `except asyncio.TimeoutError:` 안에서 불려, 종전 `_log_error` 가 그 시한초과
+        사슬(`CancelledError` → `TimeoutError`)을 **크래시처럼** 적었다 — QA 의
+        `server/no_traceback` 오라클이 그것을 S1 결함으로 올렸다. 떼어 내기는 설계된
+        경로(백프레셔)라 예외가 아니다. 대신 **왜·누구를** 적는다 — 종전 기록에는 그
+        둘이 없어서 「누가 왜 느렸나」를 다음 판에 짚을 수 없었다."""
         if c in self.clients:
             self.clients.remove(c)
-            self._log_error("slow client dropped (write backpressure)")
+            # ⛔ 여기서 터지면 안 된다 — 이 함수는 쓰기 실패의 `except` 안에서 불린다.
+            #    그래서 칸을 직접 안 읽고 getattr 로 읽는다(연결 객체의 모양이 달라도 산다).
+            seen = getattr(c, "last_seen", 0) or 0
+            age = time.monotonic() - seen if seen else None
+            caps = sorted(str(x) for x in (getattr(c, "caps", None) or ()))
+            self._log_error(
+                "slow client dropped (write backpressure)",
+                f"why={why or '미상'} · 크기 {getattr(c, 'cols', '?')}x"
+                f"{getattr(c, 'rows', '?')} · 마지막 수신 "
+                f"{f'{age:.1f}초 전' if age is not None else '없음'} · "
+                f"능력 {len(caps)}개({', '.join(caps[:6])}{' …' if len(caps) > 6 else ''})",
+                exc=False)
         with contextlib.suppress(OSError, ConnectionError):
             c.writer.close()
 
@@ -1487,7 +1512,7 @@ class ServerIOMixin:
                 resp["_req_token"] = msg["_req_token"]
             await self._send_to(client, resp)
 
-    def _log_error(self, where: str, detail: str = ""):
+    def _log_error(self, where: str, detail: str = "", exc: bool = True):
         """방금 처리 중인 예외의 트레이스백을 `<sock>.error.log` 에 append 한다.
 
         detail 이 주어지면(예외 아닌 진단 로그 — claude_format_unrecognized 가 미인식
@@ -1499,7 +1524,10 @@ class ServerIOMixin:
         attach 가 _send_full 에서 터지면 화면이 일부만 그려진 채 연결이 끊겨(클라가
         '일부 나타났다 바로 종료') 이후 모든 attach 가 같은 상태로 브릭되는데,
         호출부가 이걸 잡아 로그를 남기고 계속 진행하게 해 자가복구한다. 로깅 자체는
-        절대 실패를 전파하지 않는다(best-effort)."""
+        절대 실패를 전파하지 않는다(best-effort).
+
+        `exc=False` 면 트레이스백을 안 적는다 — **설계된 경로**(예: 느린 클라 떼어
+        내기)가 `except` 안에서 부를 때 그 예외가 크래시처럼 남지 않게(pytmux-515)."""
         try:
             path = ipc.state_base(self.sock_path) + ".error.log"
             stamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1507,7 +1535,8 @@ class ServerIOMixin:
                 f.write(f"\n==== {stamp} [{where}] ====\n")
                 if detail:
                     f.write(detail + "\n")
-                f.write(traceback.format_exc())
+                if exc:
+                    f.write(traceback.format_exc())
         except Exception:
             pass
 

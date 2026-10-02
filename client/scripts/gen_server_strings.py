@@ -179,7 +179,9 @@ def _wire_producers(root):
     # 소켓으로 **안** 나가는 자리 — 진단 로그다. 위 닫힘이 `serverio` 의 프레임 함수들을
     # 정당하게 끌어오는데, 그 안의 `_log_error("어디", "한국어")` 까지 세면 게이트가
     # "카탈로그로 옮겨라"라고 틀린 처방을 낸다(그 글은 사람이 읽는 로그 파일로 간다).
-    sinks = ("_log_error", "print")
+    # `_drop_slow_client(c, why)` 의 `why` 도 그 로그로만 간다(pytmux-515 — 떼는 까닭을
+    # 진단 줄에 싣는 인자다).
+    sinks = ("_log_error", "print", "_drop_slow_client")
 
     def sink_nodes(body):
         out = set()
