@@ -107,12 +107,39 @@
         배선이 통째로 빠진 것은 <strong>실제로 띄워 찍은 그림</strong>이라야 잡힙니다. 위의 <strong>알파</strong>는 그 뜻입니다 —
         표는 채웠지만 <strong>손에 익을 만큼 다듬지는 못했습니다</strong>.
       </p>
+      <p>
+        그래서 지금은 「기능이 있다」보다 한 걸음 더 나아가 <strong>「정본과 같게 군다」</strong>를 잽니다.
+        같은 기능이면 <strong>키 반응 · 취소 조건 · 포커스 이동</strong>이 정본과 같아야 하고, 다르게 굴어도 되는 자리는 셋뿐입니다 —
+        터미널이 줄 수 없는 키, 픽셀 단위 그림, OS 창 통합. 두 클라이언트가 다르게 구는 자리를 한 줄씩 적어 두는 목록(갈림 대장)이 있고,
+        <strong>2026-10-02 에 그 목록의 「할 일」이 0 이 됐습니다</strong> — 남은 25줄은 모두 위의 세 가지에 드는 허용된 갈림입니다.
+      </p>
+    </section>
+
+    <section>
+      <h2>최근에 맞춘 것 (2026-10-02)</h2>
+      <ul>
+        <li><strong>정본과 같게 군 것</strong>
+          <ul>
+            <li>토큰 사용량 판 — <span class="inline-code">Tab</span>·<span class="inline-code">Shift+Tab</span> 은 언제나 이웃 탭, <span class="inline-code">←→</span> 는 그 줄에 다른 뜻이 없을 때 이웃 탭입니다. 정본에서는 이 키가 판을 닫아 버려, <strong>정본에 먼저</strong> 넣고 같은 날 GUI 를 맞췄습니다.</li>
+            <li>스티키 프롬프트 바 — 위로 굴린 패널 첫 줄에 지금 보는 출력의 명령(Claude 패널이면 프롬프트)이 붙고, 누르면 그 자리로 건너뜁니다. 두 클라이언트에 같은 날 들어갔고, 어느 줄에 띠를 세울지는 <strong>한 벌의 규칙</strong>을 같은 사례 표로 맞대어 잽니다.</li>
+            <li>블록 요약 판(<span class="inline-code nb">summary</span>) — GUI 에만 있던 판을 정본에도 들였습니다. 결과 표식(<span class="inline-code">ok</span>·<span class="inline-code">err</span> 등)이 두 클라이언트에서 같습니다.</li>
+            <li>알림 이력 판 — 커서로 고르고 <span class="inline-code">Enter</span> 로 전문을 펼치고 <span class="inline-code">c</span> 로 복사합니다(정본과 같음). 상태 판의 <span class="inline-code">PageUp</span>·<span class="inline-code">PageDown</span> 도 정본처럼 5줄씩 움직입니다.</li>
+          </ul>
+        </li>
+        <li><strong>GUI 답게 그린 것</strong>(픽셀 그림 — 허용된 갈림)
+          <ul>
+            <li>RTT 그래프 — 글자 칸을 8단계로 칠하던 막대를 <strong>실제 값에 비례하는 픽셀 막대</strong>로 바꿨습니다. 임계는 점선, 측정이 없던 구간은 바닥의 점으로 그립니다. 터미널 클라이언트의 글자 그래프는 그대로입니다.</li>
+            <li>스크롤바 — 보이기만 하던 오른쪽 막대를 <strong>잡아 끌 수 있고</strong>, 막대 바깥 트랙을 누르면 그 비율 자리로 건너뜁니다.</li>
+            <li>토큰 사용량 판 — 탭을 옮겨도 <strong>판의 높이가 그대로</strong>입니다(내용이 짧은 탭에서 창이 줄어들던 것).</li>
+          </ul>
+        </li>
+      </ul>
     </section>
 
     <section>
       <h2>지금 화면</h2>
       <p>
-        아래는 <strong>2026-08-02 소스로 이 자리에서 직접 띄워 찍은</strong> 그림입니다(macOS).
+        아래는 <strong>이 자리에서 직접 띄워 찍은</strong> 그림입니다(macOS) — 앞의 넷은 2026-08-02 소스, 마지막 하나는 2026-10-02 소스입니다.
         연출한 합성 화면이 아니라 실제로 서버에 붙어 돌던 창입니다.
       </p>
 
@@ -134,6 +161,11 @@
       <figure>
         <img src="image/gui-04-calendar.png" alt="pytmux GUI — 달력 오버레이가 패널을 덮은 화면">
         <figcaption>달력 오버레이 — <strong>서버가 그린 화면</strong>이 그대로 GUI 에 뜬 것입니다(<a href="changes#d-2026-08-02">2026-08-02</a>). 플러그인 한 벌이 두 클라이언트 모두에 뜹니다.</figcaption>
+      </figure>
+
+      <figure>
+        <img src="image/gui-05-sticky.png" alt="pytmux GUI — 위로 굴린 패널 첫 줄의 스티키 프롬프트 바와 오른쪽 스크롤바">
+        <figcaption>스티키 프롬프트 바 — 위로 굴린 패널 첫 줄의 <span class="inline-code">▲ ./build.sh</span> 가 지금 보는 컴파일 출력의 명령입니다. 오른쪽 끝의 막대는 이제 잡아 끌 수 있습니다(<a href="changes#d-2026-10-02">2026-10-02</a>).</figcaption>
       </figure>
     </section>
 

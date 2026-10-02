@@ -344,6 +344,9 @@ section { padding: 64px 0; }
 .doc .cl-day h2 { font-size: 24px; margin: 30px 0 4px; padding-top: 14px; }
 .doc .cl-day ul { margin: 8px 0 0; }
 .doc .cl-day li { margin-bottom: 6px; line-height: 1.5; }
+/* 하위 요소는 «들여쓴 목록»으로 싣는다(2026-10-02 · `<br>·` 흉내 대신) — 위 항목에 붙어 보이게 간격을 줄인다. */
+.doc .cl-day li > ul { margin: 6px 0 6px; padding-left: 22px; }
+.doc .cl-day li li { margin-bottom: 4px; }
 
 /* ── 최근 수정사항 프리뷰(랜딩) — 최신 날짜 하나를 한 덩어리로 묶은 박스 ── */
 .cl-news {
@@ -365,4 +368,7 @@ section { padding: 64px 0; }
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .cl-news li strong { color: var(--text); }
+/* 미리보기는 항목마다 세 줄로 자른다 — 그런데 줄 수 자르기(line-clamp)는 하위 목록(블록)에 먹지 않아
+   들여쓴 하위 항목이 글머리표 없이 다 펼쳐진다(2026-10-02 실측). 미리보기에서는 하위 목록을 걷는다. */
+.cl-news li ul { display: none; }
 .cl-news li .pill { margin-left: 0; margin-right: 4px; }
