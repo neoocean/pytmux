@@ -347,8 +347,12 @@ def steps():
             # 그것을 FAIL 로 찍으면 매번 빨간 줄이 하나 상주하고, 상주하는 빨간 줄은
             # 곧 아무도 안 본다 — SKIP 은 요약에 사유와 함께 반드시 남는다(아래 '건너뜀').
             # `미러 위생`(check_mirror.py)이 이미 같은 판정을 스스로 한다.
+            # ⚠ 그 사유 줄이 곧 **빚의 입구**다(pytmux-196) — 여기서 낸 CL 은 git 에 안
+            #   간다. 그래서 무엇을 해야 하는지까지 적는다.
             needs=lambda: (None if os.path.isdir(os.path.join(ROOT, ".git"))
-                           else "git 클론이 아니다 — 미러는 다른 워크스페이스에서 본다"),
+                           else "git 클론이 아니다 — 여기서 제출한 CL 은 git 에 안 간다. "
+                                "git 클론이 있는 상자에서 "
+                                "`python3 scripts/publish_check.py --catch-up --push`"),
             # ★ **이 SKIP 만 정당하다**(검수 2026-09-05 C-3): p4 전용 워크스페이스에는
             # 잴 것이 아예 없다. 나머지 여덟(bash·cargo·client 부재)은 「도구가 없어서
             # 못 쟀다」이고, 그것을 rc 0 으로 접으면 «전부 통과» 한 줄이 거짓이 된다.

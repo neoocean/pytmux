@@ -562,3 +562,83 @@ async def test_existence_check_uses_the_real_filter_not_a_stub():
     assert calls, "check_existence 가 gitignore 필터를 아예 안 불렀다"
     assert calls[0] == ["captures/a.log.gz"], calls
     assert rc == 0, "\n".join(out)
+
+
+# ── `--catch-up`(pytmux-196·197) — 미러 빚을 한 명령으로 ─────────────────────
+#
+# 빚의 입구는 git 클론이 없는 p4 전용 워크스페이스에서 낸 CL 이다. 야간 감시가 그것을
+# 매일 잡았고 사람이 손으로 `git add/commit/push` 를 했다. 캐치업은 **같은 측정**으로
+# p4 가 정본인 쪽만 git 에 담는다.
+
+def _catch_up(mapping, ignored=(), **kw):
+    calls = []
+    inner = _fake_run(mapping)
+
+    def run(cmd, cwd=ROOT):
+        calls.append(list(cmd))
+        return inner(cmd, cwd)
+    old_run, old_ign = pc.run, pc.git_ignored
+    pc.run = run
+    pc.git_ignored = lambda paths: {p for p in paths if p in ignored}
+    out = []
+    try:
+        rc = pc.catch_up(out=out.append, **kw)
+    finally:
+        pc.run, pc.git_ignored = old_run, old_ign
+    return rc, "\n".join(out), calls
+
+
+_DEBT = {**_CLEAN,
+         "git status --porcelain": (0, " M pytmuxlib/server.py\n"),
+         "p4 files ./...": (0, _files(("pytmuxlib/server.py", "edit"),
+                                      ("pytmuxlib/onlyp4.py", "add"))),
+         "git ls-files": (0, "pytmuxlib/server.py\n"),
+         "p4 files " + ROOT: (0, "//woojinkim/scripts/pytmux/pytmuxlib/onlyp4.py#1 - add "
+                                 "change 77159 (text)\n"
+                                 "//woojinkim/scripts/pytmux/pytmuxlib/server.py#9 - edit "
+                                 "change 77160 (text)\n")}
+
+
+async def test_catch_up_commits_exactly_the_p4_side_paths():
+    rc, text, calls = _catch_up(_DEBT)
+    assert rc == 0, text
+    adds = [c for c in calls if c[:2] == ["git", "add"]]
+    commits = [c for c in calls if c[:2] == ["git", "commit"]]
+    assert adds and adds[0][-2:] == ["pytmuxlib/onlyp4.py", "pytmuxlib/server.py"], calls
+    # ★ 경로를 못박아 커밋한다 — 공유 인덱스의 남의 스테이징을 쓸어 담지 않는다.
+    assert commits and commits[0][-3:] == ["--", "pytmuxlib/onlyp4.py",
+                                           "pytmuxlib/server.py"], commits
+    msg = commits[0][commits[0].index("-m") + 1]
+    assert "77159" in msg and "77160" in msg, msg
+    # 미는 것은 명시할 때만이다.
+    assert not [c for c in calls if c[:2] == ["git", "push"]], calls
+    assert "git push origin main" in text, text
+
+
+async def test_catch_up_pushes_only_when_asked():
+    rc, text, calls = _catch_up(_DEBT, push=True)
+    assert rc == 0, text
+    assert [c for c in calls if c[:2] == ["git", "push"]], calls
+
+
+async def test_catch_up_refuses_a_behind_clone():
+    """뒤처진 HEAD 위에 커밋하면 밀 때 갈라진다 — 처방만 말하고 아무것도 안 담는다."""
+    rc, text, calls = _catch_up({**_DEBT, "git rev-list --count": (0, "3\n")})
+    assert rc == pc.RC_STALE, text
+    assert not [c for c in calls if c[:2] in (["git", "add"], ["git", "commit"])], calls
+
+
+async def test_catch_up_leaves_git_to_p4_debt_for_a_numbered_cl():
+    """반대 방향(git 에만 있는 내용)은 p4 번호 CL 이 필요하다 — 담지 않고 알린다."""
+    rc, text, calls = _catch_up({**_CLEAN,
+                                 "p4 diff -se": (0, f"{ROOT}/.gitignore\n")})
+    assert rc == 1, text
+    assert "p4 미제출" in text, text
+    assert not [c for c in calls if c[:2] == ["git", "commit"]], calls
+
+
+async def test_the_p4_only_skip_reason_names_the_remedy():
+    """빚의 입구(p4 전용 워크스페이스)가 SKIP 사유에 처방을 적는다."""
+    src = open(os.path.join(os.path.dirname(HERE), "scripts", "check_all.py"),
+               encoding="utf-8").read()
+    assert "publish_check.py --catch-up" in src

@@ -9,6 +9,7 @@
 
     python3 scripts/publish_check.py            # 미러 드리프트 점검
     python3 scripts/publish_check.py --cl 66940 # 그 CL 이 내 파일만 담았는지(부정 게이트)
+    python3 scripts/publish_check.py --catch-up # p4 에만 게시된 것을 git 커밋으로 담는다(+ --push)
 
 드리프트 판정 원리(값싼 명령 두 개로 양방향):
   · `p4 diff -se` = 열지 않았는데 depot 과 **내용이 다른** 파일.
@@ -541,6 +542,116 @@ def check_mirror(out=print, remote=True, pre_push=False):
     return 0
 
 
+# `--catch-up` 이 git 에 담는 갈래 — **p4 가 정본인 쪽**만이다. 반대 방향(git 에만 있는
+# 내용·파일)은 p4 번호 CL 이 필요해 사람(또는 그 세션)의 몫으로 남긴다.
+CATCH_UP_KINDS = ("git-unpushed-content", "depot-only-files")
+
+
+def _changes_of(paths, batch=50):
+    """그 파일들의 depot 머리 리비전을 낸 CL 번호들(오름차순 문자열). 못 읽으면 빈 목록."""
+    found = set()
+    for i in range(0, len(paths), batch):
+        chunk = [os.path.join(ROOT, p) for p in paths[i:i + batch]]
+        rc, txt = run(["p4", "files", *chunk])
+        if rc:
+            continue
+        for ln in txt.splitlines():
+            _, _, action = ln.partition(" - ")
+            words = action.split()
+            for j, w in enumerate(words[:-1]):
+                if w == "change" and words[j + 1].isdigit():
+                    found.add(int(words[j + 1]))
+    return [str(n) for n in sorted(found)]
+
+
+def catch_up(out=print, remote=True, push=False):
+    """**p4 에만 게시된 것을 git 커밋으로 담는다** — 미러 빚을 한 명령으로 갚는다
+    (pytmux-196·197).
+
+    # 왜 있나
+
+    빚이 쌓이는 입구는 하나다: **git 클론이 없는 p4 전용 워크스페이스**(office·alienware)
+    에서 제출한 CL. 거기서는 이 게이트가 잴 것이 없어 SKIP 하고, 아무도 git 에 안 민다.
+    야간 감시(`qa/repo.py`)가 playground 에서 그것을 매일 잡았다(196 이 281회 · 197 이
+    81회) — 그때마다 사람이 파일 목록을 보고 `git add/commit/push` 를 손으로 했다. 그
+    손일을 한 명령으로 줄인 것이 이 함수다. 판정은 **같은 측정**(`measure_drift`)을 쓴다 —
+    감시·게이트·캐치업이 서로 다른 술어로 묻지 않게.
+
+    # 지키는 것
+
+    - 기준선이 **로컬 HEAD == origin/main** 일 때만 한다. 뒤처진 HEAD 위에 커밋하면 밀 때
+      갈라진다(그때는 처방만 말하고 멈춘다).
+    - `git commit -- <경로들>` — **그 경로만** 담는다. 공유 워크스페이스라 인덱스에 남의
+      스테이징이 있을 수 있다.
+    - p4 쪽(열린 파일·depot)은 **안 건드린다.** git→p4 방향의 빚은 보고만 한다.
+    - 미는 것(`--push`)은 명시할 때만이다 — 바깥으로 나가는 일이라 기본은 커밋까지.
+    """
+    rc, head = run(["git", "rev-parse", "HEAD"])
+    if rc:
+        out("✗ git 저장소가 아니다 — 캐치업은 git 클론이 있는 상자에서 돈다")
+        return 1
+    stale, unmeasured, baseline = measure_freshness(remote=remote)
+    if stale or baseline:
+        out("✗ 로컬 HEAD 가 origin/main 과 같을 때만 캐치업한다(뒤처진 HEAD 위에 커밋하면 "
+            "밀 때 갈라진다):")
+        for s in stale:
+            out(f"    {s['what']} — {s['detail']}")
+            out(f"      → {s['fix']}")
+        if baseline:
+            out(f"    {baseline['what']} — {baseline['detail']}")
+            out(f"      → {baseline['fix']}")
+        return RC_STALE
+    if unmeasured:
+        for u in unmeasured:
+            out(f"· 못 쟀다 — {u['what']}: {u['detail']}")
+        out("✗ 기준선을 못 재서 캐치업하지 않는다")
+        return RC_STALE
+    drifts, _wip, dunmeasured = measure_drift()
+    if dunmeasured:
+        for u in dunmeasured:
+            out(f"· 못 쟀다 — {u['what']}: {u['detail']}")
+        out("✗ 드리프트를 다 못 재서 캐치업하지 않는다")
+        return RC_STALE
+    paths = sorted({p for d in drifts if d["kind"] in CATCH_UP_KINDS
+                    for p in d["items"]})
+    left = [d for d in drifts
+            if d["kind"] not in CATCH_UP_KINDS and d["kind"] != "git-unpushed-commits"]
+    if paths:
+        cls = _changes_of(paths)
+        msg = (f"미러 캐치업: p4 에만 게시돼 있던 {len(paths)}개 파일"
+               f" (p4 {'·'.join(cls) if cls else '?'})")
+        rc, txt = run(["git", "add", "--", *paths])
+        if rc:
+            out(f"✗ git add 실패: {txt.strip()[:200]}")
+            return 1
+        rc, txt = run(["git", "commit", "-m", msg, "--", *paths])
+        if rc:
+            out(f"✗ git commit 실패: {txt.strip()[:200]}")
+            return 1
+        out(f"✓ {msg}")
+        for p in paths[:20]:
+            out(f"    {p}")
+        if len(paths) > 20:
+            out(f"    … 외 {len(paths) - 20}개")
+    else:
+        out("✓ git 에 담을 p4 쪽 빚이 없다")
+    if paths or any(d["kind"] == "git-unpushed-commits" for d in drifts):
+        if push:
+            rc, txt = run(["git", "push", "origin", "HEAD:main"])
+            if rc:
+                out(f"✗ git push 실패: {txt.strip()[:200]}")
+                return 1
+            out("✓ origin/main 에 밀었다")
+        else:
+            out("  → 밀기: git push origin main (또는 --push)")
+    for d in left:
+        render_drift(d, out=out)
+    if left:
+        out("  ⚠ 위 갈래는 p4 번호 CL 이 필요해 캐치업이 안 담는다")
+        return 1
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="p4↔git 게시 게이트 — rc 0(깨끗)/1(빚)/2(기준선이 낡아 못 쟀다)")
@@ -550,9 +661,16 @@ def main(argv=None):
     ap.add_argument("--pre-push", action="store_true",
                     help="git-unpushed-commits 갈래를 안 잰다(issue/pytmux-267) — "
                          "pre-push 훅 전용. push 직전엔 그 갈래가 언제나 참인 동어반복이다")
+    ap.add_argument("--catch-up", action="store_true",
+                    help="p4 에만 게시된 내용·파일을 git 커밋으로 담는다(pytmux-196·197) — "
+                         "로컬 HEAD == origin/main 일 때만")
+    ap.add_argument("--push", action="store_true",
+                    help="--catch-up 뒤 origin/main 에 민다(명시할 때만)")
     a = ap.parse_args(argv)
     if a.cl:
         return check_cl(a.cl)
+    if a.catch_up:
+        return catch_up(remote=not a.no_remote, push=a.push)
     return check_mirror(remote=not a.no_remote, pre_push=a.pre_push)
 
 
