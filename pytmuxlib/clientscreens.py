@@ -3136,7 +3136,11 @@ class ChooseBufferScreen(ModalScreen):
         self._items = items
 
     def compose(self) -> ComposeResult:
-        rows = [ListItem(Label(f"{it['i']}: {it['preview']}"), id=f"b{it['i']}")
+        # 미리보기·이름은 **서버가 보낸 글**이다 — 마크업으로 읽으면 `[/x]` 한 통에
+        # compose 가 MarkupError 로 죽고 `[@click=app.quit]` 은 살아 있는 동작 링크가
+        # 된다(검수 2026-09-04 S2). 아래 두 피커도 같다.
+        rows = [ListItem(Label(f"{it['i']}: {it['preview']}", markup=False),
+                         id=f"b{it['i']}")
                 for it in self._items] or [ListItem(
                     Label(i18n.t("screen.no_buffers")), id="bnone")]
         yield ListView(*rows, id="buf")
@@ -3787,7 +3791,7 @@ class ChooseLayoutScreen(ModalScreen):
         self._title = title if title is not None else i18n.t("screen.layout_load")
 
     def compose(self) -> ComposeResult:
-        rows = [ListItem(Label(nm), id=f"L{i}")
+        rows = [ListItem(Label(nm, markup=False), id=f"L{i}")
                 for i, nm in enumerate(self._names)] or \
                [ListItem(Label(i18n.t("screen.no_layouts")), id="Lnone")]
         lv = ListView(*rows, id="lay")
@@ -3839,7 +3843,8 @@ class MergeRemoteTabScreen(ModalScreen):
         return i18n.t("screen.merge_remote_title", dir=d)
 
     def compose(self) -> ComposeResult:
-        rows = [ListItem(Label(f"{it['i'] + 1}: {it['name']}"), id=f"m{it['i']}")
+        rows = [ListItem(Label(f"{it['i'] + 1}: {it['name']}", markup=False),
+                         id=f"m{it['i']}")
                 for it in self._items]
         lv = ListView(*rows, id="mrt")
         lv.border_title = self._title()

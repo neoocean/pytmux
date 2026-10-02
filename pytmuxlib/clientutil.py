@@ -764,6 +764,62 @@ def harden_no_color_filters(app) -> int:
     return n
 
 
+# ── 서버가 지은 글의 제어 문자를 **단말에 닿기 전** 한 자리에서 막는다 ──────────────
+#
+# 검수 2026-09-04 S1(문서 `pytmux/client-reports-2026-09-04-python-tui-client-security-review`):
+# 패널 셀·탭 이름·Tier C 제목·알림 등 **서버가 보낸 글**이 ESC·C1 을 품은 채 Rich
+# `Segment` 로 단말에 그대로 쓰였다 — Textual·Rich 는 BEL 만 거르고 ESC·CSI·C1 은 남긴다.
+# 그래서 오염된 상류가 `ESC]52;c;…` 로 사용자의 클립보드를 덮거나 대체 화면을 뒤집을 수
+# 있었다. 위젯마다 막으면 다음 위젯이 또 샌다 — Textual 의 **줄 필터**는 모든 위젯의
+# 렌더된 줄(테두리 제목 포함)을 지나므로 그 한 자리에 건다.
+# 치환은 **같은 폭의 눈에 보이는 기호**다(C0 → U+2400 대, DEL → ␡, C1 → ␦) — 지우면
+# 그 줄의 칸 수가 바뀌어 격자가 밀린다(폭 계산은 그 글자를 이미 1칸으로 셌다).
+# ⛔ 이 앱은 단말 제어를 `Segment` 글로 내지 않는다(그런 일은 `_term_write` 가 드라이버에
+#    직접 쓴다) — 그래서 이 필터가 정당한 출력을 지울 일은 없다.
+_CTRL_CHARS_RE = re.compile("[\x00-\x1f\x7f-\x9f]")
+
+
+def _ctrl_picture(m) -> str:
+    c = ord(m.group())
+    if c < 0x20:
+        return chr(0x2400 + c)
+    return "\u2421" if c == 0x7F else "\u2426"
+
+
+def neutralize_controls(text: str) -> str:
+    """글에서 제어 문자를 같은 폭의 기호로 바꾼다(필터와 같은 규칙 · 시험용으로도 쓴다)."""
+    return _CTRL_CHARS_RE.sub(_ctrl_picture, text) if text else text
+
+
+def install_control_char_filter(app) -> bool:
+    """앱의 줄 필터 맨 앞에 제어 문자 무력화 필터를 단다. 멱등. 달았으면(이미 있으면) True."""
+    try:
+        from rich.segment import Segment
+        from textual.filter import LineFilter
+    except Exception:
+        return False
+
+    class StripControlChars(LineFilter):
+        def apply(self, segments, background):
+            out = None
+            for i, seg in enumerate(segments):
+                text = seg.text
+                if seg.control is None and text and _CTRL_CHARS_RE.search(text):
+                    if out is None:
+                        out = list(segments)
+                    out[i] = Segment(_CTRL_CHARS_RE.sub(_ctrl_picture, text),
+                                     seg.style, seg.control)
+            return segments if out is None else out
+
+    filters = getattr(app, "_filters", None)
+    if not isinstance(filters, list):
+        return False
+    if any(type(f).__name__ == "StripControlChars" for f in filters):
+        return True
+    filters.insert(0, StripControlChars())
+    return True
+
+
 def make_style(d: dict) -> Style:
     if not d:
         return DEFAULT_STYLE

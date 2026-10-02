@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Dict, Optional
 
 from . import ipc
@@ -81,6 +82,23 @@ def t(key: str, default: Optional[str] = None, **kw) -> str:
         except (KeyError, IndexError, ValueError):
             return s
     return s
+
+
+def has(key: str) -> bool:
+    """카탈로그에 그 키가 있나(어느 로케일이든)."""
+    return any(key in cat for cat in _CATALOG.values())
+
+
+_SIMPLE_FIELD_RE = re.compile(r"\{(\w+)\}")
+
+
+def safe_format(s: str, kw: Dict[str, object], limit: int = 2000) -> str:
+    """`{이름}` 자리만 채운다 — 속성·첨자·서식 지정(`{x.__class__}`·`{x:>9999999}`)은
+    글자 그대로 둔다. **남이 지은 형식 문자열**(서버가 보낸 기본 글)에 쓴다(검수
+    2026-09-04 S4). 결과는 `limit` 자로 자른다."""
+    out = _SIMPLE_FIELD_RE.sub(
+        lambda m: str(kw[m.group(1)]) if m.group(1) in kw else m.group(0), str(s))
+    return out if len(out) <= limit else out[:limit] + "…"
 
 
 def phrase(key: str, default: Optional[str] = None, **kw) -> tuple:

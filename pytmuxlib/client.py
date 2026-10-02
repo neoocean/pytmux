@@ -37,6 +37,7 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
     _signed_int, _with_reverse,
     has_hangul, hangul_to_qwerty, harden_no_color_filters,
+    install_control_char_filter,
     _normalize_key, _shell_argv, key_to_bytes, make_style, strip_box_drawing,
     theme_color, unwrap_copy_text)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
@@ -59,6 +60,53 @@ from .clientconn import (  # noqa: F401  (PytmuxApp 믹스인 — 4-1 파일 분
     _NetReconnectMixin, _RestartVersionMixin)
 from .clientcmd import _CommandMixin  # noqa: F401
 from .clientio import _InputMixin, _RenderMixin  # noqa: F401
+
+
+# Tier C 글 판 크기 상한(검수 2026-09-04 S4).
+_TIER_C_MAX_CHARS = 200_000
+_TIER_C_MAX_LINES = 5_000
+
+# 격자 한 변의 상한 — 실제 단말은 수백 칸이다. 상한 없이 받으면 `cols:100000,rows:100000`
+# 한 통이 합성마다 10^10 칸을 짓는다(검수 2026-09-04 S2).
+_LAYOUT_MAX_DIM = 4000
+
+
+def _sane_layout(msg):
+    """`layout` 프레임을 합성이 믿고 쓸 수 있는 모양으로 다듬는다(사본을 돌려준다).
+
+    합성(`_composite`)은 `call_soon` 으로 돌아 **디스패치 가드 밖**이다 — 여기서 걸러
+    두지 않으면 기하 한 칸이 매 합성마다 예외를 내 화면이 얼어붙는다(검수 2026-09-04 S2).
+    - `cols`·`rows`: 1..상한의 정수가 아니면 빼 버린다(합성이 제 크기로 폴백한다).
+    - 패널: `id`·`x`·`y`·`w`·`h` 가 정수(`w`·`h` 는 1..상한)가 아니면 그 패널을 뺀다.
+      `box` 는 정수 넷이 아니면 뺀다.
+    - 분할선: `x`·`y`·`w`·`h` 정수가 아니면 뺀다."""
+    def _dim(v):
+        return (isinstance(v, int) and not isinstance(v, bool)
+                and 1 <= v <= _LAYOUT_MAX_DIM)
+
+    def _coord(v):
+        return (isinstance(v, int) and not isinstance(v, bool)
+                and -_LAYOUT_MAX_DIM <= v <= _LAYOUT_MAX_DIM)
+
+    out = dict(msg)
+    for k in ("cols", "rows"):
+        if k in out and not _dim(out[k]):
+            del out[k]
+    panes = []
+    for p in msg.get("panes") or []:
+        if not (isinstance(p, dict) and _coord(p.get("id")) and _coord(p.get("x"))
+                and _coord(p.get("y")) and _dim(p.get("w")) and _dim(p.get("h"))):
+            continue
+        box = p.get("box")
+        if box is not None and not (isinstance(box, (list, tuple)) and len(box) == 4
+                                    and all(_coord(v) for v in box)):
+            p = {k: v for k, v in p.items() if k != "box"}
+        panes.append(p)
+    out["panes"] = panes
+    out["dividers"] = [d for d in (msg.get("dividers") or [])
+                       if isinstance(d, dict)
+                       and all(_coord(d.get(k)) for k in ("x", "y", "w", "h"))]
+    return out
 
 
 def _wire_int(v, default: int = 0) -> int:
@@ -461,7 +509,13 @@ class _ChooseScreensMixin:
                 severity="warn")
             return
         body = str(msg.get("text") or "")
+        # 크기 상한(검수 2026-09-04 S4) — 수 MB 짜리 판 하나가 줄마다 래핑하는 동안 UI 가
+        # 멎는다. 사람이 읽을 판에 그보다 긴 글은 없다.
+        if len(body) > _TIER_C_MAX_CHARS:
+            body = body[:_TIER_C_MAX_CHARS]
         lines = body.splitlines() or [str(msg.get("note") or "")]
+        if len(lines) > _TIER_C_MAX_LINES:
+            lines = lines[:_TIER_C_MAX_LINES] + ["…"]
         # 힌트는 **마지막 줄**로 붙인다 — `InfoScreen` 에는 꼬리줄 칸이 따로 없고,
         # 그 판의 관례가 「아무 키나 닫기」라 안 붙이면 무엇을 누를지 화면이 안 말한다.
         hint = str(msg.get("hint") or "")
@@ -661,6 +715,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 중 죽는다(상류 결함, upstream 미수정 — clientutil 참조). App.__init__ 이
             # 필터 목록을 만든 **직후** 안전판으로 갈아 끼운다. 그 변수가 없으면 무동작.
             harden_no_color_filters(self)
+            # 검수 2026-09-04 S1 — 서버가 지은 글의 ESC·C1 이 단말에 닿기 전 한 자리에서
+            # 막는다(모든 위젯의 렌더된 줄이 이 필터를 지난다 · clientutil 머리말).
+            install_control_char_filter(self)
             self.sock_path = sock_path
             self.session_name = session_name
             self.reader = None
@@ -1321,6 +1378,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
             t = msg.get("t")
             if t == "layout":
                 prev_active = self.layout.get("active")
+                msg = _sane_layout(msg)       # 검수 2026-09-04 S2 — 기하를 믿기 전에
                 self.layout = msg
                 new_active = msg.get("active")
                 # 레이아웃에 선언된 패널만 캐시로 유지한다(F-D 계열 F-F, 검수 2026-07-17).
@@ -1862,9 +1920,16 @@ def build_client_app(sock_path: str, config: dict | None = None,
                                     **(detail.get("kw") or {})) if dkey
                              else detail.get("text", ""))
             key = msg.get("key")
-            if key:
-                return i18n.t(key, default=str(msg.get("text", "")), **kw)
-            return str(msg.get("text", ""))
+            # ★ 카탈로그에 없는 키면 **서버가 보낸 글이 형식 문자열**이 된다 — 그때는
+            #   `{이름}` 자리만 채운다(검수 2026-09-04 S4: `{why.__class__}`·`{why:>10000000}`).
+            if key and i18n.has(key):
+                text = i18n.t(key, **kw)
+            elif key:
+                text = i18n.safe_format(str(msg.get("text", "")), kw)
+            else:
+                text = str(msg.get("text", ""))
+            # 상태줄 한 줄이다 — 서버 값 하나로 수 MB 가 되지 않게 자른다.
+            return text if len(text) <= 2000 else text[:2000] + "…"
 
         def display_message(self, text, secs=None, dismissable=None,
                             severity=clientnotices.DEFAULT_SEVERITY,

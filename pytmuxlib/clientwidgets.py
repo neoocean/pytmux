@@ -1121,6 +1121,11 @@ class TabBar(Widget):
         # 과 같다. 이동(esc+숫자)은 index_for_number 가 같은 순서로 역매핑한다.
         vis = _visual_tab_numbers(self.tabs)
         for t in self.tabs:
+            # 와이어 값이다 — `index` 가 정수가 아니면 `+ 1` 이 **탭바 render 안에서**
+            # 터진다(검수 2026-09-04 S3). 그런 탭은 그리지 않는다.
+            if not isinstance(t, dict) or not isinstance(t.get("index"), int) \
+                    or isinstance(t.get("index"), bool):
+                continue
             flag = "!" if t.get("bell") else ("#" if t.get("activity") else "")
             ic = self.app.plugins.client_tab_glyph(self.app, t)
             ic = (ic + " ") if ic else ""
@@ -1129,7 +1134,7 @@ class TabBar(Widget):
             # 두고(select_window 등 좌표 계산 호환), **보여줄 때만** 시각 번호로 바꾼다.
             num = vis.get(t["index"], t["index"] + 1)
             # §10-21ⓓ2: 원격 탭 이름은 **그릴 때만** 접는다(값은 서버 계약이라 불변).
-            name = remote_title_display(t["name"], bool(t.get("remote")),
+            name = remote_title_display(str(t.get("name", "")), bool(t.get("remote")),
                                         self._remote_title_mode())
             out.append(f" {pin}{ic}{num}:{name}{flag} ")
         return out
