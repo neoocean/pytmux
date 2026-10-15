@@ -675,6 +675,17 @@ fn enable_decorations_if_needed(window: &winit::window::Window, adapter_info: &A
     }
 }
 
+/// 가장자리 리사이즈를 판정할 때 보는 창 상태(pytmux-155/365). 순수 판정
+/// (`drag_resize_direction_for`)에 넣으려고 따로 묶었다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DragResizeGate {
+    maximized: bool,
+    fullscreen: bool,
+    /// 사용자가 크기를 바꿀 수 있고(winit `is_resizable`) **OS 창에 크기 조절 테두리가
+    /// 있다**(Windows `WS_THICKFRAME`).
+    resizable: bool,
+}
+
 struct RenderingResources {
     resources: Resources,
     renderer: Renderer,
@@ -985,17 +996,7 @@ impl Window {
             return;
         };
 
-        // Windows are not drag-resizable when maximized.
-        let drag_resize_direction = if inner.window.is_maximized() {
-            None
-        } else {
-            let scale_factor = inner.window.scale_factor();
-            Self::drag_resize_direction_at_position(
-                inner.physical_size().to_logical(scale_factor),
-                position,
-                DRAG_RESIZE_MARGIN,
-            )
-        };
+        let drag_resize_direction = Self::current_drag_resize_direction(inner, position);
 
         if let Some(resize_direction) = &drag_resize_direction {
             inner
@@ -1011,15 +1012,80 @@ impl Window {
         inner.active_drag_resize_direction = drag_resize_direction;
     }
 
-    /// Start a drag-resize iff the cursor is in a position to do this. That positioning should
-    /// already have been determined by [`Self::update_drag_resize_state`]. Returns `true` if
+    /// 지금 창 상태와 커서 자리로 본 리사이즈 방향(없으면 `None`).
+    ///
+    /// ★ 창 상태 셋을 **그때그때** 묻는다(pytmux-155/365 · 검수 pytmux-34 #1):
+    /// - 최대화 — 상류가 원래 막던 것.
+    /// - **전체 화면** — 종전에는 안 막았다. winit 의 보더리스 전체 화면은 `MAXIMIZED`
+    ///   플래그가 아니라서, 화면 네 가장자리 4px 가 리사이즈 띠로 판정됐다. 그런데 그때
+    ///   winit 은 `WS_SIZEBOX` 를 걷어 내므로 OS 가 크기 조절 루프를 거절하고, 그 거절이
+    ///   winit 의 끌기 걸쇠를 영영 걸었다(그 뒤 머리줄 끌기까지 죽는다 — 365 의 모양).
+    /// - **크기 조절 테두리 없음** — 위와 같은 까닭을 스타일로 직접 본다(Windows). 전체
+    ///   화면 말고도 테두리를 걷는 경로가 생기면 이 줄이 덮는다.
+    fn current_drag_resize_direction(
+        inner: &Inner,
+        position: LogicalPosition<f32>,
+    ) -> Option<ResizeDirection> {
+        let gate = DragResizeGate {
+            maximized: inner.window.is_maximized(),
+            fullscreen: inner.window.fullscreen().is_some(),
+            resizable: inner.window.is_resizable() && Self::has_sizing_frame(&inner.window),
+        };
+        let scale_factor = inner.window.scale_factor();
+        Self::drag_resize_direction_for(
+            gate,
+            inner.physical_size().to_logical(scale_factor),
+            position,
+            DRAG_RESIZE_MARGIN,
+        )
+    }
+
+    #[cfg(windows)]
+    fn has_sizing_frame(window: &winit::window::Window) -> bool {
+        use super::windows::WindowExt as _;
+        window.has_sizing_frame()
+    }
+
+    #[cfg(not(windows))]
+    fn has_sizing_frame(_window: &winit::window::Window) -> bool {
+        true
+    }
+
+    /// [`Self::current_drag_resize_direction`] 의 **순수한 절반** — 창을 안 띄우고 잰다.
+    fn drag_resize_direction_for(
+        gate: DragResizeGate,
+        window_size: LogicalSize<u32>,
+        cursor_position: LogicalPosition<f32>,
+        margin: f32,
+    ) -> Option<ResizeDirection> {
+        if gate.maximized || gate.fullscreen || !gate.resizable {
+            return None;
+        }
+        Self::drag_resize_direction_at_position(window_size, cursor_position, margin)
+    }
+
+    /// Start a drag-resize iff the cursor is in a position to do this. Returns `true` if
     /// drag-resizing was successfully initiated.
-    pub fn try_drag_resize(&self) -> bool {
+    ///
+    /// ★ 방향을 **누르는 이 자리에서 다시 잰다**(검수 pytmux-34 #1 ②). 종전에는 마지막
+    /// MouseMoved 가 남긴 `active_drag_resize_direction` 을 그대로 썼다 — 그 뒤 키보드로
+    /// 최대화·스냅·전체 화면을 바꾸면 낡은 방향이 남아, 리사이즈가 안 되는 상태에서
+    /// `drag_resize_window` 를 불렀다(OS 가 거절 → winit 걸쇠가 걸린다).
+    pub fn try_drag_resize(&self, position: LogicalPosition<f32>) -> bool {
         let mut inner = self.inner.borrow_mut();
         let Some(inner) = inner.as_mut() else {
             return false;
         };
-        let Some(direction) = inner.active_drag_resize_direction else {
+        let direction = Self::current_drag_resize_direction(inner, position);
+        if direction != inner.active_drag_resize_direction {
+            log::debug!(
+                "drag-155 낡은 리사이즈 방향 {:?} → 지금 {:?}",
+                inner.active_drag_resize_direction,
+                direction
+            );
+            inner.active_drag_resize_direction = direction;
+        }
+        let Some(direction) = direction else {
             return false;
         };
         inner.window.drag_resize_window(direction).is_ok()
@@ -1100,9 +1166,11 @@ impl Window {
         let scale = inner.window.scale_factor();
         let size = inner.physical_size().to_logical::<f32>(scale);
         format!(
-            "decorated={} maximized={} resize_dir={:?} titlebar_h={} size={}x{} scale={} margin={}",
+            "decorated={} maximized={} fullscreen={} sizing_frame={} resize_dir={:?} titlebar_h={} size={}x{} scale={} margin={}",
             inner.window.is_decorated(),
             inner.window.is_maximized(),
+            inner.window.fullscreen().is_some(),
+            Self::has_sizing_frame(&inner.window),
             inner.active_drag_resize_direction,
             self.titlebar_height.get(),
             size.width,
@@ -1285,7 +1353,20 @@ impl Window {
     }
 
     pub(super) fn set_cursor_icon(&self, cursor: Cursor) {
-        if let Some(Inner { window, .. }) = self.inner.borrow().as_ref() {
+        if let Some(Inner {
+            window,
+            active_drag_resize_direction,
+            ..
+        }) = self.inner.borrow().as_ref()
+        {
+            // ★ 가장자리 리사이즈 띠 위에서는 **리사이즈 커서가 이긴다**(검수 pytmux-34 #5 ·
+            //   pytmux-365). 띠 판정(`update_drag_resize_state`)은 리사이즈 커서를 동기로
+            //   세우는데, 그 직후 뷰가 같은 MouseMoved 에서 `reset_cursor` 를 부르고 그것이
+            //   이 사건으로 **비동기로** 와서 화살표로 덮었다 — 그래서 4px 띠에 신호가 한
+            //   번도 안 떴고, 사람은 「리사이즈가 안 된다」로 읽었다.
+            if active_drag_resize_direction.is_some() {
+                return;
+            }
             let icon = match cursor {
                 Cursor::Arrow => CursorIcon::Default,
                 Cursor::IBeam => CursorIcon::Text,
@@ -1502,6 +1583,12 @@ fn create_window(
             if let Err(e) = window.set_cloaked(true) {
                 report_error!(anyhow::Error::new(e).context("Failed to mark window as cloaked"));
             };
+
+            // winit 의 끌기 걸쇠가 영영 걸리지 않게(pytmux-155/365 · `drag_latch` 머리말).
+            // 못 걸어도 창은 종전대로 돈다 — 남기는 것은 진단 한 줄이다.
+            if !window.install_os_drag_latch_guard() {
+                log::warn!("drag-155 끌기 걸쇠 감시를 못 걸었다 — 걸쇠가 걸리면 다시 띄워야 풀린다");
+            }
 
             if let Some(adjustment) = maybe_adjust_window_vertically(window) {
                 let direction = if adjustment > 0 { "down" } else { "up" };
@@ -1801,4 +1888,74 @@ fn get_monitor_logical_bounds(monitor: &MonitorHandle) -> RectF {
         Vector2F::new(logical_position.x, logical_position.y),
         Vector2F::new(logical_size.width, logical_size.height),
     )
+}
+
+#[cfg(test)]
+mod drag_resize_gate_tests {
+    //! 가장자리 리사이즈 판정(pytmux-155/365 · 검수 pytmux-34 #1 ①).
+    //!
+    //! 되돌리면 실패해야 하는 오라클:
+    //!   · 전체 화면을 다시 안 막으면           → fullscreen_has_no_resize_band 실패
+    //!   · 테두리 없는 창을 다시 안 막으면      → a_window_without_a_sizing_frame_has_no_band 실패
+    //!   · 판정을 통째로 죽이면(언제나 None)    → a_normal_window_still_resizes_from_its_edges 실패
+    use super::*;
+
+    const SIZE: LogicalSize<u32> = LogicalSize::new(1280, 800);
+    const NORMAL: DragResizeGate = DragResizeGate {
+        maximized: false,
+        fullscreen: false,
+        resizable: true,
+    };
+
+    fn at(x: f32, y: f32, gate: DragResizeGate) -> Option<ResizeDirection> {
+        Window::drag_resize_direction_for(gate, SIZE, LogicalPosition::new(x, y), DRAG_RESIZE_MARGIN)
+    }
+
+    /// 네 변과 네 모서리 — 사람 손이 전체 화면에서 가기 쉬운 자리들.
+    const EDGES: [(f32, f32); 8] = [
+        (1., 400.),
+        (1279., 400.),
+        (640., 1.),
+        (640., 799.),
+        (1., 1.),
+        (1279., 1.),
+        (1., 799.),
+        (1279., 799.),
+    ];
+
+    #[test]
+    fn a_normal_window_still_resizes_from_its_edges() {
+        // 양성 짝 — 아래 둘이 «언제나 None» 으로 통과하지 못하게.
+        assert_eq!(at(1., 400., NORMAL), Some(ResizeDirection::West));
+        assert_eq!(at(640., 1., NORMAL), Some(ResizeDirection::North));
+        assert_eq!(at(1279., 799., NORMAL), Some(ResizeDirection::SouthEast));
+        assert_eq!(at(640., 400., NORMAL), None, "가운데가 리사이즈 띠로 잡혔다");
+    }
+
+    #[test]
+    fn fullscreen_has_no_resize_band() {
+        // ☠ 365: 보더리스 전체 화면은 `MAXIMIZED` 가 아니라서 종전에는 화면 네 가장자리가
+        //   리사이즈 띠였다. 그 누름이 OS 의 거절을 부르고 winit 걸쇠를 걸었다.
+        let gate = DragResizeGate { fullscreen: true, ..NORMAL };
+        for (x, y) in EDGES {
+            assert_eq!(at(x, y, gate), None, "전체 화면 ({x},{y}) 가 리사이즈 띠다");
+        }
+    }
+
+    #[test]
+    fn a_maximized_window_has_no_resize_band() {
+        let gate = DragResizeGate { maximized: true, ..NORMAL };
+        for (x, y) in EDGES {
+            assert_eq!(at(x, y, gate), None, "최대화 ({x},{y}) 가 리사이즈 띠다");
+        }
+    }
+
+    #[test]
+    fn a_window_without_a_sizing_frame_has_no_band() {
+        // 테두리(`WS_THICKFRAME`)가 없는 창에는 OS 가 크기 조절 루프를 안 연다.
+        let gate = DragResizeGate { resizable: false, ..NORMAL };
+        for (x, y) in EDGES {
+            assert_eq!(at(x, y, gate), None, "테두리 없는 창 ({x},{y}) 가 리사이즈 띠다");
+        }
+    }
 }

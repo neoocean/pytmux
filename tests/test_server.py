@@ -3723,7 +3723,11 @@ async def test_sync_output_active_feed_does_not_time_out():
             if not sent_during or max_gap < SYNC_OUTPUT_MAX_DEFER:
                 break                                   # 판정 가능(통과 또는 진짜 결함)
             srv._ingest_slice(p, b"\x1b[?2026l")        # 다음 라운드를 위해 프레임 닫기
-            while await _collect(0.2):
+            # ⛔ 상한 없는 `while await _collect(0.2)` 금지 — 셸 패널 출력이 0.2초 안에 계속
+            #   오면(부하 아래 ConPTY 재도색) 영원히 돌아 러너가 faulthandler 로 절단됐다
+            #   (2026-10-15 두 번 · 둘 다 다른 빌드가 돌던 회차).
+            drain_end = _time.monotonic() + 3.0
+            while _time.monotonic() < drain_end and await _collect(0.2):
                 pass
         if sent_during and max_gap >= SYNC_OUTPUT_MAX_DEFER:
             skip(f"러너 스톨: 급식 간격 {max_gap:.2f}s 가 디퍼 타임아웃"

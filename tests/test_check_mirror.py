@@ -193,3 +193,55 @@ async def test_scan_with_nothing_to_scan_is_a_breakage_not_a_pass():
         rc = cm.scan_paths([])
     assert rc == 1, err.getvalue()
     assert "고장" in err.getvalue(), err.getvalue()
+
+
+async def test_leaks_reads_non_ascii_paths_as_utf8_bytes():
+    """pytmux-34 #15: `git ls-files -z` 를 `text=True`(encoding 없음)로 받아 Windows 에서
+    로캘 코드페이지로 디코드했다 — 한글 파일명이 깨진 이름이 되어 open 이 실패하고 유출
+    스캔이 그 파일을 **조용히** 건너뛰었다. git 의 원래 바이트(UTF-8)를 흉내 낸 가짜
+    출력으로 `한글.md` 안의 유출이 잡히는지 잰다(이 상자에는 git 이 없다)."""
+    import subprocess
+    tmp = _tmpdir()
+    _write(tmp, "한글.md", _leak("http://100.", "79.188.26", ":8086/"))
+    _write(tmp, "plain.txt", "nothing here")
+    old_root, old_run = cm.ROOT, cm.subprocess.run
+
+    def fake_run(argv, **kw):
+        assert not kw.get("text") and "encoding" not in kw, kw   # 바이트로 받는다
+        out = "한글.md".encode("utf-8") + b"\0plain.txt\0gone.txt\0"
+        return subprocess.CompletedProcess(argv, 0, out, b"")
+    cm.ROOT = tmp
+    cm.subprocess.run = fake_run
+    try:
+        found = cm._leaks()
+    finally:
+        cm.ROOT, cm.subprocess.run = old_root, old_run
+    assert [rel for rel, _ in found] == ["한글.md"], found     # 지운 파일(gone)은 통과
+
+
+async def test_scan_reports_unreadable_files_instead_of_passing():
+    """pytmux-34 #15: 열기에 실패한 파일은 «못 쟀다» 다 — 종전엔 None(통과)이었다."""
+    tmp = _tmpdir()
+    sub = os.path.join(tmp, "a_dir")
+    os.mkdir(sub)                                   # 디렉터리는 open 이 실패한다
+    why = cm._scan(sub)
+    assert why and "못 읽었다" in why, why
+    assert cm._scan(os.path.join(tmp, "missing.txt")) is None   # 지운 추적 파일
+
+
+async def test_publish_check_parses_porcelain_z_quoting_and_renames():
+    """pytmux-34 #15: `git status --porcelain` 을 `-z` 없이 받아 `strip('"')` 만 했다 —
+    비ASCII 경로의 인용·8진 이스케이프와 rename(`a -> b`)이 집합 비교를 어긋나게 했다."""
+    _spec2 = importlib.util.spec_from_file_location(
+        "publish_check", os.path.join(os.path.dirname(HERE), "scripts",
+                                      "publish_check.py"))
+    pc = importlib.util.module_from_spec(_spec2)
+    _spec2.loader.exec_module(pc)
+    raw = (" M 문서/한글.md\0R  new name.py\0old name.py\0?? 새 파일.txt\0"
+           "C  copy.py\0src.py\0")
+    dirty, untracked = pc.parse_porcelain_z(raw.encode("utf-8"))
+    assert dirty == {"문서/한글.md", "new name.py", "old name.py", "copy.py"}, dirty
+    assert untracked == {"새 파일.txt"}, untracked
+    import inspect
+    assert "git_status_sets()" in inspect.getsource(pc.measure_drift)
+    assert '"-z"' in inspect.getsource(pc.git_status_sets)

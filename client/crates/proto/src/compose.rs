@@ -164,6 +164,46 @@ pub fn joins_previous(prev: &str, ch: char) -> bool {
     false
 }
 
+/// VS16 — 이모지 표현 선택자. 앞 그림 글자를 **2칸 컬러 이모지**로 그리라는 표시다.
+pub const VS16: char = '\u{fe0f}';
+
+/// 이 군집이 **VS16 때문에 2칸**인가(pytmux-556 · 사용자 결정 2026-10-07).
+///
+/// 규약 「군집의 폭 = 밑글자의 폭」의 **유일한 예외**다 — `⚠`(폭 1) + `U+FE0F` 를 Claude
+/// Code·Windows Terminal·tmux 3.5 가 모두 2칸으로 센다. 밑글자가 **그림 글자**일 때만이고
+/// (`A`+VS16 은 1칸), 이미 2칸인 밑글자는 그대로 2칸이다. 파이썬 정본 `cellwidth.vs16_wide`
+/// 와 같은 판정이라야 한다(픽스처가 잰다).
+pub fn vs16_wide(text: &str) -> bool {
+    let mut it = text.chars();
+    let Some(first) = it.next() else {
+        return false;
+    };
+    it.next().is_some() && text.contains(VS16) && is_pictographic(first) && char_cells(first) == 1
+}
+
+/// **군집**(셀 하나의 글)이 차지하는 칸 수 — 첫 글자의 폭, 단 VS16 넓힘은 2(파이썬
+/// `cellwidth.cluster_cells`). 빈 글은 1 이다.
+pub fn cluster_cells(text: &str) -> usize {
+    let Some(first) = text.chars().next() else {
+        return 1;
+    };
+    let w = char_cells(first);
+    if w == 1 && vs16_wide(text) { 2 } else { w }
+}
+
+/// `ch` 를 앞 셀 `prev` 에 얹으면 그 셀이 **1칸에서 2칸으로 넓어지나**(pytmux-556).
+///
+/// 격자에 앉히는 자리는 이것이 참이면 뒤 칸을 연속 칸으로 바꾸고 한 칸 더 민다 — 뒤 칸이
+/// 없으면 얹지 않고 버린다(서버 격자가 그렇게 짓는다 · 파이썬 `cellwidth.widens`).
+pub fn widens(prev: &str, ch: char) -> bool {
+    if ch != VS16 || cluster_cells(prev) != 1 {
+        return false;
+    }
+    let mut s = prev.to_owned();
+    s.push(ch);
+    cluster_cells(&s) == 2
+}
+
 /// 이 글자가 앞 셀에 **얹히나** — 폭 0 이거나 군집이 이어질 때.
 ///
 /// 격자에 글자를 앉히는 자리는 넷(`compose_row`·`Canvas::blit_pane`·`Canvas::put_text`·
@@ -192,6 +232,15 @@ fn compose_row(row: &Row, cols: usize) -> String {
             if let Some(b) = base
                 && attaches(&cells[b], ch)
             {
+                // VS16 이 1칸 그림 글자를 2칸으로 넓힌다(pytmux-556) — 자리가 없으면 버린다.
+                if widens(&cells[b], ch) {
+                    if b + 1 == cx && cx < cols {
+                        cells[b].push(ch);
+                        cells[cx] = String::new();
+                        cx += 1;
+                    }
+                    continue;
+                }
                 cells[b].push(ch);
                 continue;
             }
@@ -227,6 +276,9 @@ pub fn display_width(line: &str) -> usize {
     let mut cluster = String::new();
     for ch in line.chars() {
         if attaches(&cluster, ch) {
+            if widens(&cluster, ch) {
+                width += 1; // VS16 이 1칸 그림 글자를 2칸으로 넓혔다(pytmux-556)
+            }
             cluster.push(ch);
             continue;
         }

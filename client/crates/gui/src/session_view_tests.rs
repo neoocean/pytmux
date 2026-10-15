@@ -1177,18 +1177,52 @@ fn a_variation_selector_rides_along_instead_of_taking_a_cell() {
     //
     // 재는 것 둘: ⑴ 칸의 합이 안 늘어난다 ⑵ 선택자가 **앞 조각에 붙어** 한 조각으로
     // 셰이퍼에 간다(갈라 놓으면 색이 죽는다).
+    //
+    // ★ pytmux-556 뒤로 `⚠`+VS16 은 **2칸**이다(VS16 이 폭 1 그림 글자를 넓힌다 — 캔버스가
+    //   뒤 칸을 연속 칸으로 둔다). 그래서 ⑴ 은 «선택자 하나만큼» 이 아니라 **정확히 한 칸**
+    //   느는지로 재고, 선택자 자체가 칸을 먹는지는 그림 글자가 아닌 `A`+VS16 으로 잰다.
+    let sum = |t: &str| SessionView::grid_segments(t).iter().map(|(_, c)| c).sum::<usize>();
     let segs = SessionView::grid_segments("|\u{26a0}\u{fe0f}|");
-    let cells: usize = segs.iter().map(|(_, c)| c).sum();
     assert_eq!(
-        cells,
-        SessionView::grid_segments("|\u{26a0}|").iter().map(|(_, c)| c).sum::<usize>(),
-        "선택자가 칸을 먹어 줄이 밀렸다: {segs:?}"
+        sum("|\u{26a0}\u{fe0f}|"),
+        sum("|\u{26a0}|") + 1,
+        "VS16 이 ⚠ 를 2칸으로 넓히지 않았다(캔버스와 갈린다): {segs:?}"
     );
+    assert_eq!(sum("|A\u{fe0f}|"), sum("|A|"), "선택자가 칸을 먹어 줄이 밀렸다");
     assert!(
         segs.iter().any(|(piece, _)| piece.chars().count() == 2
             && piece.starts_with('\u{26a0}')
             && piece.ends_with('\u{fe0f}')),
         "선택자가 앞 글자와 갈라졌다 — 색 이모지가 흑백으로 그려진다: {segs:?}"
+    );
+}
+
+#[test]
+fn a_cursor_on_the_back_half_of_a_vs16_widened_glyph_isolates_that_glyph() {
+    // pytmux-556 — `⚠`+VS16 은 2칸이다. 커서가 그 **뒤 칸**(연속 칸)에 서면 떼어 낼 것은
+    // 그 군집 하나여야 한다. 글자마다 칸을 세면 뒤 칸이 「다음 글자」로 읽혀 `x` 를 떼어
+    // 가고, 그러면 커서가 엉뚱한 글자 위에 그려진다.
+    let segs = vec![("a\u{26a0}\u{fe0f}xy".to_owned(), 5)];
+    let out = SessionView::isolate_cell(segs, 0, 2);
+    assert_eq!(
+        out,
+        vec![
+            ("a".to_owned(), 1),
+            ("\u{26a0}\u{fe0f}".to_owned(), 2),
+            ("xy".to_owned(), 2),
+        ],
+        "넓어진 군집의 뒤 칸에서 다른 글자를 뗐다"
+    );
+    // 대조군 — 그 다음 칸(3)은 `x` 다.
+    let out = SessionView::isolate_cell(vec![("a\u{26a0}\u{fe0f}xy".to_owned(), 5)], 0, 3);
+    assert_eq!(
+        out,
+        vec![
+            ("a\u{26a0}\u{fe0f}".to_owned(), 3),
+            ("x".to_owned(), 1),
+            ("y".to_owned(), 1),
+        ],
+        "넓어진 군집 다음 칸에서 `x` 를 못 뗐다"
     );
 }
 
@@ -11736,4 +11770,135 @@ fn a_prompt_jump_with_scrollback_still_goes() {
     let (view, out) = jump_after(40);
     assert!(sent_jump(&out), "스크롤백이 있는데 안 뛰었다: {out:?}");
     assert_eq!(view.mode.mode(), InputMode::Scroll);
+}
+
+// ── AltGr 글자 · 검수 pytmux-34 #4 ────────────────────────────────────────────────
+//
+// Windows 는 AltGr 를 `Ctrl+Alt` 로 보고한다. 종전에는 그 키를 원시 키(`Ctrl+Alt+@`)로
+// 보내 `encode` 가 `None` 을 내고 **아무것도 안 나갔다**(독·불·폴란드 배열의 `@ € { } [ ] \ |`).
+//
+// 되돌리면 실패해야 하는 오라클:
+//   · AltGr 판정을 빼면(원시 키로 보내면)     → an_altgr_character_reaches_the_pane_as_that_character 실패
+//   · 글자만 보고 조합키까지 글자로 읽으면    → a_real_ctrl_alt_chord_stays_a_chord 실패
+
+#[test]
+fn an_altgr_character_reaches_the_pane_as_that_character() {
+    // 키 이름(`key`)과 그 키가 낸 글자(`chars`)가 같다 — 배열이 글자를 낸 경우다.
+    for c in ['@', '{', '[', ']', '}', '\\', '|', '€', 'ą', '~'] {
+        let s = c.to_string();
+        assert_eq!(
+            SessionView::keydown_action(&ks(&s, true, true, false), &s),
+            Some(ViewAction::RawKey(Key::Char(c), Mods::NONE)),
+            "AltGr 로 친 {c:?} 가 그 글자로 안 갔다"
+        );
+    }
+    // 그 글자 키는 수정키 없는 평글자와 **같은 바이트**로 패널에 간다(US 배열의 `Shift+2`).
+    let out = sent_after(vec![layout_one_pane()], &[(Key::Char('@'), Mods::NONE)]);
+    assert_eq!(out, vec![Outgoing::Input(b"@".to_vec())], "실제: {out:?}");
+}
+
+#[test]
+fn a_dead_key_pair_from_altgr_goes_as_typed_text() {
+    // 데드 키 뒤에 오는 두 글자(배열이 합치지 못한 짝)는 글자열로 간다.
+    assert_eq!(
+        SessionView::keydown_action(&ks("`", true, true, false), "`e"),
+        Some(ViewAction::Typed("`e".to_owned()))
+    );
+}
+
+#[test]
+fn a_real_ctrl_alt_chord_stays_a_chord() {
+    // 대조군 — 배열이 아무것도 안 내거나(US 의 `Ctrl+Alt+A`) 제어 문자를 내면 진짜
+    // 조합키다. 이것까지 글자로 읽으면 `ESC ^A` 를 쓰는 앱(emacs 등)이 깨진다.
+    let chord = Mods { ctrl: true, alt: true };
+    assert_eq!(
+        SessionView::keydown_action(&ks("a", true, true, false), ""),
+        Some(ViewAction::RawKey(Key::Char('a'), chord))
+    );
+    assert_eq!(
+        SessionView::keydown_action(&ks("a", true, true, false), "\u{1}"),
+        Some(ViewAction::RawKey(Key::Char('a'), chord))
+    );
+    // `Ctrl+Alt+Space` 에 공백을 돌려주는 배열이 있다 — 그것은 글자가 아니다.
+    assert_eq!(
+        SessionView::keydown_action(&ks(" ", true, true, false), " "),
+        Some(ViewAction::RawKey(Key::Char(' '), chord))
+    );
+    // `Ctrl` 만·`Alt` 만은 이 갈래가 아니다(종전 그대로).
+    assert_eq!(
+        SessionView::keydown_action(&ks("a", true, false, false), "\u{1}"),
+        Some(ViewAction::RawKey(Key::Char('a'), Mods::CTRL))
+    );
+}
+
+// ── OS 클립보드를 UI 스레드에서 안 기다린다 · 검수 pytmux-34 #2 ─────────────────────
+//
+// 되돌리면 실패해야 하는 오라클:
+//   · OSC 52 를 다시 `clip::copy` 로 동기 호출하면 → osc52_goes_to_the_window_clipboard… 실패
+//   · 알림 복사를 다시 UI 스레드에서 기다리면    → copying_a_notice_does_not_wait… 실패
+//   · 결과를 안 주우면(알림이 안 뜨면)          → copying_a_notice_does_not_wait… 실패
+
+static OSC52_TOOL_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn counting_copier(_text: &str) -> bool {
+    OSC52_TOOL_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    true
+}
+
+#[test]
+fn osc52_goes_to_the_window_clipboard_not_to_a_blocking_tool() {
+    let (mut view, tx, _sent) = harness();
+    view.config.set_clipboard = true;
+    view.os_copier = counting_copier;
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    // "붙일 글" 의 base64 — 패널 앱이 OSC 52 로 보낸 것.
+    let osc52: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "clipboard", "pane": 1, "data": "67aZ7J28IOq4gA=="
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(osc52))).unwrap();
+    view.pump_headless();
+    assert_eq!(
+        view.window_clip_for_test.as_deref(),
+        Some("붙일 글"),
+        "OSC 52 가 창 계층 클립보드로 안 갔다"
+    );
+    assert_eq!(
+        OSC52_TOOL_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "OSC 52 가 외부 도구(PowerShell)를 불렀다"
+    );
+}
+
+fn slow_copier(_text: &str) -> bool {
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    true
+}
+
+#[test]
+fn copying_a_notice_does_not_wait_for_the_clipboard_tool() {
+    // ☠ `clip::copy` 는 Windows 에서 PowerShell 을 띄운다(0.5~2초 · 상한 7초). UI 스레드에서
+    //   기다리면 그동안 창이 멈춘다 — 느린 가짜를 끼워 `c` 가 바로 돌아오는지 잰다.
+    let (mut view, _sent) = view_with_two_notices();
+    view.os_copier = slow_copier;
+    view.handle_key(Key::Down, Mods::NONE);
+    let start = std::time::Instant::now();
+    view.handle_key(Key::Char('c'), Mods::NONE);
+    let took = start.elapsed();
+    assert!(
+        took < std::time::Duration::from_millis(400),
+        "`c` 가 클립보드 도구를 기다렸다: {took:?}"
+    );
+    // 결과는 다음 펌프가 줍는다 — 알림이 실제로 떠야 한다(양성 짝).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut said = false;
+    while std::time::Instant::now() < deadline {
+        view.pump_headless();
+        if view.state.notices().any(|n| n.text.contains("알림을 복사했다")) {
+            said = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(said, "복사가 끝났는데 결과 알림이 안 떴다");
 }

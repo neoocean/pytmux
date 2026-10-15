@@ -166,6 +166,19 @@ class _NetReconnectMixin:
         """소켓 재연결 + hello 송신 공통 경로(재시작 재개·degraded 강제 재접속 공용).
         listen 이 열릴 때까지 retries 회(_RECONNECT_DELAY 간격) 재시도하고, 붙으면
         현재 크기로 hello 를 보낸다. 성공 True / 시간초과 False(호출부가 메시지 처리)."""
+        # 옛 연결은 먼저 닫는다(검수 pytmux-34 #14). 손상·과대 프레임으로 `read_msg` 가
+        # None 을 돌려 「EOF」로 다뤄진 경우 소켓은 **살아 있어**, 닫지 않으면 서버가 옛
+        # 연결에도 계속 프레임을 쓰다가 백프레셔 드롭까지 버퍼를 쌓는다.
+        # (_force_reconnect 는 이미 닫고 None 으로 둔 채 들어온다 — 그때는 no-op.)
+        old_w = self.writer
+        if old_w is not None:
+            self.writer = None
+            close = getattr(old_w, "close", None)   # 시험의 자리표시자(object())도 있다
+            if callable(close):
+                try:
+                    close()
+                except (OSError, RuntimeError):
+                    pass
         for _ in range(retries):
             try:
                 self.reader, self.writer = await ipc.open_connection(
@@ -175,18 +188,29 @@ class _NetReconnectMixin:
                 await asyncio.sleep(_RECONNECT_DELAY)
         else:
             return False
+        await write_msg(self.writer, self._hello_msg())
+        return True
+
+    def _hello_msg(self) -> dict:
+        """hello 한 통 — 최초 접속(on_mount)과 재접속(`_connect_and_hello`)이 **같이** 쓴다.
+
+        종전에는 두 자리가 따로 조립했고 재접속 쪽에는 플러그인 caps 가 빠져 있었다
+        (검수 pytmux-34 #6): 서버는 광고한 것만 보내므로 `restart-server`·백프레셔 드롭·
+        degraded 회복 한 번 뒤로 `blocks` 프레임이 영영 안 왔다.
+        능력은 코어 + 플러그인이다 — 플러그인 디렉토리를 지우면 그 기능의 프레임이 한
+        바이트도 안 오게 된다(`Registry.client_caps`)."""
         cols, rows = self._content_size()
         hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols,
-                 "rows": rows, "caps": list(CLIENT_CAPS)}
-        if cellwidth.ambiguous_wide():    # 재접속 시에도 서버에 모호폭 모드 재통지
+                 "rows": rows,
+                 "caps": sorted(set(CLIENT_CAPS) | set(self.plugins.client_caps()))}
+        if cellwidth.ambiguous_wide():    # 서버 pyte 격자도 모호폭=2 로 맞추도록
             hello["ambig"] = "wide"
         tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
         if tok:
             hello["token"] = tok
         if self.session_name:
             hello["session"] = self.session_name
-        await write_msg(self.writer, hello)
-        return True
+        return hello
 
     def _use_execv_relaunch(self) -> bool:
         """restart-all 시 클라를 os.execv 로 relaunch 할지 여부. Windows 에서는
@@ -256,8 +280,9 @@ class _NetReconnectMixin:
             return
         self._force_reconnecting = True
         try:
-            self.display_message(
-                "pytmux: 재접속 중…" + (" (자동 회복)" if reason == "auto" else ""))
+            # 문구는 카탈로그로(검수 pytmux-34 #15 — 영어 판에서도 한국어로 떴다).
+            self.display_message(i18n.t("msg.reconnecting_auto" if reason == "auto"
+                                        else "msg.reconnecting"))
             # 옛 소켓을 강제로 닫아 블록된 read_msg 를 깨운다(옛 태스크는 세대
             # 불일치로 종료). writer/reader 가 같은 전송을 공유하므로 writer 만 닫음.
             old_w = self.writer
@@ -483,8 +508,7 @@ class _RestartVersionMixin:
         # 실제 재시작 수행. restart-all 은 클라 자신도 relaunch 한다.
         if kind == "all":
             self._relaunch_on_restart = True
-            self.display_message(
-                "pytmux: 전체 재시작 — 서버 재시작 + 클라 재기동…")
+            self.display_message(i18n.t("msg.full_restart"))   # 검수 pytmux-34 #15
         else:
             self.display_message(i18n.t("msg.server_restart"))
         self.send_cmd("restart_server")

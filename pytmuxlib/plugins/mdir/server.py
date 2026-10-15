@@ -97,6 +97,47 @@ def _inside(child: str, parent: str) -> bool:
     return c == p or c.startswith(p + os.sep)
 
 
+def _merge_copy_no_follow(src: str, dst: str) -> None:
+    """디렉터리 `src` 를 기존 디렉터리 `dst` 위로 병합 복사한다 — **목적지 쪽 링크를 절대
+    따라가지 않는다**(pytmux-34 #6 · MDIR-1 의 한 단계 아래).
+
+    `shutil.copytree(dirs_exist_ok=True)` 의 `symlinks=True` 는 *소스* 링크를 링크로
+    복사할 뿐이고, 목적지 트리 **안**의 링크는 ⑴ 디렉터리면 makedirs 가 통과해 그 안으로
+    쓰고 ⑵ 파일이면 copy2 가 'wb' 로 열어 **링크 대상을 덮어쓴다**. 그래서 매 단계에서
+    목적지 경로를 `lexists`/`islink` 로 보고 링크면 **링크 자체를 지운 뒤** 쓴다 —
+    사용자가 고른 것은 「대체」이지 「링크가 가리키는 곳에 쓰기」가 아니다.
+    파일↔디렉터리 충돌은 조용히 중첩하지 않고 실패로 올린다(dir_overwrite 와 같은 규칙)."""
+    import errno
+    import shutil
+    if os.path.islink(dst):
+        os.unlink(dst)
+    if os.path.lexists(dst) and not os.path.isdir(dst):
+        raise NotADirectoryError(errno.ENOTDIR, "대상이 디렉터리가 아님", dst)
+    os.makedirs(dst, exist_ok=True)             # 이 시점의 dst 는 링크가 아니다
+    for name in os.listdir(src):
+        s = os.path.join(src, name)
+        d = os.path.join(dst, name)
+        if os.path.islink(s):                   # 소스 링크는 링크로(copytree symlinks=True)
+            if os.path.lexists(d):
+                if os.path.isdir(d) and not os.path.islink(d):
+                    raise IsADirectoryError(errno.EISDIR, "디렉터리를 링크로 대체 불가", d)
+                os.unlink(d)
+            os.symlink(os.readlink(s), d,
+                       target_is_directory=os.path.isdir(s))
+        elif os.path.isdir(s):
+            _merge_copy_no_follow(s, d)
+        else:
+            if os.path.islink(d):
+                os.unlink(d)                    # 링크 대상에 쓰지 않는다
+            elif os.path.isdir(d):
+                raise IsADirectoryError(errno.EISDIR, "파일을 디렉터리 위로 덮어쓸 수 없음", d)
+            shutil.copy2(s, d, follow_symlinks=False)
+    try:
+        shutil.copystat(src, dst, follow_symlinks=False)
+    except OSError:
+        pass
+
+
 def mdir_op_msg(server, sess, msg: dict) -> dict:
     """mdir 파일 조작 요청(request_mdir_op) — 서버가 shutil/os 로 **직접** 수행한다
     (패널 셸 상태와 무관, 페더레이션이면 릴레이돼 원격 파일시스템에 적용).
@@ -179,8 +220,16 @@ def mdir_op_msg(server, sess, msg: dict) -> dict:
                     exists = False
                 if op == "copy":
                     if os.path.isdir(s) and not os.path.islink(s):
-                        shutil.copytree(s, tgt, symlinks=True,
-                                        dirs_exist_ok=exists)
+                        if exists:
+                            # 병합 복사는 copytree(dirs_exist_ok) 를 쓰지 않는다
+                            # (pytmux-34 #6). 위 unlink 는 **최상위**만 본다 — 대상 트리
+                            # **안**의 링크(`proj/notes.txt → ~/.ssh/authorized_keys`,
+                            # `proj/hooks → ~/.config/…`)는 copytree 가 그대로 따라가
+                            # dstdir 밖에 썼다(makedirs 는 링크된 디렉터리를 통과하고,
+                            # copy2 는 목적지를 'wb' 로 연다).
+                            _merge_copy_no_follow(s, tgt)
+                        else:
+                            shutil.copytree(s, tgt, symlinks=True)
                     elif exists and os.path.isdir(tgt):
                         # 검수 새 배터리 2026-07-25(M-B): 파일 X 를 같은 이름의
                         # **디렉토리** X 위로 덮어쓰면 copy2 가 그 **안으로** 복사해

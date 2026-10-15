@@ -115,6 +115,10 @@ pub static EN: &[(&str, &str)] = &[
         "인증 토큰을 못 읽었다: {path} (서버가 띄운 사용자와 같은 계정인지 확인)",
         "Could not read the auth token: {path} (check you are the same account that started the server)",
     ),
+    (
+        "루프백이 아닌 호스트({host})에는 이 상자의 인증 토큰을 보내지 않는다 — 원격은 remote-attach 를 쓴다 (꼭 필요하면 PYTMUX_ALLOW_REMOTE_TOKEN=1)",
+        "Not sending this machine's auth token to a non-loopback host ({host}) — use remote-attach for remote servers (set PYTMUX_ALLOW_REMOTE_TOKEN=1 if you really need to)",
+    ),
     ("핸드셰이크 실패: {err}", "Handshake failed: {err}"),
     // ── framing.rs — FrameError ──
     ("연결이 닫혔다", "Connection closed"),

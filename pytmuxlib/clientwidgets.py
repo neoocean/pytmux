@@ -20,6 +20,7 @@ from rich.segment import Segment
 from rich.style import Style
 
 from . import clientnotices, i18n
+from .cellwidth import cluster_cells
 from .clientutil import (_DATE_STRFTIME, _TIME_STRFTIME, REMOTE_PINK,
                          _char_cells, _deemoji_text, norm_sep, path_at,
                          remote_title_display, theme_color)
@@ -46,6 +47,29 @@ def _deemoji_strip_if_dim(app, strip: Strip) -> Strip:
     segs = [Segment(_deemoji_text(seg.text), seg.style, seg.control)
             for seg in strip]
     return Strip(segs, strip.cell_length)
+
+
+_VS16 = "\ufe0f"
+
+
+def _term_cluster(text: str) -> str:
+    """셀의 군집을 **바깥 단말에 낼 글**로 바꾼다(pytmux-555).
+
+    격자는 `⚠`+U+FE0F 를 밑글자 폭대로 **1칸**에 얹는다(pytmux-407 · 「군집의 폭 =
+    밑글자의 폭」). 그런데 그 글을 그대로 내면 Windows Terminal·tmux 3.5 같은 현대
+    단말은 VS16 을 보고 **2칸 컬러 이모지**로 그리며 커서를 2칸 민다 — Rich 는 1칸으로
+    세므로 그 줄의 나머지가 한 칸 밀리고 패널 오른쪽 테두리가 공백에 덮인다(제보:
+    Claude Code 의 `⚠️ 이 Claude는 …` 줄에서 테두리가 늘 같은 자리에 빈다).
+
+    그래서 1칸 셀이면 VS16 을 떼어 **텍스트 표현**으로 낸다 — 단말이 격자보다 넓게 그릴
+    글을 내지 않는다. 격자·복사본(`_extract_selection`)은 원래 글을 그대로 든다.
+
+    ★ pytmux-556 뒤로 그림 글자 + VS16 은 격자에서 **2칸**이라(`cellwidth.vs16_wide`)
+    여기를 안 탄다 — VS16 째로 나가 컬러로 그려진다. 남은 손님은 격자가 넓히지 못한
+    것들(줄 끝에서 버려지지 않고 들어온 옛 서버의 셀 · 그림 글자가 아닌 밑글자)이다."""
+    if _VS16 in text and cluster_cells(text) == 1:
+        return text.replace(_VS16, "") or text
+    return text
 
 
 class SepInsensitiveSuggester(SuggestFromList):
@@ -297,6 +321,8 @@ class MultiplexerView(Widget):
         for cx, (ch, st) in enumerate(row):
             if ch == "":
                 continue  # 와이드 문자의 연속 셀 → 앞 문자가 2칸을 차지함
+            if len(ch) > 1:
+                ch = _term_cluster(ch)
             if cx in under:
                 st = st + Style(underline=True) if st else Style(underline=True)
             if st is run_st:
@@ -856,6 +882,9 @@ class MultiplexerView(Widget):
                 if (y0, x0) > (y1, x1):
                     y0, x0, y1, x1 = y1, x1, y0, x0
                 self.app._copy_unwrap_geom = (cols, x0)
+                # 회신(`selection`)은 **물었을 때만** 받는다(검수 pytmux-34 #5) —
+                # send_cmd 도 같은 표시를 하지만 여기가 요청의 정문이라 직접 세운다.
+                self.app._expect_selection()
                 self.app.send_cmd("copy_range", pane=pid,
                                   y0=y0, x0=x0, y1=y1, x1=x1)
             elif text:

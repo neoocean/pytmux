@@ -193,6 +193,21 @@ def create_vault(conn, now: float) -> str:
     return vid
 
 
+def drop_vault_if_empty(conn, vault_id: str) -> bool:
+    """패스키가 하나도 없는 vault 를 지운다 — 등록 도중 실패의 보상(pytmux-34 #12).
+    패스키가 붙은 vault 는 절대 건드리지 않는다(조건을 SQL 안에 둔다)."""
+    try:
+        conn.rollback()             # 실패한 INSERT 의 열린 트랜잭션부터 정리
+    except sqlite3.Error:
+        pass
+    cur = conn.execute(
+        "DELETE FROM vault WHERE vault_id=? AND NOT EXISTS"
+        " (SELECT 1 FROM passkey WHERE passkey.vault_id=vault.vault_id)",
+        (vault_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def new_recovery_code(conn, vault_id: str, now: float) -> str:
     """복구 코드를 발급(재발급)한다. 평문은 **이때 한 번만** 반환된다."""
     raw = secrets.token_bytes(16)                    # 128비트
@@ -471,7 +486,7 @@ def put_events(conn, vault_id: str, records, now: float) -> dict:
     S-4(검수): 예전에는 루프 중간에 QuotaExceeded 를 올려 **이미 넣은 행은 남고
     rows_used 는 안 오르고 트랜잭션은 열린 채로** 다음 요청에 넘어갔다(실측:
     3행 저장·rows_used=0·in_transaction=True → 쿼터가 영영 안 걸림). 이제
-    ① 배치 크기로 **삽입 전에** 판정하고 ② 전부-또는-전무로 커밋하며 ③ 어떤 실패든
+    ① 신규분으로 **커밋 전에** 판정하고 ② 전부-또는-전무로 커밋하며 ③ 어떤 실패든
     rollback 한다."""
     v = conn.execute(
         "SELECT quota_rows, rows_used, quota_bytes, bytes_used FROM vault"
@@ -479,12 +494,11 @@ def put_events(conn, vault_id: str, records, now: float) -> dict:
     if v is None:
         raise KeyError(vault_id)
     recs = list(records)
-    size = sum(len(bytes(r["ct"])) + len(bytes(r["nonce"])) for r in recs)
-    # 최악(전부 신규)을 가정해 **미리** 판정한다 — 부분 반영을 원천 차단.
-    if v["rows_used"] + len(recs) > v["quota_rows"]:
-        raise QuotaExceeded("vault 행 쿼터 초과")
-    if v["bytes_used"] + size > v["quota_bytes"]:
-        raise QuotaExceeded("vault 바이트 쿼터 초과")
+    # 쿼터는 **실제로 새로 들어간 행**으로 판정한다(pytmux-34 #13). 예전에는 최악(전부
+    # 신규)을 가정해 삽입 전에 거부했는데, 클라의 resync(커서 초기화 → 전량 재업로드)는
+    # 거의 전부 중복이라 쿼터 근처의 vault 에서 **넣을 행이 0 인데도** 배치마다 507 이
+    # 나 커서가 영영 전진하지 못했다. 이제 한 트랜잭션 안에서 INSERT OR IGNORE 로 넣어
+    # 보고 신규분이 쿼터를 넘으면 **통째로 rollback** 한다 — 전부-또는-전무(S-4)는 그대로다.
     accepted = ignored = 0
     added_bytes = 0
     try:
@@ -500,6 +514,10 @@ def put_events(conn, vault_id: str, records, now: float) -> dict:
                 added_bytes += len(bytes(rec["ct"])) + len(bytes(rec["nonce"]))
             else:
                 ignored += 1
+        if v["rows_used"] + accepted > v["quota_rows"]:
+            raise QuotaExceeded("vault 행 쿼터 초과")
+        if v["bytes_used"] + added_bytes > v["quota_bytes"]:
+            raise QuotaExceeded("vault 바이트 쿼터 초과")
         if accepted:
             conn.execute(
                 "UPDATE vault SET rows_used=rows_used+?, bytes_used=bytes_used+?"

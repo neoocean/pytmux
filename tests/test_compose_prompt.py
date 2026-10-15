@@ -93,8 +93,10 @@ async def test_esc_ctrl_updown_jumps_prompts_and_enters_scroll():
         # 정상 동작으로 못박고 있었다.
         # ⚠ 값을 손으로 심지 않는다 — 서버의 화면 프레임이 곧 실제 값(빈 셸 = 0)으로
         #   덮어써 첫 시도가 붉었다(2026-10-02 실측). 셸에 진짜 스크롤백을 만든다.
+        # ⚠ `seq` 를 쓰지 않는다(pytmux-557): Windows 기본 셸(cmd.exe)에는 없어 스크롤백이
+        #   안 생겼다. 빈 Enter 는 어느 셸이든 프롬프트를 한 줄씩 내 화면(30행)을 넘친다.
         aid = app.layout.get("active")
-        app.send_input(b"seq 1 120\r")
+        app.send_input(b"\r" * 60)
         assert await wait_until(pilot, lambda: (app.pane_top or {}).get(aid, 0) > 0,
                                 timeout=10.0), "셸이 스크롤백을 안 만들었다"
         try:

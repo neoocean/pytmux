@@ -102,8 +102,12 @@ def _scan(path):
     try:
         with open(path, "rb") as fh:
             text = fh.read().decode("latin-1")
-    except OSError:
-        return None
+    except FileNotFoundError:
+        return None                 # 추적 중이지만 지운 파일 — 미러로 갈 내용이 없다
+    except (OSError, ValueError) as e:      # ValueError = 인코딩 못 하는 경로 이름
+        # ⛔ 못 읽었으면 «못 쟀다» 다(pytmux-34 #15). 종전에는 None = 통과라, 열기에
+        # 실패한 파일(Windows 에서 이름이 깨진 비ASCII 경로 등)이 조용히 스캔에서 빠졌다.
+        return f"파일을 못 읽었다({type(e).__name__}) — 못 쟀으면 통과가 아니다"
     for pat, why in LEAK_PATTERNS:
         if pat.search(text):
             return why
@@ -112,16 +116,23 @@ def _scan(path):
 
 def _leaks():
     """미러로 갈 파일에서 이 상자 고유 문자열을 찾는다 → `(경로, 사유)` 목록."""
+    # ⛔ **바이트로 받아 `\0` 으로 쪼갠 뒤 UTF-8 로 푼다**(pytmux-34 #15). `text=True` 를
+    # encoding 없이 쓰면 Windows 에서 로캘 코드페이지(cp1252·cp949)로 디코드돼 한글
+    # 파일명이 깨진 이름이 되고 → open 실패 → 유출 스캔이 그 파일을 조용히 건너뛰었다.
+    # cp1252 미정의 바이트가 끼면 UnicodeDecodeError 로 게이트가 통째로 죽었다.
+    # git 은 `-z` 출력에서 경로를 인용하지 않고 원래 바이트(UTF-8)로 낸다.
     proc = subprocess.run(
-        ["git", "ls-files", "-co", "--exclude-standard", "-z"],
-        cwd=ROOT, capture_output=True, text=True,
+        ["git", "-c", "core.quotepath=off", "ls-files", "-co",
+         "--exclude-standard", "-z"],
+        cwd=ROOT, capture_output=True,
     )
     if proc.returncode != 0:
         return [("(git ls-files)", "미러 대상 목록을 못 얻었다 — 못 쟀으면 통과가 아니다")]
     found = []
-    for rel in proc.stdout.split("\0"):
-        if not rel:
+    for raw in proc.stdout.split(b"\0"):
+        if not raw:
             continue
+        rel = raw.decode("utf-8", "surrogateescape")
         why = _scan(os.path.join(ROOT, rel))
         if why:
             found.append((rel, why))

@@ -108,7 +108,8 @@ class SyncApp:
 
     _UNAUTH_ROUTES = {("POST", "/v1/enroll/options"), ("POST", "/v1/enroll/verify"),
                       ("POST", "/v1/auth/options"), ("POST", "/v1/auth/verify"),
-                      ("POST", "/v1/devices"), ("POST", "/v1/recover")}
+                      ("POST", "/v1/devices"), ("POST", "/v1/recover"),
+                      ("POST", "/v1/recover-link")}
 
     def _handle_locked(self, method, path, query, headers, body, q):
         try:
@@ -137,7 +138,12 @@ class SyncApp:
             if route == ("POST", "/v1/recover"):
                 return self._recover_code(body)
             if method == "GET" and path == "/v1/recover":
-                return self._recover(q)
+                # 부작용 없는 확인 페이지뿐이다(pytmux-34 #2). 토큰 소모·세션 발급은
+                # 아래 POST 로만 — 링크 미리보기·프리페치가 GET 으로 토큰을 써 버리면
+                # 그 봇의 쿠키 저장소에 vault 세션이 생겼다.
+                return self._static("recover.html")
+            if route == ("POST", "/v1/recover-link"):
+                return self._recover(body)
             if route == ("GET", "/v1/session"):
                 return self._session_state(headers)
             if route == ("POST", "/v1/vault/key"):
@@ -190,7 +196,8 @@ class SyncApp:
         """`static/` 밑의 화이트리스트 파일만. 경로 조작(`../`)은 이름 자체를 막아
         차단한다 — 정규화로 막는 것보다 확실하다."""
         ext = os.path.splitext(name)[1]
-        if name not in ("enroll.html", "enroll.js", "enroll.css", "analytics.js"):
+        if name not in ("enroll.html", "enroll.js", "enroll.css", "analytics.js",
+                        "recover.html", "recover.js"):
             return self._err(404, "not_found")
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "static", name)
@@ -258,16 +265,30 @@ class SyncApp:
         now = self._now()
         if ch[1] is None and not self._may_create_vault(headers):
             return self._bad_auth("registration_closed")
-        vault_id = ch[1] or sdb.create_vault(self.conn, now)
+        # ⛔ vault 를 만들기 **전에** 실패할 수 있는 검사를 전부 끝낸다(pytmux-34 #12).
+        # 예전에는 create_vault(즉시 commit)가 중복 검사·라벨 바인딩보다 앞서, 라벨이
+        # 비문자열(→ sqlite InterfaceError 500)이거나 credential_exists 면 **패스키 없는
+        # 고아 vault** 가 남았다. 기본 모드(vault 0개일 때만 생성)에서는 그 순간부터
+        # 아무도 vault 를 못 만들고 로그인도 안 된다 — 운영자가 DB 를 직접 고쳐야 풀렸다.
+        label = d.get("label")
+        if label is not None and not isinstance(label, str):
+            return self._err(400, "bad_request")
+        label = (label or "")[:64] or None
         if sdb.get_passkey(self.conn, reg["cred_id"]) is not None:
             return self._bad_auth("credential_exists")
+        new_vault = ch[1] is None
+        vault_id = ch[1] or sdb.create_vault(self.conn, now)
         try:
             sdb.add_passkey(self.conn, vault_id, reg["cred_id"], reg["cose_key"],
                             reg["sign_count"], reg["aaguid"],
-                            label=(d.get("label") or None), now=now)
+                            label=label, now=now)
         except sdb.LimitExceeded:
             self._bump("passkey_limit")
             return self._err(409, "limit")
+        except Exception:
+            if new_vault:               # 방금 만든 vault 를 되돌린다(고아 금지)
+                sdb.drop_vault_if_empty(self.conn, vault_id)
+            raise
         sid = sdb.new_session(self.conn, vault_id, now, SESSION_TTL)
         out = {"ok": True}
         if ch[1] is None:
@@ -336,12 +357,22 @@ class SyncApp:
                                 "recovery_code": sdb.new_recovery_code(
                                     self.conn, vault_id, now)}, cookie=sid)
 
-    def _recover(self, q):
-        """일회용 복구 링크 — 토큰이 맞으면 **기존 vault** 세션을 발급하고 첫 화면으로.
+    def _recover(self, body):
+        """일회용 복구 링크 — 토큰이 맞으면 **기존 vault** 세션을 발급한다.
 
         새 vault 를 만들지 않는다는 점이 핵심이다: 기존 vault 에 붙어야 등록된 기기와
-        감싼 키가 그대로 살아 있다. 토큰은 상수시간 비교 후 **즉시 폐기**한다."""
-        token = (q.get("t") or [""])[0]
+        감싼 키가 그대로 살아 있다. 토큰은 상수시간 비교 후 **즉시 폐기**한다.
+
+        토큰은 **POST 본문**으로만 받는다(pytmux-34 #2): GET 쿼리스트링이면 링크
+        미리보기 봇이 먼저 소모하고(운영자는 401, 봇은 세션), 앞단 프록시 로그·브라우저
+        히스토리에도 남는다. 링크(`/v1/recover#t=…`)는 확인 페이지를 열 뿐이고, 그
+        페이지(static/recover.js)가 버튼을 누를 때 여기로 보낸다. 미인증 전역 상한
+        (`_UNAUTH_ROUTES`)도 이 경로에 걸린다."""
+        d = self._body_json(body)
+        if d is None:
+            return self._err(400, "bad_request")
+        token = d.get("t")
+        token = token if isinstance(token, str) else ""
         if not self.recovery_token or not token:
             return self._bad_auth("recover")
         if not hmac.compare_digest(token, self.recovery_token):
@@ -352,9 +383,7 @@ class SyncApp:
             return self._bad_auth("recover")
         self.recovery_token = ""            # 일회용
         sid = sdb.new_session(self.conn, row["vault_id"], self._now(), SESSION_TTL)
-        status, headers_out, body = self._json(200, {"ok": True}, cookie=sid)
-        headers_out["Location"] = "/"
-        return 302, headers_out, body
+        return self._json(200, {"ok": True}, cookie=sid)
 
     def _session_state(self, headers):
         """새로고침 후 페이지가 로그인 상태를 되찾는 경로.
@@ -614,8 +643,6 @@ class SyncApp:
         dev = sdb.get_device(self.conn, did)     # 폐기 기기는 None
         if dev is None:
             return self._deny("unknown_device")
-        if not self._rate_ok(did, now):
-            return self._deny("rate")
         try:
             sig = wa.b64u_decode(sig_s)
         except wa.WebAuthnError:
@@ -628,6 +655,11 @@ class SyncApp:
                                                 body, query))
         except (InvalidSignature, ValueError):
             return self._deny("signature")
+        # 기기 상한도 서명이 맞은 **뒤에** 깎는다(pytmux-34 #16). 앞에서 깎으면 device_id
+        # 만 아는 제3자가 아무 서명으로 분당 RATE_BURST 번 두드려 그 기기의 정상
+        # push/pull 을 `rate` 로 막을 수 있었다.
+        if not self._rate_ok(did, now):
+            return self._deny("rate")
         # 서명이 맞은 **뒤에** nonce 를 소모한다 — 그 전에 쓰면 아무나 nonce 테이블을
         # 채워 정상 요청을 밀어낼 수 있다.
         if not sdb.use_nonce(self.conn, did, nonce, now, SIG_WINDOW):
@@ -803,13 +835,30 @@ def make_handler(app):
     class Handler(BaseHTTPRequestHandler):
         server_version = "synserver"        # 버전 문자열 노출 최소화
         sys_version = ""
+        # 소켓 타임아웃(pytmux-34 #3). 기본 None 이면 Content-Length 만 크게 주고 본문을
+        # 안 보내는 연결이 요청마다 만들어지는 스레드를 **무기한** 붙든다 — 연결 수백
+        # 개만 열어 두면 스레드·FD 가 고갈된다. StreamRequestHandler 가 settimeout 한다.
+        timeout = 30
 
         def _run(self, method):
-            length = _int(self.headers.get("Content-Length"), 0)
-            body = self.rfile.read(min(length, MAX_BODY + 1)) if length else b""
+            # ⛔ 길이를 **읽기 전에** 판정한다(pytmux-34 #3). `Content-Length: -1` 은
+            # 참으로 평가되고 min(-1, …) = -1 이라 rfile.read(-1) 이 EOF 까지 읽었다 —
+            # MAX_BODY 검사는 app.handle 안이라 그보다 늦어 메모리 상한이 없었다.
+            raw_len = self.headers.get("Content-Length")
+            length = _int(raw_len, -1) if raw_len is not None else 0
+            if length < 0:
+                self.close_connection = True
+                return self._reply(*app._err(400, "bad_request"))
+            if length > MAX_BODY:
+                self.close_connection = True   # 본문을 안 읽었으니 연결을 재사용 못 한다
+                return self._reply(*app._err(413, "too_large"))
+            body = self.rfile.read(length) if length else b""
             parsed = urllib.parse.urlsplit(self.path)
             status, headers, out = app.handle(
                 method, parsed.path, parsed.query, dict(self.headers), body)
+            self._reply(status, headers, out)
+
+        def _reply(self, status, headers, out):
             self._status = status          # 접근 로그에 상태를 남긴다
             self.send_response(status)
             for k, v in headers.items():
@@ -855,20 +904,42 @@ def build_parser():
     p.add_argument("--bootstrap-token", default="",
                    help="새 vault 생성 시 요구할 X-Sync-Bootstrap 값")
     p.add_argument("--recovery-token", default="",
-                   help="일회용 복구 링크 토큰(/v1/recover?t=…) — 패스키를 전부 잃었을 때")
+                   help="일회용 복구 링크 토큰(/v1/recover#t=…, %d자 이상) — 패스키를"
+                        " 전부 잃었을 때" % MIN_RECOVERY_TOKEN)
     return p
+
+
+# 복구 토큰 최소 길이(pytmux-34 #2). 이 토큰 하나로 vault 세션이 나오므로 운영자가 고른
+# 짧은 값에 기대지 않는다 — `secrets.token_urlsafe(16)`(128비트)가 22자다.
+MIN_RECOVERY_TOKEN = 22
+
+
+def check_recovery_token(token: str) -> str:
+    """복구 토큰 강도 검사. 비었으면 '' (기능 꺼짐), 짧으면 ValueError."""
+    token = str(token or "")
+    if token and len(token) < MIN_RECOVERY_TOKEN:
+        raise ValueError("--recovery-token 은 %d자 이상이어야 한다(예: python -c "
+                         "\"import secrets;print(secrets.token_urlsafe(24))\")"
+                         % MIN_RECOVERY_TOKEN)
+    return token
 
 
 def main(argv=None):
     from http.server import ThreadingHTTPServer
-    a = build_parser().parse_args(argv)
+    parser = build_parser()
+    a = parser.parse_args(argv)
+    try:
+        a.recovery_token = check_recovery_token(a.recovery_token)
+    except ValueError as e:
+        parser.error(str(e))
     conn = sdb.connect(a.db)
     app = SyncApp(conn, a.rp_id, a.origin or ("https://" + a.rp_id),
                   open_registration=a.open_registration,
                   bootstrap_token=a.bootstrap_token)
     app.recovery_token = a.recovery_token
     if a.recovery_token:
-        sys.stderr.write("recovery link armed: /v1/recover?t=<token> (일회용)\n")
+        sys.stderr.write("recovery link armed: /v1/recover#t=<token> (일회용 · 열고 "
+                         "'복구 진행' 버튼을 눌러야 소모된다)\n")
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(app))
     sys.stderr.write("synserver %s:%d rp=%s\n" % (a.host, a.port, a.rp_id))
     try:

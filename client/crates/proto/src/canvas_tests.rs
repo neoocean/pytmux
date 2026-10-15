@@ -351,11 +351,18 @@ fn a_variation_selector_rides_the_letter_instead_of_taking_a_cell() {
     // 두 가지가 한꺼번에 걸려 있던 자리다(pytmux-407):
     //  (1) 그 글자가 **제 칸을 먹어** 뒤따르는 글자가 한 칸씩 밀렸다.
     //  (2) 경고 기호가 선택자와 **갈려** 셰이퍼에 홀로 가 흑백으로 그려졌다.
+    //  ★ pytmux-556 뒤로 `⚠`+VS16 은 **2칸**이다(VS16 이 폭 1 그림 글자를 넓힌다) —
+    //    그래서 `B` 는 3번째 칸에 서고 2번째 칸은 연속 칸이다. 선택자 자체가 칸을 먹는지는
+    //    그림 글자가 아닌 밑글자(`A`+VS16)로 잰다(아래 `C`).
     let mut c = Canvas::new(10, 1);
     c.blit_pane(&plain("A\u{26a0}\u{fe0f}B"), 0, 0, 10, 1);
     assert_eq!(c.cell(0, 0).unwrap().ch, 'A');
     assert_eq!(c.cell(1, 0).unwrap().ch, '\u{26a0}');
-    assert_eq!(c.cell(2, 0).unwrap().ch, 'B', "선택자가 칸을 먹어 줄이 밀렸다");
+    assert!(c.cell(2, 0).unwrap().continuation, "VS16 이 ⚠ 를 2칸으로 넓히지 않았다");
+    assert_eq!(c.cell(3, 0).unwrap().ch, 'B', "넓어진 군집 뒤 자리가 틀렸다");
+    let mut n = Canvas::new(10, 1);
+    n.blit_pane(&plain("A\u{fe0f}C"), 0, 0, 10, 1);
+    assert_eq!(n.cell(1, 0).unwrap().ch, 'C', "선택자가 칸을 먹어 줄이 밀렸다");
     // 그 칸의 **글**은 둘이 붙은 한 덩어리다 — 갈라 넘기면 색 이모지가 흑백이 된다.
     assert_eq!(c.cell(1, 0).unwrap().text(), "\u{26a0}\u{fe0f}");
     // 다시 내보낼 때도 잃지 않는다(복사·검색·재직렬화가 이 길을 탄다).

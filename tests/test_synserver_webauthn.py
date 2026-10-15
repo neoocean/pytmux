@@ -241,10 +241,17 @@ async def test_rejects_unsupported_alg():
     auth.cose = dict(auth.cose)
     auth.cose[3] = -65535                          # 알 수 없는 알고리즘
     att, cd = auth.register(ch)
-    reg = wa.verify_registration(att, cd, ch, RP_ID, ORIGIN)   # 등록은 통과(키 보관)
+    # pytmux-34 #12: 예전에는 등록이 통과(키 보관)하고 로그인에서야 떨어졌다 — 그
+    # 사이에 쓸 수 없는 키가 첫 vault 를 차지해 기본 모드의 첫 등록을 영구히 잠갔다.
+    # 이제 등록 단계에서 거부한다.
+    _reject(wa.verify_registration, att, cd, ch, RP_ID, ORIGIN)
+    good = FakeAuthenticator()
+    reg = wa.verify_registration(*good.register(ch), ch, RP_ID, ORIGIN)
+    bad_key = cbor(dict(auth.cose))
     ch2 = wa.new_challenge()
     ad, cd, sig = auth.sign(ch2)
-    _reject(wa.verify_assertion, ad, cd, sig, reg["cose_key"], ch2, RP_ID, ORIGIN)
+    _reject(wa.verify_assertion, ad, cd, sig, bad_key, ch2, RP_ID, ORIGIN)
+    assert reg["cose_key"]
 
 
 # ── CBOR 파서 자체(공격면) ─────────────────────────────────────────────────

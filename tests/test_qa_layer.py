@@ -1255,8 +1255,10 @@ async def test_residue_does_not_count_a_process_we_already_reaped():
         #   ★ 그리고 이것이 **재려는 상황에 맞는** 모양이기도 하다: 위 독스트링이 적듯
         #   슬롯이 띄우는 서버가 `Popen(..., start_new_session=True)` 다. 세션을 갈라도
         #   **직계 자식인 것은 그대로**라 좀비·`waitpid` 를 재려던 뜻은 안 상한다.
+        # 신원 표지: 슬롯 홈 경로를 argv 에 싣는다 — reap() 은 명령줄이 **이 슬롯의
+        # 것**일 때만 쏜다(pytmux-34 #7). 실 서버는 엔드포인트(홈 아래 소켓)가 그 표지다.
         child = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(30)"],
+            [sys.executable, "-c", "import time; time.sleep(30)", slot.home],
             start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         slot.spawned.append(child.pid)
@@ -1293,7 +1295,7 @@ def test_wipe_reaps_before_it_deletes_the_pid_files():
         # ☠ start_new_session=True 를 빼면 이 시험이 스위트를 통째로 끈다 — 위
         #   test_residue_does_not_count_a_process_we_already_reaped 의 주석 그대로다.
         child = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(30)"],
+            [sys.executable, "-c", "import time; time.sleep(30)", slot.home],
             start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         slot.spawned.append(child.pid)
@@ -1313,6 +1315,74 @@ def test_wipe_reaps_before_it_deletes_the_pid_files():
                 child.wait(timeout=5)
             except Exception:
                 pass
+
+
+def test_reap_does_not_shoot_a_pid_that_is_no_longer_ours():
+    """⛔ **pid 파일의 번호가 재사용됐으면 쏘지 않는다**(pytmux-34 #7).
+
+    pty-host 는 QA 의 자식이 아니라 먼저 죽을 수 있고 그 번호는 재사용된다. `reap()` 은
+    `proc.terminate(force=True)`(POSIX 프로세스 그룹 · Windows 트리 전체)로 쏘므로, 신원을
+    안 보면 그 번호를 받은 **사용자의 라이브 서버·셸 트리**가 날아간다. 대역으로 슬롯과
+    무관한 프로세스를 띄워 그 pid 를 pid 파일에 적고, reap() 뒤에도 살아 있어야 한다.
+    대조군: 슬롯 표지가 있는 프로세스는 같은 경로로 죽는다."""
+    import subprocess
+    import time
+    with _slot() as slot:
+        os.makedirs(slot.state_dir, exist_ok=True)
+        stranger = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ours = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)",
+             "--pidfile", os.path.join(slot.state_dir, "x.ptyhost.pid")],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for name, p in (("a", stranger), ("b", ours)):
+                with open(os.path.join(slot.state_dir, name + ".ptyhost.pid"), "w",
+                          encoding="utf-8") as fh:
+                    fh.write(str(p.pid))
+            slot.reap()
+            ours_dead = False
+            for _ in range(50):
+                if ours.poll() is not None:
+                    ours_dead = True
+                    break
+                time.sleep(0.1)
+            assert stranger.poll() is None, \
+                "슬롯과 무관한 프로세스를 pid 파일 번호만 믿고 죽였다"
+            assert ours_dead, "슬롯 표지가 있는 pty-host 를 못 죽였다(대조군 — 공허 통과)"
+        finally:
+            for p in (stranger, ours):
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+                try:
+                    p.wait(timeout=5)
+                except Exception:
+                    pass
+    # 호출부: reap 경로가 신원 판정을 실제로 거친다(헬퍼만 있고 안 부르면 공허 통과).
+    import inspect
+    from qa import env as qa_env
+    src = inspect.getsource(qa_env.HomeSlot.reap)
+    assert "_still_ours(" in src
+    assert "command_line(" in inspect.getsource(qa_env.HomeSlot._still_ours)
+
+
+def test_slot_keeps_the_real_token_db_and_sync_server_out():
+    """pytmux-34 #9: 슬롯 서버가 사용자의 실 토큰 DB(72MB)를 슬롯으로 복사해 오거나 실
+    동기화 서버로 가짜 행을 올리지 않게 슬롯이 스위치를 세운다."""
+    with _slot() as slot:
+        assert os.environ.get("PYTMUX_NO_DB_MIGRATE") == "1"
+        assert os.environ.get("PYTMUX_TOKEN_SYNC_URL") == "https://127.0.0.1:9"
+        assert slot.home
+    assert os.environ.get("PYTMUX_NO_DB_MIGRATE") is None or \
+        os.environ.get("PYTMUX_NO_DB_MIGRATE") == _SAVED_NO_MIGRATE
+
+
+_SAVED_NO_MIGRATE = os.environ.get("PYTMUX_NO_DB_MIGRATE")
 
 
 def test_the_ledger_is_not_reported_for_a_scenario_that_died_halfway():

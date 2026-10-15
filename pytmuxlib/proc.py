@@ -489,6 +489,39 @@ def foreground_command(pid: int) -> Optional[str]:
     return _win_foreground_command(pid)
 
 
+_PROCESSENTRY32W = None        # 지연 정의 캐시 — `_processentry32w` 참조
+
+
+def _processentry32w():
+    """`PROCESSENTRY32W` 구조체 클래스 — **프로세스 수명에 한 번만** 짓는다(pytmux-505·382).
+
+    ☠ 종전엔 `_win_proc_table` 이 부를 때마다 이 클래스를 새로 정의하고
+    `ctypes.POINTER(그 클래스)` 를 argtypes 에 실었다. Python ≤3.13 의 `ctypes.POINTER`
+    는 결과를 `ctypes._pointer_type_cache` 에 **클래스를 키로 영구 보관**하므로, 호출마다
+    클래스 1개·CField 10개·포인터 타입 1개가 영영 안 풀렸다(실측: 100회 → CField
+    +1000 · 캐시 +100). 이 함수는 자동 탭이름과 Claude 패널 감지가 패널마다 주기적으로
+    부르므로 서버가 며칠 돌면 GC 가 훑을 산 객체가 끝없이 는다 — 「수 일 두면 느려진다」
+    (pytmux-382)의 실측 기제이고, test_client_longrun 의 간헐 실패(pytmux-505)가 남긴
+    「자란 종류 상위: _ctypes.CField +70」이 그 흔적이었다."""
+    global _PROCESSENTRY32W
+    if _PROCESSENTRY32W is None:
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260)]
+
+        _PROCESSENTRY32W = PROCESSENTRY32W
+    return _PROCESSENTRY32W
+
+
 def _win_proc_table():
     """Windows: ToolHelp 스냅샷 1회로 `(exe_of, children)` 전체 프로세스 표를 만든다.
 
@@ -501,16 +534,7 @@ def _win_proc_table():
 
         TH32CS_SNAPPROCESS = 0x00000002
         INVALID = wintypes.HANDLE(-1).value
-
-        class PROCESSENTRY32W(ctypes.Structure):
-            _fields_ = [
-                ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
-                ("th32ProcessID", wintypes.DWORD),
-                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
-                ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-                ("th32ParentProcessID", wintypes.DWORD),
-                ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
-                ("szExeFile", ctypes.c_wchar * 260)]
+        PROCESSENTRY32W = _processentry32w()
 
         k = ctypes.WinDLL("kernel32", use_last_error=True)
         k.CreateToolhelp32Snapshot.restype = wintypes.HANDLE

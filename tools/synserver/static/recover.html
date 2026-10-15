@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>pytmux 동기화 — 복구 링크</title>
+<link rel="stylesheet" href="/static/enroll.css">
+</head>
+<body>
+<main>
+  <h1>복구 링크</h1>
+  <!-- 이 페이지는 열기만 해서는 아무 일도 하지 않는다(pytmux-34 #2). 토큰은 아래 버튼을
+       눌러야 POST 로 소모된다 — 링크 미리보기 봇이 먼저 열어도 토큰이 살아 있다. -->
+  <p class="lead">운영자가 발급한 <strong>일회용</strong> 복구 링크입니다. 아래 버튼을 누르면
+    기존 vault 에 로그인하고, 그 자리에서 새 패스키를 추가할 수 있습니다.</p>
+  <div class="row">
+    <button id="btn-recover-link">복구 진행</button>
+  </div>
+  <p id="recover-link-msg" class="hint"></p>
+</main>
+<script src="/static/recover.js"></script>
+</body>
+</html>

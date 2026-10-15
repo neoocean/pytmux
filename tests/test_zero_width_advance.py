@@ -52,7 +52,10 @@ async def test_a_selector_does_not_shift_the_rest_of_the_row():
                       "dividers": [], "active": pid,
                       "cols": cols, "rows": 5}
         plain = "|A|"
-        marked = "|\u26a0" + SEL + "|"
+        # \u26a0 \ubc11\uae00\uc790\ub294 \uadf8\ub9bc \uae00\uc790\uac00 **\uc544\ub2cc** `A` \ub2e4 \u2014 `\u26a0`+VS16 \uc740 pytmux-556 \ub4a4\ub85c 2\uce78\uc774\ub77c
+        #   (VS16 \uc774 \ub113\ud78c\ub2e4 \u00b7 `test_grapheme_clusters` \uac00 \uc7b0\ub2e4) \uc774 \u00ab\uce78\uc744 \uc548 \uba39\ub294\ub2e4\u00bb \uc624\ub77c\ud074\uc758
+        #   \ud45c\ubcf8\uc774 \ub420 \uc218 \uc5c6\ub2e4.
+        marked = "|A" + SEL + "|"
         app._dispatch({"t": "screen", "pane": pid,
                        "rows": [[[plain, {}]], [[marked, {}]]], "cursor": None})
         app._composite()

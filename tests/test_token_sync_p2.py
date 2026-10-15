@@ -316,6 +316,9 @@ async def test_worker_skips_when_off_and_never_blocks_loop():
     seen, slept2 = [], []
 
     class FakeClient:
+        def require_sync_schema(self):
+            seen.append(threading.get_ident())
+
         def push_limits(self):
             seen.append(threading.get_ident())
             return {"sent": 0}
@@ -566,6 +569,181 @@ async def test_readonly_db_backs_off_without_logging_a_traceback():
     srv2, _ = await run(sqlite3.OperationalError("database is locked"))
     assert srv2.logged and "token_sync" in srv2.logged[0], \
         "락까지 조용히 삼켰다 — 진짜 실패가 묻힌다"
+
+
+def test_sync_url_is_judged_by_the_parsed_host():
+    """접두 일치가 `http://localhost.evil.com` 을 통과시키던 것(pytmux-34 인프라 #14)."""
+    ok = tokensync._check_sync_url
+    assert ok("https://sync.example.org/") == "https://sync.example.org"
+    assert ok("http://localhost:8080") == "http://localhost:8080"
+    assert ok("http://127.0.0.1:9") == "http://127.0.0.1:9"
+    for bad in ("http://localhost.evil.com", "http://127.0.0.1.evil.com",
+                "http://example.org", "ftp://x"):
+        try:
+            ok(bad)
+        except tokensync.SyncError:
+            continue
+        raise AssertionError("평문 원격 주소를 받아들였다: %s" % bad)
+    with harness.patched(tokensync.os, environ=dict(tokensync.os.environ,
+                                                    PYTMUX_TOKEN_SYNC_URL="http://evil.example")):
+        assert tokensync.default_sync_url() == "", "나쁜 env 주소에서 실 서버로 폴백했다"
+
+
+def test_scratch_homes_do_not_sync_unless_a_url_is_explicit():
+    env = {k: v for k, v in tokensync.os.environ.items()
+           if k not in ("PYTMUX_TOKEN_SYNC_URL", "PYTMUX_TOKENS_DB", "PYTMUX_NO_DB_MIGRATE")}
+    with harness.patched(tokensync.os, environ=dict(env, PYTMUX_NO_DB_MIGRATE="1")):
+        assert tokensync._sync_disabled_by_env()
+    with harness.patched(tokensync.os, environ=dict(env, PYTMUX_TOKENS_DB="x.db",
+                                                    PYTMUX_TOKEN_SYNC_URL="https://a.b")):
+        assert not tokensync._sync_disabled_by_env()
+    with harness.patched(tokensync.os, environ=env):
+        assert not tokensync._sync_disabled_by_env()
+
+
+def test_an_unreadable_device_key_is_not_regenerated():
+    """읽기 실패(백신의 일시 잠금 등)에 새 키로 덮어쓰면 서버 공개키와 어긋나 영구 401
+    이었다(pytmux-34 인프라 #4) — 실패로 올리고 파일은 그대로 둔다."""
+    d = tempfile.mkdtemp(prefix="pytmux-devkey-")
+    path = os.path.join(d, "sync_device.key")
+    with open(path, "wb") as f:
+        f.write(b"k" * 32)
+    cli = tokensync.SyncClient(None, d, None)
+    real_open = open
+
+    def flaky(p, *a, **k):
+        if str(p) == path:
+            raise PermissionError("locked by AV")
+        return real_open(p, *a, **k)
+    import builtins
+    with harness.patched(builtins, open=flaky):
+        try:
+            cli._device_key()
+        except tokensync.SyncError:
+            pass
+        else:
+            raise AssertionError("읽기 실패인데 키를 새로 만들었다")
+    with open(path, "rb") as f:
+        assert f.read() == b"k" * 32, "기기 키 파일이 덮어써졌다"
+
+
+async def test_a_revoked_device_is_a_state_not_a_traceback():
+    """401(기기 폐기)·429·507 은 사용자 행동이 필요한 상태다(pytmux-34 인프라 #11)."""
+    import asyncio
+
+    class FakeServer:
+        running = True
+        token_sync = "server"
+        token_sync_url = "https://x"
+        token_sync_sec = 60
+
+        def __init__(self):
+            self.logged = []
+
+        def _log_error(self, m):
+            self.logged.append(m)
+
+    srv, slept = FakeServer(), []
+
+    async def fake_sleep(n):
+        slept.append(n)
+        if len(slept) >= 2:
+            raise asyncio.CancelledError
+
+    def boom(_s):
+        tokensync._raise_http(401, b'{"error":"revoked"}', "업로드")
+    try:
+        await tokensync.run_worker(srv, make_client=boom, sleep=fake_sleep)
+    except asyncio.CancelledError:
+        pass
+    assert srv.logged == [], srv.logged
+
+
+def _legacy_db(path):
+    """v9 이전 모양의 토큰 DB — 지금 스키마에서 동기화 칼럼만 걷어 user_version 8 로."""
+    import sqlite3
+    usagedb.connect(path).close()
+    c = sqlite3.connect(path)
+    c.execute("DROP INDEX IF EXISTS ux_limits_lkey")
+    c.execute("DROP INDEX IF EXISTS ix_xc_host")
+    for table, col in usagedb.SYNC_COLUMNS:
+        c.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+    c.execute("PRAGMA user_version=8")
+    c.commit()
+    c.close()
+
+
+async def test_half_migrated_db_is_a_state_not_a_traceback():
+    """사다리를 덜 오른 토큰 DB 위에서 동기화 한 바퀴가 `no such column: lkey`
+    트레이스백을 쌓지 않는다(pytmux-546) — 사유(그 DB 경로 포함)만 남기고 다음 주기로.
+
+    종전: `_sync_once` → `push_limits` → `backfill_limits_lkey` 의 첫 SELECT 가
+    OperationalError 로 죽고, 워커가 그것을 error.log 트레이스백으로 남겨 서버 예외
+    가드가 **무관한 시험**(test_client·test_compose_prompt·test_remote …)을 첫 시도에
+    떨궜다. 되돌리면: `_sync_once` 의 `require_sync_schema` 를 지우면 ⑵가,
+    워커의 `SchemaNotReady` 갈래를 지우면 ⑶이 떨어진다."""
+    import asyncio
+    import sqlite3
+
+    # ⑴ 사다리가 다시 오를 수 있으면 그 자리에서 고친다 — 사유도 안 남긴다.
+    d = tempfile.mkdtemp(prefix="pytmux-546-")
+    p = os.path.join(d, "tokens.db")
+    _legacy_db(p)
+    conn = sqlite3.connect(p)
+    conn.row_factory = sqlite3.Row
+    assert usagedb.missing_sync_columns(conn), "시험 전제: 칼럼이 없어야 한다"
+    tokensync.SyncClient(conn, d, None).require_sync_schema()
+    assert usagedb.missing_sync_columns(conn) == []
+    conn.close()
+
+    # ⑵ 못 오르면(락 등) `SchemaNotReady` — 메시지가 **그 파일**을 말한다.
+    p2 = os.path.join(d, "stuck.db")
+    _legacy_db(p2)
+    conn2 = sqlite3.connect(p2)
+    conn2.row_factory = sqlite3.Row
+
+    def locked(_c):
+        raise sqlite3.OperationalError("database is locked")
+
+    with harness.patched(usagedb, _ensure_schema=locked):
+        try:
+            tokensync._sync_once(tokensync.SyncClient(conn2, d, None))
+        except tokensync.SchemaNotReady as e:
+            assert "lkey" in str(e) and "stuck.db" in str(e), str(e)
+        else:
+            raise AssertionError("덜 오른 DB 를 push 까지 끌고 갔다")
+    conn2.close()
+
+    # ⑶ 워커는 그것을 **상태**로 다룬다 — error.log 에 안 적고 백오프한다.
+    class FakeServer:
+        running = True
+        token_sync = "server"
+        token_sync_url = "https://x"
+        token_sync_sec = 60
+
+        def __init__(self):
+            self.logged = []
+
+        def _log_error(self, m):
+            self.logged.append(m)
+
+    srv, slept = FakeServer(), []
+
+    async def fake_sleep(n):
+        slept.append(n)
+        if len(slept) >= 3:
+            raise asyncio.CancelledError
+
+    def boom(_s):
+        raise tokensync.SchemaNotReady("토큰 DB 스키마가 덜 올랐습니다(limits.lkey 없음)")
+
+    try:
+        await tokensync.run_worker(srv, make_client=boom, sleep=fake_sleep)
+    except asyncio.CancelledError:
+        pass
+    assert srv.logged == [], "덜 오른 DB 를 error.log 트레이스백으로 남겼다: %r" % srv.logged
+    # 일시 상태라 지수 백오프를 안 탄다 — 다음 주기에 곧바로 다시 본다.
+    assert slept[0] == slept[1] == 60, slept
 
 
 # ── 설정 경로(켜는 방법이 코드 안에 있어야 한다) ────────────────────────────

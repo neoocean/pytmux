@@ -479,6 +479,8 @@ _KEY_DIAG = frozenset({
 
 DEFAULT_STYLE = Style()
 _style_cache: dict = {}
+# make_style 캐시 상한(검수 pytmux-34 #1) — 같은 파일의 lru 캐시(8192)와 같은 자릿수.
+_STYLE_CACHE_MAX = 8192
 
 # §1.7-a 원격(remote-attach) 탭/외곽선 분홍 — 로컬(파랑 primary)과 한눈에 구분.
 # 활성 탭 배경·활성 패널 외곽선용 본색과, 비활성 외곽선용 어두운 변형.
@@ -821,11 +823,24 @@ def install_control_char_filter(app) -> bool:
 
 
 def make_style(d: dict) -> Style:
-    if not d:
+    """셀 스타일 dict → Rich `Style`(캐시).
+
+    - 캐시 상한(검수 pytmux-34 #1): 종전 `_style_cache` 는 지우지 않아 트루컬러 출력
+      (반블록 이미지 뷰어·그라데이션)이 쌓일수록 **영구히** 자랐다(382 후보). 상한을
+      넘으면 통째로 비운다 — 정상 화면의 고유 스타일은 수백 개라 곧 다시 찬다.
+    - 모양 방어(#3): 스타일은 페더레이션 상류에서도 온다. dict 가 아니거나 값이 해시
+      불가(`{"f": ["x"]}`)면 기본 스타일로 접는다 — 합성은 디스패치 가드 밖이라 여기서
+      예외가 나면 매 프레임 화면이 언다."""
+    if not d or not isinstance(d, dict):
         return DEFAULT_STYLE
-    key = tuple(sorted(d.items()))
-    st = _style_cache.get(key)
+    try:
+        key = tuple(sorted(d.items()))
+        st = _style_cache.get(key)
+    except TypeError:
+        return DEFAULT_STYLE
     if st is None:
+        if len(_style_cache) >= _STYLE_CACHE_MAX:
+            _style_cache.clear()
         attrs = dict(bold=bool(d.get("bo")), italic=bool(d.get("it")),
                      underline=bool(d.get("un")), reverse=bool(d.get("rv")),
                      strike=bool(d.get("st")))
@@ -942,9 +957,10 @@ def _restart_server_relaunch_label(server_os) -> str:
 
     ⚠ 클라의 OS 로 판단하면 안 된다 — 서버는 원격일 수 있다(페더레이션·ssh). 그래서
     서버가 `server_os` 를 적어 보내고, 모르면(옛 서버) 종전 문구로 남는다."""
+    # 라벨은 카탈로그 키로 번역한다(검수 pytmux-34 #15 — 영어 판에 한국어 라벨이 섞였다).
     if server_os == "windows":
-        return "서버 재기동 지원(pty-host 인수인계)"
-    return "서버 re-exec 지원(POSIX·이벤트루프)"
+        return i18n.t("restartcheck.lbl_relaunch_win")
+    return i18n.t("restartcheck.lbl_reexec")
 
 
 def _restart_check_eval(m, cli_ok, kind="all"):
@@ -959,12 +975,12 @@ def _restart_check_eval(m, cli_ok, kind="all"):
     checks = [
         (m.get("reexec_supported"),
          _restart_server_relaunch_label(m.get("server_os"))),
-        (m.get("has_sessions"), "복원할 세션 존재"),
-        (m.get("serialize_ok"), "상태 직렬화 round-trip"),
-        (fd_ok, f"패널 master fd 보유 ({with_fd}/{panes})"),
+        (m.get("has_sessions"), i18n.t("restartcheck.lbl_sessions")),
+        (m.get("serialize_ok"), i18n.t("restartcheck.lbl_serialize")),
+        (fd_ok, i18n.t("restartcheck.lbl_fd", n=with_fd, total=panes)),
     ]
     if kind == "all":
-        checks.append((cli_ok, "클라이언트 relaunch 인자 해석"))
+        checks.append((cli_ok, i18n.t("restartcheck.lbl_client")))
     return all(ok for ok, _ in checks), checks
 
 

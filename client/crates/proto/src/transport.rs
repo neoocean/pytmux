@@ -82,6 +82,33 @@ impl Stream {
             Stream::Tcp(s) => s.set_read_timeout(timeout),
         }
     }
+
+    /// 쓰기 타임아웃(검수 pytmux-34 #6). 읽기와 달리 이것은 **끊김**이다 — 반쯤 쓴 프레임
+    /// 뒤로는 스트림이 어긋나므로 위 계층은 연결을 접는다([`Self::shutdown`]).
+    pub fn set_write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            Stream::Unix(s) => s.set_write_timeout(timeout),
+            Stream::Tcp(s) => s.set_write_timeout(timeout),
+        }
+    }
+
+    pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
+        match self {
+            #[cfg(unix)]
+            Stream::Unix(s) => s.write_timeout(),
+            Stream::Tcp(s) => s.write_timeout(),
+        }
+    }
+
+    /// 양쪽을 닫는다 — 같은 소켓을 쥔 **읽기 스레드도** 깨어나 끝난다(복제본도 같은 소켓).
+    pub fn shutdown(&self) -> io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            Stream::Unix(s) => s.shutdown(std::net::Shutdown::Both),
+            Stream::Tcp(s) => s.shutdown(std::net::Shutdown::Both),
+        }
+    }
 }
 
 impl Read for Stream {
@@ -157,6 +184,46 @@ mod tests {
             "상한보다 오래 매달렸다: {:?}",
             start.elapsed()
         );
+    }
+
+    #[test]
+    fn a_write_to_a_peer_that_never_reads_gives_up_instead_of_hanging() {
+        // ☠ 검수 pytmux-34 #6: 쓰기 타임아웃이 없으면 서버 루프가 멈춘 동안의 큰 붙여넣기가
+        //   송신 버퍼를 채우고 `write_all` 이 **UI 스레드를 무기한** 막는다. 읽지 않는
+        //   상대에게 수 MiB 를 밀어 넣어 상한 안에 `Err` 로 돌아오는지 본다.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (park_tx, park_rx) = std::sync::mpsc::channel::<()>();
+        let peer = std::thread::spawn(move || {
+            // 받기만 하고 안 읽는다 — 시험이 끝날 때까지 소켓을 쥐고 있는다.
+            let held = listener.accept().ok();
+            let _ = park_rx.recv();
+            drop(held);
+        });
+        let mut stream = Stream::connect_tcp("127.0.0.1", port).unwrap();
+        stream.set_write_timeout(Some(Duration::from_millis(300))).unwrap();
+        // 쓰기는 따로 돌린다 — 상한이 빠지면 시험이 **매달리지 않고 떨어지게**.
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let chunk = vec![b'x'; 1 << 20];
+            // 커널 버퍼(수 MiB 까지 자동 조정될 수 있다)가 차기 전에는 쓰기가 성공한다 —
+            // 그래서 넉넉히 민다.
+            let mut result = Ok(());
+            for _ in 0..256 {
+                result = stream.write_all(&chunk);
+                if result.is_err() {
+                    break;
+                }
+            }
+            let _ = done_tx.send(result.is_err());
+        });
+        let verdict = done_rx.recv_timeout(Duration::from_secs(20));
+        let _ = park_tx.send(());
+        let _ = peer.join();
+        match verdict {
+            Ok(errored) => assert!(errored, "읽지 않는 상대에게 256 MiB 를 다 썼다고 한다"),
+            Err(_) => panic!("읽지 않는 상대에게 쓰다가 20초 넘게 매달렸다 — 쓰기 상한이 없다"),
+        }
     }
 
     #[test]

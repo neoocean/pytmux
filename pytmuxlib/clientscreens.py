@@ -15,6 +15,7 @@ from textual import events
 from textual.binding import Binding
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.widget import Widget
 from textual.strip import Strip
 from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
@@ -3068,7 +3069,10 @@ class ConfirmScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirmbox"):
-            yield Label(self._message, id="confirmmsg")
+            # ⛔ 마크업으로 읽지 않는다(검수 pytmux-34 #7) — 메시지에는 탭 이름·호스트가
+            #   끼고, `[/]`·`[/x]` 한 조각이 MarkupError 로 클라를 죽였다(`[@click=…]` 는
+            #   클릭 액션이 됐다). 호출부 문구에 마크업을 쓰는 곳이 없다.
+            yield Label(self._message, id="confirmmsg", markup=False)
             with Horizontal(id="confirmopts"):
                 yield Label(self._yes, id="cy")
                 yield Label(self._no, id="cn")
@@ -3406,7 +3410,10 @@ class SearchResultsScreen(ModalScreen):
         # 테두리(제목·힌트)의 주인은 **판**이고 목록은 그 안에서 스크롤만 한다 —
         # 종전엔 목록 자체가 판이라, 판 안에 다른 줄을 놓을 자리가 없었다.
         with Vertical(id="sresbox") as box:
-            box.border_title = self.headline_text()
+            # 평문 Content 로 넣는다(검수 pytmux-34 #7) — Textual 8 은 `border_title` 에
+            # 넣은 str 을 **그 자리에서** 마크업으로 파싱해, 검색어 `[/INST]`·`[/quote]`
+            # 하나가 MarkupError 로 compose 를 죽였다. 머리말에는 서버가 echo 한 검색어가 낀다.
+            box.border_title = Content(self.headline_text())
             box.border_subtitle = i18n.t("screen.search_all_sub")
             # 잘렸다·빠졌다는 **판 안**에 둔다(줄바꿈되는 자리 — notes_text 참조).
             # 할 말이 없으면 그 줄도 없다(로컬만 쓰는 사람의 판을 안 늘린다).

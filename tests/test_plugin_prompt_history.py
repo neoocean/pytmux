@@ -47,6 +47,59 @@ async def test_track_input_skips_escape_sequences():
     assert p._ph_history == ["abcd"]
 
 
+async def test_track_input_ctrl_c_drops_buffer():
+    """Ctrl+C 로 버린 입력이 다음 제출에 붙지 않는다(pytmux-561 — 제보 화면의
+    `…4000119401_*/clear` 가 그 모양이었다)."""
+    p = _claude_pane()
+    server.track_input(p, b"! p4 opened 4000119401_*")
+    server.track_input(p, b"\x03")
+    server.track_input(p, b"/clear\r")
+    assert p._ph_history == ["/clear"], p._ph_history
+
+
+async def test_track_input_double_esc_drops_buffer():
+    """Esc 두 번(800ms 이하 — claude 2.1.300 의 `R4` 창)이면 claude 가 입력칸을 비우므로
+    누적분도 버린다(pytmux-562). 패널로 가는 ESC 는 `\\x1b` 한 바이트짜리 입력으로 온다."""
+    p = _claude_pane()
+    server.track_input(p, b"discarded draft", now=10.0)
+    server.track_input(p, b"\x1b", now=10.0)
+    server.track_input(p, b"\x1b", now=10.5)
+    server.track_input(p, b"fresh\r", now=11.0)
+    assert p._ph_history == ["fresh"], p._ph_history
+    # 경계: 정확히 800ms 도 두 번이다(claude 는 `<=`).
+    server.track_input(p, b"draft", now=20.0)
+    server.track_input(p, b"\x1b", now=20.0)
+    server.track_input(p, b"\x1b", now=20.8)
+    server.track_input(p, b"x\r", now=21.0)
+    assert p._ph_history[-1] == "x", p._ph_history
+    # 한 입력에 둘이 붙어 와도 두 번이다.
+    server.track_input(p, b"draft", now=30.0)
+    server.track_input(p, b"\x1b\x1b", now=30.0)
+    server.track_input(p, b"y\r", now=30.1)
+    assert p._ph_history[-1] == "y", p._ph_history
+
+
+async def test_track_input_single_or_slow_esc_keeps_buffer():
+    """대조군: 맨몸 ESC 한 번·900ms 떨어진 두 번·Alt+키(ESC+글자)·CSI 는 claude 가 안
+    비우므로 누적분을 지키고, 비운 뒤 셋째 ESC 는 새 첫 번째다(`R4` 의 대기 해제)."""
+    p = _claude_pane()
+    server.track_input(p, b"keep", now=1.0)
+    server.track_input(p, b"\x1b", now=1.0)              # 한 번
+    server.track_input(p, b"\x1b", now=1.9)              # 900ms — 새 첫 번째
+    server.track_input(p, b"\x1bb", now=2.0)             # Alt+b — 누름 아님
+    server.track_input(p, b"\x1b[D", now=2.1)            # ← — 누름 아님
+    server.track_input(p, b" me\r", now=2.2)
+    assert p._ph_history == ["keep me"], p._ph_history
+    # 둘로 비운 직후의 셋째는 짝이 없다 — 넷째가 와야 다시 비운다.
+    server.track_input(p, b"a", now=5.0)
+    server.track_input(p, b"\x1b", now=5.0)
+    server.track_input(p, b"\x1b", now=5.1)              # 비움
+    server.track_input(p, b"b", now=5.2)
+    server.track_input(p, b"\x1b", now=5.3)              # 새 첫 번째
+    server.track_input(p, b"c\r", now=5.4)
+    assert p._ph_history[-1] == "bc", p._ph_history
+
+
 async def test_track_input_gated_on_claude():
     p = _claude_pane()
     p._claude = None                                   # Claude 아님 → 기록 안 함
@@ -189,6 +242,136 @@ async def test_preview_undim_preserves_other_owners_rows():
     app._cmd_target_pane = None
     render.draw_preview(app, cells, 30, 6)
     assert app._undim_rows == {5}, app._undim_rows   # 남의 행은 보존
+
+
+# --------------------------------------------------------------------------- #
+# render.py — 고정 프롬프트 바(pytmux-560)
+# --------------------------------------------------------------------------- #
+def _put(cells, y, text):
+    for x, ch in enumerate(text):
+        cells[y][x] = (ch, cells[y][x][1])
+
+
+def _row(cells, y):
+    return "".join(c[0] for c in cells[y])
+
+
+def _pinned_app(hist, target=None, scroll=0):
+    app = _FakeApp(1, hist, 3, target)
+    app.pane_scroll = {1: scroll}
+    return app
+
+
+async def test_pinned_bar_shows_latest_prompt_on_first_row():
+    cells = _grid(30, 6)
+    _put(cells, 0, "older transcript text")
+    app = _pinned_app(["old one", "latest ask"])
+    render.draw_pinned(app, cells, 30, 6)
+    assert _row(cells, 0).startswith(" ❯ latest ask"), _row(cells, 0)
+    assert "old one" not in _text(cells)
+    # 한 줄 프롬프트는 한 행만 덮는다 — 둘째 행은 앱 글 그대로.
+    assert not _row(cells, 1).strip(), _row(cells, 1)
+    st = cells[0][3][1]
+    assert st.bold and tuple(st.color.get_truecolor()) == (255, 255, 255), st
+
+
+async def test_pinned_bar_caps_at_two_rows_with_ellipsis():
+    # 여러 줄: 처음 두 줄만, 끝에 …
+    cells = _grid(30, 6)
+    render.draw_pinned(_pinned_app(["L1\nL2\nL3\nL4"]), cells, 30, 6)
+    assert "L1" in _row(cells, 0) and "L2" in _row(cells, 1)
+    assert "L3" not in _text(cells) and "…" in _row(cells, 1), _text(cells)
+    assert not _row(cells, 2).strip()
+    # 긴 한 줄: 폭에 맞춰 두 행으로 접히고 넘치면 …
+    cells = _grid(30, 6)
+    long = "".join(chr(ord("a") + i % 26) for i in range(100))
+    render.draw_pinned(_pinned_app([long]), cells, 30, 6)
+    assert _row(cells, 0).startswith(" ❯ abc"), _row(cells, 0)
+    assert _row(cells, 1).rstrip().endswith("…"), _row(cells, 1)
+    assert not _row(cells, 2).strip()
+    # 두 줄짜리는 잘린 게 아니다 — … 가 없다.
+    cells = _grid(30, 6)
+    render.draw_pinned(_pinned_app(["one\ntwo"]), cells, 30, 6)
+    assert "…" not in _text(cells) and "two" in _row(cells, 1)
+
+
+async def test_pinned_rows_wide_chars_fit_budget():
+    from pytmuxlib.clientutil import _char_cells
+    rows = render.pinned_rows("가나다라마바사아자차카타파하" * 3, 20)
+    assert len(rows) == 2 and rows[-1].endswith("…"), rows
+    for r in rows:
+        assert sum(_char_cells(c) for c in r) <= 20, r
+
+
+async def test_pinned_bar_yields():
+    # ① `:` 미리보기 대상 패널 — 미리보기가 그 자리를 쓴다.
+    cells = _grid(30, 6)
+    render.draw_pinned(_pinned_app(["ask"], target=1), cells, 30, 6)
+    assert not _text(cells).strip()
+    # ② pytmux 스크롤 중 — 블록 스티키 바의 몫.
+    cells = _grid(30, 6)
+    render.draw_pinned(_pinned_app(["ask"], scroll=3), cells, 30, 6)
+    assert not _text(cells).strip()
+    # ③ 첫 줄이 이미 claude 자신의 스티키 바(표식으로 시작).
+    cells = _grid(30, 6)
+    _put(cells, 0, "❯ some earlier prompt…")
+    render.draw_pinned(_pinned_app(["ask"]), cells, 30, 6)
+    assert _row(cells, 0).startswith("❯ some earlier"), _row(cells, 0)
+    # ④ 그 프롬프트가 패널 안에 표식 줄로 보인다.
+    cells = _grid(30, 6)
+    _put(cells, 0, "header")
+    _put(cells, 3, "> latest ask")
+    render.draw_pinned(_pinned_app(["latest ask"]), cells, 30, 6)
+    assert _row(cells, 0).startswith("header"), _row(cells, 0)
+    # 대조군: 다른 프롬프트의 표식 줄만 보이면 바가 선다.
+    cells = _grid(30, 6)
+    _put(cells, 0, "header")
+    _put(cells, 3, "> something else")
+    render.draw_pinned(_pinned_app(["latest ask"]), cells, 30, 6)
+    assert "latest ask" in _row(cells, 0), _row(cells, 0)
+    # 이력 없음 → 없음.
+    cells = _grid(30, 6)
+    render.draw_pinned(_pinned_app([]), cells, 30, 6)
+    assert not _text(cells).strip()
+
+
+async def test_pinned_bar_hidden_after_clear():
+    """`/clear`(별칭 `/reset`·`/new`)가 가장 최근 제출이면 바가 서지 않는다 — 지운 대화의
+    프롬프트를 새 대화 위에 띄우지 않는다(pytmux-561)."""
+    for cmd in ("/clear", "/reset", "/new", " /CLEAR "):
+        cells = _grid(30, 6)
+        _put(cells, 0, "new conversation")
+        render.draw_pinned(_pinned_app(["old ask", cmd]), cells, 30, 6)
+        assert _row(cells, 0).startswith("new conversation"), (cmd, _row(cells, 0))
+        assert "old ask" not in _text(cells), cmd
+    # 대조군: 지운 뒤 새로 낸 프롬프트는 다시 선다.
+    cells = _grid(30, 6)
+    render.draw_pinned(_pinned_app(["old ask", "/clear", "fresh ask"]), cells, 30, 6)
+    assert _row(cells, 0).startswith(" ❯ fresh ask"), _row(cells, 0)
+    # `/clear` 로 시작하지 않는 글은 경계가 아니다.
+    cells = _grid(30, 6)
+    render.draw_pinned(_pinned_app(["explain /clear please"]), cells, 30, 6)
+    assert "explain /clear" in _row(cells, 0), _row(cells, 0)
+
+
+async def test_pinned_bar_click_and_hit_via_plugin_hooks():
+    """누르면 그 패널의 팝업이 열리고, 바 밖은 받지 않는다. **플러그인 훅 경로**로 재서
+    `client_render` 에서 `draw_pinned` 호출을 지우면 이 시험이 문다."""
+    plugin = importlib.import_module(_PKG).PLUGIN
+    cells = _grid(30, 6)
+    app = _pinned_app(["a\nb"])
+    opened = []
+    app.open_prompt_history = opened.append
+    plugin.client_render(app, cells, 30, 6)
+    assert plugin.client_hit(app, 5, 0) and plugin.client_hit(app, 5, 1)
+    assert not plugin.client_hit(app, 5, 2)
+    assert plugin.client_click(app, 5, 2, 1) is False and not opened
+    assert plugin.client_click(app, 5, 1, 3) is False      # 오른쪽 클릭은 안 받는다
+    assert plugin.client_click(app, 5, 1, 1) is True and opened == [1]
+    # 바가 비킨 프레임에서는 받지 않는다(표가 프레임마다 다시 선다).
+    app.pane_scroll = {1: 2}
+    plugin.client_render(app, _grid(30, 6), 30, 6)
+    assert not plugin.client_hit(app, 5, 0)
 
 
 async def test_popup_multiline_expands_into_rows_capped():

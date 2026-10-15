@@ -7529,10 +7529,16 @@ async def test_a_cell_carries_the_whole_grapheme_cluster():
     paint_runs(cells, runs, W, H, None)
     assert cells[0][0][0] == "A"
     assert cells[0][1][0] == "⚠️", repr(cells[0][1][0])
-    assert cells[0][2][0] == "B", "선택자가 칸을 먹어 줄이 밀렸다"
+    # ★ pytmux-556 뒤로 `⚠`+VS16 은 2칸이다 — 뒤 칸은 연속 칸, `B` 는 그 다음.
+    assert cells[0][2][0] == "", "VS16 이 ⚠ 를 2칸으로 넓히지 않았다"
+    assert cells[0][3][0] == "B", "넓어진 군집 뒤 자리가 틀렸다"
     # ⛔ 그 셀을 폭 함수에 넣어도 안 죽는다 — 종전 `char_cells` 는 여기서 TypeError 였다.
     from pytmuxlib.cellwidth import cluster_cells
-    assert cluster_cells(cells[0][1][0]) == 1
+    assert cluster_cells(cells[0][1][0]) == 2
+    # 선택자 자체는 칸을 안 먹는다 — 그림 글자가 아닌 밑글자로 잰다.
+    c2 = [[(" ", None) for _ in range(W)] for _ in range(H)]
+    paint_runs(c2, [{"x": 0, "y": 0, "text": "A️B", "style": {}}], W, H, None)
+    assert c2[0][1][0] == "B", "선택자가 칸을 먹어 줄이 밀렸다"
 
 
 async def test_a_zero_width_char_at_the_start_of_a_run_is_dropped():

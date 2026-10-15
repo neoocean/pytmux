@@ -16,6 +16,7 @@ import sys
 
 from . import ipc                     # open_private(0600) — raw 캡처 파일 소유자 전용
 from .cellwidth import attaches as _attaches, char_advance as _char_advance
+from .cellwidth import widens as _widens
 from .clientutil import _char_cells   # 1-9: 로컬 비메모이즈 복사본 대신 정식 lru_cache 판
 from .model import Pane
 from .protocol import set_winsize
@@ -40,6 +41,13 @@ def render_pane_lines(pane: Pane) -> list[str]:
                 #   문자소 군집에 이어지는 것. 낱개로 앉히면 `👨‍👩‍👧` 가 여섯 칸이 되어
                 #   서버 격자(같은 규칙으로 센다)와 어긋난다.
                 if base is not None and _attaches(cells[base], ch):
+                    # VS16 이 1칸 그림 글자를 2칸으로 넓힌다(pytmux-556) — 자리가 없으면 버린다.
+                    if _widens(cells[base], ch):
+                        if base + 1 == cx and cx < W:
+                            cells[base] += ch
+                            cells[cx] = ""
+                            cx += 1
+                        continue
                     cells[base] += ch
                     continue
                 if _char_advance(ch) == 0:

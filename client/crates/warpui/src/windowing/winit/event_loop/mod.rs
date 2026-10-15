@@ -1640,10 +1640,14 @@ impl EventLoop {
         // Check if we should start a window drag-resize. If so, do that instead of
         // passing the event into warpui. Skip for touch events as drag_resize_window
         // doesn't work properly with touch input on Windows.
+        // ★ 터치 판정을 `try_drag_resize` **앞에** 둔다 — 그 함수는 부르면 실제로 리사이즈를
+        //   «시작»한다. 종전 순서는 터치에서도 OS 에 크기 조절을 넘긴 뒤에야 「터치니까
+        //   안 한다」를 봤다(그 루프가 거절되면 winit 걸쇠가 걸린다 · pytmux-155).
+        //   방향은 누른 이 자리에서 다시 잰다(낡은 MouseMoved 값 금지 · 검수 pytmux-34 #1 ②).
         if let crate::event::Event::LeftMouseDown { .. } = event
             && !winit_window.is_decorated()
-            && winit_window.try_drag_resize()
             && window_state.last_touch_purpose.is_none()
+            && winit_window.try_drag_resize(window_state.last_cursor_position)
         {
             log::debug!("drag-155 리사이즈를 시작했다 — 여기서 돌려보낸다");
             // If we initiated a drag via the method

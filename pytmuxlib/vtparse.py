@@ -363,8 +363,10 @@ class VTTokenizer:
         o = ord(ch)
         if _CSI_FINAL_LO <= o <= _CSI_FINAL_HI and ch not in ("<", "=", ">", "?"):
             # 종결 바이트 도달. (마커 <>=? 는 파라미터부 시작에서만 의미 — 위 제외.)
-            self._dispatch_csi(ch)
+            # ★ GROUND 복귀를 dispatch **앞**에 둔다(pytmux-34 서버 검수 #1): 핸들러가
+            #   예외를 내도 FSM 이 CSI 에 갇혀 그 패널 출력이 영구히 멎지 않게.
             self.state = self._GROUND
+            self._dispatch_csi(ch)
             return
         if ch in "<>=?" and not self._raw:
             # 파라미터부 맨 앞 private/secondary 마커.
@@ -372,7 +374,9 @@ class VTTokenizer:
         elif ch in "$ !\"'":
             # intermediate 바이트(DECRQM 등) — private 마커로 기록(드물어 보존만).
             self._priv = self._priv or ch
-        elif ch.isdigit() or ch in ";:":
+        elif "0" <= ch <= "9" or ch in ";:":
+            # ⛔ `ch.isdigit()` 금지 — `²`·`³` 같은 위첨자도 True 인데 `int('²')` 는
+            #   ValueError 다(pytmux-34 #1 · `printf '\e[²m'` 한 줄로 패널이 멎었다).
             # 상한 초과분은 버린다(F2). 자르는 편이 안전한 저하다 — 정상 CSI 는 이
             # 한계 근처도 안 가고, 넘겼다는 건 이미 파라미터가 핸들러 arity 를 한참
             # 넘겨 어차피 _call_csi 에서 잘릴 입력이라는 뜻이다.

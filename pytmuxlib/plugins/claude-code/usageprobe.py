@@ -206,6 +206,21 @@ BOOT_TIMEOUT = 25.0
 PANEL_TIMEOUT = 12.0
 #: 「느리다」의 문턱 — 부팅이 예산의 이 비율을 넘게 쓰면 호출부가 한 줄 남긴다.
 SLOW_FRACTION = 0.6
+#: `query_usage` 안의 고정 펌프 합(초): /usage 뒤 0.4 + Esc 뒤 0.2 + /status 뒤 0.4.
+_FIXED_PUMPS = 1.0
+
+
+def worst_case_seconds(boot_timeout: float = BOOT_TIMEOUT,
+                       panel_timeout: float = PANEL_TIMEOUT) -> float:
+    """`query_usage` 가 **최악에** 쓰는 시간(초) — 바깥 캡의 근거(pytmux-34 #10).
+
+    부팅 대기는 관리 설정 승인 화면을 넘기면 **한 번 더** 열리고(`wait_for` 의
+    `end = … + maxs`), 패널 대기는 `/usage` 와 `/status`(계정·모델 폴백 — 거의 항상
+    돈다) 두 번 쓴다. 각 `wait_for` 는 마지막 `pump(0.3)` 하나만큼 넘칠 수 있다.
+    손으로 합을 적어 둔 캡(62초)이 이 최악(≈74초)보다 작아, 시간 초과가 바쁨 플래그를
+    일찍 풀고 숨은 claude 를 겹쳐 띄웠다."""
+    return (2 * boot_timeout + 2 * panel_timeout + _FIXED_PUMPS
+            + 4 * 0.3 + 0.5)
 
 
 def query_usage(cmd: str = "claude", cwd: str | None = None,

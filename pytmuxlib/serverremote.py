@@ -195,7 +195,9 @@ _REMOTE_RELAY_ACTIONS = {
 # `_req_token` 을 실어 보내고 업스트림이 회신에 echo 한다). 팝업을 여는 응답들이라
 # 같은 원격 호스트를 보는 다른 다운스트림 뷰어에 새면 안 된다. 미태깅 액션(입력·
 # 리사이즈·nc_list 등)은 종전대로 그 링크를 보는 전 클라에 브로드캐스트.
-_REMOTE_REQ_TOKEN_ACTIONS = {"request_token_log", "request_buffers"}
+# `copy_range` 도 그렇다 — 회신(`selection`)이 그 링크의 모든 뷰어에게 가면 한 사람의
+# 드래그 복사가 **다른 사람의 OS 클립보드**를 덮었다(pytmux-34 클라 검수 #5).
+_REMOTE_REQ_TOKEN_ACTIONS = {"request_token_log", "request_buffers", "copy_range"}
 
 # §1.7-c 원격 탭을 보는 동안 거부하는 경계 횡단 조작(notice 회신). 로컬 트리에
 # 조용히 실행되지도, 업스트림으로 릴레이되지도 않는다 — 원격 탭은 원격 패널만,
@@ -664,6 +666,24 @@ class ServerRemoteMixin:
         except BaseException:
             await _kill_proc(proc)
             raise
+        # ★ 핸드셰이크 뒤에도 stderr 를 계속 비운다(pytmux-34 서버 검수 #6). 안 읽으면
+        #   StreamReader 버퍼(128KiB)와 OS 파이프가 차는 날 ssh 의 fd 2 쓰기가 막히고,
+        #   stderr 와 stdout 이 같은 채널 window 를 쓰므로 **링크가 통째로 멎는다**.
+        #   끝 4KiB 만 남겨 둔다(끊긴 뒤 진단용 — `proc.stderr_tail`).
+        proc.stderr_tail = b""
+
+        async def _drain_stderr(p=proc):
+            try:
+                while True:
+                    chunk = await p.stderr.read(4096)
+                    if not chunk:
+                        return
+                    p.stderr_tail = (p.stderr_tail + chunk)[-4096:]
+            except (ConnectionError, OSError, ValueError):
+                return
+        spawn = getattr(self, "_spawn", None)
+        if spawn is not None and getattr(proc, "stderr", None) is not None:
+            spawn(_drain_stderr(), "remote_stderr_drain")
         return proc.stdout, proc.stdin, tok, proc
 
     def _is_self_ssh_token(self, tok: str) -> bool:

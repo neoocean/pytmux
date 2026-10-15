@@ -46,11 +46,21 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
 # 성립한다. 그 0.4초는 조건을 기다리는 대기가 아니라 **재는 대상 그 자체**라 폴링으로
 # 옮길 수 없다(옮기면 그 시험이 아무것도 안 잰다). 나머지 한 줄은 그 가짜 서버가
 # EOF 까지 연결을 붙들고 있는 루프로, 옆의 `_mute` 상류가 쓰는 것과 같은 모양이다.
-TOTALS = {"pause": 249, "sleep": 86, "silent_skip": 17}
+# 2026-10-15(pytmux-34 클라·인프라 검수): pause 249→252 · sleep 86→87. **자극이지 조건
+# 대기가 아니다** — test_client_review34 의 셋은 display-panes 타이머(1.5초)가 «살아
+# 있었다면 닫혔을» 시간을 실제로 흘려 재는 것(1.0+0.7)과, plugin_screen 폭주 뒤 «더 쌓이지
+# 않았다»는 부정 단언의 정착(0.2)이다 — 폴링하면 조건이 처음부터 참이라 공허해진다.
+# test_transcript_wiring 의 하나는 완료 콜백이 예약한 꼬리 테일까지 **한 바퀴** 양보하는
+# `sleep(0)` 이다(조건 폴링 부분은 wait_for 로 옮겼다).
+TOTALS = {"pause": 252, "sleep": 87, "silent_skip": 17}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
     "test_claude_resume_plugin": [8, 0, 0],
+    # 2026-10-15: 시간이 입력인 대기 셋(위 TOTALS 주석) — 타이머 경과 1.0+0.7 · 부정 단언 0.2.
+    "test_client_review34": [3, 0, 0],
+    # 2026-10-15: 완료 콜백까지 한 바퀴 양보하는 sleep(0) 하나(위 TOTALS 주석).
+    "test_transcript_wiring": [0, 1, 0],
     # 2026-07-28 이주(214->182): 화면 마운트 대기 32건을 wait_mounted 로.
     # 2026-07-28 이주 5차(182->171): 단순 단언 대기를 wait_until 로.
     # 2026-07-30c 이주 6차(171->160): 화면 마운트(pause→isinstance 단언) 7건을

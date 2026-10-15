@@ -29,6 +29,7 @@ from textual.geometry import Offset
 from textual.suggester import SuggestFromList
 
 from . import clientclip, clientrender, i18n, ipc, plugins, proc, version
+from .cellwidth import widens as _widens
 from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     COMMAND_ARGHIST, COMMAND_NOARG, COMMAND_OPTIONS, COMMANDS, COMPLETIONS,
     DEFAULT_STYLE, MAC_OPT_NUMBER_ROW, norm_sep,
@@ -446,13 +447,24 @@ class _InputMixin:
     def _enter_display(self):
         self.mode = "display"
         self._composite()
-        self.set_timer(1.5, self._auto_exit_display)
+        # 자동 종료 타이머는 한 개만 산다(검수 pytmux-34 #13) — 종전에는 앞 표시의 1.5초
+        # 타이머가 살아 있어, 1초 안에 다시 연 두 번째 오버레이를 0.5초 만에 닫았다.
+        self._stop_display_timer()
+        self._display_timer = self.set_timer(1.5, self._auto_exit_display)
+
+    def _stop_display_timer(self):
+        t = getattr(self, "_display_timer", None)
+        self._display_timer = None
+        if t is not None:
+            t.stop()
 
     def _auto_exit_display(self):
+        self._display_timer = None
         if self.mode == "display":
             self._exit_display()
 
     def _exit_display(self):
+        self._stop_display_timer()
         self.mode = "normal"
         self._composite()
 
@@ -906,7 +918,16 @@ class _RenderMixin:
 
     def _do_pending_composite(self):
         self._composite_pending = False
-        self._composite()
+        # 마지막 방어선(검수 pytmux-34 #3): 이 콜백은 `call_soon` 이라 디스패치 가드
+        # (`_dispatch_guarded`) 밖이다. 프레임 검증을 빠져나간 값 하나가 여기서 예외를
+        # 내면 루프가 그 예외를 삼키고 **다음 프레임도 같은 값으로 또 터져** 화면이
+        # 영영 멈춘다. 세고 로그만 남긴다(직접 `_composite()` 를 부르는 길은 그대로 둔다).
+        try:
+            self._composite()
+        except Exception:
+            self._composite_errors = getattr(self, "_composite_errors", 0) + 1
+            self.log(f"composite failed (#{self._composite_errors}): "
+                     f"{traceback.format_exc()}")
 
     # 셀 그리드 합성 헬퍼는 앱 비의존이라 clientrender.py 로 분리(#12). 호출은
     # clientrender.put_cell(...) 로 직접 한다(과거 self._put_cell). 시계/달력
@@ -1004,6 +1025,17 @@ class _RenderMixin:
                             at -= 1
                         prev = cells[gy][at][0] if (0 <= gy < H and 0 <= at < W) else ""
                         if prev and _attaches(prev, chh):
+                            # ★ VS16 이 1칸 그림 글자를 **2칸으로 넓히면** 뒤 칸을 연속
+                            #   칸으로 바꾸고 한 칸 더 민다(pytmux-556 · 서버 격자와 같은
+                            #   규칙). 넓힐 자리가 없으면 버린다 — 1칸 셀에 2칸 글을 두면
+                            #   바깥 단말이 그 줄을 넘쳐 그린다(pytmux-555).
+                            if _widens(prev, chh):
+                                if at + 1 == cx and cx < W and cx - p["x"] < p["w"]:
+                                    pst = cells[gy][at][1]
+                                    cells[gy][at] = (prev + chh, pst)
+                                    cells[gy][cx] = ("", pst)
+                                    cx += 1
+                                continue
                             cells[gy][at] = (prev + chh, cells[gy][at][1])
                             continue
                         if wch == 0:
@@ -1317,19 +1349,18 @@ class _RenderMixin:
             pcx, pcy = pu_layout["cx"], pu_layout["cy"]
             pcw, pch = pu_layout["cw"], pu_layout["ch"]
             box_st = Style(color=theme_color(self, "primary"), bold=True)
-            # ① 박스 내부를 불투명 공백으로 덮어 뒤 화면을 가린다.
-            for gy in range(py, min(py + ph, H)):
-                if gy < 0:
-                    continue
-                for gx in range(px, min(px + pw, W)):
-                    if gx >= 0:
-                        cells[gy][gx] = (" ", DEFAULT_STYLE)
+            # ① 박스 내부를 불투명 공백으로 덮어 뒤 화면을 가린다. 범위는 **먼저 화면
+            #    안으로 자른다** — 기하는 `_sane_layout` 이 상한을 걸지만, 화면 밖 칸을
+            #    하나씩 `continue` 로 건너는 루프는 그 상한만큼 헛돈다(검수 pytmux-34 #2).
+            for gy in range(max(0, py), min(py + ph, H)):
+                for gx in range(max(0, px), min(px + pw, W)):
+                    cells[gy][gx] = (" ", DEFAULT_STYLE)
             # ② 테두리 박스.
             x2, y2 = px + pw - 1, py + ph - 1
-            for gx in range(px + 1, x2):
+            for gx in range(max(px + 1, 0), min(x2, W)):
                 clientrender.put_cell(cells, gx, py, "─", box_st, W, H)
                 clientrender.put_cell(cells, gx, y2, "─", box_st, W, H)
-            for gy in range(py + 1, y2):
+            for gy in range(max(py + 1, 0), min(y2, H)):
                 clientrender.put_cell(cells, px, gy, "│", box_st, W, H)
                 clientrender.put_cell(cells, x2, gy, "│", box_st, W, H)
             clientrender.put_cell(cells, px, py, "┌", box_st, W, H)
@@ -1374,6 +1405,14 @@ class _RenderMixin:
                             prev = cells[gy][at][0] \
                                 if (0 <= gy < H and 0 <= at < W) else ""
                             if prev and _attaches(prev, chh):
+                                # VS16 넓힘(pytmux-556) — 위 본문 루프와 같은 규칙.
+                                if _widens(prev, chh):
+                                    if at + 1 == gx and gx < W and gx - pcx < pcw:
+                                        pst = cells[gy][at][1]
+                                        cells[gy][at] = (prev + chh, pst)
+                                        cells[gy][gx] = ("", pst)
+                                        gx += 1
+                                    continue
                                 cells[gy][at] = (prev + chh, cells[gy][at][1])
                                 continue
                             if wch == 0:

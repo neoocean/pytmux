@@ -801,16 +801,185 @@ async def test_recovery_link_is_single_use_and_keeps_vault():
     cookie, vault, _a = _enroll(app)
     app.handle("POST", "/v1/logout", headers=cookie)
 
-    assert _j(app.handle("GET", "/v1/recover", "t=nope"))[0] == 401   # 토큰 없음
+    def link(t):
+        return app.handle("POST", "/v1/recover-link",
+                          body=json.dumps({"t": t}).encode())
+
+    assert _j(link("nope"))[0] == 401                                # 토큰 없음
     app.recovery_token = "one-time-secret"
-    assert _j(app.handle("GET", "/v1/recover", "t=wrong"))[0] == 401
-    status, hdrs, _b = app.handle("GET", "/v1/recover", "t=one-time-secret")
-    assert status == 302 and hdrs["Location"] == "/"
+    assert _j(link("wrong"))[0] == 401
+    assert _j(link(["one-time-secret"]))[0] == 401                   # 비문자열
+    status, hdrs, _b = link("one-time-secret")
+    assert status == 200
     sid = hdrs["Set-Cookie"].split(";")[0].split("=", 1)[1]
     assert sdb.session_vault(app.conn, sid, clock.t) == vault        # 같은 vault
     assert sdb.vault_count(app.conn) == 1                            # 새로 안 만듦
     # 토큰은 소모됐다 — 링크가 로그에 남아도 재사용되지 않는다.
-    assert _j(app.handle("GET", "/v1/recover", "t=one-time-secret"))[0] == 401
+    assert _j(link("one-time-secret"))[0] == 401
+
+
+async def test_recovery_link_get_has_no_side_effect():
+    """pytmux-34 #2: GET 은 확인 페이지만 준다. 링크 미리보기 봇이 먼저 열어도 토큰이
+    살아 있고 세션 쿠키가 나가지 않는다 — 소모는 POST(`/v1/recover-link`)로만."""
+    app, clock = _app()
+    _enroll(app)
+    app.recovery_token = "one-time-secret"
+    status, hdrs, body = app.handle("GET", "/v1/recover", "t=one-time-secret")
+    assert status == 200 and "Set-Cookie" not in hdrs, hdrs
+    assert b"recover.js" in body and b"one-time-secret" not in body
+    assert app.recovery_token == "one-time-secret"                   # 안 소모됨
+    st, hdrs, _b = app.handle("GET", "/static/recover.js")
+    assert st == 200 and b"/v1/recover-link" in _b
+    # POST 경로는 미인증 전역 상한 대상이다(무차별 대입 상한).
+    assert ("POST", "/v1/recover-link") in app._UNAUTH_ROUTES
+    codes = [app.handle("POST", "/v1/recover-link",
+                        body=b'{"t":"x"}')[0] for _ in range(sapp.UNAUTH_BURST + 2)]
+    assert codes[-1] == 429
+
+
+async def test_recovery_token_minimum_length():
+    """pytmux-34 #2: 토큰 하나로 vault 세션이 나오므로 짧은 토큰은 기동에서 거부한다."""
+    assert sapp.check_recovery_token("") == ""
+    tok = "x" * sapp.MIN_RECOVERY_TOKEN
+    assert sapp.check_recovery_token(tok) == tok
+    try:
+        sapp.check_recovery_token("short")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("짧은 복구 토큰을 받아들였다")
+    import inspect
+    assert "check_recovery_token(" in inspect.getsource(sapp.main)   # 호출부
+
+
+async def test_enroll_failure_leaves_no_orphan_vault():
+    """pytmux-34 #12: vault 를 먼저 만들고 실패하면 고아 vault 가 남아 기본 모드에서
+    첫 등록이 영구히 잠겼다. 라벨이 비문자열이면 400 이고 vault 0 개, 정상 재시도는 성공."""
+    app, _ = _app(open_registration=False)
+
+    def enroll(label):
+        auth = FakeAuthenticator()
+        _st, opts = _j(app.handle("POST", "/v1/enroll/options"))
+        att, cd = auth.register(wa.b64u_decode(opts["challenge"]))
+        return _j(app.handle("POST", "/v1/enroll/verify", body=json.dumps({
+            "challenge": opts["challenge"], "label": label,
+            "attestationObject": wa.b64u_encode(att),
+            "clientDataJSON": wa.b64u_encode(cd)}).encode()))[0]
+
+    assert enroll({"x": 1}) == 400
+    assert sdb.vault_count(app.conn) == 0
+    # add_passkey 가 예기치 않게 실패해도 방금 만든 vault 는 되돌린다.
+    orig = sdb.add_passkey
+
+    def boom(*a, **k):
+        raise RuntimeError("disk")
+    sdb.add_passkey = boom
+    try:
+        assert enroll("ok") == 500
+    finally:
+        sdb.add_passkey = orig
+    assert sdb.vault_count(app.conn) == 0
+    assert enroll("ok") == 200 and sdb.vault_count(app.conn) == 1
+
+
+async def test_registration_rejects_unusable_cose_key():
+    """pytmux-34 #12: 등록 때 COSE 키를 파싱하지 않으면 쓸 수 없는 키로 첫 vault 를
+    차지할 수 있었다."""
+    import inspect
+    src = inspect.getsource(wa.verify_registration)
+    assert "_public_key(" in src
+    try:
+        wa._public_key({1: 2, 3: wa.ALG_ES256, -1: 1, -2: b"\x00" * 31, -3: b"\x00" * 32})
+    except wa.WebAuthnError:
+        pass
+    else:
+        raise AssertionError("잘린 EC 좌표를 받아들였다")
+
+
+async def test_quota_ignores_duplicates():
+    """pytmux-34 #13: 쿼터 선판정이 중복 행까지 신규로 세어, 쿼터에 닿은 vault 의 resync
+    (전부 중복)가 507 로 영구 정지했다. 이제 신규분만 센다."""
+    app, clock = _app()
+    cookie, vault, _ = _enroll(app)
+    did, sk = _device(app, cookie)
+    body = ("\n".join(_rec("e%01x" % i * 8) for i in range(1, 4))).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)
+    assert _j(app.handle("POST", "/v1/events", headers=h, body=body))[1]["accepted"] == 3
+    app.conn.execute("UPDATE vault SET quota_rows=3 WHERE vault_id=?", (vault,))
+    app.conn.commit()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body)      # 같은 배치 재전송
+    st, out = _j(app.handle("POST", "/v1/events", headers=h, body=body))
+    assert st == 200 and out["accepted"] == 0 and out["ignored"] == 3, out
+    # 신규가 한 행이라도 넘치면 여전히 전부 거부(전무)다.
+    body2 = body + b"\n" + _rec("f1" * 8).encode()
+    h = _signed(app, clock, did, sk, "POST", "/v1/events", body2)
+    assert _j(app.handle("POST", "/v1/events", headers=h, body=body2))[0] == 507
+    assert app.conn.execute("SELECT COUNT(*) FROM event").fetchone()[0] == 3
+    assert app.conn.in_transaction is False
+
+
+async def test_device_rate_counts_only_verified_requests():
+    """pytmux-34 #16: 기기 상한을 서명 검증 전에 깎아, device_id 를 아는 제3자가 나쁜
+    서명으로 그 기기의 정상 동기화를 막을 수 있었다."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    app, clock = _app()
+    cookie, _v, _a = _enroll(app)
+    did, sk = _device(app, cookie)
+    evil = ed25519.Ed25519PrivateKey.generate()
+    for _ in range(sapp.RATE_BURST + 1):
+        h = _signed(app, clock, did, evil, "GET", "/v1/events", b"", "since=0")
+        assert app.handle("GET", "/v1/events", "since=0", h, b"")[0] == 401
+    h = _signed(app, clock, did, sk, "GET", "/v1/events", b"", "since=0")
+    assert app.handle("GET", "/v1/events", "since=0", h, b"")[0] == 200
+
+
+class _InfiniteBody:
+    """무한 본문. read(-1) 은 EOF 까지 = 영원히 — 호출되면 즉시 실패로 드러낸다."""
+    def __init__(self):
+        self.reads = []
+
+    def read(self, n=-1):
+        self.reads.append(n)
+        if n is None or n < 0:
+            raise AssertionError("rfile.read(%r) — EOF 까지 읽으려 했다" % (n,))
+        return b"x" * n
+
+
+def _raw_handler(app, headers):
+    import io
+    from email.message import Message
+    H = sapp.make_handler(app)
+    h = H.__new__(H)
+    msg = Message()
+    for k, v in headers.items():
+        msg[k] = v
+    h.headers = msg
+    h.rfile = _InfiniteBody()
+    h.wfile = io.BytesIO()
+    h.path = "/v1/events"
+    h.command = "POST"
+    h.request_version = "HTTP/1.1"
+    h.requestline = "POST /v1/events HTTP/1.1"
+    h.client_address = ("127.0.0.1", 0)
+    h.close_connection = False
+    return h
+
+
+async def test_http_layer_bounds_body_and_sets_timeout():
+    """pytmux-34 #3: `Content-Length: -1` 이 rfile.read(-1)(EOF 까지)로 메모리 상한을
+    뚫었고, 소켓 타임아웃이 없어 본문을 안 보내는 연결이 스레드를 무기한 붙들었다."""
+    app, _ = _app()
+    H = sapp.make_handler(app)
+    assert H.timeout and H.timeout <= 60
+    for cl, want in (("-1", 400), ("abc", 400), (str(sapp.MAX_BODY + 1), 413)):
+        h = _raw_handler(app, {"Content-Length": cl})
+        h._run("POST")
+        assert h._status == want, (cl, h._status)
+        assert h.rfile.reads == [], h.rfile.reads        # 본문을 읽지 않았다
+        assert h.close_connection is True
+    h = _raw_handler(app, {"Content-Length": "5"})
+    h._run("POST")
+    assert h.rfile.reads == [5]
 
 
 async def test_recovery_code_unlocks_without_admin():

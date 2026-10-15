@@ -16,14 +16,10 @@ LC_* 를 못 받는(드문) sshd 면 표식이 전파되지 않아 원격 거부
 동작은 없다(우아한 열화). mosh 는 `-o` 옵션을 직접 받지 않으므로(–-ssh 경유) 래핑
 대상에서 제외한다 — ssh/autossh 만 감싼다(둘 다 `-o` 를 ssh 로 전달).
 
-**Windows(#1.4)**: 패널 셸이 cmd.exe 라 POSIX sh 래퍼 대신 `.cmd` 배치 래퍼를 깐다.
-명령 해석이 PATH 디렉터리 순서를 먼저 따르므로(같은 dir 안에서만 PATHEXT 순서) 래퍼
-디렉터리를 PATH 앞단에 두면 우리 `ssh.cmd` 가 진짜 `ssh.exe` 를 가린다. 래퍼는
-`%~$PATH:E` 로 **확장자 .exe 만** 골라 진짜 ssh.exe 를 찾으므로(우리 dir 엔 .cmd 만
-있어 자기 자신을 안 잡음) PATH 에서 자기 dir 을 빼는 수고가 필요 없다. 그 뒤
-`ssh.exe -o SendEnv=LC_PYTMUX %*` 로 exec 한다. Windows OpenSSH 클라이언트는 SendEnv 를
-지원하고, 원격 전파 여부는 POSIX 와 동일하게 sshd AcceptEnv 에 달렸다(우아한 열화).
-PowerShell 패널에서도 .cmd 는 동일하게 해석된다.
+**Windows(#1.4 → pytmux-34 #8)**: 예전에는 `.cmd` 배치 래퍼를 깔았지만 cmd.exe 가
+`%*` 를 다시 파싱해 인자 안의 `&`·`|`·`%VAR%` 가 **로컬에서** 실행됐다(BatBadBut
+부류). 배치로는 인자를 재해석 없이 넘길 수 없어 Windows 는 래퍼를 깔지 않고 표식
+env 만 심는다 — 원격 중첩 거부의 전파만 열화한다.
 
 표식 이름은 launcher.NEST_MARKER 와 동일해야 한다(여기 import 하면 순환이라 상수만 공유).
 """
@@ -63,6 +59,7 @@ NEST_DCS_RE = re.compile(rb"\x1bP>\|pytmux-(ssh|nest);([A-Za-z0-9+/=]{0,8192})\x
 
 # 래핑 대상(ssh 류). 모두 `-o SendEnv=…` 를 ssh 로 전달한다.
 _WRAPPED = ("ssh", "autossh")
+IS_WINDOWS = os.name == "nt"
 
 # POSIX sh 래퍼 본문. argv0(basename)로 어떤 명령인지 알아내고, 자기 디렉터리를
 # PATH 에서 제거한 뒤 진짜 바이너리에 SendEnv 표식을 끼워 exec 한다.
@@ -95,42 +92,34 @@ fi
 exec "$real" -o SendEnv=%(marker)s "$@"
 """
 
-# Windows .cmd 배치 래퍼 본문. 배치 파일이라 for 변수는 %%E, 변수 확장은 %_real%,
-# 모든 인자는 %*. `%%~$PATH:E`(E=ssh.exe 등 .exe 만)로 진짜 바이너리를 찾아 우리
-# .cmd 자기 자신을 안 잡는다(PATH 에서 자기 dir 제거 불필요). marker 를 SendEnv 로 끼워
-# exec(call 후 같은 종료코드로 종료). .format() 으로 채우므로 % 는 그대로 리터럴.
-_WRAPPER_CMD = """@echo off
-rem pytmux ssh wrapper: propagate nesting marker ({marker}) via SendEnv.
-setlocal
-set "_real="
-for %%E in ({exe}) do set "_real=%%~$PATH:E"
-if not defined _real (
-  echo pytmux: {exe} not found in PATH 1>&2
-  exit /b 127
-)
-"%_real%" -o SendEnv={marker} %*
-"""
+# (Windows `.cmd` 배치 래퍼는 pytmux-34 #8 에서 걷어냈다 — `ensure_wrapper_dir` 주석.)
 
 
 def ensure_wrapper_dir(state_dir: str) -> str | None:
     """ssh 래퍼들을 담은 디렉터리를 (없으면) 만들고 경로를 반환한다.
 
     멱등: 이미 있으면 그대로 둔다. 생성 실패 시 None(표식 전파 없이 우아하게 동작).
-    POSIX 는 `ssh`/`autossh` sh 래퍼(0o755), Windows 는 `ssh.cmd`/`autossh.cmd` 배치
-    래퍼를 만든다(#1.4 — 패널 cmd.exe/PowerShell 이 .cmd 를 해석)."""
+    POSIX 는 `ssh`/`autossh` sh 래퍼(0o755)를 만든다. Windows 는 None(래퍼 없음 ·
+    pytmux-34 #8 — 옛 `.cmd` 래퍼가 남아 있으면 지운다)."""
     wd = os.path.join(state_dir, "sshwrap")
+    if IS_WINDOWS:
+        # ⛔ **Windows 는 래퍼를 깔지 않는다**(pytmux-34 #8 · BatBadBut / CVE-2024-24576
+        # 부류). `.cmd` 를 실행하면 cmd.exe 가 `%*` 를 **다시 토큰화**해, 호출자가 정상
+        # 인용한 인자 안의 `&`·`|`·`>`·`^`·`%VAR%` 가 메타문자로 되살아난다 — PowerShell
+        # 패널의 `ssh host 'ls|wc -l'` 가 **로컬에서** 파이프되고 `ssh h 'echo a&calc'`
+        # 가 로컬에서 calc 를 띄웠다(패널 밖에서는 같은 스크립트가 안전해 추적도 어렵다).
+        # 배치 파일로는 인자를 재해석 없이 넘길 길이 없다. 그래서 래퍼를 끄고 표식 env
+        # 만 심는다 — 원격 중첩 거부의 전파만 열화한다(로컬 PYTMUX 가드는 그대로).
+        # 이미 깔린 옛 래퍼는 **지운다**: 떠 있는 패널 셸의 PATH 가 이 디렉터리를
+        # 아직 앞단에 두고 있어, 남겨 두면 그 패널들이 계속 재해석을 탄다.
+        for name in _WRAPPED:
+            try:
+                os.unlink(os.path.join(wd, name + ".cmd"))
+            except OSError:
+                pass
+        return None
     try:
         os.makedirs(wd, exist_ok=True)
-        if os.name == "nt":
-            for name in _WRAPPED:
-                body = _WRAPPER_CMD.format(
-                    exe=name + ".exe", marker=NEST_MARKER).encode("utf-8")
-                path = os.path.join(wd, name + ".cmd")
-                if _same_file(path, body):
-                    continue
-                with open(path, "wb") as f:
-                    f.write(body)
-            return wd
         body = (_WRAPPER_SH % {"marker": NEST_MARKER,
                                "tokenv": NEST_TOKEN_ENV}).encode("utf-8")
         for name in _WRAPPED:

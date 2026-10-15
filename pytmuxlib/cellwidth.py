@@ -82,8 +82,15 @@ def cluster_cells(text: str) -> int:
 
     칸 수는 **첫 글자**가 정한다 — 뒤따르는 것은 폭 0 이라 얹히기만 한다. 빈 글은 1 이다
     (빈 셀도 한 칸이고, 화면 대부분이 그것이다).
+
+    ★ 예외 하나 — **VS16 이 붙은 폭 1 그림 글자는 2칸**이다(`vs16_wide` · pytmux-556).
     """
-    return char_cells(text[0]) if text else 1
+    if not text:
+        return 1
+    w = char_cells(text[0])
+    if w == 1 and vs16_wide(text):
+        return 2
+    return w
 
 
 #: ZWJ — 이 글자로 끝나는 셀은 **군집이 아직 안 끝났다**는 뜻이다.
@@ -182,6 +189,37 @@ def char_advance(ch: str) -> int:
     return 0 if wcwidth(ch) == 0 else char_cells(ch)
 
 
+#: VS16 — 이모지 표현 선택자. 앞 그림 글자를 **2칸 컬러 이모지**로 그리라는 표시다.
+VS16 = "\ufe0f"
+
+
+def vs16_wide(text: str) -> bool:
+    """이 군집이 **VS16 때문에 2칸**인가(pytmux-556 · 사용자 결정 2026-10-07).
+
+    규약 「군집의 폭 = 밑글자의 폭」(2026-09-01)의 **유일한 예외**다. `⚠`(U+26A0)는
+    wcwidth 로 1칸이지만 뒤에 U+FE0F 가 붙으면 Claude Code(string-width)·Windows
+    Terminal·tmux 3.5 가 모두 **2칸**으로 센다. 격자만 1칸으로 두면 ⑴ 바깥 단말이 그
+    줄을 한 칸 넘쳐 그려 패널 테두리를 덮고(pytmux-555) ⑵ 앱이 그 뒤에 맞춰 그린 표·상자
+    끝이 패널 안에서 한 칸 어긋난다.
+
+    ⛔ 밑글자가 **그림 글자**일 때만이다 — `A`+U+FE0F 는 유효한 이모지 열이 아니라 단말도
+    앱도 1칸으로 둔다. 이미 2칸인 밑글자는 그대로 2칸이다(이 함수는 1→2 만 묻는다).
+    러스트 짝은 `proto::compose::vs16_wide` 다.
+    """
+    return (len(text) > 1 and VS16 in text and is_pictographic(text[0])
+            and char_cells(text[0]) == 1)
+
+
+def widens(prev: str, ch: str) -> bool:
+    """`ch` 를 앞 셀 `prev` 에 얹으면 그 셀이 **1칸에서 2칸으로 넓어지나**.
+
+    격자에 글자를 앉히는 자리(서버 화면 모델 · 정본 클라 합성 · 재생 합성 · 오버레이 런)는
+    얹은 뒤 이것이 참이면 **뒤 칸을 연속 칸(`""`)으로 바꾸고 커서를 한 칸 더 민다** —
+    뒤 칸이 없으면(줄 끝) 얹지 않고 버린다(1칸 셀에 2칸 글을 두면 그 줄이 넘친다).
+    """
+    return ch == VS16 and cluster_cells(prev) == 1 and cluster_cells(prev + ch) == 2
+
+
 def attaches(prev: str, ch: str) -> bool:
     """이 글자가 앞 셀에 **얹히나** — 폭 0 이거나 군집이 이어질 때(pytmux-407 ⓐ).
 
@@ -205,6 +243,8 @@ def line_cells(text: str) -> int:
     cluster = ""
     for ch in text:
         if cluster and attaches(cluster, ch):
+            if widens(cluster, ch):
+                width += 1          # VS16 이 1칸 그림 글자를 2칸으로 넓혔다(pytmux-556)
             cluster += ch
             continue
         width += char_cells(ch)

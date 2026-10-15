@@ -171,7 +171,9 @@ def load_persisted(sock_path: str) -> Optional[str]:
     try:
         with open(_lang_file(sock_path), "r", encoding="ascii") as f:
             v = f.read().strip()
-    except OSError:
+    except (OSError, UnicodeError):
+        # 비-ASCII 로 깨진 파일의 UnicodeDecodeError 는 OSError 가 아니다 — 종전에는
+        # 그 하나로 클라 기동(`PytmuxApp.__init__`)이 죽었다(검수 pytmux-34 #17).
         return None
     return v if v in LOCALES else None
 
@@ -694,6 +696,20 @@ register({
         "restartcheck.cli_ver": "  클라 버전: 실행={run}  디스크={disk}",
         "restartcheck.note": "  (버전 차이는 위험이 아니라 '재시작이 새 코드를 로드'를 뜻함)",
         "restartcheck.title": "restart-check (드라이런)",
+        # 점검 항목 라벨(clientutil._restart_check_eval · 검수 pytmux-34 #15 — 종전 하드코딩).
+        # ko 문구는 Rust `en_core.rs` 의 원문 키와 같게 둔다(두 클라가 같은 화면).
+        "restartcheck.lbl_reexec": "서버 re-exec 지원(POSIX·이벤트루프)",
+        "restartcheck.lbl_relaunch_win": "서버 재기동 지원(pty-host 인수인계)",
+        "restartcheck.lbl_sessions": "복원할 세션 존재",
+        "restartcheck.lbl_serialize": "상태 직렬화 round-trip",
+        "restartcheck.lbl_fd": "패널 master fd 보유 ({n}/{total})",
+        "restartcheck.lbl_client": "클라이언트 relaunch 인자 해석",
+        # 재접속·전체 재시작·휠 스크롤백 알림(검수 pytmux-34 #15 — 종전 하드코딩)
+        "msg.reconnecting": "pytmux: 재접속 중…",
+        "msg.reconnecting_auto": "pytmux: 재접속 중… (자동 회복)",
+        "msg.full_restart": "pytmux: 전체 재시작 — 서버 재시작 + 클라 재기동…",
+        "msg.alt_scroll_on": "휠 스크롤백: pytmux 처리(1007 끔)",
+        "msg.alt_scroll_off": "휠 스크롤백: 터미널 기본",
         # version 팝업
         "version.header": "pytmux 버전 / 업타임",
         "version.client": "  클라이언트  {ver:<14}  업타임 {up}",
@@ -744,6 +760,17 @@ register({
         "restartcheck.cli_ver": "  Client version: running={run}  disk={disk}",
         "restartcheck.note": "  (a version diff is not a risk — it means 'restart loads new code')",
         "restartcheck.title": "restart-check (dry-run)",
+        "restartcheck.lbl_reexec": "Server re-exec support (POSIX·event loop)",
+        "restartcheck.lbl_relaunch_win": "Server relaunch support (pty-host handover)",
+        "restartcheck.lbl_sessions": "Sessions to restore exist",
+        "restartcheck.lbl_serialize": "State serialization round-trip",
+        "restartcheck.lbl_fd": "Pane master fds held ({n}/{total})",
+        "restartcheck.lbl_client": "Client relaunch argument parsing",
+        "msg.reconnecting": "pytmux: reconnecting…",
+        "msg.reconnecting_auto": "pytmux: reconnecting… (auto recovery)",
+        "msg.full_restart": "pytmux: full restart — server restart + client relaunch…",
+        "msg.alt_scroll_on": "Wheel scrollback: handled by pytmux (1007 off)",
+        "msg.alt_scroll_off": "Wheel scrollback: terminal default",
         "version.header": "pytmux version / uptime",
         "version.client": "  Client  {ver:<14}  uptime {up}",
         "version.server": "  Server  {ver:<14}  uptime {up}",

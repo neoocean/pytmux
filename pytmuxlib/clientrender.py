@@ -11,7 +11,7 @@ client.py 의 거대 클로저(build_client_app)에 갇혀 있던 그리기 헬�
 — 디렉토리를 지우면 그 그리기 코드도 함께 사라지는 완전한 delete-to-disable."""
 from __future__ import annotations
 
-from .cellwidth import attaches, char_advance, cluster_cells
+from .cellwidth import attaches, char_advance, cluster_cells, widens
 from .clientutil import _char_cells
 
 
@@ -106,6 +106,15 @@ def paint_runs(cells, runs, W, H, theme):
                     at -= 1
                 prev_ch, prev_st = cells[y][at]
                 if prev_ch and attaches(prev_ch, ch):
+                    # VS16 이 1칸 그림 글자를 2칸으로 넓히면 뒤 칸을 연속 칸으로(pytmux-556
+                    # · 판정은 `cellwidth.widens` 한 벌). 자리가 없으면 버린다.
+                    if widens(prev_ch, ch):
+                        if at + 1 == x and x < W:
+                            put_cell(cells, x, y, " ", prev_st, W, H)   # 배경 짝 정리 먼저
+                            cells[y][at] = (prev_ch + ch, prev_st)
+                            cells[y][x] = ("", prev_st)
+                            x += 1
+                        continue
                     cells[y][at] = (prev_ch + ch, prev_st)
                     continue
             if char_advance(ch) == 0:

@@ -20,7 +20,10 @@ type Handler = Box<dyn FnMut(&mut EventContext, &AppContext, Vector2F) -> Dispat
 type MouseHandler = Box<
     dyn FnMut(&mut EventContext, &AppContext, Vector2F, &ModifiersState) -> DispatchEventResult,
 >;
-type KeyHandler = Box<dyn FnMut(&mut EventContext, &AppContext, &Keystroke) -> DispatchEventResult>;
+/// 키 콜백. 안에서는 **그 키가 낸 글자**(`Event::KeyDown::chars`)까지 받는다 —
+/// [`EventHandler::on_keydown`] 은 그것을 버리는 3인자 판으로 감싸 넣는다(기존 호출부 무변경).
+type KeyHandler =
+    Box<dyn FnMut(&mut EventContext, &AppContext, &Keystroke, &str) -> DispatchEventResult>;
 /// 입력기(IME)가 **확정한 글자**를 받는 콜백.
 ///
 /// 한글·CJK 는 자판 한 번이 글자 하나가 아니다 — 조합이 끝나야 글자가 나오고, 그 결과는
@@ -133,9 +136,26 @@ impl EventHandler {
         self
     }
 
-    pub fn on_keydown<F>(mut self, callback: F) -> Self
+    pub fn on_keydown<F>(mut self, mut callback: F) -> Self
     where
         F: 'static + FnMut(&mut EventContext, &AppContext, &Keystroke) -> DispatchEventResult,
+    {
+        self.keydown = Some(RefCell::new(Box::new(move |ctx, app, keystroke, _chars| {
+            callback(ctx, app, keystroke)
+        })));
+        self
+    }
+
+    /// [`on_keydown`](Self::on_keydown) 에 **그 키가 낸 글자**를 더한 판(pytmux 검수 34 #4).
+    ///
+    /// Windows 는 AltGr 를 `Ctrl+Alt` 로 보고한다 — 독일어 배열의 `AltGr+Q` 는 키 이름만
+    /// 보면 `Ctrl+Alt+@` 이고, 그것이 «배열이 낸 글자 `@`» 인지 «진짜 조합키» 인지는 이벤트가
+    /// 싣고 있는 글자(`chars`)를 봐야 갈린다. 이벤트는 처음부터 그 값을 싣고 있었고 콜백만
+    /// 버리고 있었다(`on_scroll_wheel` 의 위치와 같은 모양의 구멍).
+    pub fn on_keydown_with_chars<F>(mut self, callback: F) -> Self
+    where
+        F: 'static
+            + FnMut(&mut EventContext, &AppContext, &Keystroke, &str) -> DispatchEventResult,
     {
         self.keydown = Some(RefCell::new(Box::new(callback)));
         self
@@ -474,9 +494,11 @@ impl Element for EventHandler {
                     return true;
                 }
             }
-            Some(Event::KeyDown { keystroke, .. }) => {
+            Some(Event::KeyDown {
+                keystroke, chars, ..
+            }) => {
                 if let Some(callback) = self.keydown.as_ref() {
-                    return match callback.borrow_mut()(ctx, app, keystroke) {
+                    return match callback.borrow_mut()(ctx, app, keystroke, chars) {
                         DispatchEventResult::PropagateToParent => false,
                         DispatchEventResult::StopPropagation => true,
                     };

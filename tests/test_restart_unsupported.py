@@ -56,7 +56,10 @@ async def test_the_dry_run_carries_the_reason_on_windows():
         assert chk["reexec_supported"] is False
         assert chk["host_fail"] == "spawning pty-host failed: OSError: x", chk
         # POSIX(그리고 host 모드)에서는 비어 있다 — 재기동이 되는 서버에 사유를 안 단다.
-        chk2 = srv.restart_check()
+        # ★ POSIX 갈래도 **패치로 세운다**(pytmux-554): 맨 호출은 «이 상자의 OS» 를 재므로
+        #   Windows 러너에서는 사유가 붙는 것이 정상 동작이고, 그것을 실패로 읽었다.
+        with harness.patched(pty_backend, IS_WINDOWS=False):
+            chk2 = srv.restart_check()
         assert chk2["host_fail"] == "", chk2
     finally:
         ptyhostmgr._LAST_FAILURE.pop(srv.sock_path, None)

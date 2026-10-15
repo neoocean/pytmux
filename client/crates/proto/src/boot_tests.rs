@@ -110,6 +110,12 @@ fn only_a_missing_server_makes_us_start_one() {
         !means_no_server(&AttachError::Handshake(crate::framing::FrameError::Closed)),
         "대답한 서버 옆에 새 서버를 띄우면 안 된다"
     );
+    // 원격 호스트를 지목했다가 토큰 때문에 거절된 것(검수 pytmux-34 #7)은 «없다» 가 아니다 —
+    // 로컬 서버를 띄우면 사용자가 지목하지 않은 곳에 붙는다.
+    assert!(
+        !means_no_server(&AttachError::NonLoopback("10.0.0.5".into())),
+        "원격을 지목한 사람에게 로컬 서버를 띄워 붙였다"
+    );
 }
 
 // --- 실제로 부른다 ---------------------------------------------------------

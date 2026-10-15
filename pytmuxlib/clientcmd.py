@@ -54,6 +54,17 @@ from .keymap import (_key_to_ctrl_bytes, _tmux_key_to_textual,
 from .protocol import MIN_H, MIN_W, PROTO_VERSION, read_msg, write_msg
 
 
+def _shell_capture(cmd, env=None):
+    """셸 명령 하나를 돌려 (stdout 글, 종료코드)를 돌려준다 — **워커 스레드용**(검수
+    pytmux-34 #8). 실패(기동 불가·15초 초과)는 (오류 글, 1)."""
+    try:
+        res = subprocess.run(_shell_argv(cmd), capture_output=True, timeout=15,
+                             env=env, **proc.no_window_kwargs())
+        return res.stdout.decode("utf-8", "ignore"), res.returncode
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e), 1
+
+
 def parse_set_hook(args):
     """`set-hook` 의 인자(이미 shlex 로 쪼갠 토큰)를 해석한다.
 
@@ -364,30 +375,35 @@ class _CommandMixin:
         self.push_screen(
             ComposePromptScreen(seed, prompt_row, pane_x, pane_w), done)
 
+    # run-shell/if-shell 은 **워커 스레드에서** 돈다(검수 pytmux-34 #8). 종전에는 이벤트
+    # 루프 위에서 동기 `subprocess.run(timeout=15)` 를 기다려, 훅(alert-bell 등)에 건
+    # 명령 하나가 키·화면·ping 을 최대 15초 세웠다(ping 이 밀리면 degraded → 강제
+    # 재접속까지 번진다). 클립보드 경로(M-4)와 같은 to_thread 패턴이고, 결과(판·버퍼·
+    # then/else)는 메인 루프로 돌아와 처리한다.
+    # 환경은 **부를 때** 떠 둔다 — `_fire_hook` 은 PYTMUX_* 를 `_run_command` 동안만
+    # 심고 되돌리므로, 스레드가 나중에 os.environ 을 읽으면 그 컨텍스트가 이미 없다.
     def _run_shell(self, cmd):
-        try:
-            res = subprocess.run(_shell_argv(cmd), capture_output=True,
-                                 timeout=15, **proc.no_window_kwargs())
-            text = res.stdout.decode("utf-8", "ignore")
-            rc = res.returncode
-        except (OSError, subprocess.SubprocessError) as e:
-            text, rc = str(e), 1
-        if text.strip():
-            self.send_cmd("set_buffer", text=text)
-            self.push_screen(InfoScreen(text.splitlines()[:40], title="run-shell"))
-        return rc
+        env = dict(os.environ)
+
+        async def _job():
+            text, rc = await asyncio.to_thread(_shell_capture, cmd, env)
+            if text.strip():
+                self.send_cmd("set_buffer", text=text)
+                self.push_screen(InfoScreen(text.splitlines()[:40],
+                                            title="run-shell"))
+            return rc
+        self.run_worker(_job(), exclusive=False)
 
     def _if_shell(self, cond, then_cmd, else_cmd=None):
-        try:
-            rc = subprocess.run(_shell_argv(cond), capture_output=True,
-                                timeout=15,
-                                **proc.no_window_kwargs()).returncode
-        except (OSError, subprocess.SubprocessError):
-            rc = 1
-        if rc == 0:
-            self._run_command(then_cmd)
-        elif else_cmd:
-            self._run_command(else_cmd)
+        env = dict(os.environ)
+
+        async def _job():
+            _text, rc = await asyncio.to_thread(_shell_capture, cond, env)
+            if rc == 0:
+                self._run_command(then_cmd)
+            elif else_cmd:
+                self._run_command(else_cmd)
+        self.run_worker(_job(), exclusive=False)
 
     _SENDKEYS = {"Enter": b"\r", "Tab": b"\t", "Space": b" ",
                  "Escape": b"\x1b", "BSpace": b"\x7f", "Up": b"\x1b[A",
@@ -466,6 +482,8 @@ class _CommandMixin:
         if self.plugins.handle_command(self, c, args):
             return
         if c in ("run-shell", "run"):
+            # tmux 의 `-b`(백그라운드) 깃발은 이제 늘 그렇다 — 명령으로 읽지 않는다.
+            args = [a for a in args if a != "-b"]
             if args:
                 self._run_shell(args[0])
             return

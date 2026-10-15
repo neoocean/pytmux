@@ -546,13 +546,47 @@ class ServerClaudeMixin:
         except OSError:
             return False
         try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:                    # 루프 밖(도구) — 동기로 물어도 된다
+            return self._ps_says_claude(pgid)
+        # ⛔ `ps` 는 **루프 스레드에서 돌지 않는다**(pytmux-34 #5). 인식 실패 패널마다
+        # 5초에 한 번 동기 서브프로세스(타임아웃 1초)가 루프를 잡았다. executor 로 묻고
+        # 답은 (pgid, 판정) 캐시로 받는다 — 같은 포그라운드 그룹이면 지난 답을 쓰고,
+        # 아직 모르면 False(보수적 — 경고는 확실할 때만, 위 docstring 의 규칙 그대로).
+        # 판정이 한 throttle 주기(5초) 늦을 수 있지만 경고 자체가 지속시간 문턱을 넘어야
+        # 서므로 의미가 바뀌지 않는다.
+        cached = getattr(pane, "_fg_claude_cache", None)
+        if not getattr(pane, "_fg_claude_pending", False):
+            pane._fg_claude_pending = True
+            try:
+                fut = loop.run_in_executor(None, self._ps_says_claude, pgid)
+            except Exception:
+                pane._fg_claude_pending = False
+            else:
+                def _done(f, pane=pane, pgid=pgid):
+                    pane._fg_claude_pending = False
+                    try:
+                        pane._fg_claude_cache = (pgid, bool(f.result()))
+                    except Exception:
+                        pane._fg_claude_cache = (pgid, False)
+                fut.add_done_callback(_done)
+        if cached and cached[0] == pgid:
+            return cached[1]
+        return False
+
+    @staticmethod
+    def _ps_says_claude(pgid) -> bool:
+        """(executor 스레드) 그 프로세스 그룹 리더의 명령행에 'claude' 가 있나."""
+        try:
             out = subprocess.run(
                 ["ps", "-o", "command=", "-p", str(pgid)], capture_output=True,
                 text=True, timeout=1, **proc.no_window_kwargs()).stdout
         except (subprocess.SubprocessError, OSError):
             # 프로세스 소멸·ps 부재·타임아웃 = 기대 가능한 실패 → False 폴백.
             return False
-        return "claude" in out.lower()
+        return "claude" in (out or "").lower()
 
     def _update_fmt_unknown(self, pane, recognized: bool) -> bool:
         """§3.7: Claude 실행 중인데 화면 파서가 상태를 못 읽는 상태가 지속되면 패널에
@@ -697,15 +731,12 @@ class ServerClaudeMixin:
         단일-패널판 — 비-claude 패널의 불필요한 flicker 를 피한다. 치수(rows/cols)는
         불변이라 레이아웃(탭바·분할·커서)은 안 흔들리고, 앱의 repaint 출력은 평소
         feed→flush 경로로 클라에 전달된다(별도 _send_full 불필요). pty 부재/OSError 는
-        조용히 무시(종료 중 패널)."""
-        pty = getattr(p, "pty", None)
-        if pty is None:
-            return
-        try:
-            pty.set_winsize(max(1, p.rows - 1), p.cols)
-            pty.set_winsize(p.rows, p.cols)
-        except OSError:
-            pass
+        조용히 무시(종료 중 패널).
+
+        토글 자체는 코어 `_nudge_winsize` 한 자리가 한다 — Windows(ConPTY)에서는 즉시
+        되돌리면 앱이 크기 변화를 못 봐 다시 안 그리므로(pytmux-552) 간격을 두는데, 그
+        규칙을 여기서 따로 들고 있으면 둘이 갈린다(종전 사본이 바로 그 무동작이었다)."""
+        self._nudge_winsize(p)
 
     def _usage_exit_lines(self, width: int = 80, pane: Pane = None) -> list:
         """세션 종료 시 패널에 주입할 토큰 사용량 요약 **줄 목록**(ANSI 최소)을 만든다.
@@ -2133,6 +2164,8 @@ class ServerClaudeMixin:
         if self._usage_busy:
             return self._usage
         self._usage_busy = True
+        fut = None
+        timings: dict = {}
         try:
             from . import usageprobe
             loop = asyncio.get_event_loop()
@@ -2141,12 +2174,21 @@ class ServerClaudeMixin:
             # 안쪽이 아직 기다리는 중에 밖이 잘라, 「무엇에서 오래 걸렸나」가 통째로
             # 사라지고 아래 계측도 빈손이 된다. 35초였을 때 안쪽 합이 이미 20초였고
             # 실측 전체가 27.4초라 여유가 거의 없었다.
-            timings: dict = {}
-            u = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None, functools.partial(usageprobe.query_usage, "claude", cwd,
-                                            timings=timings)),
-                timeout=usageprobe.BOOT_TIMEOUT + usageprobe.PANEL_TIMEOUT + 25)
+            # ⚠ 그 합을 손으로 적으면 안쪽 갈래가 늘 때 깨진다(pytmux-34 #10 — 관리 설정
+            # 승인이 부팅 대기를 한 번 더 열고 /status 단계가 패널 예산을 한 번 더 써
+            # 최악 ≈74초인데 캡은 62초였다). 그래서 안쪽이 스스로 계산한 최악을 쓴다.
+            fut = loop.run_in_executor(
+                None, functools.partial(usageprobe.query_usage, "claude", cwd,
+                                        timings=timings))
+            u = await asyncio.wait_for(asyncio.shield(fut),
+                                       timeout=usageprobe.worst_case_seconds() + 10)
+        except asyncio.TimeoutError:
+            # 시간 초과는 «예외» 가 아니라 상태다 — 트레이스백 없이 한 줄만 남긴다
+            # (시험 서버의 예외 가드가 이것을 결함으로 세지 않게).
+            if not self._usage_probe_err:
+                self._usage_probe_err = True
+                self._log_error("usage_probe", "timeout", exc=False)
+            u = None
         except Exception:
             # #28: 프로브 실패(타임아웃·spawn 불가)는 표시상 '미확인' 폴백으로
             # 충분하지만, 진단 단서는 남긴다 — 10분 주기 반복이라 첫 실패만 기록.
@@ -2155,7 +2197,15 @@ class ServerClaudeMixin:
                 self._log_error("usage_probe")
             u = None
         finally:
-            self._usage_busy = False
+            if fut is not None and not fut.done():
+                # 바깥이 잘라도 executor 스레드의 숨은 claude 는 아직 돈다 — 그것이
+                # **끝날 때** 바쁨을 푼다(pytmux-34 #10). 여기서 풀면 다음 예약이 두 번째
+                # 숨은 claude 를 겹쳐 띄웠다.
+                def _release(_f, self=self):
+                    self._usage_busy = False
+                fut.add_done_callback(_release)
+            else:
+                self._usage_busy = False
             self._note_usage_probe(timings)
         if u:
             self._usage_probe_err = False             # 회복 — 재발 시 다시 1회 기록
@@ -2440,6 +2490,35 @@ class ServerClaudeMixin:
             return False
         return True
 
+    @staticmethod
+    def _harden_db_dir(db_path: str) -> None:
+        """토큰 DB 디렉터리를 소유자 전용으로 조인다(pytmux-34 #1 · S2).
+
+        그 디렉터리에는 토큰 DB(계정 이메일 원문)와 동기화 비밀 — `sync_vault.key`(모든
+        머신 레코드의 복호 키)·`sync_device.key`(기기 서명 개인키)·`sync_device.id` — 가
+        함께 산다. 코드가 기대던 `0600`/`0700` 은 **Windows 에서 ACL 을 바꾸지 않는다**.
+        PYTMUX_HOME 없는 기본 설치의 DB 디렉터리는 소스 체크아웃 안이라 비시스템
+        드라이브 루트의 `Authenticated Users:(M)` 이 그대로 내려왔다(실측) — 다른 로컬
+        계정이 키를 읽거나 바꿔치기할 수 있었다.
+
+        `(OI)(CI)` 로 조이므로 그 안에 이미 있거나 앞으로 만들어질 파일(DB·사이드카·키
+        셋)이 **상속으로** 소유자 전용이 된다 — 키를 만드는 쪽(tokensync)이 따로 무엇을
+        하지 않아도 된다. ipc 의 표식 캐시로 머신당 한 번만 icacls 를 띄운다.
+        ⛔ `PYTMUX_TOKENS_DB` 로 받은 임의 경로의 디렉터리(예: %TEMP%)는 **조이지 않는다**
+        — 우리 것이 아닌 공용 디렉터리의 ACL 을 바꾸면 안 된다(호출자가 그 갈래 전에 끊는다)."""
+        d = os.path.dirname(os.path.abspath(db_path))
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            return
+        if not ipc.IS_WINDOWS:
+            try:
+                os.chmod(d, 0o700)
+            except OSError:
+                pass
+            return
+        ipc._harden_win_acl(d, is_dir=True)
+
     def _migrate_legacy_db(self, new_path: str):
         """토큰 DB 를 새 위치(new_path)로 1회 마이그레이션한다 — 이력 유실 없이 무중단,
         WAL 사이드카(-wal/-shm) 동반. PYTMUX_TOKENS_DB 강제 지정(테스트) 시엔 건너뛴다.
@@ -2454,6 +2533,14 @@ class ServerClaudeMixin:
              위치라 남겨둘 이유가 없다. PYTMUX_HOME 미설정(new_path=플러그인 db/)일 때의
              기존 거동도 이 경로다(루트 db/ → 플러그인 db/)."""
         if os.environ.get("PYTMUX_TOKENS_DB"):
+            return
+        # 모든 DB 진입(서버 연결 `_tokens_db_conn`·동기화 워커 `tokensync._client_for`)이
+        # 여기를 먼저 지나므로, DB 디렉터리 하드닝도 이 자리에 둔다(pytmux-34 #1).
+        self._harden_db_dir(new_path)
+        if os.environ.get("PYTMUX_NO_DB_MIGRATE"):
+            # 스크래치 홈(QA 슬롯·run-pytmux 드라이버)은 사용자의 **실 토큰 DB**(이메일
+            # 원문 포함 · 실측 72MB)를 끌어오지 않는다(pytmux-34 #9). 끌어오면 기동 직후
+            # 루프가 복사만큼 멎고, 개인 데이터 사본이 /tmp 슬롯에 남는다.
             return
         if os.path.exists(new_path):
             return
@@ -2655,7 +2742,7 @@ class ServerClaudeMixin:
         # S6 T5: 응답 종료 이벤트 → 실측이 묵었으면 디바운스 갱신 예약.
         self._on_token_commit_refresh()
 
-    def _xc_resolve_path(self, pane):
+    def _xc_resolve_path(self, pane, on_ready=None):
         """패널의 트랜스크립트(`~/.claude/projects/<proj>/*.jsonl`) 경로를 캐시·주기
         재해석한다(§10-D P3, 없으면 None). lsof/ps 후손 탐색이 비싸 한 번 잡은 경로를
         _XC_RESOLVE_FRAMES 테일 동안 패널에 캐시하고, 카운트가 0일 때만(첫 호출 포함)
@@ -2665,13 +2752,60 @@ class ServerClaudeMixin:
         if n > 0:
             pane._xc_resolve_n = n - 1
             return getattr(pane, "_xc_path", None)
-        old = getattr(pane, "_xc_path", None)
+        if on_ready is not None:
+            waiting = getattr(pane, "_xc_on_resolved", None)
+            if waiting is None:
+                waiting = pane._xc_on_resolved = []
+            if on_ready not in waiting:
+                waiting.append(on_ready)
+        if getattr(pane, "_xc_resolving", False):
+            return getattr(pane, "_xc_path", None)   # 해석 중 — 그동안은 캐시
+        pid = getattr(pane, "child_pid", None)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:                    # 루프 밖(도구·생성기) — 동기로 해도 된다
+            return self._xc_apply_path(pane, self._xc_find_path(pane, pid))
+        # ⛔ 해석은 **루프 스레드에서 돌지 않는다**(pytmux-34 #5). `find_transcript` 는
+        # POSIX 에서 `ps`·`lsof` 를 동기로 부르고(각 타임아웃 3초) `lsof -p` 는 부하에서
+        # 수백 ms~수 초가 걸린다 — 그동안 모든 클라의 프레임과 입력 에코가 멎었다
+        # (Claude 패널 6개면 분당 6회). `claude-name-sync` 가 이미 쓰는 패턴대로
+        # executor 로 넘기고, 결과는 루프 스레드의 완료 콜백에서 반영한다.
+        pane._xc_resolving = True
+        try:
+            fut = loop.run_in_executor(None, self._xc_find_path, pane, pid)
+        except Exception:
+            pane._xc_resolving = False
+            return getattr(pane, "_xc_path", None)
+
+        def _done(f, pane=pane):
+            pane._xc_resolving = False
+            try:
+                new = f.result()
+            except Exception:
+                new = None
+            self._xc_apply_path(pane, new)
+            for cb in getattr(pane, "_xc_on_resolved", None) or ():
+                try:
+                    cb()
+                except Exception:
+                    pass
+            pane._xc_on_resolved = None
+        fut.add_done_callback(_done)
+        return getattr(pane, "_xc_path", None)
+
+    def _xc_find_path(self, pane, pid):
+        """(executor 스레드) 패널 cwd + 트랜스크립트 경로 해석 — 블로킹 부분 전부."""
         try:
             cwd = self._pane_cwd(pane)
         except Exception:
             cwd = None
-        new_path = transcript.find_transcript(
-            getattr(pane, "child_pid", None), cwd)
+        return transcript.find_transcript(pid, cwd)
+
+    def _xc_apply_path(self, pane, new_path):
+        """(루프 스레드) 해석 결과를 패널 캐시에 반영한다."""
+        old = getattr(pane, "_xc_path", None)
         if new_path and new_path != old:
             pane._xc_offset = None          # 경로 변경 → DB 커서로 재이음
         pane._xc_path = new_path
@@ -2700,14 +2834,71 @@ class ServerClaudeMixin:
             conn = self._tokens_db_conn()
             if conn is None:
                 return
-            path = self._xc_resolve_path(pane)
+            if getattr(pane, "_xc_reading", False):
+                return                       # 큰 읽기가 executor 에서 도는 중
+            # 해석이 executor 에서 끝나면 이 테일을 한 번 더 돌린다(그 사이 커밋을
+            # 다음 주기까지 미루지 않게) — 대기 콜백은 패널당 하나만.
+            again = None
+            if not getattr(pane, "_xc_on_resolved", None):
+                def again(s=sess, t=tab, p=pane):
+                    self._xc_tail_pane(s, t, p, force=True)
+            path = self._xc_resolve_path(pane, on_ready=again)
             if not path:
                 return
             off = getattr(pane, "_xc_offset", None)
             if off is None:                  # 첫 테일/경로변경 → DB 커서로 이음
                 cur = usagedb.get_xc_cursor(conn, path)
                 off = cur[0] if cur else 0
+            if self._xc_offload_read(sess, tab, pane, path, off):
+                return
             recs, new_off = transcript.tail_file(path, off)
+            self._xc_apply_tail(sess, tab, pane, conn, path, off, recs, new_off)
+        except Exception:
+            pass
+
+    #: 루프 스레드에서 한 번에 읽어도 되는 트랜스크립트 양(바이트). 이보다 많이 남았으면
+    #: (커서 없는 첫 테일·긴 세션 재시작 직후) executor 로 읽는다(pytmux-34 #5).
+    _XC_LOOP_READ_MAX = 1 << 20
+
+    def _xc_offload_read(self, sess, tab, pane, path, off) -> bool:
+        """읽을 양이 크면 executor 로 넘기고 True. 작으면 False(호출자가 동기로 읽는다).
+
+        경로가 처음이거나 바뀌었는데 DB 커서가 없으면 `off=0` 이라 `tail_file` 이
+        **트랜스크립트 전체**(장기 세션은 수십 MB)를 루프에서 읽고 파싱했다. DB 쓰기는
+        연결의 스레드 친화성 때문에 루프에 남기고, 읽기·파싱만 넘긴다."""
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return False
+        if size - (off or 0) <= self._XC_LOOP_READ_MAX:
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        pane._xc_reading = True
+        try:
+            fut = loop.run_in_executor(None, transcript.tail_file, path, off)
+        except Exception:
+            pane._xc_reading = False
+            return False
+
+        def _done(f, pane=pane):
+            pane._xc_reading = False
+            try:
+                recs, new_off = f.result()
+                conn = self._tokens_db_conn()
+                if conn is not None and getattr(pane, "_xc_path", None) == path:
+                    self._xc_apply_tail(sess, tab, pane, conn, path, off,
+                                        recs, new_off)
+            except Exception:
+                pass
+        fut.add_done_callback(_done)
+        return True
+
+    def _xc_apply_tail(self, sess, tab, pane, conn, path, off, recs, new_off):
+        """(루프 스레드) 읽은 레코드를 usage_xc 에 적재하고 커서를 옮긴다."""
+        try:
             if recs:
                 # v8: 적재 시점 패널 Claude 계정을 함께 실어 계정별 cache-포함 집계를
                 # 가능하게 한다(미식별이면 None → 표시층 unknown). insert_xc_many 가

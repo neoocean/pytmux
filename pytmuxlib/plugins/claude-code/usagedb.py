@@ -471,6 +471,31 @@ def limits_lkey(host: str | None, ts, source, account) -> str:
                               source or "", account or "")
 
 
+# 동기화 계층이 읽고 쓰는 칼럼(v9 이 더한다). 이것이 없으면 push/pull 의 첫 질의가
+# `no such column` 으로 죽는다(pytmux-546).
+SYNC_COLUMNS = (("limits", "host"), ("limits", "lkey"),
+                ("usage_xc", "tzoff"), ("usage_xc", "host"))
+
+
+def missing_sync_columns(conn) -> list:
+    """`SYNC_COLUMNS` 중 이 DB 에 없는 것을 `테이블.칼럼` 으로 돌려준다(다 있으면 빈 목록)."""
+    have = {}
+    for table, _col in SYNC_COLUMNS:
+        if table not in have:
+            have[table] = {r["name"] for r in
+                           conn.execute(f"PRAGMA table_info({table})")}
+    return [f"{t}.{c}" for t, c in SYNC_COLUMNS if c not in have[t]]
+
+
+def db_file(conn) -> str:
+    """이 연결이 연 파일 경로(인메모리면 `:memory:`) — 진단 문구에 싣는다."""
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        return (row[2] if row is not None else "") or ":memory:"
+    except sqlite3.Error:
+        return "?"
+
+
 def backfill_limits_lkey(conn, host_id: str) -> int:
     """레거시 limits 행(lkey NULL)에 자기 host_id 기준 lkey 를 채운다. 채운 행 수.
 
@@ -586,10 +611,12 @@ def backfill_xc_accounts(conn, sessions=None) -> dict:
             nsess += 1
     if filled:
         conn.commit()
+    # 세션을 좁혀 불렀으면 미상 집계도 그 세션으로 좁힌다 — 커밋마다 전 테이블(129k 행)을
+    # 세던 COUNT 가 루프 스레드를 잡았다(pytmux-34 인프라 검수 #5). 전량 호출은 종전대로.
     unresolved = int(conn.execute(
         "SELECT COUNT(*) AS n FROM usage_xc "
-        "WHERE account IS NULL OR lower(account)=?",
-        (usagelog.UNKNOWN,)).fetchone()["n"])
+        "WHERE (account IS NULL OR lower(account)=?)" + where_s,
+        [usagelog.UNKNOWN] + args).fetchone()["n"])
     return {"filled": filled, "sessions": nsess, "conflicts": conflicts,
             "unresolved": unresolved}
 

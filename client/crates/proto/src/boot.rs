@@ -269,6 +269,9 @@ pub fn means_no_server(err: &AttachError) -> bool {
         | AttachError::NoPort(_)
         | AttachError::NoToken(_) => true,
         AttachError::Handshake(_) => false,
+        // ⛔ 원격 호스트를 지목했는데 토큰 때문에 거절한 것은 «서버가 없다» 가 아니다 —
+        //    여기서 로컬 서버를 띄우면 사용자가 지목하지 않은 곳에 붙는다(검수 pytmux-34 #7).
+        AttachError::NonLoopback(_) => false,
     }
 }
 

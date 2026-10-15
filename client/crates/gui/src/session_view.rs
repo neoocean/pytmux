@@ -456,6 +456,15 @@ pub struct SessionView {
     /// 통째로 멈춘다(정본도 워커로 뺀다). 붙여넣기는 그 결과가 온 **뒤에야** 뜻이 생긴다:
     /// 어느 경로를 붙일지가 성공 여부로 갈리기 때문이다.
     paste_result: std::sync::Arc<std::sync::Mutex<Option<RemoteImage>>>,
+    /// OS 클립보드 복사(경로·알림 전문)의 결과가 도착하는 자리(검수 pytmux-34 #2).
+    ///
+    /// **스레드로 뺀 이유**: `clip::copy` 는 Windows 에서 PowerShell 을 띄운다(콜드 스타트
+    /// 0.5~2초 · 상한 5+2초) — 그 크레이트 머리말이 「호출부가 별도 스레드에서 부른다」를
+    /// 전제로 적어 두었는데 이 둘은 UI 스레드에서 동기로 불러 그동안 창이 멈췄다.
+    os_copy_done: std::sync::Arc<std::sync::Mutex<Vec<OsCopyDone>>>,
+    /// 실제로 복사하는 함수. 시험이 느린 가짜를 끼워 「UI 스레드가 안 기다린다」를 잰다 —
+    /// 시험 빌드의 기본값은 **이 상자의 클립보드를 안 건드리는** 가짜다.
+    pub(crate) os_copier: fn(&str) -> bool,
     /// `debug-stats` 판의 **서버 절반**(pytmux-382) — `debug_stats` 회신이 온 뒤에야 있다.
     ///
     /// 판을 열 때 비우고 명령을 보낸다. 회신이 안 오면(구서버 · 끊김) 판은 「서버가 아직
@@ -615,6 +624,9 @@ pub struct SessionView {
     /// 되읽을 수 없고, 되읽어도 그것이 이 창의 것인지 알 수 없다.
     #[cfg(test)]
     copied_for_test: Option<String>,
+    /// 시험이 읽는 **창 계층 클립보드에 쓸 글**(`pump_headless` 가 남긴다 · 검수 pytmux-34 #2).
+    #[cfg(test)]
+    pub(crate) window_clip_for_test: Option<String>,
     /// 마우스가 올라와 있는 분할 경계의 id(N3 — 스플리터 바 강조·커서 모양).
     divider_hover: Option<i64>,
     /// 마우스가 올라와 있는 **뜻이 있는 범위**(§10-21ⓥ2·ⓧ2) — 링크·경로.
@@ -846,6 +858,11 @@ impl SessionView {
             config,
             shell_result: Default::default(),
             paste_result: Default::default(),
+            os_copy_done: Default::default(),
+            #[cfg(not(test))]
+            os_copier: clip::copy,
+            #[cfg(test)]
+            os_copier: |_| true,
             server_stats: None,
             pending: Vec::new(),
             pinger: proto::rtt::Pinger::default(),
@@ -884,6 +901,8 @@ impl SessionView {
             sb_drag: None,
             #[cfg(test)]
             copied_for_test: None,
+            #[cfg(test)]
+            window_clip_for_test: None,
             divider_hover: None,
             span_hover: None,
             press: None,
@@ -935,6 +954,75 @@ impl SessionView {
             keystroke.key.chars().next(),
         )?;
         Some((key, mods))
+    }
+
+    /// 키 하나(키 이름 + **그 키가 낸 글자**)를 뷰 동작 하나로 — 없으면 `None`(버린다).
+    ///
+    /// 종전에는 이 갈래가 `on_keydown` 닫힘 안에 있어 창 없이는 못 쟀다. 차례가 계약이다:
+    /// 붙여넣기 → 글자 크기 → 탭 전환 → 전체 화면 → **AltGr 글자** → 원시 키.
+    fn keydown_action(keystroke: &warpui::keymap::Keystroke, chars: &str) -> Option<ViewAction> {
+        // ★ 붙여넣기는 **Ctrl+V**(정본과 같은 손버릇) · **Cmd/Super+V**(정본
+        // `super+v`) · **Ctrl+Shift+V**(터미널 관례 별칭)다. 이 클라에는 붙여넣기를
+        // 대신 해 줄 바깥 터미널이 없어서(TUI 는 bracketed paste 로 받는다) 여기서
+        // 직접 받는다. 가로채면 패널 안 프로그램이 `0x16` 을 못 받는데, 그 값은
+        // **정본이 이미 치르기로 한 것**이다(`is_paste_chord` 문서 · pytmux-364).
+        // ⛔ 자리도 정본과 같다 — 패널 패스스루와 `bind -n` **앞**이다.
+        if Self::is_paste_chord(keystroke) {
+            return Some(ViewAction::PasteRequest);
+        }
+        // ★ 글자 크기(§10-21ⓐ)도 여기서 가로챈다 — 바깥 터미널이 없어서
+        //   우리가 안 받으면 아무도 안 받는다(붙여넣기와 같은 사정).
+        if let Some(action) = Self::font_scale_chord(keystroke) {
+            return Some(ViewAction::Act(action));
+        }
+        // ★ 탭 전환(§10-21ⓕ·ⓕ2) — 독립 앱이라 이 조합을 가로챌 수 있다
+        //   (정본은 터미널 안이라 못 한다). 패널 안 프로그램의 `Ctrl+Tab` 이
+        //   사라지는 것은 제보가 감수한 결정이다.
+        if let Some(forward) = Self::tab_switch_chord(keystroke) {
+            return Some(ViewAction::AltTab(forward));
+        }
+        // ★ 전체 화면(§10-21ⓘ3) — 상류 창이 `toggle_fullscreen()` 을 주는데
+        //   이 크레이트가 한 번도 안 부르고 있었다(ⓕ2 의 수정키 뗌과 같은
+        //   모양의 미배선).
+        if Self::is_fullscreen_chord(keystroke) {
+            return Some(ViewAction::Act(base::Action::ToggleFullscreen));
+        }
+        // ★ AltGr 로 친 글자(검수 pytmux-34 #4).
+        //   글자 하나면 **수정키 없는 그 글자 키**로 보낸다 — US 배열에서 `Shift+2` 로 친
+        //   `@` 와 같은 길(모드·접두·바인딩)을 지나야 두 배열의 사용자가 같은 앱을 쓴다.
+        if let Some(text) = Self::altgr_text(keystroke, chars) {
+            let mut it = text.chars();
+            return Some(match (it.next(), it.next()) {
+                (Some(c), None) => ViewAction::RawKey(Key::Char(c), Mods::NONE),
+                _ => ViewAction::Typed(text.to_owned()),
+            });
+        }
+        // 모르는 키는 조용히 버린다 — 자식에게 쓰레기를 보내지 않는다.
+        Self::key_from_keystroke(keystroke).map(|(key, mods)| ViewAction::RawKey(key, mods))
+    }
+
+    /// `Ctrl+Alt` 로 온 키가 **배열이 낸 글자**면 그 글자(검수 pytmux-34 #4).
+    ///
+    /// Windows 는 AltGr 를 `Ctrl+Alt` 로 보고한다. 그래서 독일어 배열의 `AltGr+Q`(`@`) ·
+    /// `AltGr+7/8/9/0`(`{[]}`) · `AltGr+E`(`€`) 가 전부 `Ctrl+Alt+글자` 로 왔고, 원시 키로
+    /// 보내면 `encode` 가 `None` 을 내 **아무것도 안 나갔다**(`[`·`\`·`]` 는 더 나빴다 —
+    /// `ESC ESC` 같은 제어 바이트가 나갔다). 정본 TUI 는 호스트 단말이 AltGr 를 글자로 풀어
+    /// 주므로 그 글자가 그대로 간다 — 허용 갈림 ⓐⓑⓒ 어디에도 안 드는 **정본과 다른 동작**
+    /// 이었다.
+    ///
+    /// 가르는 것은 키 이름이 아니라 **그 키가 낸 글자**다: 배열이 글자를 내면 그것은 입력이고
+    /// (Windows Terminal 도 왼쪽 `Ctrl+Alt` 를 AltGr 로 친다), 배열이 아무것도 안 내거나 제어
+    /// 문자를 내면 진짜 조합키(`Ctrl+Alt+A` → `ESC ^A`)다. `Cmd`/`Super` 가 섞이면 OS·앱
+    /// 단축키 쪽이라 손대지 않는다.
+    fn altgr_text<'a>(keystroke: &warpui::keymap::Keystroke, chars: &'a str) -> Option<&'a str> {
+        if !(keystroke.ctrl && keystroke.alt) || keystroke.cmd || keystroke.meta {
+            return None;
+        }
+        // 공백은 뺀다 —`Ctrl+Alt+Space` 에 배열이 공백을 돌려주는 상자가 있는데, 그것은
+        // 글자가 아니라 조합키(`ESC NUL`)로 읽는 쪽이 종전·정본과 같다.
+        let printable = !chars.is_empty()
+            && chars.chars().all(|c| !c.is_control() && !c.is_whitespace());
+        printable.then_some(chars)
     }
 
     /// 이 키가 "지금 OS 클립보드를 붙여넣어 달라"인가 — `Ctrl+V` · `Cmd`(`Super`)`+V` ·
@@ -3151,11 +3239,8 @@ impl SessionView {
                 };
                 // 도구가 하나도 없으면 `false` 다 — 그때 "복사됨"이라고 말하면 거짓말이
                 // 되고, 붙여넣기가 안 되는 이유를 찾을 수 없게 된다(`clip::copy` 문서).
-                if clip::copy(&full) {
-                    self.state.note_notice(tf("경로를 복사했다: {path}", &[("path", &full)]));
-                } else {
-                    self.state.note_error(tf("경로를 복사하지 못했다: {path}", &[("path", &full)]));
-                }
+                // ⛔ 여기서 기다리지 않는다 — 결과(성공·실패 알림)는 다음 펌프가 줍는다.
+                self.spawn_os_copy(full.clone(), OsCopyWhat::Path(full));
             }
         }
     }
@@ -3855,7 +3940,11 @@ impl SessionView {
     /// `flush_outgoing` 이 한다. 둘의 앞뒤가 바뀌면 창 크기 알림이 한 프레임 늦는다.
     #[cfg(test)]
     pub(crate) fn pump_headless(&mut self) -> bool {
-        let (dirty, _clip) = self.pump_messages();
+        let (dirty, clip) = self.pump_messages();
+        // 창 계층에 쓸 것을 시험이 볼 수 있게 남긴다(검수 pytmux-34 #2 · OSC 52 오라클).
+        if clip.is_some() {
+            self.window_clip_for_test = clip;
+        }
         self.pump_tail(dirty)
     }
 
@@ -3902,9 +3991,11 @@ impl SessionView {
         }
         // 원격에 올린 그림도 스레드에서 온다 — 셸 결과와 **같은 자리**에서 줍는다.
         let pasted = self.take_remote_image();
+        // OS 클립보드 복사 결과도 스레드에서 온다(검수 pytmux-34 #2) — 같은 자리에서 줍는다.
+        let copied = self.take_os_copies();
         // 시계는 서버 메시지가 없어도 흐른다 — 퍼올리기와 같은 자리에서 재운다
         // (GUI 에는 TUI 의 프레임 루프에 해당하는 자리가 여기뿐이다).
-        let mut dirty = self.tick_clock() || shell || pasted;
+        let mut dirty = self.tick_clock() || shell || pasted || copied;
         dirty |= self.tick_thumb();
         // 입력기 배지는 서버 메시지와 무관하게 바뀐다 — 시계와 같은 자리에서 잰다.
         dirty |= self.tick_ime();
@@ -3987,8 +4078,14 @@ impl SessionView {
                         if let Some(text) = self.state.take_clipboard() {
                             // `set set-clipboard off` 면 걷기만 하고 안 쓴다 — 걷는 것은
                             // 꺼져 있어도 해야 한다(안 걷으면 켠 순간 옛 복사가 튀어나온다).
+                            // ★ 창 계층 클립보드로 쓴다(검수 pytmux-34 #2) — 종전에는 여기서
+                            //   `clip::copy`(PowerShell)를 **UI 스레드에서 동기로** 불러, 패널
+                            //   앱이 OSC 52 를 보낼 때마다 창이 최대 7초 멈췄다(원격 셸이나
+                            //   악성 출력이 연달아 찍으면 사실상 응답 없음). 선택 복사가 이미
+                            //   쓰는 길이고, 한 펌프 안에서 여러 번 와도 **마지막 것 하나만**
+                            //   쓴다(연타 합치기).
                             if self.config.set_clipboard {
-                                let _ = clip::copy(&text);
+                                clip = Some(text);
                             }
                         }
                         // ★ 플러그인 표면을 화면 상태에 실어 준다(설계 Tier A · P2).
@@ -8455,14 +8552,48 @@ impl SessionView {
         {
             self.copied_for_test = Some(text.clone());
         }
-        if clip::copy(&text) {
-            self.state.note_notice(tf(
-                "알림을 복사했다: {n}자",
-                &[("n", text.chars().count().to_string().as_str())],
-            ));
-        } else {
-            self.state.note_error(t("알림을 복사하지 못했다").to_owned());
+        let chars = text.chars().count();
+        self.spawn_os_copy(text, OsCopyWhat::Notice(chars));
+    }
+
+    /// OS 클립보드 복사를 **UI 스레드 밖에서** 돌린다(검수 pytmux-34 #2). 결과는
+    /// [`take_os_copies`](Self::take_os_copies) 가 다음 펌프에서 줍는다.
+    fn spawn_os_copy(&mut self, text: String, what: OsCopyWhat) {
+        let slot = self.os_copy_done.clone();
+        let copier = self.os_copier;
+        std::thread::spawn(move || {
+            let ok = copier(&text);
+            if let Ok(mut slot) = slot.lock() {
+                slot.push(OsCopyDone { what, ok });
+            }
+        });
+    }
+
+    /// 도착한 복사 결과를 알림으로 말한다. 말했으면 `true`(= 다시 그릴 일이 있다).
+    fn take_os_copies(&mut self) -> bool {
+        let done = match self.os_copy_done.lock() {
+            Ok(mut slot) => std::mem::take(&mut *slot),
+            Err(_) => return false,
+        };
+        for item in &done {
+            // ⚠ 원문을 **리터럴로** 부른다(i18n 게이트 · `take_remote_image` 와 같은 규칙).
+            match (&item.what, item.ok) {
+                (OsCopyWhat::Path(full), true) => self
+                    .state
+                    .note_notice(tf("경로를 복사했다: {path}", &[("path", full)])),
+                (OsCopyWhat::Path(full), false) => self
+                    .state
+                    .note_error(tf("경로를 복사하지 못했다: {path}", &[("path", full)])),
+                (OsCopyWhat::Notice(n), true) => self.state.note_notice(tf(
+                    "알림을 복사했다: {n}자",
+                    &[("n", n.to_string().as_str())],
+                )),
+                (OsCopyWhat::Notice(_), false) => {
+                    self.state.note_error(t("알림을 복사하지 못했다").to_owned())
+                }
+            }
         }
+        !done.is_empty()
     }
 
     /// F10 메뉴(패리티 G1d · 계층은 레이아웃 맞추기 ⑪). 파이썬 `MENU_ITEMS` 와 **같은
@@ -10395,6 +10526,11 @@ impl SessionView {
                 if !ascii.is_empty() {
                     ascii.push(ch);
                 } else if let Some(last) = out.last_mut() {
+                    // VS16 이 1칸 그림 글자를 2칸으로 넓힌다(pytmux-556) — 격자(캔버스)가
+                    // 그 뒤 칸을 연속 칸으로 두었으므로 조각도 두 칸을 차지한다.
+                    if proto::compose::widens(&last.0, ch) {
+                        last.1 += 1;
+                    }
                     last.0.push(ch);
                 }
                 // 줄 맨 앞에 온 폭 0 글자는 얹힐 데가 없다 — 버린다(놓을 칸이 없다).
@@ -10449,50 +10585,47 @@ impl SessionView {
                 out.push((piece, cells));
                 continue;
             }
-            let mut before = String::new();
-            let mut before_cells = 0usize;
-            let mut chars = piece.chars().peekable();
-            // 이 조각에서 지금까지 본 글 — **군집 판정에 앞의 것이 필요하다**
-            // (`joins_previous` 는 앞 글의 꼬리를 본다).
-            let mut seen = String::new();
-            while let Some(ch) = chars.next() {
-                // 얹히는 글자는 칸을 안 쓴다 — 폭 0 이거나 군집이 이어질 때(pytmux-407 ⓐ).
-                let w = if proto::compose::attaches(&seen, ch) {
-                    0
-                } else {
-                    proto::compose::char_advance(ch)
-                };
-                seen.push(ch);
-                // 혼자 떼면 그 글자와 갈라진다(pytmux-389) — 앞에 붙여 둔다.
-                if w == 0 {
-                    before.push(ch);
+            // 먼저 **군집으로** 가른다 — 칸 수는 군집이 정한다. 얹히는 글자(폭 0 · 군집의
+            // 다음 조각)는 칸을 안 쓰되(pytmux-407 ⓐ), VS16 이 1칸 그림 글자를 넓히면 그
+            // 군집은 2칸이다(pytmux-556). 글자마다 칸을 세면 넓어진 군집의 **뒤 칸**에 선
+            // 커서가 다음 글자를 떼어 간다.
+            let mut clusters: Vec<(String, usize)> = Vec::new();
+            for ch in piece.chars() {
+                if let Some((text, w)) = clusters.last_mut()
+                    && proto::compose::attaches(text, ch)
+                {
+                    if proto::compose::widens(text, ch) {
+                        *w += 1;
+                    }
+                    text.push(ch);
                     continue;
                 }
-                if col + before_cells + w > at {
+                // 혼자 떼면 그 글자와 갈라진다(pytmux-389) — 폭 0 은 칸 0 의 군집으로
+                // 두어 아래에서 앞쪽에 붙는다.
+                clusters.push((ch.to_string(), proto::compose::char_advance(ch)));
+            }
+            let mut before = String::new();
+            let mut before_cells = 0usize;
+            let mut iter = clusters.into_iter();
+            while let Some((text, w)) = iter.next() {
+                if w > 0 && col + before_cells + w > at {
                     if !before.is_empty() {
                         out.push((std::mem::take(&mut before), before_cells));
                     }
-                    // 뗄 글자에 얹힌 것(변이 선택자 등)은 **함께** 뗀다.
-                    let mut pick = ch.to_string();
-                    while let Some(&next) = chars.peek() {
-                        // 얹힌 것(변이 선택자 · 군집의 다음 조각)은 **함께** 뗀다 —
-                        // 갈라 두면 커서 자리에서 군집이 쪼개진다.
-                        if !proto::compose::attaches(&pick, next) {
-                            break;
-                        }
-                        pick.push(next);
-                        chars.next();
-                    }
-                    out.push((pick, w));
-                    let rest: String = chars.collect();
+                    // 뗄 군집에 얹힌 것(변이 선택자 · 군집의 다음 조각)은 이미 **함께** 있다.
+                    let rest: String = iter.by_ref().map(|(t, _)| t).collect();
+                    out.push((text, w));
                     if !rest.is_empty() {
                         out.push((rest, cells - before_cells - w));
                     }
                     done = true;
                     break;
                 }
-                before.push(ch);
+                before.push_str(&text);
                 before_cells += w;
+            }
+            if !done && !before.is_empty() {
+                out.push((before, before_cells));
             }
             col += cells;
         }
@@ -11416,41 +11549,10 @@ impl View for SessionView {
         // 같은 이유이고, 바인딩을 이 뷰에 걸지 않는 덕에 **같은 키가 두 번 처리되는**
         // 일도 구조적으로 없다.
         EventHandler::new(body)
-            .on_keydown(|evt, _app, keystroke| {
-                // ★ 붙여넣기는 **Ctrl+V**(정본과 같은 손버릇) · **Cmd/Super+V**(정본
-                // `super+v`) · **Ctrl+Shift+V**(터미널 관례 별칭)다. 이 클라에는 붙여넣기를
-                // 대신 해 줄 바깥 터미널이 없어서(TUI 는 bracketed paste 로 받는다) 여기서
-                // 직접 받는다. 가로채면 패널 안 프로그램이 `0x16` 을 못 받는데, 그 값은
-                // **정본이 이미 치르기로 한 것**이다(`is_paste_chord` 문서 · pytmux-364).
-                // ⛔ 자리도 정본과 같다 — 패널 패스스루와 `bind -n` **앞**이다.
-                if Self::is_paste_chord(keystroke) {
-                    evt.dispatch_typed_action(ViewAction::PasteRequest);
-                    return DispatchEventResult::StopPropagation;
-                }
-                // ★ 글자 크기(§10-21ⓐ)도 여기서 가로챈다 — 바깥 터미널이 없어서
-                //   우리가 안 받으면 아무도 안 받는다(붙여넣기와 같은 사정).
-                if let Some(action) = Self::font_scale_chord(keystroke) {
-                    evt.dispatch_typed_action(ViewAction::Act(action));
-                    return DispatchEventResult::StopPropagation;
-                }
-                // ★ 탭 전환(§10-21ⓕ·ⓕ2) — 독립 앱이라 이 조합을 가로챌 수 있다
-                //   (정본은 터미널 안이라 못 한다). 패널 안 프로그램의 `Ctrl+Tab` 이
-                //   사라지는 것은 제보가 감수한 결정이다.
-                if let Some(forward) = Self::tab_switch_chord(keystroke) {
-                    evt.dispatch_typed_action(ViewAction::AltTab(forward));
-                    return DispatchEventResult::StopPropagation;
-                }
-                // ★ 전체 화면(§10-21ⓘ3) — 상류 창이 `toggle_fullscreen()` 을 주는데
-                //   이 크레이트가 한 번도 안 부르고 있었다(ⓕ2 의 수정키 뗌과 같은
-                //   모양의 미배선).
-                if Self::is_fullscreen_chord(keystroke) {
-                    evt.dispatch_typed_action(ViewAction::Act(base::Action::ToggleFullscreen));
-                    return DispatchEventResult::StopPropagation;
-                }
-                match Self::key_from_keystroke(keystroke) {
-                    Some((key, mods)) => evt.dispatch_typed_action(ViewAction::RawKey(key, mods)),
-                    // 모르는 키는 조용히 버린다 — 자식에게 쓰레기를 보내지 않는다.
-                    None => {}
+            .on_keydown_with_chars(|evt, _app, keystroke, chars| {
+                // 갈래 판정은 순수 함수 한 곳이다(`keydown_action`) — 이 닫힘은 배관뿐이다.
+                if let Some(action) = Self::keydown_action(keystroke, chars) {
+                    evt.dispatch_typed_action(action);
                 }
                 DispatchEventResult::StopPropagation
             })
@@ -12115,6 +12217,23 @@ const THUMB_TTL: std::time::Duration = std::time::Duration::from_secs(6);
 const THUMB_W: f32 = 160.;
 const THUMB_H: f32 = 120.;
 const THUMB_MARGIN: f32 = 12.;
+
+/// 스레드로 뺀 OS 클립보드 복사가 **무엇을** 복사했나 — 결과 알림의 문구가 이것으로 갈린다
+/// (검수 pytmux-34 #2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OsCopyWhat {
+    /// 경로 범위(`act_on_span`) — 풀어 낸 전체 경로.
+    Path(String),
+    /// 알림 이력의 `c` — 그 전문의 글자 수.
+    Notice(usize),
+}
+
+/// 스레드로 뺀 복사 한 번의 결과.
+#[derive(Debug, Clone)]
+struct OsCopyDone {
+    what: OsCopyWhat,
+    ok: bool,
+}
 
 /// 스레드에서 돌린 `scp` 한 번의 결과 — 원격 탭에 붙일 **그림의 경로**(pytmux-159).
 ///

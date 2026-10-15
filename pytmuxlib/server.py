@@ -704,21 +704,17 @@ class Server(*_SERVER_BASES):
             return
         p = win.active_pane
         if p.pipe_proc:  # 토글/재시작: 기존 파이프 종료
-            try:
-                p.pipe_proc.stdin.close()
-            except OSError:
-                pass
-            try:
-                p.pipe_proc.terminate()
-            except OSError:           # 이미 죽음(ProcessLookupError) 등
-                pass
+            p.pipe_proc.close(terminate=True)
             p.pipe_proc = None
         if cmd:
             try:
                 # no_window_kwargs: Windows 에서 pipe-pane 의 cmd /c 콘솔 창 안 뜨게(§10)
-                p.pipe_proc = subprocess.Popen(proc.shell_argv(cmd),
-                                               stdin=subprocess.PIPE,
-                                               **proc.no_window_kwargs())
+                # ★ 쓰기는 PipeSink 의 스레드가 한다 — 루프에서 동기로 쓰면 안 읽는 대상이
+                #   데몬 전체를 멈췄다(pytmux-34 서버 검수 #2).
+                from .pipesink import PipeSink
+                p.pipe_proc = PipeSink(subprocess.Popen(proc.shell_argv(cmd),
+                                                        stdin=subprocess.PIPE,
+                                                        **proc.no_window_kwargs()))
             except (OSError, ValueError):   # 명령 없음/인자 오류 — 조용히 실패 말고 로그
                 p.pipe_proc = None
                 self._log_error("pipe_pane_spawn")

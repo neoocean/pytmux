@@ -114,6 +114,7 @@
       "value"
     ],
     "copy_range": [
+      "_req_token",
       "pane",
       "x0",
       "x1",

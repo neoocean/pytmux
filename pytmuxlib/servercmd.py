@@ -460,7 +460,14 @@ class ServerCmdMixin:
                 text = ""
         if len(text) > self._COPY_RANGE_MAX:
             text = text[:self._COPY_RANGE_MAX]
-        await self._send_to(client, {"t": "selection", "text": text})
+        resp = {"t": "selection", "text": text}
+        # 릴레이된 요청이면 요청 클라 식별자를 돌려준다(검수 pytmux-34 #5) — 다운스트림이
+        # 그 링크를 보는 **모든** 뷰어가 아니라 드래그한 클라에게만 회신을 보내게 한다
+        # (남의 선택이 내 OS 클립보드를 덮던 것). 짝은 serverremote 의
+        # `_REMOTE_REQ_TOKEN_ACTIONS` 에 "copy_range" 를 넣는 것이다.
+        if msg.get("_req_token") is not None:
+            resp["_req_token"] = msg["_req_token"]
+        await self._send_to(client, resp)
 
     @_cmd("pipe_pane", HANDLED)
     async def _cmd_pipe_pane(self, client, sess, msg):

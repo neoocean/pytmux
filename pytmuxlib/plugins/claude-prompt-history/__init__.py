@@ -10,6 +10,9 @@
     ↑↓ 로 이전 프롬프트를 살펴보고, Enter 로 그 프롬프트가 입력된 스크롤백 위치로
     화면을 올린 뒤 팝업을 닫는다(서버가 스크롤백 텍스트 검색으로 점프). Esc 로도 닫는다.
   * 미리보기 행수 N 은 명령(`prompt-history-lines N`)과 팝업(+/−)에서 설정·영속(서버 opts).
+  * Claude 패널 첫 줄에 **가장 최근 프롬프트를 고정 바**로 늘 띄운다(최대 2줄 · pytmux-560).
+    claude 자신의 스티키 바가 떠 있거나 그 프롬프트가 화면에 보이면 비킨다. 누르면 팝업.
+    (아래 2026-06-12 결정 「평소엔 안 보인다」를 사용자 요구 2026-10-15 가 뒤집었다.)
 
 설계 결정(사용자 확정 2026-06-12):
   - 기존 claude-code 의 always-on 단일행 헤더를 **대체**한다(Phase 2 에서 그 헤더 제거).
@@ -278,8 +281,30 @@ class _PromptHistoryPlugin:
         app.ph_panes = new
 
     def client_render(self, app, cells, W, H):
-        from .render import draw_preview
+        from .render import draw_pinned, draw_preview
         draw_preview(app, cells, W, H)
+        draw_pinned(app, cells, W, H)
+
+    def client_click(self, app, x, y, button=1):
+        """고정 바(pytmux-560)를 누르면 그 패널의 프롬프트 히스토리 팝업을 연다.
+
+        바는 앱 글 위에 덮어 그린 것이라, 받지 않으면 클릭이 **가려진 앱 글자**로 간다
+        (fullscreen claude 는 그 자리를 다른 뜻으로 읽는다). 그래서 바 위의 왼쪽 클릭은
+        여기서 끝낸다."""
+        from .render import pinned_at
+        if button != 1:
+            return False
+        pid = pinned_at(app, x, y)
+        if pid is None:
+            return False
+        opener = getattr(app, "open_prompt_history", None)
+        if opener is not None:
+            opener(pid)
+        return True
+
+    def client_hit(self, app, x, y):
+        from .render import pinned_at
+        return pinned_at(app, x, y) is not None
 
 
 PLUGIN = _PromptHistoryPlugin()

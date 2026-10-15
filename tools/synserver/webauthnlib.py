@@ -280,6 +280,15 @@ def verify_registration(att_obj: bytes, client_data: bytes, challenge: bytes,
         raise WebAuthnError("attestationObject 형식 오류")
     ad = parse_auth_data(att["authData"])
     _check_rp_and_flags(ad, rp_id, require_at=True)
+    # 등록 때 공개키를 **실제로 파싱해 본다**(pytmux-34 #12). 안 보면 쓸 수 없는
+    # 키(지원하지 않는 kty·곡선, 잘린 좌표)로도 첫 vault 를 차지할 수 있고, 그 vault 는
+    # 로그인이 영영 안 된다 — 기본 모드에서는 그것이 곧 첫 등록의 영구 잠김이다.
+    try:
+        _public_key(ad["cose_key"])
+    except WebAuthnError:
+        raise
+    except Exception as e:            # cryptography 의 ValueError 등도 실패로 수렴
+        raise WebAuthnError("COSE 공개키를 해석할 수 없음") from e
     return {"cred_id": ad["cred_id"], "cose_key": ad["_key_bytes"],
             "sign_count": ad["sign_count"],
             "aaguid": att["authData"][37:53]}

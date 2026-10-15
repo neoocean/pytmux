@@ -178,10 +178,32 @@ pub fn open_link(url: &str) -> bool {
     let Some(opener) = clip::system_tool(opener) else {
         return false;
     };
+    let Some(url) = url_for_opener(url, cfg!(target_os = "windows")) else {
+        return false;
+    };
     std::process::Command::new(opener)
         .arg(url)
         .spawn()
         .is_ok()
+}
+
+/// 오프너에 넘길 꼴로 URL 을 다듬는다 — 못 넘길 값이면 `None`(검수 pytmux-34 #8 · 강화).
+///
+/// 범위 판정(`base::spans`)은 공백에서만 끊고 꼬리 구두점만 뗀다. 그래서 가운데에
+/// `"`·제어 문자·`,` 가 든 «URL» 이 여기까지 온다 — 패널 출력은 남이 만든 글이다.
+/// - `"`·제어 문자·공백: URL 에 날것으로 있을 이유가 없고(브라우저도 인코딩해서 준다),
+///   오프너의 명령줄 해석과 std 의 인자 인용이 어긋날 여지를 만든다 → 안 연다.
+/// - Windows `,`: `explorer.exe` 는 명령줄을 MSVCRT 규칙이 아니라 **쉼표로 가르는 자체
+///   스위치 규칙**(`/select,` `/root,`)으로 읽는다. `%2C` 로 바꿔 쉼표 자체를 없앤다 —
+///   퍼센트 인코딩된 쉼표는 웹 서버 쪽에서 같은 뜻으로 읽힌다.
+///
+/// 실제로 파일 실행으로 이어지는 입력은 검수에서 못 만들었다 — 이것은 결함 수정이 아니라
+/// 싼 강화다(같은 판정을 순수 함수로 두어 어느 상자에서나 잰다).
+pub fn url_for_opener(url: &str, windows: bool) -> Option<String> {
+    if url.chars().any(|c| c == '"' || c.is_control() || c.is_whitespace()) {
+        return None;
+    }
+    Some(if windows { url.replace(',', "%2C") } else { url.to_owned() })
 }
 
 /// 상대 경로를 **전체 경로**로 푼다(§10-21ⓧ2). 기준은 그 패널의 작업 디렉터리다.
@@ -399,6 +421,24 @@ fn session_lines(state: &SessionState) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_url_never_reaches_explorer_with_a_comma_or_a_quote() {
+        // 검수 pytmux-34 #8 — explorer 는 쉼표로 스위치를 가른다(`/root,` `/select,`).
+        assert_eq!(
+            url_for_opener("https://a/,/root,C:\\x", true).as_deref(),
+            Some("https://a/%2C/root%2CC:\\x")
+        );
+        assert_eq!(url_for_opener("https://a/\"b", true), None);
+        assert_eq!(url_for_opener("https://a/\u{7}b", false), None);
+        assert_eq!(url_for_opener("https://a/ b", false), None);
+        // 멀쩡한 URL 은 그대로 간다(양성 짝) — 다른 OS 의 쉼표도 그대로다.
+        assert_eq!(
+            url_for_opener("https://example.com/a?b=1&c=2", true).as_deref(),
+            Some("https://example.com/a?b=1&c=2")
+        );
+        assert_eq!(url_for_opener("https://a/x,y", false).as_deref(), Some("https://a/x,y"));
+    }
 
     #[test]
     fn there_are_always_tabs_even_before_the_server_says_anything() {

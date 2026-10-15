@@ -9,21 +9,49 @@ Claude 패널 판정은 claude-code 가 세우는 `pane._claude` 를 getattr 로
 claude-code 가 없으면 아무 프롬프트도 기록하지 않는다(하드 참조 금지)."""
 from __future__ import annotations
 
+import time
+
 _HIST_CAP = 200           # 패널당 보관 상한
 _TAIL = 30                # status 에 싣고 팝업이 다루는 최근 슬라이스(번호↔인덱스 정렬)
 _INBUF_CAP = 4000         # 멀티라인 프롬프트 누적 버퍼 상한
+
+#: claude 가 「Esc 두 번 = 입력칸 비우기」로 읽는 간격(초) — pytmux-562.
+#: 정본은 claude 2.1.300 이진의 더블프레스 도우미 `var a=800;function R4(e,o,r,t=a)` 다:
+#: 두 번째 누름이 첫 번째로부터 **800ms 이하**면 비우고 대기를 푼다(셋째는 새 첫 번째).
+#: 사이에 다른 키가 와도 대기를 안 푼다 — 도우미가 시각만 본다.
+#: claude 는 정수 ms 로 잰다 — 초 단위 float 빼기(20.8-20.0=0.8000…07)로 경계를 놓치지 않게
+#: 우리도 ms 로 비교한다.
+_ESC_DOUBLE_MS = 800
 
 
 def _is_claude(pane) -> bool:
     return bool(getattr(pane, "_claude", None))
 
 
-def track_input(pane, data: bytes):
+def _esc_press(pane, now) -> bool:
+    """맨몸 ESC 한 번. 직전 누름과 함께 claude 의 「두 번」이 되면 True(대기 해제)."""
+    prev = getattr(pane, "_ph_esc_ts", None)
+    if prev is not None and round((now - prev) * 1000, 3) <= _ESC_DOUBLE_MS:
+        pane._ph_esc_ts = None
+        return True
+    pane._ph_esc_ts = now
+    return False
+
+
+def track_input(pane, data: bytes, now=None):
     r"""입력 바이트에서 현재 (멀티라인) 프롬프트를 누적하고 제출(Enter=\r)에 한 항목으로
     확정한다. CSI/ESC 시퀀스(화살표 등)는 건너뛰고, \n(Shift+Enter)은 줄바꿈으로 누적만
-    한다(멀티라인=한 항목). Claude 패널만 기록한다."""
+    한다(멀티라인=한 항목). Claude 패널만 기록한다.
+
+    claude 가 입력칸을 비우는 키 둘은 누적분도 버린다(안 버리면 다음 제출 앞에 붙는다):
+    Ctrl+C(pytmux-561)와 **Esc 두 번**(pytmux-562 · `_ESC_DOUBLE_MS`). 패널로 가는 ESC
+    (`Shift+ESC`·`esc e`·`send-escape`)는 `\x1b` 한 바이트짜리 입력으로 오므로, 뒤에 아무것도
+    없는 ESC(또는 ESC 바로 뒤 ESC)를 키 한 번으로 센다 — ESC+글자(Alt)·CSI 는 누름이 아니다.
+    `now` 는 시험용 시각 주입구다(기본 `time.monotonic()`)."""
     if not _is_claude(pane):
         return
+    if now is None:
+        now = time.monotonic()
     text = data.decode("utf-8", "ignore")
     buf = getattr(pane, "_ph_inbuf", "")
     hist = getattr(pane, "_ph_history", None)
@@ -33,6 +61,11 @@ def track_input(pane, data: bytes):
     while i < n:
         ch = text[i]
         if ch == "\x1b":                 # ESC: 제어 시퀀스 건너뜀
+            if text[i + 1:i + 2] in ("", "\x1b"):    # 맨몸 ESC = 키 한 번(pytmux-562)
+                if _esc_press(pane, now):
+                    buf = ""
+                i += 1
+                continue
             i += 1
             if i < n and text[i] == "[":
                 i += 1
@@ -51,6 +84,8 @@ def track_input(pane, data: bytes):
                 if len(hist) > _HIST_CAP:
                     del hist[:-_HIST_CAP]
             buf = ""
+        elif ch == "\x03":               # Ctrl+C: claude 가 입력칸을 비운다 → 누적분 버림
+            buf = ""                     # (안 버리면 다음 제출에 붙는다 — pytmux-561)
         elif ord(ch) in (8, 127):        # backspace
             buf = buf[:-1]
         elif ord(ch) >= 32:

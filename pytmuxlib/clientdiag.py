@@ -52,8 +52,12 @@ BASELINE = {
 }
 
 
-def rss_bytes() -> int | None:
-    """이 프로세스의 상주 메모리. 못 알아내면 None(추측하지 않는다)."""
+def peak_rss_bytes() -> int | None:
+    """이 프로세스의 상주 메모리 **최고 수위**(`ru_maxrss`). 못 알아내면 None.
+
+    ⚠ 최고 수위라 줄어드는 것을 못 보고 「지금 자라고 있나」를 가를 수 없다 — 그
+    판정은 `rss_bytes`(현재값)로 한다(검수 pytmux-34 #16: 종전에는 이 값이 `rss` 칸에
+    실려 382 판정에 쓰였다)."""
     try:
         import resource
     except ImportError:
@@ -62,6 +66,56 @@ def rss_bytes() -> int | None:
     # ⚠ 단위가 OS 마다 다르다 — macOS 는 **바이트**, Linux 는 **KiB** 다.
     # 이걸 틀리면 표가 1024배 어긋난 채 「메모리가 폭증했다」로 읽힌다.
     return ru if sys.platform == "darwin" else ru * 1024
+
+
+def _win_rss() -> int | None:
+    """Windows 현재 작업 집합(`GetProcessMemoryInfo.WorkingSetSize`)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _PMC(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    pmc = _PMC()
+    pmc.cb = ctypes.sizeof(_PMC)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PMC),
+                                           wintypes.DWORD]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    # GetCurrentProcess 는 의사 핸들이라 닫을 것이 없다.
+    if not psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc),
+                                      pmc.cb):
+        return None
+    return int(pmc.WorkingSetSize)
+
+
+def rss_bytes() -> int | None:
+    """이 프로세스의 **현재** 상주 메모리. 못 알아내면 None(추측하지 않는다).
+
+    검수 pytmux-34 #16: 종전 이 함수는 `ru_maxrss`(최고 수위)를 돌려 「지금 자라나」를
+    못 갈랐고, Windows 에는 `resource` 가 없어 늘 None 이었다(이 박스가 Windows 다).
+    Linux 는 `/proc/self/statm`, Windows 는 `GetProcessMemoryInfo`. 그 밖(macOS)은
+    현재값을 싸게 얻을 길이 없어 None — 최고 수위는 `peak_rss_bytes` 가 따로 낸다."""
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/self/statm", "rb") as f:
+                pages = int(f.read().split()[1])
+            return pages * os.sysconf("SC_PAGE_SIZE")
+        if os.name == "nt":
+            return _win_rss()
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+    return None
 
 
 def type_counts(objs=None) -> dict:
@@ -126,6 +180,9 @@ def collect_stats(app, *, collect: bool = False) -> dict:
         "pid": os.getpid(),
         "python": sys.version.split()[0],
         "rss": rss_bytes(),
+        "peak_rss": peak_rss_bytes(),
+        # make_style 캐시 크기(검수 pytmux-34 #1) — 상한(8192)에서 비워지는지 보는 자리.
+        "style_cache": _style_cache_len(),
         "objects": len(objs),
         "collected_now": collect,
         "gc_collect_ms": gc_ms,
@@ -137,6 +194,14 @@ def collect_stats(app, *, collect: bool = False) -> dict:
     }
 
 
+def _style_cache_len() -> int | None:
+    try:
+        from .clientutil import _style_cache
+    except Exception:
+        return None
+    return len(_style_cache)
+
+
 def _mb(n):
     return "?" if n is None else f"{n / 1048576:.1f} MB"
 
@@ -146,7 +211,9 @@ def render(stats: dict) -> list:
     「많은 건가」를 알 수 없고, 이 명령은 그것을 알려주려고 있다."""
     b = BASELINE
     lines = [
-        f"pid {stats['pid']} · python {stats['python']} · RSS {_mb(stats['rss'])}",
+        f"pid {stats['pid']} · python {stats['python']} · RSS {_mb(stats['rss'])}"
+        f" (peak {_mb(stats.get('peak_rss'))})"
+        f" · style cache {'?' if stats.get('style_cache') is None else stats['style_cache']}",
         f"산 객체 {stats['objects']:,}"
         f"   (기준선 ≈{b['objects_settled']:,} 에서 «눕는다» — 그보다 크게·계속"
         f" 자라면 그때가 새 결함이다)",

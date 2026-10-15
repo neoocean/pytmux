@@ -90,6 +90,50 @@ fn every_cluster_lands_where_the_canon_puts_it() {
     );
 }
 
+/// 같은 표본을 **패널 옮기기**(`blit_pane`)와 **행 합성**(`compose_rows`)으로도 잰다.
+///
+/// 격자에 앉히는 자리는 넷이고(`compose` 머리말) 위 시험은 `put_text` 하나만 문다 —
+/// VS16 넓힘(pytmux-556)처럼 **자리마다 따로 적힌** 규칙은 한 곳만 빠져도 그 줄이 밀린다.
+#[test]
+fn every_placement_path_agrees_with_the_canon() {
+    let fx = fixture();
+    let mut wrong = Vec::new();
+    for sample in &fx.samples {
+        let row: proto::message::Row = vec![proto::message::Run::plain(sample.text.clone())];
+        let mut canvas = Canvas::new(fx.cols, 1);
+        canvas.blit_pane(std::slice::from_ref(&row), 0, 0, fx.cols, 1);
+        let got = row_cells(&canvas, fx.cols);
+        if got != sample.cells {
+            wrong.push(format!("blit_pane {}: 우리 {:?} · 정본 {:?}", sample.name, got, sample.cells));
+        }
+        let line = proto::compose::compose_rows(std::slice::from_ref(&row), fx.cols).remove(0);
+        let want = sample.cells.concat();
+        if line.trim_end() != want.trim_end() || proto::compose::display_width(&line) != fx.cols {
+            wrong.push(format!("compose_rows {}: 우리 {:?} · 정본 {:?}", sample.name, line, want));
+        }
+    }
+    assert!(wrong.is_empty(), "격자가 정본과 갈렸다:\n  {}", wrong.join("\n  "));
+}
+
+#[test]
+fn vs16_widens_only_a_one_cell_pictograph() {
+    // pytmux-556 — 넓히는 것은 «폭 1 그림 글자 + VS16» 뿐이다. 대조군이 없으면
+    // 「VS16 이면 무엇이든 2칸」인 판도 위 시험을 통과한다.
+    let fx = fixture();
+    let cells = |name: &str| {
+        fx.samples
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("표본 {name} 이 없다"))
+            .cells
+            .clone()
+    };
+    assert_eq!(cells("vs16"), vec!["|", "\u{26a0}\u{fe0f}", "", "|"], "⚠️ 가 2칸이 아니다");
+    assert_eq!(cells("vs16_on_letter"), vec!["|", "A\u{fe0f}", "|"], "A+VS16 을 넓혔다");
+    assert_eq!(cells("vs15_text"), vec!["|", "\u{26a0}\u{fe0e}", "|"], "VS15 를 넓혔다");
+    assert_eq!(cells("vs16_edge").len(), fx.cols, "줄 끝 VS16 이 줄을 넘쳤다");
+}
+
 #[test]
 fn a_zwj_between_letters_is_not_a_cluster() {
     // ⛔ 대조군 — ZWJ 는 데바나가리 등에서 **이음/끊음 제어**로도 쓰인다. 거기서 두

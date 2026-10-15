@@ -82,15 +82,35 @@ def test_generations_report_frequency_not_just_size():
 
 def test_rss_unit_is_not_off_by_1024():
     """⚠ `ru_maxrss` 는 macOS 가 **바이트**, Linux 가 **KiB** 다. 틀리면 표가
-    1024배 어긋난 채 「메모리가 폭증했다」로 읽힌다."""
-    n = clientdiag.rss_bytes()
+    1024배 어긋난 채 「메모리가 폭증했다」로 읽힌다(최고 수위는 이제 `peak_rss_bytes`)."""
+    n = clientdiag.peak_rss_bytes()
     if n is None:
         # ⛔ 맨 `return` 은 「잰 것 없이 pass」다(검수 2026-09-05 C-4) — Windows(`resource` 없음)
         #    에서 이 시험이 회계에 초록으로 실렸다. 건너뛰면 건너뛰었다고 말한다.
         from run import skip
-        skip("이 OS 는 rss 를 못 잰다(resource 모듈 없음)")
+        skip("이 OS 는 최고 수위 rss 를 못 잰다(resource 모듈 없음)")
     # 이 러너가 1 MB 미만이거나 100 GB 이상일 수는 없다 — 단위가 어긋나면 걸린다.
     assert 1_000_000 < n < 100_000_000_000, (n, sys.platform)
+
+
+def test_rss_is_the_current_value_on_windows_and_linux():
+    """검수 pytmux-34 #16 — `rss` 칸은 **현재** 상주 메모리다. 종전에는 최고 수위
+    (`ru_maxrss`)라 「지금 자라나」를 못 갈랐고, Windows 에서는 늘 None 이었다."""
+    if not (sys.platform.startswith("linux") or sys.platform == "win32"):
+        from run import skip
+        skip("현재 rss 는 Linux·Windows 만 잰다(macOS 는 최고 수위만)")
+    n = clientdiag.rss_bytes()
+    assert n is not None, "이 OS 에서 현재 rss 를 못 쟀다"
+    assert 1_000_000 < n < 100_000_000_000, (n, sys.platform)
+    # 현재값이 자라는 것을 본다 — 최고 수위였다면 줄 수 없고, 이 값은 움직여야 한다.
+    blob = bytearray(64 * 1024 * 1024)
+    for i in range(0, len(blob), 4096):
+        blob[i] = 1                                # 실제로 페이지를 만진다
+    grown = clientdiag.rss_bytes()
+    assert grown - n > 32 * 1024 * 1024, (n, grown)
+    s = clientdiag.collect_stats(_App())
+    assert s["rss"] is not None and "peak_rss" in s
+    del blob
 
 
 def test_the_table_carries_the_baseline():

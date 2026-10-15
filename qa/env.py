@@ -103,10 +103,14 @@ class HomeSlot:
         self._entered = False
         #: 우리가 직접 띄운 pid 만 담는다. 이름 매칭으로 넓히지 않는다(규율 ⑵).
         self.spawned: list[int] = []
+        #: 슬롯에 들어선 시각. 그보다 먼저 만들어진 프로세스는 우리 것일 수 없다
+        #: (Windows 신원 판정 `_still_ours` · pytmux-34 #7).
+        self.entered_at = time.time()
 
     # ── 컨텍스트 ─────────────────────────────────────────────────────────────
     def __enter__(self) -> "HomeSlot":
         _guard_scratch(self.home)
+        self.entered_at = time.time()
         os.makedirs(self.home, exist_ok=True)
         # ⛔ **설정만은 거두는 것이 아니라 세운다**(pytmux-474 가 덤으로 드러낸 자리).
         # 탐색 차례는 `$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` →
@@ -125,7 +129,15 @@ class HomeSlot:
         # NO_COLOR 는 에이전트 셸이 심는다 — 그대로 두면 Textual 이 Monochrome 필터를
         # 물려 실 클라 캡처가 통째로 무너진다(루트 CLAUDE.md 의 실측 110건과 같은 자리).
         # 제품 결함이 아닌 것을 결함으로 신고하지 않으려면 여기서 지운다.
+        # ⛔ 실 토큰 DB·실 동기화 서버에 닿지 않는다(pytmux-34 #9). 슬롯 서버는 제 홈의
+        # 기본 엔드포인트라 DB 이름이 `claude-tokens.db` 가 되고, 그대로 두면
+        # `_migrate_legacy_db` 가 사용자의 **실 플러그인 DB**(이메일 원문 · 실측 72MB)를
+        # 슬롯으로 복사해 왔다(기동 직후 루프 정지 + 개인 데이터 사본이 슬롯에 남음).
+        # 동기화 URL 은 `tests/run.py` 와 같은 닿지 않는 주소로 세운다 — 슬롯의 가짜
+        # 행이 실 vault 로 올라가면 지울 수 없다(서버는 먼저 온 것이 이긴다).
         for k, v in (("PYTMUX_HOME", self.home), ("PYTMUX_CONFIG", cfg),
+                     ("PYTMUX_NO_DB_MIGRATE", "1"),
+                     ("PYTMUX_TOKEN_SYNC_URL", "https://127.0.0.1:9"),
                      ("NO_COLOR", None), ("PYTMUX", None), ("LC_PYTMUX", None)):
             self._saved[k] = os.environ.get(k)
             if v is None:
@@ -189,12 +201,53 @@ class HomeSlot:
         「살아 있다」고 답한다(실측: `ps -o stat` = `Z` · waitpid 뒤에야 ProcessLookupError).
         죽인 쪽이 거두지 않으면 그 흔적을 누구도 못 지운다."""
         from pytmuxlib import proc          # 지연 import — 정리 경로에서만 필요하다
-        for pid in list(self.spawned) + self.ptyhost_pids():
+        for pid, kind in ([(p, "spawned") for p in self.spawned]
+                          + [(p, "ptyhost") for p in self.ptyhost_pids()]):
+            if _reap_zombie(pid):
+                continue                    # 이미 끝난 우리 자식 — 거두기만 하면 된다
+            # ⛔ **쏘기 전에 그 번호가 아직 우리 것인지 묻는다**(pytmux-34 #7). pty-host 는
+            #   QA 의 자식이 아니라 먼저 죽을 수 있고 그 번호는 재사용된다(Windows 는 빠르다).
+            #   `proc.terminate(force=True)` 는 POSIX 에서 **프로세스 그룹 전체**, Windows
+            #   에서 **트리 전체**를 강제 종료하므로, 재사용된 번호를 쏘면 사용자의 라이브
+            #   서버·셸 트리를 날린다 — CLAUDE.md 가 3회 겪었다고 적은 사고와 같은 결과다.
+            #   모르면(None) **안 쏜다**(`proc.command_line` 의 계약).
+            if not self._still_ours(pid, kind):
+                continue
             try:
                 proc.terminate(pid, force=True)
             except Exception:
                 pass                        # 이미 죽은 pid 는 정상이다
             _reap_zombie(pid)
+
+    def _still_ours(self, pid: int, kind: str) -> bool:
+        """그 pid 가 **이 슬롯이 띄운 그 프로세스**인가(pytmux-34 #7).
+
+        - pty-host: 명령줄의 `--pidfile` 이 이 슬롯의 state 디렉터리 안이다 → 홈 경로가
+          명령줄에 있어야 한다.
+        - 우리가 띄운 서버·GUI: 명령줄에 `pytmux` 가 있어야 하고, POSIX 는 엔드포인트가
+          홈 아래 소켓이라 홈 경로까지 있어야 한다. Windows 의 엔드포인트는
+          `tcp:127.0.0.1:0` 이라 사용자의 라이브 서버와 명령줄이 **같다** — 그래서
+          Windows 는 **슬롯에 들어선 뒤에 만들어진 프로세스인지**(생성 시각)까지 본다.
+        못 물었으면 False(안 쏜다)."""
+        if pid <= 0:
+            return False
+        created = None
+        if IS_WINDOWS:
+            cl, created = _win_identity(pid)
+        else:
+            from pytmuxlib import proc
+            cl = proc.command_line(pid)
+        if not cl:
+            return False
+        norm = cl.replace("\\", "/").casefold()
+        home = os.path.abspath(self.home).replace("\\", "/").casefold()
+        if kind == "ptyhost":
+            return home in norm
+        if "pytmux" not in norm:
+            return False
+        if IS_WINDOWS:
+            return created is not None and created >= self.entered_at - 2.0
+        return home in norm
 
     def residue(self, timeout: float = 3.0, step: float = 0.1) -> list[str]:
         """정리 판정 — **내 홈의 상태 파일**로만 한다(규율 ⑶).
@@ -248,6 +301,36 @@ class HomeSlot:
         """
         self.reap()
         shutil.rmtree(self.home, ignore_errors=True)
+
+
+def _win_identity(pid: int) -> tuple:
+    """Windows: `(명령줄, 생성 시각 epoch)` 를 **한 번의** CIM 질의로 읽는다(못 읽으면
+    `(None, None)`). 이 상자는 프로세스 하나 띄우는 데 수 초가 걸려(보안 스택) 명령줄과
+    생성 시각을 따로 물으면 정리 시간이 두 배가 된다. ⛔ 모르면 None — 부르는 쪽이
+    「안 쏜다」로 진다(`proc.command_line` 과 같은 계약)."""
+    import shutil
+    exe = shutil.which("powershell")
+    if not exe or pid <= 0:
+        return None, None
+    ps = ("$p = Get-CimInstance Win32_Process -Filter 'ProcessId=%d'; "
+          "if ($p) { [string]([long](($p.CreationDate.ToUniversalTime() - "
+          "[datetime]'1970-01-01').TotalSeconds)); $p.CommandLine }" % int(pid))
+    try:
+        r = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-Command", ps],
+                           capture_output=True, timeout=15.0,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    if r.returncode != 0:
+        return None, None
+    lines = (r.stdout or b"").decode("utf-8", "replace").strip().splitlines()
+    if len(lines) < 2:
+        return None, None
+    try:
+        created = float(lines[0].strip())
+    except ValueError:
+        return None, None
+    return "\n".join(lines[1:]).strip() or None, created
 
 
 def _reap_zombie(pid: int) -> bool:

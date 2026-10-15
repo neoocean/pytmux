@@ -547,22 +547,36 @@ pub fn run_shell(cmd: &str) -> (i32, String) {
         // 이진 옆 폴더의 `cmd.exe` 가 먼저 잡히는 그 구멍을 여기서 다시 열지 않는다.
         return (1, "셸을 찾지 못했다(COMSPEC 도 %SystemRoot% 도 안 잡힌다)".to_owned());
     };
-    let mut child = match Command::new(&argv[0])
+    let mut command = Command::new(&argv[0]);
+    command
         .args(&argv[1..])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
     {
+        // CREATE_NO_WINDOW — GUI 이진에서 `cmd /c` 를 띄우면 콘솔 창이 번쩍인다
+        // (`feed` 와 같은 이유 · 파이썬 `proc.no_window_kwargs()`).
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = match command.spawn() {
         Ok(child) => child,
         // 셸조차 못 띄운 것은 **사용자에게 보여야 한다** — 조용히 rc 1 만 돌려주면
         // "명령이 실패했다"와 "셸이 없다"를 못 가린다.
         Err(err) => return (1, format!("셸을 띄우지 못했다: {err}")),
     };
+    // ★ 파이프는 자식이 도는 **동안** 읽는다(검수 pytmux-34 #3). 종전에는 자식이 끝난 뒤에야
+    //   읽기 시작했다 — 출력이 파이프 버퍼(Windows 익명 파이프 4 KiB · Linux 64 KiB)를
+    //   넘으면 자식이 `write` 에서 막혀 안 끝나고, 15초 뒤 죽어 rc 1 이 됐다(`if-shell` 이
+    //   반대 갈래로 갔다). 정본 `subprocess.run(capture_output=True)` 은 communicate 가 동시에
+    //   읽어 이 교착이 없다.
+    let stdout = drain_pipe(child.stdout.take());
+    let stderr = drain_pipe(child.stderr.take());
     let deadline = Instant::now() + SHELL_TIMEOUT;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(POLL),
             Ok(None) => {
                 let _ = child.kill();
@@ -571,26 +585,84 @@ pub fn run_shell(cmd: &str) -> (i32, String) {
             }
             Err(err) => return (1, format!("기다리지 못했다: {err}")),
         }
-    }
-    match child.wait_with_output() {
-        Ok(out) => {
-            let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-            // stderr 도 싣는다 — 실패한 명령은 거기에만 말한다.
-            let err = String::from_utf8_lossy(&out.stderr);
-            if !err.trim().is_empty() {
-                if !text.is_empty() && !text.ends_with('\n') {
-                    text.push('\n');
-                }
-                text.push_str(&err);
-            }
-            (out.status.code().unwrap_or(1), text)
+    };
+    // 자식은 끝났다. 손자가 파이프를 물고 살아 있으면 EOF 가 안 오므로 **짧게만** 기다린다
+    // (그때 이미 모은 몫은 버리지 않는다 — 읽기 스레드가 조각마다 내놓는다).
+    let grace = Instant::now() + PIPE_GRACE;
+    let mut text = String::from_utf8_lossy(&stdout.collect(grace)).into_owned();
+    // stderr 도 싣는다 — 실패한 명령은 거기에만 말한다.
+    let err_bytes = stderr.collect(grace);
+    let err = String::from_utf8_lossy(&err_bytes);
+    if !err.trim().is_empty() {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
         }
-        Err(err) => (1, format!("출력을 읽지 못했다: {err}")),
+        text.push_str(&err);
     }
+    (status.code().unwrap_or(1), text)
 }
 
 /// 셸 명령의 상한. 파이썬 `_run_shell`·`_if_shell` 과 같은 값이다.
 const SHELL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 자식이 끝난 뒤 파이프 EOF 를 더 기다리는 상한. 손자(백그라운드로 띄운 것)가 파이프를
+/// 물고 있으면 EOF 가 영영 안 온다 — 그 때문에 결과가 15초 상한 밖으로 매달리면 안 된다.
+const PIPE_GRACE: Duration = Duration::from_secs(1);
+
+/// 읽은 것을 쌓아 둘 상한(파이프 하나당). 결과는 상태줄·알림에 몇십 줄만 보이므로
+/// (`session.rs` 의 40줄 상한) 그 이상은 읽기만 하고 버린다 — **읽기는 멈추지 않는다**
+/// (멈추면 자식이 다시 막힌다).
+const PIPE_KEEP: usize = 1 << 20;
+
+/// 파이프 하나를 끝까지 읽는 스레드. 읽은 조각을 채널로 내놓는다.
+struct PipeDrain(Option<std::sync::mpsc::Receiver<Vec<u8>>>);
+
+fn drain_pipe<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> PipeDrain {
+    let Some(mut pipe) = pipe else {
+        return PipeDrain(None);
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        let mut kept = 0usize;
+        loop {
+            match pipe.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let room = PIPE_KEEP.saturating_sub(kept);
+                    if room > 0 {
+                        let take = n.min(room);
+                        kept += take;
+                        if tx.send(buf[..take].to_vec()).is_err() {
+                            // 받는 쪽이 떠났다 — 그래도 자식이 막히지 않게 끝까지 비운다.
+                            kept = PIPE_KEEP;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    PipeDrain(Some(rx))
+}
+
+impl PipeDrain {
+    /// 지금까지 온 것 + `until` 까지 더 오는 것(EOF 면 거기서 끝).
+    fn collect(self, until: Instant) -> Vec<u8> {
+        let Some(rx) = self.0 else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(chunk) => out.extend_from_slice(&chunk),
+                // 끊김 = 읽기 스레드가 EOF 를 보고 끝났다. 시간 초과 = 손자가 물고 있다.
+                Err(_) => break,
+            }
+        }
+        out
+    }
+}
 
 /// OS 별 셸 argv(파이썬 `proc.shell_argv` 와 같다).
 fn shell_argv(cmd: &str) -> Option<Vec<String>> {
@@ -625,6 +697,28 @@ mod shell_tests {
         // ★ `if-shell` 이 이 값으로 갈린다 — 0 이 아닌데 0 을 돌려주면 조건이 뒤집힌다.
         let (rc, _) = run_shell("exit 3");
         assert_eq!(rc, 3);
+    }
+
+    #[test]
+    fn output_bigger_than_a_pipe_buffer_does_not_deadlock() {
+        // ☠ 검수 pytmux-34 #3: 자식이 끝난 뒤에야 파이프를 읽으면, 파이프 버퍼(Windows 4 KiB ·
+        //   Linux 64 KiB)를 넘는 출력에서 자식이 `write` 에 막혀 안 끝나고 15초 뒤 죽는다 —
+        //   rc 1 + 「시간이 다 됐다」. `if-shell` 이 그 rc 로 반대 갈래로 간다.
+        //   ⚠ 시각은 안 잰다 — 이 상자는 프로세스 하나에 수 초가 걸린다(보안 스택). 교착이면
+        //   rc 가 1 이고 글이 「시간이 다 됐다」라서 시각 없이도 갈린다.
+        let line = "x".repeat(40);
+        let cmd = if cfg!(windows) {
+            format!("for /l %i in (1,1,3000) do @echo {line}")
+        } else {
+            format!("i=0; while [ $i -lt 3000 ]; do echo {line}; i=$((i+1)); done")
+        };
+        let (rc, text) = run_shell(&cmd);
+        assert_eq!(rc, 0, "큰 출력에서 실패했다: {:?}", &text[..text.len().min(120)]);
+        assert!(
+            text.len() >= 3000 * 40,
+            "출력이 덜 왔다: {} 바이트",
+            text.len()
+        );
     }
 
     #[test]

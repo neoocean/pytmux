@@ -54,6 +54,67 @@ def _symlink(target, link):
 
 # ── mdir: 목적지 심볼릭 링크(MDIR-1 계열 전수) ─────────────────────────────
 
+async def test_merge_copy_does_not_follow_links_inside_dst_tree():
+    """pytmux-34 #6: 「모두 덮어쓰기」 병합 복사가 대상 트리 **안**의 링크를 따라
+    dstdir 밖에 썼다(MDIR-1 은 최상위만 막았다). 파일 링크·디렉터리 링크 둘 다 잰다."""
+    d = tempfile.mkdtemp()
+    outside = os.path.join(d, "outside")
+    os.mkdir(outside)
+    victim = os.path.join(outside, "victim")
+    with open(victim, "w") as f:
+        f.write("SECRET")
+    src = os.path.join(d, "srcdir", "proj")
+    os.makedirs(os.path.join(src, "sub"))
+    with open(os.path.join(src, "x.txt"), "w") as f:
+        f.write("payload")
+    with open(os.path.join(src, "sub", "y.txt"), "w") as f:
+        f.write("payload2")
+    dstdir = os.path.join(d, "dstdir")
+    os.makedirs(os.path.join(dstdir, "proj"))
+    _symlink(victim, os.path.join(dstdir, "proj", "x.txt"))      # 파일 링크
+    _symlink(outside, os.path.join(dstdir, "proj", "sub"))       # 디렉터리 링크
+    r = _op(op="copy", src=[src], dst=dstdir, overwrite="all")
+    assert r["done"] == 1, r
+    assert open(victim).read() == "SECRET", "대상 트리 안의 파일 링크를 따라가 덮어썼다"
+    assert not os.path.exists(os.path.join(outside, "y.txt")), \
+        "대상 트리 안의 디렉터리 링크를 따라가 그 밖에 썼다"
+    got = os.path.join(dstdir, "proj")
+    assert not os.path.islink(os.path.join(got, "x.txt"))
+    assert open(os.path.join(got, "x.txt")).read() == "payload"
+    assert open(os.path.join(got, "sub", "y.txt")).read() == "payload2"
+
+
+async def test_merge_copy_still_merges_plain_trees():
+    """병합 복사의 본뜻(기존 파일은 남기고 같은 이름은 대체)은 그대로다 — 링크 없는
+    트리(Windows 에서도 도는 대조군). 호출부가 새 경로를 실제로 타는지도 본다."""
+    import inspect
+    d = tempfile.mkdtemp()
+    src = os.path.join(d, "s", "proj")
+    os.makedirs(os.path.join(src, "sub"))
+    with open(os.path.join(src, "a.txt"), "w") as f:
+        f.write("new-a")
+    with open(os.path.join(src, "sub", "b.txt"), "w") as f:
+        f.write("new-b")
+    dstdir = os.path.join(d, "t")
+    os.makedirs(os.path.join(dstdir, "proj", "sub"))
+    with open(os.path.join(dstdir, "proj", "a.txt"), "w") as f:
+        f.write("old-a")
+    with open(os.path.join(dstdir, "proj", "keep.txt"), "w") as f:
+        f.write("keep")
+    os.makedirs(os.path.join(src, "clash"))                      # 디렉터리 → 파일 충돌
+    with open(os.path.join(dstdir, "proj", "clash"), "w") as f:
+        f.write("file")
+    r = _op(op="copy", src=[src], dst=dstdir, overwrite="all")
+    assert r["done"] == 0 and r["failed"], r                     # 충돌은 조용히 넘기지 않는다
+    os.rmdir(os.path.join(src, "clash"))
+    r = _op(op="copy", src=[src], dst=dstdir, overwrite="all")
+    assert r["done"] == 1, r
+    p = os.path.join(dstdir, "proj")
+    assert open(os.path.join(p, "a.txt")).read() == "new-a"
+    assert open(os.path.join(p, "keep.txt")).read() == "keep"
+    assert open(os.path.join(p, "sub", "b.txt")).read() == "new-b"
+    assert "_merge_copy_no_follow(" in inspect.getsource(mserver.mdir_op_msg)
+
 async def test_copy_does_not_follow_dangling_dst_symlink():
     """MDIR-1 회귀(고정 유지): 목적지가 **끊어진** 링크면 lexists 로 충돌 판정하고,
     덮어쓰기를 골라도 링크를 지운 뒤 그 자리에 쓴다(링크 대상에 쓰지 않는다)."""

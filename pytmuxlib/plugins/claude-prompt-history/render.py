@@ -116,3 +116,197 @@ def draw_preview(app, cells, W, H):
     # 그린 행들을 딤 제외 집합에 실어, 명령 프롬프트 backdrop-dim 이 이 바를 회색으로
     # 뭉개지 않게 한다(가독성). 그릴 게 없으면 회수만 한다.
     _ph_undim_set(app, drawn_rows)
+
+
+# ---- 고정 프롬프트 바(pytmux-560) ─────────────────────────────────────────────
+#: 고정 바의 최대 행수. 사용자 요구가 「여러 줄이면 최대 2줄」이다 — 바가 패널 위를
+#: 가리는 오버레이라 더 키우면 그만큼 앱 글이 가려진다.
+PINNED_MAX_ROWS = 2
+
+#: 이번 프레임에 그린 고정 바 — `{패널 id: (y0, y1, x0, x1)}`(y1·x1 은 끝 다음).
+#: 클릭·히트 판정이 이 표를 읽는다(그린 자리와 누르는 자리가 같은 값을 보게).
+_PINNED = "_ph_pinned"
+
+#: 줄 첫 글자가 이것이면 「제출된 프롬프트 줄」(또는 claude 자신의 스티키 바)이다.
+#: claude-code 의 `PROMPT_MARK_FIRST` 와 같은 뜻이지만 그 플러그인을 import 하지 않는다
+#: (delete-to-disable — 하드 참조 금지). `›` 는 옛 판 claude 의 스티키 바 표식이다.
+_MARKS = (">", "❯", "›")
+
+#: 대화를 비우는 claude 명령(`/clear` 와 그 별칭). 이것이 가장 최근 제출이면 바가 서지
+#: 않는다(pytmux-561) — 화면은 새 대화인데 바만 지운 대화의 프롬프트를 띄우게 된다.
+#: 이력은 팝업·점프의 재료라 지우지 않고 바만 경계를 안다.
+_CLEAR_CMDS = ("/clear", "/reset", "/new")
+
+
+def _is_clear(prompt):
+    """제출 글이 대화를 비우는 명령인가(인자·앞뒤 공백 무시)."""
+    words = (prompt or "").split()
+    return bool(words) and words[0].lower() in _CLEAR_CMDS
+
+
+def _row_text(cells, gy, x0, x1):
+    """합성 셀 한 행의 글자(와이드 글자 stub `""` 은 건너뛴다)."""
+    return "".join(cells[gy][gx][0] for gx in range(x0, x1)
+                   if cells[gy][gx][0] != "")
+
+
+def _mark_body(text):
+    """프롬프트 표식으로 시작하는 줄이면 표식 뒤 글, 아니면 None."""
+    s = text.lstrip()
+    if not s or s[0] not in _MARKS:
+        return None
+    return s[1:].strip()
+
+
+def _clean(text):
+    """그릴 글 — 탭은 공백, 나머지 제어문자는 공백으로 접는다(글자가 붙지 않게)."""
+    return "".join(" " if (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f) else c
+                   for c in text)
+
+
+def pinned_rows(prompt, budget, max_rows=PINNED_MAX_ROWS):
+    """프롬프트를 폭 `budget` 칸에 접어 **최대 `max_rows` 행**의 글로 만든다.
+
+    첫 행은 `❯ ` 로, 뒤 행은 두 칸 들여 쓴다. 빈 줄은 건너뛴다(빈 행으로 2줄 중 하나를
+    버리지 않게). 넘치면 마지막 행 끝을 `…` 로 바꾼다 — 「더 있다」를 말하는 자리다.
+    """
+    from pytmuxlib.clientutil import _char_cells
+    lines = [_clean(ln).strip() for ln in (prompt or "").split("\n")]
+    lines = [ln for ln in lines if ln]
+    if not lines or budget < 4:
+        return []
+    rows = []                     # [(글, 칸 수)]
+    truncated = False
+    for li, ln in enumerate(lines):
+        cur, used = ("  " if rows else "❯ "), 2
+        for ch in ln:
+            w = _char_cells(ch)
+            if used + w > budget:
+                rows.append((cur, used))
+                cur, used = "  ", 2
+                if len(rows) > max_rows:
+                    break
+            cur += ch
+            used += w
+        rows.append((cur, used))
+        if len(rows) >= max_rows:
+            truncated = len(rows) > max_rows or li < len(lines) - 1
+            break
+    rows = rows[:max_rows]
+    if truncated:
+        text, used = rows[-1]
+        while text and used + 1 > budget:
+            used -= _char_cells(text[-1])
+            text = text[:-1]
+        rows[-1] = (text.rstrip() + "…", used + 1)
+    return [text for text, _ in rows]
+
+
+def draw_pinned(app, cells, W, H):
+    """Claude 패널마다 첫 줄에 **가장 최근 제출 프롬프트**를 고정 바로 얹는다
+    (pytmux-560 · 사용자 요구 2026-10-15: *"스크롤을 위로 올려야 이전 프롬프트가
+    보인다 — 항상 보이게, 여러 줄이면 최대 2줄"*).
+
+    # 왜 pytmux 가 그리나
+
+    claude 자신의 스티키 바(fullscreen 렌더러)는 뷰포트가 위로 굴러 있을 때만 서고,
+    블록 스티키 바(`plugins/blocks`)도 pytmux 스크롤 중에만 선다. 「항상」은 앱이 줄 수
+    없어 여기서 낸다. 재료는 이미 status 로 와 있는 `ph_panes`(입력 추적 이력)다.
+
+    # 비키는 조건 — 같은 것을 두 번 보이지 않게, 더 맞는 바를 가리지 않게
+
+    ① 그 패널에 `:` 미리보기가 떠 있다(`draw_preview` 가 같은 자리를 쓴다)
+    ② pytmux 스크롤 중이다 — 블록 스티키 바가 「보고 있는 곳의」 프롬프트를 낸다
+    ③ 패널 첫 줄이 이미 프롬프트 표식으로 시작한다 — claude 자신의 스티키 바가 떠 있거나
+       프롬프트 줄이 맨 위에 있다
+    ④ 그 프롬프트가 지금 패널 안에 표식 줄로 보인다(방금 제출해 아직 화면에 있다)
+    ⑤ 가장 최근 제출이 `/clear`(별칭 포함)다 — 그 앞 프롬프트는 지운 대화의 것이다
+       (pytmux-561)
+    """
+    bars = {}
+    setattr(app, _PINNED, bars)
+    table = getattr(app, "ph_panes", None) or {}
+    if not table:
+        return
+    target = getattr(app, "_cmd_target_pane", None)
+    scrolls = getattr(app, "pane_scroll", None) or {}
+    style = None
+    for pane in (getattr(app, "layout", None) or {}).get("panes", []):
+        pid = pane.get("id")
+        hist = (table.get(pid) or {}).get("h") or []
+        if not hist or not hist[-1] or pid == target or scrolls.get(pid):
+            continue
+        if _is_clear(hist[-1]):
+            continue                                        # ⑤
+        px, py, pw, ph = (pane.get("x", 0), pane.get("y", 0),
+                          pane.get("w", 0), pane.get("h", 0))
+        if pw < 8 or ph < 4 or not (0 <= py < H):
+            continue
+        x0, x1 = max(0, px), min(px + pw, W)
+        y_end = min(py + ph, H)
+        if _mark_body(_row_text(cells, py, x0, x1)) is not None:
+            continue                                        # ③
+        prompt = hist[-1]
+        first = next((_clean(ln).strip() for ln in prompt.split("\n")
+                      if ln.strip()), "")
+        if _visible(cells, first, py, y_end, x0, x1):
+            continue                                        # ④
+        rows = pinned_rows(prompt, max(0, pw - 2), min(PINNED_MAX_ROWS, ph - 2))
+        if not rows:
+            continue
+        if style is None:
+            from rich.style import Style
+            from pytmuxlib.clientutil import theme_color
+            style = Style(color="#FFFFFF", bold=True,
+                          bgcolor=theme_color(app, "primary-darken-2"))
+        _paint_rows(cells, rows, px, py, x0, x1, W, H, style)
+        bars[pid] = (py, min(py + len(rows), H), x0, x1)
+
+
+def _visible(cells, first, y0, y1, x0, x1):
+    """프롬프트 첫 줄이 패널 안 어느 표식 줄에 보이나(④).
+
+    claude 는 긴 프롬프트를 접어 그리므로 행 글은 프롬프트의 **앞부분**일 수 있고,
+    반대로 짧은 프롬프트는 행보다 짧다 — 둘 중 짧은 쪽 길이(최대 30자)의 앞부분을 맞댄다.
+    """
+    if not first:
+        return False
+    for gy in range(y0, y1):
+        body = _mark_body(_row_text(cells, gy, x0, x1))
+        if not body:
+            continue
+        k = min(len(body), len(first), 30)
+        if body[:k] == first[:k]:
+            return True
+    return False
+
+
+def _paint_rows(cells, rows, px, py, x0, x1, W, H, style):
+    from pytmuxlib.clientutil import _char_cells
+    for i, text in enumerate(rows):
+        gy = py + i
+        if not (0 <= gy < H):
+            continue
+        for gx in range(x0, x1):
+            cells[gy][gx] = (" ", style)
+        gx = px + 1                                         # 좌우 한 칸 여백
+        for ch in text:
+            wch = _char_cells(ch)
+            if gx + wch > x1 - 1:
+                break
+            if 0 <= gx < W:
+                cells[gy][gx] = (ch, style)
+                if wch == 2 and gx + 1 < W:
+                    cells[gy][gx + 1] = ("", style)
+            gx += wch
+
+
+def pinned_at(app, x, y):
+    """(x, y) 가 이번 프레임에 그린 고정 바 위면 그 패널 id, 아니면 None.
+
+    누르는 자리(`client_click`)와 밑줄을 빼는 자리(`client_hit`)가 **같은 표**를 읽는다
+    (pytmux-541 의 규율 — 둘이 따로 재면 언젠가 어긋난다)."""
+    for pid, (y0, y1, x0, x1) in (getattr(app, _PINNED, None) or {}).items():
+        if y0 <= y < y1 and x0 <= x < x1:
+            return pid
+    return None

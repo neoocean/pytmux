@@ -1174,6 +1174,26 @@ class Split:
     def first_pane(self) -> Pane:
         return self.a.first_pane()
 
+    @staticmethod
+    def child_rects(orient: str, ratio: float, x, y, w, h):
+        """박스 (x,y,w,h) 를 나눈 `(rect_a, rect_b, divider_rect)`.
+
+        자식은 경계 셀을 공유(겹침)한다 — 각 패널이 자기 테두리 박스를 그리므로 경계
+        열/행을 양쪽 테두리가 같은 셀로 쓴다(한 변당 최소 MIN). `Window._layout` 과
+        **분할 전 새 패널 크기 예측**(servertree.split_pane · pytmux-418)이 이 한 벌을 쓴다
+        — 식이 두 벌이면 예측이 어긋나 새 패널이 띄우자마자 또 리사이즈된다."""
+        if orient == "lr":
+            if w >= MIN_W * 2:
+                bx = max(MIN_W, min(w - MIN_W, round((w - 1) * ratio)))
+            else:
+                bx = max(1, min(w - 1, (w - 1) // 2))
+            return ((x, y, bx + 1, h), (x + bx, y, w - bx, h), (x + bx, y, 1, h))
+        if h >= MIN_H * 2:
+            by = max(MIN_H, min(h - MIN_H, round((h - 1) * ratio)))
+        else:
+            by = max(1, min(h - 1, (h - 1) // 2))
+        return ((x, y, w, by + 1), (x, y + by, w, h - by), (x, y + by, w, 1))
+
 
 _pid_seq = [0]
 _split_seq = [0]
@@ -1277,28 +1297,15 @@ class Window:
         if isinstance(node, Pane):
             panes.append(node)
             return
-        # 자식은 경계 셀을 공유(겹침)한다. 각 패널이 자기 테두리 박스를 그리므로
-        # 경계 열/행을 양쪽 패널 테두리가 같은 셀로 공유한다(한 변당 최소 MIN).
-        if node.orient == "lr":
-            if w >= MIN_W * 2:
-                bx = max(MIN_W, min(w - MIN_W, round((w - 1) * node.ratio)))
-            else:
-                bx = max(1, min(w - 1, (w - 1) // 2))
-            divs.append({"split_id": node.id, "orient": "lr",
-                         "x": x + bx, "y": y, "w": 1, "h": h,
-                         "rect": [x, y, w, h]})
-            self._layout(node.a, x, y, bx + 1, h, panes, divs)        # [x, x+bx]
-            self._layout(node.b, x + bx, y, w - bx, h, panes, divs)   # [x+bx, x+w-1]
-        else:
-            if h >= MIN_H * 2:
-                by = max(MIN_H, min(h - MIN_H, round((h - 1) * node.ratio)))
-            else:
-                by = max(1, min(h - 1, (h - 1) // 2))
-            divs.append({"split_id": node.id, "orient": "tb",
-                         "x": x, "y": y + by, "w": w, "h": 1,
-                         "rect": [x, y, w, h]})
-            self._layout(node.a, x, y, w, by + 1, panes, divs)        # [y, y+by]
-            self._layout(node.b, x, y + by, w, h - by, panes, divs)   # [y+by, y+h-1]
+        # 자식은 경계 셀을 공유(겹침)한다 — 식은 Split.child_rects 한 벌(분할 전 예측과 공유).
+        ra, rb, (dx, dy, dw, dh) = Split.child_rects(node.orient, node.ratio,
+                                                     x, y, w, h)
+        divs.append({"split_id": node.id,
+                     "orient": "lr" if node.orient == "lr" else "tb",
+                     "x": dx, "y": dy, "w": dw, "h": dh,
+                     "rect": [x, y, w, h]})
+        self._layout(node.a, *ra, panes, divs)
+        self._layout(node.b, *rb, panes, divs)
 
     def split_by_id(self, sid: int):
         stack = [self.root]

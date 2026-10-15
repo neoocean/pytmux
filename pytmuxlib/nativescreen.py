@@ -39,6 +39,8 @@ from .protocol import HISTORY
 # ⚠ `cellwidth` 는 이쪽을 모듈 최상위에서 import 하지 않는다(지연 import 라 순환이
 #   안 난다 — `_patch_native_width` 안의 `from . import nativescreen`).
 from .cellwidth import joins_previous as _joins
+from .cellwidth import vs16_wide as _vs16_wide
+from .cellwidth import widens as _widens
 
 # 폭 축소 직후 autowrap 을 잠깐 끄는 전환 윈도우(model.WRAP_GUARD_SEC 와 동일값). 순환
 # import 를 피하려 상수만 복제한다(값이 갈리면 안 됨 — 둘 다 0.4).
@@ -183,7 +185,8 @@ class _NativeBase:
                     is_wide = False
                     continue
                 char = line[x].data
-                is_wide = _wcwidth(char[0]) == 2 if char else False
+                is_wide = (_wcwidth(char[0]) == 2 or _vs16_wide(char)) \
+                    if char else False
                 yield char
         return ["".join(render(self.buffer[y])) for y in range(self.lines)]
 
@@ -368,12 +371,28 @@ class _NativeBase:
         return (line, x)
 
     def _attach_to_base(self, char: str, normalize: bool) -> bool:
-        """`char` 를 앞 밑글자 셀에 얹는다 — 얹었으면 참(커서는 안 움직인다)."""
+        """`char` 를 앞 밑글자 셀에 얹는다 — 얹었으면 참(커서는 안 움직인다).
+
+        ★ 단 하나 커서가 움직이는 경우: VS16 이 1칸 그림 글자를 **2칸으로 넓힐 때**
+        (`cellwidth.widens` · pytmux-556). 그때는 뒤 칸을 연속 칸으로 바꾸고 커서를 한 칸
+        더 민다 — 단말(WT·tmux 3.5)과 앱(Claude Code)이 그 글자를 2칸으로 세므로 격자도
+        같게 선다. 넓힐 자리가 없으면(밑글자가 커서 바로 앞이 아니거나 줄 끝) **버린다**:
+        1칸 셀에 VS16 을 두면 클라가 그 셀을 2칸으로 읽어 줄이 넘친다."""
         found = self._base_cell()
         if found is None:
             return False
         line, x = found
         last = line[x]
+        if _widens(last.data, char):
+            cx = self.cursor.x
+            if not (line is self.buffer[self.cursor.y] and x == cx - 1
+                    and cx < self.columns):
+                return True                         # 넓힐 자리가 없다 — 버린다
+            self._break_wide_pair(line, cx)
+            line[x] = last._replace(data=last.data + char)
+            line[cx] = last._replace(data="")
+            self.cursor.x = cx + 1
+            return True
         text = last.data + char
         if normalize:
             text = unicodedata.normalize("NFC", text)
@@ -656,7 +675,7 @@ class _NativeBase:
         if last < 0:
             return
         data = line[last].data
-        if data and _wcwidth(data[0]) == 2:
+        if data and (_wcwidth(data[0]) == 2 or _vs16_wide(data)):
             line[last] = self._erase_char()
 
     def _erase_span(self, line, lo: int, hi: int, blank) -> None:
@@ -894,6 +913,14 @@ class NativeScrollbackScreen(_NativeBase):
         # 검색 매치는 스크롤백 길이를 기준으로 한 **절대 인덱스**라, 비운 사실을
         # 패널이 알아야 그 좌표계를 함께 되돌린다. 안 꽂혀 있으면 무동작.
         self.on_history_cleared = None
+        # 이 monotonic 시각까지, **`history_skip` 줄만큼** 밀려난 줄을 스크롤백에 안 담는다
+        # (pytmux-553). Windows 리드로우 넛지가 ConPTY 를 한 줄 **늘린** 동안 conhost 가
+        # H+1 행을 다시 칠하면 H 행 모델에서는 맨 윗줄 하나가 밀려나 스크롤백에 중복으로
+        # 쌓인다(실측: 넛지마다 1줄). ⛔ 시간 창만으로 막으면 그 사이 **진짜 출력**의 줄까지
+        # 버린다(pytmux-34 서버 검수 #3 — attach 마다 모든 패널이 넛지된다) — 그래서 개수
+        # 예산(늘린 행 수)을 쓰고 시한은 안 쓰인 예산을 거두는 안전장치로만 둔다.
+        self.history_hold_until = 0.0
+        self.history_skip = 0
         super().__init__(columns, lines)
 
     def erase_in_display(self, how=0, *args, **kwargs) -> None:
@@ -915,15 +942,27 @@ class NativeScrollbackScreen(_NativeBase):
         if self.on_history_cleared is not None:
             self.on_history_cleared()
 
+    # ★ 영역 맨 윗줄이 밀려나면 **영역 top 과 무관하게** 스크롤백에 담는다 — LF(index)와
+    #   SU(_scroll_region_up)가 같은 규칙이다(pytmux-509 · tmux 3.6a 오라클: 영역 `3;7r`
+    #   에서 LF 넷 → 히스토리 R0..R3 · `ESC[2S` → R0,R1. tmux `grid_scroll_history_region`
+    #   이 그 일을 한다). 종전 SU 만 `top == 0` 일 때 담아 두 경로가 다른 답을 냈고,
+    #   Claude classic 렌더러가 `ESC[2;16r`+`ESC[1S` 로 굴린 본문은 스크롤백에 안 남았다.
+    def _collect(self, row) -> None:
+        if self.history_skip:
+            if time.monotonic() < self.history_hold_until:
+                self.history_skip -= 1
+                return
+            self.history_skip = 0       # 시한이 지났다 — 안 쓰인 예산은 버린다
+        self.history.top.append(row)
+
     def index(self) -> None:
         top, bottom = self.margins or Margins(0, self.lines - 1)
         if self.cursor.y == bottom:
-            self.history.top.append(self.buffer[top])
+            self._collect(self.buffer[top])
         super().index()
 
     def _scroll_region_up(self, top, bottom) -> None:
-        if top == 0:
-            self.history.top.append(self.buffer[0])
+        self._collect(self.buffer[top])
         super()._scroll_region_up(top, bottom)
 
     def reverse_index(self) -> None:

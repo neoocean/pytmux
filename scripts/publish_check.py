@@ -183,6 +183,44 @@ def git_ignored(paths):
     return {s.decode("utf-8", "replace") for s in p.stdout.split(b"\0") if s}
 
 
+def parse_porcelain_z(raw):
+    """`git status --porcelain -z` 출력 → `(dirty, untracked)` 경로 집합(pytmux-34 #15).
+
+    종전에는 `-z` 없이 받아 `strip('"')` 만 했다 — git 은 비ASCII·특수문자 경로를
+    `"\\355\\225…"` 로 **인용·8진 이스케이프**하고 rename 을 `a -> b` 한 줄로 내므로,
+    집합 비교가 어긋나 **거짓 드리프트**가 났다. `-z` 에서는 경로가 인용 없이 원래
+    바이트(UTF-8)로 오고, rename/copy(`R`/`C`) 항목은 **다음 NUL 필드가 원래 경로**다.
+    rename 은 양쪽 경로를 다 「바뀜」으로 센다(옛 경로는 지워진 것이다)."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    dirty, untracked = set(), set()
+    fields = raw.split("\0")
+    i = 0
+    while i < len(fields):
+        ent = fields[i]
+        i += 1
+        if len(ent) < 4:
+            continue
+        code, path = ent[:2], ent[3:]
+        if code == "??":
+            untracked.add(path)
+            continue
+        dirty.add(path)
+        if "R" in code or "C" in code:
+            if i < len(fields) and fields[i]:
+                if "R" in code:
+                    dirty.add(fields[i])
+            i += 1
+    return dirty, untracked
+
+
+def git_status_sets():
+    """작업 트리의 `(dirty, untracked)` — `-z` 로 받는다(위 `parse_porcelain_z`).
+    `run` 이 UTF-8 로 못박아 디코드하므로 NUL 구분은 그대로 남는다."""
+    _, st_txt = run(["git", "status", "--porcelain", "-z"])
+    return parse_porcelain_z(st_txt or "")
+
+
 def check_cl(cl, out=print):
     """부정 게이트: CL 에 이 프로젝트 밖 파일(= 병렬 세션의 WIP)이 실렸는지.
 
@@ -436,13 +474,7 @@ def measure_drift(pre_push=False, baseline=None):
               if r}
     _, se_txt = run(["p4", "diff", "-se", "./..."])
     depot_diff = {r for r in (rel(ln) for ln in se_txt.splitlines()) if r}
-    _, st_txt = run(["git", "status", "--porcelain"])
-    git_dirty, git_untracked = set(), set()
-    for ln in st_txt.splitlines():
-        if not ln.strip():
-            continue
-        code, path = ln[:2], ln[3:].strip().strip('"')
-        (git_untracked if code.strip() == "??" else git_dirty).add(path)
+    git_dirty, git_untracked = git_status_sets()
     if baseline:
         # ★ 기준선을 갈아끼운다(pytmux-388). `git status` 가 방금 낸 두 집합은 **로컬
         #   HEAD·인덱스** 기준이라, HEAD 가 뒤처져 있으면 남이 이미 민 것을 전부 담고 있다.

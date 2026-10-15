@@ -101,11 +101,33 @@ def _sane_layout(msg):
         if box is not None and not (isinstance(box, (list, tuple)) and len(box) == 4
                                     and all(_coord(v) for v in box)):
             p = {k: v for k, v in p.items() if k != "box"}
+        if "title" in p and not isinstance(p.get("title"), (str, type(None))):
+            p = {k: v for k, v in p.items() if k != "title"}   # 검수 pytmux-34 #3
         panes.append(p)
     out["panes"] = panes
     out["dividers"] = [d for d in (msg.get("dividers") or [])
                        if isinstance(d, dict)
                        and all(_coord(d.get(k)) for k in ("x", "y", "w", "h"))]
+    # 패널 제목줄(pane-border-status) — 합성이 `tb['title']`·`tb["y"]`·`range(tb["w"])`
+    # 를 그대로 쓴다(검수 pytmux-34 #3).
+    tbs = msg.get("titlebars")
+    if tbs is not None:
+        out["titlebars"] = [
+            tb for tb in (tbs if isinstance(tbs, list) else [])
+            if isinstance(tb, dict) and isinstance(tb.get("title"), str)
+            and _coord(tb.get("x")) and _coord(tb.get("y")) and _dim(tb.get("w"))]
+    # 라이브 PTY 팝업(#10-1) — 종전에는 이 갈래가 없어 `y=-10**9, h=10**9+5` 한 통이
+    # 합성마다 10^9 회 루프를 돌렸다(검수 pytmux-34 #2). 모양이 하나라도 틀리면 팝업을
+    # 통째로 뺀다(반쪽 팝업은 그릴 수도 입력을 보낼 수도 없다).
+    pu = msg.get("popup")
+    if pu is not None:
+        ok = (isinstance(pu, dict) and _coord(pu.get("id"))
+              and all(_coord(pu.get(k)) for k in ("x", "y", "cx", "cy"))
+              and all(_dim(pu.get(k)) for k in ("w", "h", "cw", "ch")))
+        if not ok:
+            out.pop("popup", None)
+        elif not isinstance(pu.get("title"), (str, type(None))):
+            out["popup"] = {k: v for k, v in pu.items() if k != "title"}
     return out
 
 
@@ -121,6 +143,58 @@ def _wire_int(v, default: int = 0) -> int:
         return int(v or default)
     except (TypeError, ValueError):
         return default
+
+
+# 셀 스타일 dict 값으로 받는 타입(검수 pytmux-34 #3) — 서버는 색 문자열·정수·참거짓만
+# 싣는다. list/dict 값은 해시가 안 돼 make_style 캐시 키에서 터진다.
+_STYLE_VAL_TYPES = (str, int, float, bool, type(None))
+
+
+def _sane_row(row):
+    """화면 한 행(세그먼트 목록)을 합성이 믿고 쓸 모양으로 다듬는다(검수 pytmux-34 #3).
+
+    합성(`_composite`)은 `for text, style_d in row` → `make_style(style_d)` →
+    `for chh in text` 를 디스패치 가드 밖에서 돈다. 상류가 보낸 세그먼트 하나가
+    2-튜플이 아니거나(언팩 실패) 글이 str 이 아니거나 스타일 값이 해시 불가면 **매
+    합성이** 예외로 끝나 화면이 언다. 모양이 틀린 세그먼트는 버리고, 스타일만 틀리면
+    기본 스타일(`{}`)로 접는다. 정상 행은 사본 없이 그대로 돌려준다(핫패스)."""
+    if not isinstance(row, (list, tuple)):
+        return []
+    out = None
+    for i, seg in enumerate(row):
+        ok = (isinstance(seg, (list, tuple)) and len(seg) == 2
+              and isinstance(seg[0], str))
+        fixed = None
+        if ok:
+            st = seg[1]
+            if not (isinstance(st, dict)
+                    and all(isinstance(v, _STYLE_VAL_TYPES) for v in st.values())):
+                fixed = (seg[0], {})
+        if ok and fixed is None:
+            if out is not None:
+                out.append(seg)
+            continue
+        if out is None:
+            out = list(row[:i])
+        if fixed is not None:
+            out.append(fixed)
+    return row if out is None else out
+
+
+def _sane_rows(rows):
+    """`screen` 의 rows 전체 — 리스트가 아니면 빈 화면, 행 수는 격자 상한까지."""
+    if not isinstance(rows, list):
+        return []
+    return [_sane_row(r) for r in rows[:_LAYOUT_MAX_DIM]]
+
+
+def _sane_cursor(cur):
+    """커서는 정수 둘(`[x, y]`)만 받는다 — 아니면 None(커서 없음, 검수 pytmux-34 #3)."""
+    if (isinstance(cur, (list, tuple)) and len(cur) == 2
+            and all(isinstance(v, int) and not isinstance(v, bool)
+                    and -_LAYOUT_MAX_DIM <= v <= _LAYOUT_MAX_DIM for v in cur)):
+        return cur
+    return None
 
 
 # ── §5.4: PytmuxApp 책임별 믹스인(모듈 레벨) ─────────────────────────────────────
@@ -157,6 +231,25 @@ class _ClipboardMixin:
             text = unwrap_copy_text(text, cols, first_col)
         if text:
             self.copy_text(text)
+
+    # `copy_range` 를 보낸 뒤 회신(`selection`)을 기다리는 시간(초). 서버 추출은 ms 단위라
+    # 넉넉하다 — 이보다 늦게 온 회신은 물은 것이 아니라고 보고 버린다.
+    _SELECTION_WAIT = 30.0
+
+    def _expect_selection(self):
+        """`copy_range` 를 보냈다 — 다음 `selection` 회신 하나를 받아들인다(검수 pytmux-34 #5).
+
+        종전에는 `selection` 을 **요청 여부와 상관없이** OS 클립보드·서버 버퍼에 넣었다.
+        원격 탭에서는 그 회신이 그 링크를 보는 **모든 뷰어**에게 가서 남의 선택이 내
+        클립보드를 덮었고, 악성 상류는 아무 때나 `selection` 을 보내 `set-clipboard off`
+        까지 우회했다. 멱등이다(같은 요청에 두 자리가 세워도 회신 하나만 받는다)."""
+        self._selection_wait_until = time.monotonic() + self._SELECTION_WAIT
+
+    def _take_selection_reply(self) -> bool:
+        """지금 온 `selection` 이 내가 물은 것인가 — 그렇다면 기다림을 내리고 True."""
+        until = getattr(self, "_selection_wait_until", 0.0)
+        self._selection_wait_until = 0.0
+        return bool(until) and time.monotonic() <= until
 
     def _apply_remote_clipboard(self, data):
         """서버가 넘긴 OSC 52 본문(base64)을 이 기계의 OS 클립보드에 넣는다.
@@ -524,10 +617,27 @@ class _ChooseScreensMixin:
         # `scroll_hint` 는 **스크롤될 때만** 붙는 토막이다(pytmux-478 ⑵). 서버는 이 판이
         # 몇 줄로 그려지는지 모르므로 두 토막을 따로 싣고, 붙일지는 판이 제 뷰포트를 재서
         # 정한다 — 다 들어가는 판에서 「↑↓ 스크롤」은 **할 수 없는 조작을 광고하는 것**이다.
-        self.push_screen(InfoScreen(lines, title=title,
-                                    scroll_hint=str(msg.get("scroll_hint") or ""),
-                                    # 꼬리줄이 없으면 토막은 제 줄로(검수 T-4).
-                                    scroll_hint_own_line=not hint))
+        scr = InfoScreen(lines, title=title,
+                         scroll_hint=str(msg.get("scroll_hint") or ""),
+                         # 꼬리줄이 없으면 토막은 제 줄로(검수 T-4).
+                         scroll_hint_own_line=not hint)
+        scr._from_plugin_screen = True
+        # ★ 판은 **한 장만** 쌓는다(검수 pytmux-34 #9). `plugin_screen` 은 요청 없이도
+        #   올 수 있고(서버 쪽 훅·푸터 존 — 그래서 `_want_*` 같은 「내가 물었나」 표시를
+        #   못 세운다) 릴레이 필터도 없어, 상류가 반복해 보내면 모달이 수천 겹 쌓였다.
+        #   맨 위가 이미 플러그인 판이면 **바꿔 끼운다** — 사용자가 다른 판을 그 위에
+        #   올린 경우만 새로 쌓이므로 개수는 사람의 조작 수로 묶인다.
+        #   ⚠ 아직 마운트 전인 판은 pop 하지 않는다 — 떼어 낸 뒤에 on_mount 가 돌아
+        #   `NoMatches(ListView)` 로 앱이 죽는다(같은 틱에 두 통이 오면 그렇다). compose
+        #   전이므로 그 판의 재료만 새 것으로 갈아 끼우면 새 글로 그려진다.
+        top = self.screen
+        if getattr(top, "_from_plugin_screen", False):
+            if not top.is_mounted:
+                for k in ("_lines", "_title", "_scroll_hint", "_scroll_hint_own_line"):
+                    setattr(top, k, getattr(scr, k))
+                return
+            self.pop_screen()
+        self.push_screen(scr)
 
     def _open_search_results(self, msg):
         """결과 판을 열고, 고른 줄의 자리로 서버에 점프를 시킨다.
@@ -1003,6 +1113,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
             except OSError:
                 pass
 
+        _TERM_TITLE_MAX = 200
+
+        def _apply_term_title(self, title):
+            """`set-titles on` — 바깥 단말 제목(OSC 2)을 실제로 쓴다(검수 pytmux-34 #12).
+
+            종전에는 `App.title` 만 바꿨는데 Textual 8 은 그것을 단말 제목으로 내보내지
+            않고(OSC 0/2 를 쓰는 코드가 없다) pytmux 는 Header 도 안 그려, 설정 화면이
+            광고하는 동작이 아무 데서도 일어나지 않았다.
+            ⛔ `#W`·`#T` 는 **패널 앱이 정한 값**이다 — C0·DEL·C1(BEL·ESC·ST 포함)을 걷고
+            길이를 자르지 않으면 이 줄이 단말 제어 주입 통로가 된다. 같은 값이면 다시 안
+            쓴다(status 는 초마다 온다)."""
+            title = "".join(ch for ch in str(title or "")
+                            if not (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F))
+            title = title[:self._TERM_TITLE_MAX]
+            self.title = title
+            if title == getattr(self, "_last_term_title", None):
+                return
+            self._last_term_title = title
+            self._term_write("\x1b]2;" + title + "\x07")
+
         async def on_mount(self):
             self.tabbar.display = self.tab_bar_always
             self.view.focus()
@@ -1035,20 +1165,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             except (ConnectionError, FileNotFoundError, OSError):
                 self.exit(message=i18n.t("msg.connect_failed"))
                 return
-            cols, rows = self._content_size()
-            # 능력은 코어 + 플러그인이다 — 플러그인 디렉토리를 지우면 그 기능의
-            # 프레임이 한 바이트도 안 오게 된다(`Registry.client_caps`).
-            hello = {"t": "hello", "proto": PROTO_VERSION, "cols": cols,
-                     "rows": rows,
-                     "caps": sorted(set(CLIENT_CAPS) | set(self.plugins.client_caps()))}
-            if cellwidth.ambiguous_wide():    # 서버 pyte 격자도 모호폭=2 로 맞추도록
-                hello["ambig"] = "wide"
-            tok = ipc.read_token(self.sock_path)   # 연결 인증(F1)
-            if tok:
-                hello["token"] = tok
-            if self.session_name:
-                hello["session"] = self.session_name
-            await write_msg(self.writer, hello)
+            # hello 조립은 재접속과 한 벌이다(`_hello_msg` · 검수 pytmux-34 #6).
+            await write_msg(self.writer, self._hello_msg())
             self._start_reader()
             # 설정 파일의 키 바인딩 경고가 있으면 startup 직후 한 번 보여준다
             # (과거엔 잘못된 키가 조용히 묻혀 사용자가 원인을 몰랐다).
@@ -1389,9 +1507,12 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 _declared = {p.get("id") for p in msg.get("panes", [])
                              if isinstance(p, dict)}
                 if _declared:                     # 빈 layout 은 정리 보류(중간 상태 방지)
+                    # `_prompt_buf`(패널별 입력 추적, 최대 4000자)도 같이 — 종전에는 빠져
+                    # 죽은 패널 id 마다 남았다(검수 pytmux-34 #10).
                     for _cache in (self.pane_content, self.pane_wrap,
                                    self.pane_top, self.pane_scroll,
-                                   self.pane_cwds):
+                                   self.pane_cwds,
+                                   getattr(self, "_prompt_buf", None) or {}):
                         for _pid in [k for k in _cache if k not in _declared]:
                             del _cache[_pid]
                     self._delta_no_base &= _declared
@@ -1426,7 +1547,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 if self.set_clipboard:
                     self._apply_remote_clipboard(msg.get("data"))
             elif t == "screen":
-                self.pane_content[msg["pane"]] = (msg["rows"], msg.get("cursor"))
+                # 행·세그먼트·커서 모양은 여기서 다듬는다 — 합성은 가드 밖이다(검수
+                # pytmux-34 #3 · `_sane_rows`/`_sane_cursor`).
+                self.pane_content[msg["pane"]] = (_sane_rows(msg["rows"]),
+                                                  _sane_cursor(msg.get("cursor")))
                 self.pane_wrap[msg["pane"]] = set(msg.get("wrap") or ())
                 if "top" in msg:
                     self.pane_top[msg["pane"]] = _wire_int(msg.get("top"))
@@ -1452,12 +1576,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         self.send_cmd("request_redraw")
                 else:
                     rows = list(prev[0])
-                    for y, segs in msg["rows"]:
+                    for item in (msg["rows"] if isinstance(msg["rows"], list) else ()):
+                        if not (isinstance(item, (list, tuple)) and len(item) == 2
+                                and isinstance(item[0], int)):
+                            continue
+                        y, segs = item
                         if 0 <= y < len(rows):
-                            rows[y] = segs
-                        elif y == len(rows):
-                            rows.append(segs)
-                    self.pane_content[pid] = (rows, msg.get("cursor"))
+                            rows[y] = _sane_row(segs)
+                        elif y == len(rows) and y < _LAYOUT_MAX_DIM:
+                            # 행 수 상한(검수 pytmux-34 #11): 종전에는 `[N],[N+1],…` 를
+                            # 이어 보내면 패널 높이와 상관없이 몇 줄이든 붙었다.
+                            rows.append(_sane_row(segs))
+                    self.pane_content[pid] = (rows, _sane_cursor(msg.get("cursor")))
                     self.pane_wrap[pid] = set(msg.get("wrap") or ())
                     if "top" in msg:
                         self.pane_top[pid] = _wire_int(msg.get("top"))
@@ -1502,7 +1632,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     tl.update_usage(msg.get("usage_limits"))
                 self._update_tabbar()
                 if self.set_titles:
-                    self.title = self.status._expand(self.title_fmt)
+                    self._apply_term_title(self.status._expand(self.title_fmt))
                 wins = msg.get("windows", [])
                 n = len(wins)
                 if self._prev_winc and n > self._prev_winc:
@@ -1580,10 +1710,18 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # clientnotices.normalize 가 info 로 낮춘다(구/신 버전 혼재 안전).
                 # secs/dismissable 는 서버가 실은 값이 우선, 없으면 등급 기본값.
                 _sev = msg.get("sev")
+                # 유지 시간은 0.5~60초로 자른다 — NaN·inf·음수·문자열은 등급 기본값으로
+                # (검수 pytmux-34 #4 덧붙임: 상류가 `secs: 1e9` 로 알림을 못 박지 않게).
+                try:
+                    _secs = float(msg["secs"]) if msg.get("secs") is not None else None
+                except (TypeError, ValueError):
+                    _secs = None
+                if _secs is not None:
+                    _secs = (None if _secs != _secs or _secs in (float("inf"), float("-inf"))
+                             else min(60.0, max(0.5, _secs)))
                 self.display_message(
                     self._notice_text(msg),
-                    secs=(float(msg["secs"]) if msg.get("secs") is not None
-                          else None),
+                    secs=_secs,
                     dismissable=(bool(msg["dismissable"])
                                  if msg.get("dismissable") is not None else None),
                     severity=_sev, source="server")
@@ -1591,8 +1729,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 마우스 드래그 선택(한 화면 초과 가능) 텍스트를 서버가 스크롤백에서
                 # 뽑아 회신한 것 — 그대로 OS 클립보드에 넣는다. 빈 문자열이면 조용히
                 # 무시(선택이 공백뿐인 경우 종전 동작과 동일).
+                # ★ 묻지 않은 회신은 버린다(검수 pytmux-34 #5 · `_expect_selection`).
                 _txt = msg.get("text") or ""
-                if _txt:
+                if not self._take_selection_reply():
+                    _txt = ""
+                if _txt and isinstance(_txt, str):
                     _w, _fc = getattr(self, "_copy_unwrap_geom", (0, 0))
                     self.copy_selection_text(_txt, _w, _fc)
             elif t == "captured":
@@ -1670,6 +1811,10 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 # 서버가 current/home/<경로> 를 해석한다. 호출부에서 명시하면 우선.
                 if action in ("split", "new_window") and "path" not in kw:
                     kw["path"] = getattr(self, "default_path", "current")
+                if action == "copy_range":
+                    # 플러그인(blocks)도 이 길로 묻는다 — 회신을 받을 표시는 여기서도
+                    # 세운다(검수 pytmux-34 #5).
+                    self._expect_selection()
                 asyncio.create_task(write_msg(self.writer, kw))
 
         def send_input(self, data: bytes):
@@ -1912,14 +2057,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
             클라-로컬) key(rnotice.*)+kw 를 싣고, 실패 원인은 detail(키 포함)로 싣는다.
             여기서 detail 을 먼저 자기 로케일로 합성해 {why} 에 채운 뒤 본문 키를 번역한다.
             key 가 없으면(구서버/플러그인) text 를 그대로 — 한국어 폴백."""
-            kw = dict(msg.get("kw") or {})
+            kw = msg.get("kw")
+            kw = dict(kw) if isinstance(kw, dict) else {}
             detail = msg.get("detail")
-            if detail:
+            if isinstance(detail, dict) and detail:
                 dkey = detail.get("key")
-                kw["why"] = (i18n.t(dkey, default=detail.get("text", ""),
-                                    **(detail.get("kw") or {})) if dkey
-                             else detail.get("text", ""))
+                dkw = detail.get("kw")
+                dkw = dkw if isinstance(dkw, dict) else {}
+                dtext = str(detail.get("text", ""))
+                # ★ 본문과 같은 규칙(검수 pytmux-34 #4 — 09-04 S4 가 빠뜨린 갈래): 카탈로그
+                #   에 없는 키면 서버가 보낸 `detail.text` 가 **형식 문자열**이 됐다
+                #   (`{a:>999999999}` 한 통이 GB 단위 할당). 그때는 `{이름}` 자리만 채운다.
+                if isinstance(dkey, str) and dkey and i18n.has(dkey):
+                    kw["why"] = i18n.t(dkey, **dkw)
+                elif dkey:
+                    kw["why"] = i18n.safe_format(dtext, dkw)
+                else:
+                    kw["why"] = dtext
             key = msg.get("key")
+            if not isinstance(key, str):
+                key = None
             # ★ 카탈로그에 없는 키면 **서버가 보낸 글이 형식 문자열**이 된다 — 그때는
             #   `{이름}` 자리만 채운다(검수 2026-09-04 S4: `{why.__class__}`·`{why:>10000000}`).
             if key and i18n.has(key):
@@ -2041,9 +2198,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 self.disable_alt_scroll = val.lower() in ("on", "true", "1", "yes")
                 self._term_write(
                     "\x1b[?1007l" if self.disable_alt_scroll else "\x1b[?1007h")
-                self.display_message(
-                    "휠 스크롤백: " + ("pytmux 처리(1007 끔)"
-                                       if self.disable_alt_scroll else "터미널 기본"))
+                self.display_message(i18n.t(   # 검수 pytmux-34 #15 — 카탈로그로
+                    "msg.alt_scroll_on" if self.disable_alt_scroll
+                    else "msg.alt_scroll_off"))
             elif name in ("ambiguous-width", "ambiguous_width"):
                 # 모호폭(East Asian Ambiguous: → · — 등) 폭 모드 런타임 전환:
                 # narrow(1칸)|wide(2칸)|auto. 단말과 앱(Claude Code 등)의 모호폭 셈법이

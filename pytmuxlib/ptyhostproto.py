@@ -94,10 +94,14 @@ async def read_frame(reader: asyncio.StreamReader, *, max_frame: int = MAX_FRAME
         return None
     typ, payload = body[:1], body[1:]
     if typ == TYPE_JSON:
+        # RecursionError(`[`×20000 같은 깊은 중첩)와 비-dict JSON 도 손상으로 본다 —
+        # 호출부 전부가 dict 를 가정한다. 메인 채널은 보안검수 F4 에서 같은 것을 막았는데
+        # 이 채널(인증 전 포함)에는 안 옮겨졌다(pytmux-34 서버 검수 #7).
         try:
-            return ("json", json.loads(payload.decode("utf-8")))
-        except (ValueError, UnicodeDecodeError):
+            obj = json.loads(payload.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, RecursionError):
             return None
+        return ("json", obj) if isinstance(obj, dict) else None
     if typ == TYPE_DATA:
         if len(payload) < _PANE.size:
             return None

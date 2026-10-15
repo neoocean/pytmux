@@ -35,12 +35,25 @@ def _append(path, *lines):
             fh.write(ln)
 
 
+async def _settle(pane, timeout=5.0):
+    """경로 해석·큰 읽기가 executor 에서 끝나고 그 완료 콜백(꼬리 테일)까지 돌 때까지
+    기다린다(pytmux-34 #5 — 해석은 더 이상 루프 스레드에서 동기로 돌지 않는다)."""
+    import asyncio
+    import harness
+    done = await harness.wait_for(
+        lambda: not getattr(pane, "_xc_resolving", False)
+        and not getattr(pane, "_xc_reading", False), timeout=timeout, step=0.01)
+    assert done, "트랜스크립트 해석이 끝나지 않았다"
+    await asyncio.sleep(0)          # 완료 콜백이 예약한 꼬리 테일까지 한 바퀴 양보
+
+
 async def _turn(srv, sess, win, pane):
     """busy → idle 한 턴 구동(committed>0 → 강제 트랜스크립트 테일)."""
     pane.feed(_BUSY)
     srv._scan_claude(sess, win)
     pane.feed(_IDLE)
     srv._scan_claude(sess, win)
+    await _settle(pane)
 
 
 async def test_commit_force_tails_transcript_into_usage_xc():
@@ -137,6 +150,57 @@ async def test_path_resolution_is_cached_not_per_scan():
             assert calls["n"] == 1, f"경로 해석은 캐시돼야(호출 {calls['n']}회)"
     finally:
         transcript.find_transcript = _ORIG_FIND
+        await teardown(srv, task, sock)
+
+
+async def test_path_resolution_and_big_reads_stay_off_the_loop_thread():
+    """pytmux-34 #5: `find_transcript`(POSIX ps·lsof, 각 타임아웃 3초)와 커서 없는 첫
+    테일(트랜스크립트 전체 읽기)이 루프 스레드에서 돌아 모든 클라의 프레임이 멎었다.
+    느린 해석(0.5초)을 심어 ① 스캔이 그만큼 안 막히고 ② 해석·큰 읽기가 루프 밖
+    스레드에서 돌며 ③ 끝나면 결과가 그대로 적재되는지 잰다."""
+    import threading
+    import time
+    srv, task, sock = await server_only()
+    orig_tail = transcript.tail_file
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        loop_thread = threading.current_thread()
+        seen = {"find": None, "tail": []}
+        with tempfile.TemporaryDirectory() as d:
+            jp = os.path.join(d, "sess-1.jsonl")
+            open(jp, "w").close()
+
+            def _slow_find(pid, cwd):
+                seen["find"] = threading.current_thread()
+                time.sleep(0.5)
+                return jp
+
+            def _tail(path, off=0):
+                seen["tail"].append(threading.current_thread())
+                return orig_tail(path, off)
+            transcript.find_transcript = _slow_find
+            transcript.tail_file = _tail
+            srv._pane_cwd = lambda pane: d
+            srv._XC_LOOP_READ_MAX = 10          # 이 시험에선 어떤 첫 테일이든 «크다»
+            _append(jp, _evt("m1", "r1", inp=10, out=5, cr=985))
+            p.feed(_BUSY)
+            srv._scan_claude(sess, win)
+            p.feed(_IDLE)
+            t0 = time.monotonic()
+            srv._scan_claude(sess, win)
+            took = time.monotonic() - t0
+            assert took < 0.3, f"스캔이 해석을 기다렸다({took:.2f}s) — 루프 블로킹"
+            await _settle(p)
+            assert seen["find"] is not None and seen["find"] is not loop_thread
+            assert seen["tail"] and all(t is not loop_thread for t in seen["tail"]), \
+                "큰 첫 테일을 루프 스레드에서 읽었다"
+            conn = srv._tokens_db_conn()
+            assert usagedb.xc_count(conn) == 1, "해석이 끝난 뒤 적재가 안 됐다"
+    finally:
+        transcript.find_transcript = _ORIG_FIND
+        transcript.tail_file = orig_tail
         await teardown(srv, task, sock)
 
 

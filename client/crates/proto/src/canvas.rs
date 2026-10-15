@@ -319,6 +319,23 @@ impl Canvas {
                             .get(at)
                             .is_some_and(|c| crate::compose::attaches(&c.text(), ch))
                         {
+                            // VS16 이 1칸 그림 글자를 2칸으로 넓힌다(pytmux-556 · 서버 격자와
+                            // 같은 규칙). 넓힐 자리가 없으면 버린다.
+                            if crate::compose::widens(&self.cells[ty][at].text(), ch) {
+                                let tx = x + cx;
+                                if at + 1 == tx && cx < w && tx < self.cols {
+                                    let style = self.cells[ty][at].style;
+                                    self.cells[ty][at].marks.push(ch);
+                                    self.cells[ty][tx] = Cell {
+                                        ch: ' ',
+                                        marks: String::new(),
+                                        style,
+                                        continuation: true,
+                                    };
+                                    cx += 1;
+                                }
+                                continue;
+                            }
                             self.cells[ty][at].marks.push(ch);
                             continue;
                         }
@@ -453,6 +470,21 @@ impl Canvas {
                     .get(at)
                     .is_some_and(|c| crate::compose::attaches(&c.text(), ch))
                 {
+                    // VS16 넓힘(pytmux-556) — 위 `blit_pane` 과 같은 규칙.
+                    if crate::compose::widens(&self.cells[y][at].text(), ch) {
+                        if at + 1 == cx {
+                            let style = self.cells[y][at].style;
+                            self.cells[y][at].marks.push(ch);
+                            self.cells[y][cx] = Cell {
+                                ch: ' ',
+                                marks: String::new(),
+                                style,
+                                continuation: true,
+                            };
+                            cx += 1;
+                        }
+                        continue;
+                    }
                     self.cells[y][at].marks.push(ch);
                     continue;
                 }

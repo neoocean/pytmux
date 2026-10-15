@@ -41,9 +41,34 @@ from . import syncrypto, usagedb
 DEFAULT_SYNC_URL = "https://pytmux-sync.woojinkim.org"
 
 
+def _check_sync_url(u) -> str:
+    """동기화 주소 판정 — **파싱한 호스트**로 본다(pytmux-34 인프라 검수 #14).
+
+    종전 접두 일치(`startswith("http://localhost")`)는 `http://localhost.evil.com` 같은
+    평문 주소를 통과시켰다. https 면 통과, http 는 호스트가 정확히 루프백일 때만."""
+    import urllib.parse
+    u = str(u or "").strip().rstrip("/")
+    if not u:
+        return u
+    parts = urllib.parse.urlsplit(u)
+    host = (parts.hostname or "").lower()
+    if parts.scheme == "https" and host:
+        return u
+    if parts.scheme == "http" and host in ("localhost", "127.0.0.1", "::1"):
+        return u
+    raise SyncError("동기화 URL 은 https 여야 합니다(개발용 localhost 예외)")
+
+
 def default_sync_url() -> str:
-    """기본 서버 주소. 환경변수가 있으면 그쪽이 우선(자기 서버·테스트용)."""
-    return (os.environ.get("PYTMUX_TOKEN_SYNC_URL") or DEFAULT_SYNC_URL).rstrip("/")
+    """기본 서버 주소. 환경변수가 있으면 그쪽이 우선(자기 서버·테스트용). 환경변수 값이
+    판정을 못 지나면 **빈 값**이다 — 실 서버로 조용히 폴백하지 않는다(빈 URL 이면 워커가 잔다)."""
+    env = os.environ.get("PYTMUX_TOKEN_SYNC_URL")
+    if env:
+        try:
+            return _check_sync_url(env)
+        except SyncError:
+            return ""
+    return DEFAULT_SYNC_URL.rstrip("/")
 
 
 KIND_LIM = "lim"
@@ -63,6 +88,28 @@ class SyncError(Exception):
 
 class NotEnrolled(SyncError):
     """이 머신이 아직 서버에 등록되지 않았다(`:claude-token-sync enroll <코드>`)."""
+
+
+class SyncRejected(SyncError):
+    """닿았고, 서버가 **사용자 행동이 필요한 상태**로 거절했다(401 폐기 · 429 상한 ·
+    507 쿼터 — pytmux-34 인프라 검수 #11). 서버·우리 결함이 아니라 상태라 트레이스백 대신
+    사유만 남긴다(`run_worker` 의 갈림)."""
+
+
+def _raise_http(status, resp, what):
+    raise (SyncRejected if status in (401, 429, 507) else SyncError)(
+        _http_why(status, resp, what))
+
+
+class SchemaNotReady(SyncError):
+    """토큰 DB 가 동기화 칼럼(`usagedb.SYNC_COLUMNS`)까지 사다리를 못 올랐다(pytmux-546).
+
+    사다리는 단계가 넘어지면(락 등) 버전을 낮춰 **다음 connect 가 다시 시도**하게 짓혀
+    있다 — 곧 「덜 오른 DB」는 설계상 있을 수 있는 일시 상태다. 그 위에서 push 의 첫
+    질의가 `no such column: lkey` 트레이스백을 쌓으면 서버 예외 가드가 그것을 조용한
+    크래시로 읽어 **무관한 시험을 떨궜다.** 그래서 읽기 전용 DB·`SyncUnreachable` 과
+    같은 갈래(사유만 · 다음 주기 재시도)로 보낸다. 메시지는 **그 DB 경로**를 싣는다 —
+    종전에는 어느 파일이었는지가 안 남아 원인을 못 좁혔다."""
 
 
 class SyncUnreachable(SyncError):
@@ -204,7 +251,11 @@ class SyncClient:
 
     @property
     def host_id(self) -> str:
-        return syncrypto.ensure_host_id(self.db_dir)
+        # 한 번 읽은 신원은 프로세스 수명 동안 고정한다(pytmux-34 인프라 검수 #4) — 매번
+        # 파일을 다시 읽으면 일시적 읽기 실패가 신원 분기로 번질 자리가 생긴다.
+        if getattr(self, "_host_id", None) is None:
+            self._host_id = syncrypto.ensure_host_id(self.db_dir)
+        return self._host_id
 
     def _keys(self):
         if self._k_id is None:
@@ -251,22 +302,27 @@ class SyncClient:
             # 원인만 던지면(=ImportError 원문) 사용자는 무엇을 해야 할지 모른다.
             raise syncrypto.SyncCryptoUnavailable(syncrypto.INSTALL_HINT) from e
         path = os.path.join(self.db_dir, "sync_device.key")
+        # ⛔ **없을 때만** 만든다(pytmux-34 인프라 검수 #4). 종전엔 읽기의 어떤 OSError 든
+        #   (백신·백업의 일시 잠금 포함) 새 키로 덮어써 서버의 공개키와 어긋났다 = 영구 401.
         try:
             with open(path, "rb") as f:
                 raw = f.read()
-            if len(raw) == 32:
-                self._device_sk = ed25519.Ed25519PrivateKey.from_private_bytes(raw)
-                return self._device_sk
-        except OSError:
-            pass
+        except FileNotFoundError:
+            raw = None
+        except OSError as e:
+            raise SyncError("기기 키를 읽지 못했습니다(%s: %s) — 새로 만들지 않습니다"
+                            "(만들면 서버의 공개키와 어긋나 영구 401)" % (path, e)) from e
+        if raw is not None:
+            if len(raw) != 32:
+                raise SyncError("기기 키 파일이 손상됐습니다(%dB): %s — 지우고 다시 등록하세요"
+                                % (len(raw), path))
+            self._device_sk = ed25519.Ed25519PrivateKey.from_private_bytes(raw)
+            return self._device_sk
         sk = ed25519.Ed25519PrivateKey.generate()
         raw = sk.private_bytes(ser.Encoding.Raw, ser.PrivateFormat.Raw,
                                ser.NoEncryption())
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, raw)
-        finally:
-            os.close(fd)
+        if not syncrypto._write_private(path, raw, replace=False):
+            return self._device_key()       # 동시 생성에서 졌다 — 승자의 키를 읽는다
         self._device_sk = sk
         return sk
 
@@ -326,11 +382,7 @@ class SyncClient:
                 self._self_revoke(did)
                 raise
         path = os.path.join(self.db_dir, "sync_device.id")
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, did.encode("ascii"))
-        finally:
-            os.close(fd)
+        syncrypto._write_private(path, did.encode("ascii"), replace=True)
         return did
 
     def _self_revoke(self, device_id: str) -> None:
@@ -393,6 +445,23 @@ class SyncClient:
             "X-Sync-Device": did, "X-Sync-Ts": ts, "X-Sync-Nonce": nonce,
             "X-Sync-Sig": sig, "Content-Type": "application/x-ndjson"})
 
+    def require_sync_schema(self) -> None:
+        """동기화 칼럼이 다 있나 — 없으면 사다리를 한 번 더 올려 보고, 그래도 없으면
+        `SchemaNotReady`(경로 포함)를 던진다. push/pull 의 첫 DB 질의보다 먼저 부른다."""
+        conn = self.conn
+        missing = usagedb.missing_sync_columns(conn)
+        if not missing:
+            return
+        try:
+            usagedb._ensure_schema(conn)
+        except sqlite3.Error:
+            pass                    # 아래 재판정이 말한다 — 여기서 새 예외를 만들지 않는다
+        missing = usagedb.missing_sync_columns(conn)
+        if missing:
+            raise SchemaNotReady(
+                "토큰 DB 스키마가 덜 올랐습니다(%s 없음) — 다음 주기에 다시 시도: %s"
+                % (", ".join(missing), usagedb.db_file(conn)))
+
     # -- push(limits) -----------------------------------------------------
 
     def push_limits(self, batch: int = PUSH_BATCH) -> dict:
@@ -434,7 +503,7 @@ class SyncClient:
         body = ("\n".join(lines) + "\n").encode()
         status, _, resp = self._signed("POST", "/v1/events", "", body)
         if status != 200:
-            raise SyncError(_http_why(status, resp, "업로드"))
+            _raise_http(status, resp, "업로드")
         try:
             out = json.loads(resp)
         except ValueError as e:
@@ -492,7 +561,7 @@ class SyncClient:
         body = ("\n".join(lines) + "\n").encode()
         status, _, resp = self._signed("POST", "/v1/events", "", body)
         if status != 200:
-            raise SyncError(_http_why(status, resp, "업로드"))
+            _raise_http(status, resp, "업로드")
         try:
             out = json.loads(resp)
         except ValueError as e:
@@ -511,7 +580,7 @@ class SyncClient:
         query = "since=%d&limit=%d" % (since, int(batch))
         status, _, resp = self._signed("GET", "/v1/events", query, b"")
         if status != 200:
-            raise SyncError(_http_why(status, resp, "내려받기"))
+            _raise_http(status, resp, "내려받기")
         merged = rejected = xc_new = 0
         last = since
         host = self.host_id
@@ -785,12 +854,7 @@ def configure(server, *, mode=None, url=None, sec=None, accounts=None,
             raise SyncError(syncrypto.INSTALL_HINT)
         server.token_sync = m
     if url is not None:
-        u = str(url).strip().rstrip("/")
-        if u and not (u.startswith("https://")
-                      or u.startswith("http://localhost")
-                      or u.startswith("http://127.0.0.1")):
-            raise SyncError("동기화 URL 은 https 여야 합니다(개발용 localhost 예외)")
-        server.token_sync_url = u
+        server.token_sync_url = _check_sync_url(url)
     if sec is not None:
         server.token_sync_sec = max(30, int(sec))
     if accounts is not None:
@@ -817,6 +881,16 @@ def configure(server, *, mode=None, url=None, sec=None, accounts=None,
 
 # ── 워커(비동기 — 블로킹은 전부 executor) ──────────────────────────────────
 
+def _sync_disabled_by_env() -> bool:
+    """시험·스크래치 홈(PYTMUX_TOKENS_DB 주입 · PYTMUX_NO_DB_MIGRATE)은 URL 을 **명시**하지
+    않는 한 동기화하지 않는다(pytmux-34 인프라 검수 #9 — 스크래치 DB 의 행이 사용자의 실
+    동기화 계정으로 올라갈 수 있었다)."""
+    if os.environ.get("PYTMUX_TOKEN_SYNC_URL"):
+        return False
+    return bool(os.environ.get("PYTMUX_TOKENS_DB")
+                or os.environ.get("PYTMUX_NO_DB_MIGRATE"))
+
+
 async def run_worker(server, make_client=None, sleep=None):
     """서버 수명 동안 도는 주기 워커. 설정이 off 면 그냥 잠만 잔다(켜면 다음
     주기에 붙는다 — 재시작 없이 토글되게).
@@ -829,7 +903,8 @@ async def run_worker(server, make_client=None, sleep=None):
     while getattr(server, "running", True):
         interval = max(30, int(getattr(server, "token_sync_sec", 300) or 300))
         mode = str(getattr(server, "token_sync", "off") or "off")
-        if mode != "server" or not getattr(server, "token_sync_url", ""):
+        if (mode != "server" or not getattr(server, "token_sync_url", "")
+                or _sync_disabled_by_env()):
             await sleep(interval)
             continue
         try:
@@ -841,6 +916,16 @@ async def run_worker(server, make_client=None, sleep=None):
             raise
         except NotEnrolled:
             pass                # 등록 전에는 조용히 대기(사용자 행동 필요)
+        except SchemaNotReady as e:
+            # 덜 오른 토큰 DB 는 다음 connect 가 다시 올리는 일시 상태다(pytmux-546) —
+            # 사유(경로 포함)만 남긴다. 트레이스백은 무관한 시험을 떨궜다.
+            # 실패 횟수에는 안 넣는다 — 지수 백오프(최대 1시간)를 탈 일이 아니라 다음
+            # 주기에 곧바로 다시 볼 일이다(pytmux-34 인프라 검수).
+            _note_state(server, e)
+        except SyncRejected as e:
+            # 기기 폐기(401)·상한(429)·쿼터(507) — 사용자 행동이 필요한 상태(검수 #11).
+            fails += 1
+            _note_state(server, e)
         except SyncUnreachable as e:
             # 서버에 **닿지 못한 것**은 이 상자 밖의 상태다(pytmux-474 ⓐ). `_net_why` 가
             # 이미 한 줄로 진단해 뒀고 그 줄은 last_err 로 패널에 뜬다 — 트레이스백은
@@ -896,6 +981,11 @@ def _sync_once(client) -> dict:
     limits 를 먼저 올린다 — 행 수가 1/20 이라 체감 값(5h%/1w%)이 usage_xc 백로그를
     기다리지 않고 먼저 도착한다(설계 §1.3). usage_xc 는 배치가 남으면 다음 주기가
     이어 받는다."""
+    client.require_sync_schema()    # push 의 첫 질의(백필)보다 먼저 — pytmux-546
+    if not client._device_id():
+        # 등록 전에는 _keys() 가 비밀 파일(sync_vault.key)을 만들지 않게 여기서 멈춘다
+        # (pytmux-34 인프라 검수 #9).
+        raise NotEnrolled("이 머신은 아직 등록되지 않았습니다")
     up = client.push_limits()
     up_xc = client.push_xc()
     down = client.pull()

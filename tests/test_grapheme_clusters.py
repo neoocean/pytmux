@@ -21,6 +21,8 @@ ZWJ = "‍"
 FAMILY = "👨" + ZWJ + "👩" + ZWJ + "👧"
 FLAG_KR = "🇰🇷"
 THUMB = "👍🏿"
+VS16 = chr(0xFE0F)
+WARN = chr(0x26A0) + VS16      # Claude Code 의 경고 아이콘 `⚠️`
 
 
 def _grid(text, cols=24):
@@ -102,8 +104,10 @@ async def test_a_line_is_measured_in_clusters_not_codepoints():
     assert cellwidth.line_cells("|" + FAMILY + "|") == 4, "군집을 낱개로 셌다"
     assert cellwidth.line_cells("|한|") == 4, "대조군이 틀렸다"
     assert cellwidth.line_cells("") == 0
-    # 얹힌 조각만으로는 폭이 안 는다(폭 0 도 군집의 일부다).
-    assert cellwidth.line_cells("⚠️") == 1
+    # 얹힌 조각만으로는 폭이 안 는다(폭 0 도 군집의 일부다) — 단 VS16 이 그림 글자를
+    # 넓히는 것은 예외다(pytmux-556).
+    assert cellwidth.line_cells(WARN) == 2, "VS16 이 붙은 ⚠ 를 1칸으로 셌다"
+    assert cellwidth.line_cells("A" + VS16) == 1, "그림 글자가 아닌 밑글자까지 넓혔다"
 
 
 async def test_the_cluster_travels_whole_into_copy_and_search():
@@ -116,3 +120,77 @@ async def test_the_cluster_travels_whole_into_copy_and_search():
     screen.draw("[" + FAMILY + "]")
     text = "".join(c.data for c in (screen.buffer[0][x] for x in range(24)))
     assert FAMILY in text, f"군집이 쪼개져 복사본에 안 남는다: {text!r}"
+
+
+async def test_vs16_widens_a_pictograph_to_two_cells_in_the_server_grid():
+    """서버 격자가 `⚠`+U+FE0F 에 **2칸**을 준다(pytmux-556 · 사용자 결정 2026-10-07).
+
+    Claude Code(string-width)·Windows Terminal·tmux 3.5 가 모두 2칸으로 센다 — 격자만
+    1칸이면 바깥 단말이 그 줄을 한 칸 넘쳐 그려 패널 테두리를 덮었고(pytmux-555), 앱이
+    그 뒤에 맞춰 그린 표 끝이 한 칸 어긋났다.
+    """
+    assert _grid("|" + WARN + "|") == ["|", WARN, "", "|"], _grid("|" + WARN + "|")
+    # 대조군 — `|한|` 과 닫는 글자 자리가 같다.
+    assert _grid("|" + WARN + "|").index("|", 1) == _grid("|한|").index("|", 1)
+    # ⛔ 대조군 — 그림 글자가 아닌 밑글자 · VS15 · 이미 2칸인 밑글자는 넓히지 않는다.
+    assert _grid("|A" + VS16 + "|") == ["|", "A" + VS16, "|"], _grid("|A" + VS16 + "|")
+    assert _grid("|⚠\ufe0e|") == ["|", "⚠\ufe0e", "|"], \
+        _grid("|⚠\ufe0e|")
+    assert _grid("|\U0001F600" + VS16 + "|") == ["|", "\U0001F600" + VS16, "", "|"]
+
+
+async def test_vs16_at_the_right_edge_is_dropped_not_overflowed():
+    """줄 끝 칸의 그림 글자에 VS16 이 오면 **넓힐 자리가 없어 버린다**.
+
+    ⛔ 얹어 두면 그 셀이 「2칸 글」인데 뒤 칸이 없다 — 직렬화가 그 줄을 한 칸 넘쳐 싣고,
+    바로 pytmux-555 의 모양(테두리가 덮인다)이 된다.
+    """
+    screen = NativeScreen(4, 3)
+    screen.draw("abc⚠" + VS16)
+    row = [screen.buffer[0][x].data for x in range(4)]
+    assert row == ["a", "b", "c", "⚠"], row
+    # 대조군 — 한 칸 여유가 있으면 넓힌다(위 버림이 「언제나 버린다」가 아니다).
+    s2 = NativeScreen(5, 3)
+    s2.draw("abc⚠" + VS16)
+    assert [s2.buffer[0][x].data for x in range(5)] == ["a", "b", "c", WARN, ""]
+
+
+async def test_the_client_lays_vs16_out_in_two_cells_and_sends_it_whole():
+    """정본 클라 합성도 2칸으로 앉히고, **VS16 째로** 단말에 낸다(pytmux-555·556).
+
+    ① 닫는 `|` 가 `|한|` 대조군과 같은 칸 ② render_line 이 `⚠️` 를 VS16 과 함께 낸다
+    (2칸 셀이므로 단말이 2칸으로 그려도 격자와 맞다) ③ 그림 글자가 아닌 `A`+VS16 은
+    1칸이라 VS16 을 떼고 낸다(pytmux-555 의 가드는 그대로).
+    """
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        pid = 7
+        cols = 12
+        app.layout = {"panes": [{"id": pid, "x": 0, "y": 1, "w": cols, "h": 4,
+                                 "mouse": 0, "active": True}],
+                      "dividers": [], "active": pid,
+                      "cols": cols, "rows": 6}
+        app._dispatch({"t": "screen", "pane": pid,
+                       "rows": [[["|한|", {}]], [["|" + WARN + "|", {}]],
+                                [["|A" + VS16 + "|", {}]]],
+                       "cursor": None})
+        app._composite()
+
+        def closing(y):
+            row = app.view._cells[1 + y][:cols]
+            return [i for i, (ch, _st) in enumerate(row) if ch == "|"]
+
+        assert closing(0) == [0, 3], f"대조군이 틀렸다 — 오라클이 공허하다: {closing(0)}"
+        assert closing(1) == closing(0), (
+            f"⚠️ 가 2칸을 안 썼다 — 대조군 {closing(0)} vs {closing(1)}")
+        assert closing(2) == [0, 2], f"A+VS16 이 넓어졌다: {closing(2)}"
+        out = "".join(seg.text for seg in app.view.render_line(2))
+        assert out.startswith("|" + WARN + "|"), f"⚠️ 를 VS16 째로 안 냈다: {out!r}"
+        out3 = "".join(seg.text for seg in app.view.render_line(3))
+        assert VS16 not in out3 and out3.startswith("|A|"), (
+            f"1칸 셀의 VS16 을 단말로 냈다 — 단말이 넓게 그리면 줄이 밀린다: {out3!r}")
+        grid3 = "".join(ch for ch, _st in app.view._cells[3][:cols])
+        assert "A" + VS16 in grid3, f"격자(복사본)에서 VS16 이 사라졌다: {grid3!r}"
+
+    await _with_app(body, size=(20, 10))

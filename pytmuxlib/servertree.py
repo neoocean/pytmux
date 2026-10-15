@@ -24,8 +24,13 @@ class ServerTreeMixin:
         target = win.active_pane
         # 시작 디렉토리: default-path 설정에 따름(기본 current=분할 대상 패널 cwd).
         cwd = self._resolve_start_cwd(sess, path)
-        # 새 패널은 일단 임시 크기로 만들고, 곧 재배치된다.
-        new = self.spawn_pane(MIN_W, MIN_H, cwd=cwd)
+        # ★ 새 패널은 **최종 크기로** 띄운다(pytmux-418). 종전엔 MIN_W×MIN_H(3×3)로 띄우고
+        #   곧 재배치했는데, 셸이 그 사이에 배너·프롬프트를 찍으면 ConPTY 는 3칸 버퍼에서
+        #   그것을 접었다가 리사이즈 때 reflow 해 다시 칠했다 — 실측: 그 출력이 통째로
+        #   사라지거나(배너·저작권 줄 소실) 줄이 안 접힌 채 마지막 칸에 겹쳐 쓰였다.
+        #   코드페이지 헬퍼(chcp)가 얹던 지연이 그 경합을 가려 왔다(PYTMUX_KEEP_CODEPAGE).
+        new = self.spawn_pane(*self._split_spawn_size(sess, win, target, orient),
+                              cwd=cwd)
         split = Split(orient, target, new, 0.5)
         parent = target.parent
         split.parent = parent
@@ -39,6 +44,22 @@ class ServerTreeMixin:
             parent.b = split
         win.active_pane = new
         win.invalidate_panes()  # §4.6: 리프 추가 → panes() 캐시 무효화
+
+    def _split_spawn_size(self, sess: Session, win, target, orient: str):
+        """분할로 생길 새 패널의 **내용 크기** `(cols, rows)` 를 분할 전에 잰다(pytmux-418).
+
+        지금 트리를 세션 크기로 한 번 배치해 target 의 박스를 얻고(줌은 호출부가 이미
+        풀었다), 같은 식(`Split.child_rects`)으로 그 박스를 나눈 b 쪽에서 테두리를 뺀다
+        — 분할 뒤에는 패널이 둘 이상이라 늘 테두리가 있다. 못 재면 종전 임시 크기."""
+        try:
+            cols, rows = self._session_size(sess)
+            win._layout(win.root, 0, 0, cols, rows, [], [])
+            _ra, rb, _div = Split.child_rects(orient, 0.5, *target.rect)
+            _cx, _cy, cw, ch, _box, _titled = self._content_rect(
+                rb, True, win.border_status)
+            return max(MIN_W, cw), max(MIN_H, ch)
+        except Exception:                          # noqa: BLE001 — 예측 실패는 종전 동작으로
+            return MIN_W, MIN_H
 
     def kill_pane(self, sess: Session, pane: Pane):
         # 셸 자식 종료(graceful = SIGHUP). 나머지 정리는 _pane_eof.

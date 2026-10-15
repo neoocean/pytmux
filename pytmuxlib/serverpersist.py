@@ -13,6 +13,11 @@ from . import ipc, proc, ptyhostmgr, pty_backend, version
 from .model import Pane, Session, Split, Tab, Window
 from .protocol import MIN_H, MIN_W, write_msg
 
+# Windows 리드로우 넛지에서 «줄인 크기»를 유지하는 시간(초) — `_nudge_winsize` 참조.
+# 실측(pytmux-552)으로 20ms 부터 효과가 있었고 0 은 무동작이었다. 앱의 이벤트 루프가
+# 바쁠 때를 감안해 넉넉히 잡는다(한 줄 짧은 화면이 이만큼 보일 수 있다).
+_WIN_NUDGE_GAP = 0.15
+
 
 #: 앞 주인에게 「물러나라」고 부탁할 때의 recv 시한(초).
 #: 이 자리는 bind **앞**이라 시한이 없으면 답 못 하는 상대에게 영원히 매달린다
@@ -806,13 +811,61 @@ class ServerPersistMixin:
         커널이 SIGWINCH 를 보내게 강제한다(앱이 현재 화면을 전체 repaint → 스냅샷을
         덮어쓴다). winsize 만 건드리고 pyte/Pane 치수는 그대로 둔다."""
         for p in self._all_panes():
-            if p.pty is None:
-                continue
-            try:
-                p.pty.set_winsize(max(1, p.rows - 1), p.cols)
-                p.pty.set_winsize(p.rows, p.cols)
-            except OSError:
-                pass
+            self._nudge_winsize(p)
+
+    def _nudge_winsize(self, p) -> None:
+        """패널 PTY 의 winsize 를 한 줄 줄였다 되돌려 앱이 화면 전체를 다시 그리게 한다.
+
+        리드로우 유발(`_induce_redraw_all`·Claude 자동 완화 `_auto_redraw_pane`)의
+        **한 자리**다. POSIX 는 종전대로 즉시 되돌린다(커널이 SIGWINCH 를 보낸다).
+
+        ⛔ **Windows(ConPTY)는 즉시 되돌리면 무동작이다**(pytmux-552 실측): 앱(Claude
+        Code)은 크기 변경 이벤트를 받은 뒤 콘솔 크기를 다시 읽는데, 그때는 이미 원래
+        크기라 «안 바뀌었다»로 보고 다시 그리지 않는다. conhost 버퍼에 쓰레기 5행을 써
+        넣고 재 보면 즉시 토글은 5행 그대로, 20~500ms 간격 토글은 0행(`ESC[2J` + 전체
+        재그리기)이었다. 그래서 Windows 는 바꾼 뒤 `_WIN_NUDGE_GAP` 초 뒤에 되돌린다 —
+        `call_later` 라 이벤트 루프를 막지 않는다. 되돌릴 때 치수는 **그 시점의**
+        `p.rows`/`p.cols` 를 읽는다(그 사이 레이아웃이 바뀌었으면 새 크기로 맞는다).
+
+        ☠ **Windows 는 «늘렸다» 되돌린다 — 줄이면 안 된다**(pytmux-553 · 2026-10-15 실측).
+        conhost 는 높이를 줄일 때 커서를 뷰포트 안에 두려고 **맨 윗줄을 버리고**, 되돌려
+        늘릴 때는 맨 아래에 빈 줄을 더한다 — 버퍼가 한 행 위로 밀린다. 앱이 그 사이에 다시
+        그리면 덮이지만 안 그리면(리사이즈에 반응하지 않는 자식으로 재현) **밀린 채 남고**,
+        앱의 차분 렌더는 묵은 칸을 건너뛰어 «한 줄씩 어긋남»이 된다 — `claude_auto_redraw
+        = idle` 이면 턴마다 한 번 당기는 방아쇠였다. 늘리면 아래에 빈 줄이 붙고 되돌릴 때
+        그 빈 줄만 빠져 **밀림이 없다**(같은 실측 · 간격 0 / 0.15초 둘 다). 늘린 동안의
+        H+1 행 재도색이 H 행 모델의 맨 윗줄을 스크롤백으로 밀어 넣는 것은
+        `history_hold_until` 로 막는다(넛지마다 중복 1줄이 쌓였다)."""
+        pty = getattr(p, "pty", None)
+        if pty is None:
+            return
+        loop = getattr(self, "loop", None)
+        windows = pty_backend.IS_WINDOWS and loop is not None
+        if windows:
+            scr = getattr(p, "_main", None) or getattr(p, "screen", None)
+            if scr is not None and hasattr(scr, "history_skip"):
+                # 늘린 행 수(1)만큼만 버린다 — 시한은 재도색이 늦게 닿는 몫을 덮는 안전장치.
+                scr.history_skip = 1
+                scr.history_hold_until = time.monotonic() + _WIN_NUDGE_GAP + 1.0
+        try:
+            pty.set_winsize(p.rows + 1 if windows else max(1, p.rows - 1), p.cols)
+        except OSError:
+            return
+        if windows:
+            loop.call_later(_WIN_NUDGE_GAP, self._nudge_restore, p)
+        else:
+            self._nudge_restore(p)
+
+    @staticmethod
+    def _nudge_restore(p) -> None:
+        """`_nudge_winsize` 의 둘째 걸음 — 패널의 현재 치수로 되돌린다(닫힌 패널은 무시)."""
+        pty = getattr(p, "pty", None)
+        if pty is None:
+            return
+        try:
+            pty.set_winsize(p.rows, p.cols)
+        except OSError:
+            pass
 
     def restart_server(self, relaunch_clients: bool = False) -> bool:
         """작업 보존 재시작(방식① 제자리 re-exec) — 셸/PTY 를 살린 채 서버 코드만

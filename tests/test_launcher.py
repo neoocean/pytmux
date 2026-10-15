@@ -126,28 +126,29 @@ async def test_request_nest_promotion_inband():
     assert await attempt(None, timeout=0.15) is False, "무응답 → 폴백"
 
 
-async def test_sshwrap_windows_cmd_wrapper():
-    """Windows(#1.4): panel_env 가 ssh.cmd/autossh.cmd 배치 래퍼를 PATH 앞단에 깐다.
+async def test_sshwrap_windows_has_no_cmd_wrapper():
+    """pytmux-34 #8: Windows 는 `.cmd` 래퍼를 깔지 않는다(표식 env 만).
 
-    래퍼는 `%~$PATH:E`(.exe 만 검색)로 진짜 ssh.exe 를 찾고 SendEnv 표식을 끼운다 —
-    PATH 에서 자기 dir 을 빼는 수고 없이 자기 .cmd 를 안 잡는다."""
-    if os.name != "nt":
-        return  # Windows 전용
+    `.cmd` 는 cmd.exe 가 `%*` 를 다시 토큰화해 인자 안의 `&`·`|`·`%VAR%` 가 **로컬에서**
+    실행됐다(BatBadBut 부류 — PowerShell 패널의 `ssh h 'a|b'` 가 로컬 파이프). 옛 래퍼가
+    남아 있으면 떠 있는 패널의 PATH 가 그것을 계속 잡으므로 지워야 한다."""
     state = tempfile.mkdtemp(prefix="pytmux-sshwrap-")
-    env = {"PATH": r"C:\Windows\System32"}
-    out = sshwrap.panel_env(env, state)
-    assert out[sshwrap.NEST_MARKER] == "1", "표식 env 주입"
     wd = os.path.join(state, "sshwrap")
-    assert out["PATH"].startswith(wd + os.pathsep), "래퍼 디렉터리가 PATH 앞단"
-    for name in ("ssh", "autossh"):
-        p = os.path.join(wd, name + ".cmd")
-        assert os.path.exists(p), f"{name}.cmd 래퍼 생성"
-        body = open(p, encoding="utf-8").read()
-        assert f"SendEnv={sshwrap.NEST_MARKER}" in body, "SendEnv 표식 전파"
-        # .exe 만 검색해 자기 .cmd 를 안 잡는다(무한 재귀 방지).
-        assert f"in ({name}.exe)" in body, ".exe 만 PATH 검색"
-    # 멱등: 다시 호출해도 내용 동일(재작성 무해).
-    sshwrap.ensure_wrapper_dir(state)
+    os.makedirs(wd)
+    stale = os.path.join(wd, "ssh.cmd")
+    with open(stale, "w", encoding="utf-8") as f:
+        f.write('@echo off\r\n"%_real%" -o SendEnv=LC_PYTMUX %*\r\n')
+    saved = sshwrap.IS_WINDOWS
+    try:
+        sshwrap.IS_WINDOWS = True         # 분기만 재는 것이라 OS 와 무관하게 돈다
+        env = {"PATH": r"C:\Windows\System32"}
+        out = sshwrap.panel_env(env, state)
+    finally:
+        sshwrap.IS_WINDOWS = saved
+    assert out[sshwrap.NEST_MARKER] == "1", "표식 env 주입"
+    assert out["PATH"] == r"C:\Windows\System32", "Windows 에 래퍼 디렉터리를 PATH 앞단에 깔았다"
+    assert not os.path.exists(stale), "옛 ssh.cmd 래퍼가 남아 떠 있는 패널이 계속 잡는다"
+    assert not hasattr(sshwrap, "_WRAPPER_CMD"), "배치 래퍼 본문이 되살아났다"
     assert sshwrap.NEST_MARKER == NEST_MARKER
 
 

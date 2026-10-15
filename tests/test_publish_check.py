@@ -91,7 +91,7 @@ async def test_a_clone_that_is_merely_behind_is_judged_on_origin_main():
                       "git rev-list --count origin/main..HEAD": (0, "0\n"),
                       **_CLEAN,
                       # 낡은 기준선이 만들어 내던 바로 그 거짓 붉음을 함께 심는다.
-                      "git status --porcelain": (0, " M client/crates/gui/src/titlebar.rs\n"),
+                      "git status --porcelain": (0, " M client/crates/gui/src/titlebar.rs\0"),
                       "p4 files": (0, _files(("CLAUDE.md", "edit"),
                                              ("client/crates/gui/src/titlebar.rs", "edit"))),
                       "git ls-files": (0, "CLAUDE.md\nclient/crates/gui/src/titlebar.rs\n"),
@@ -234,7 +234,7 @@ async def test_a_diverged_clone_still_refuses_to_judge():
     rc, text = _gate({"git rev-list --count HEAD..origin/main": (0, "30\n"),
                       "git rev-list --count origin/main..HEAD": (0, "2\n"),
                       **_CLEAN,
-                      "git status --porcelain": (0, " M client/crates/gui/src/titlebar.rs\n")})
+                      "git status --porcelain": (0, " M client/crates/gui/src/titlebar.rs\0")})
     assert rc == pc.RC_STALE, text
     assert "기준선이 낡" in text, text
     assert "titlebar.rs" not in text and "미러 일치" not in text, text
@@ -308,7 +308,7 @@ async def test_git_only_content_is_reported_as_p4_unsubmitted():
 async def test_p4_only_content_is_reported_as_git_unpushed():
     """depot 과 같은데 git HEAD 와 다름 → p4 만 게시된 상태(미러 stall 63471·63714)."""
     rc, text = _gate({**_CLEAN,
-                      "git status --porcelain": (0, " M pytmuxlib/server.py\n")})
+                      "git status --porcelain": (0, " M pytmuxlib/server.py\0")})
     assert rc == 1, text
     assert "git 미푸시" in text and "pytmuxlib/server.py" in text, text
     assert "p4 미제출" not in text, "방향을 뒤집어 보고하면 안 된다: " + text
@@ -320,8 +320,8 @@ async def test_wip_on_both_sides_is_not_drift():
     rc, text = _gate({**_CLEAN,
                       "p4 opened": (0, f"{ROOT}/tests/run.py#12 - edit …\n"),
                       "p4 diff -se": (0, f"{ROOT}/CLAUDE.md\n"),
-                      "git status --porcelain": (0, " M CLAUDE.md\n M tests/run.py\n"
-                                                    "?? tests/test_new.py\n")})
+                      "git status --porcelain": (0, " M CLAUDE.md\0 M tests/run.py\0"
+                                                    "?? tests/test_new.py\0")})
     assert rc == 0, text
     assert "작업 중 3개" in text, text
     # "미푸시 커밋 없음"(성공 문구)에 걸리지 않게 드리프트 **헤더**로 단언한다.
@@ -338,7 +338,7 @@ async def test_opened_files_are_recognized_from_depot_syntax():
     rc, text = _gate({**_CLEAN,
                       "p4 opened": (0, "//woojinkim/scripts/pytmux/pytmuxlib/"
                                        "server.py#12 - edit default change (unicode)\n"),
-                      "git status --porcelain": (0, " M pytmuxlib/server.py\n")})
+                      "git status --porcelain": (0, " M pytmuxlib/server.py\0")})
     assert rc == 0, text
     assert "✗ git 미푸시" not in text, text
     assert "작업 중 1개" in text, text
@@ -589,7 +589,7 @@ def _catch_up(mapping, ignored=(), **kw):
 
 
 _DEBT = {**_CLEAN,
-         "git status --porcelain": (0, " M pytmuxlib/server.py\n"),
+         "git status --porcelain": (0, " M pytmuxlib/server.py\0"),
          "p4 files ./...": (0, _files(("pytmuxlib/server.py", "edit"),
                                       ("pytmuxlib/onlyp4.py", "add"))),
          "git ls-files": (0, "pytmuxlib/server.py\n"),

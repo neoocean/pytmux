@@ -543,22 +543,22 @@ class ServerPtyMixin:
         # 상태이고, 그걸 마우스 경로에서 걷어낸다(serverio._reap_stale_mouse).
         if pane._mouse_on_seen and pane.mouse_track:
             self._note_mouse_owner(pane)
-        # pipe-pane: 패널 출력을 외부 명령으로 복제
-        if pane.pipe_proc and pane.pipe_proc.stdin:
-            try:
-                pane.pipe_proc.stdin.write(data)
-                pane.pipe_proc.stdin.flush()
-            except (OSError, ValueError):   # broken pipe / 닫힌 stdin
-                pane.pipe_proc = None
+        # pipe-pane: 패널 출력을 외부 명령으로 복제 — 큐에 넣기만 한다(루프를 안 막는다 ·
+        # pipesink 머리말). 대상이 1MiB 넘게 밀렸거나 파이프가 깨졌으면 끊고 사유를 남긴다.
+        sink = pane.pipe_proc
+        if sink is not None and not sink.write(data):
+            if sink.overflowed:
+                self._log_error("pipe_pane",
+                                "대상 명령이 출력을 안 읽어 1MiB 넘게 밀렸다 — pipe-pane 을 끊었다",
+                                exc=False)
+            sink.close(terminate=True)
+            pane.pipe_proc = None
 
 
     def _pane_eof(self, pane: Pane):
         self._stop_pane_feed(pane)   # 진행 중 드레인 취소(정상 EOF 면 이미 빈 상태)
         if pane.pipe_proc:
-            try:
-                pane.pipe_proc.stdin.close()
-            except OSError:
-                pass
+            pane.pipe_proc.close()          # 밀린 것을 다 쓴 뒤 stdin 을 닫는다(스레드)
             pane.pipe_proc = None
         if pane.pty is not None:
             pane.pty.stop_reader()

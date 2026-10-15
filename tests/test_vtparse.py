@@ -487,9 +487,15 @@ async def test_a_variation_selector_does_not_swallow_the_rest_of_the_line():
     line = pane._main.buffer[0]
     text = pane._serialize_row(line, 20)[0][0]
     assert "B| tail" in text, f"선택자 뒤가 잘렸다: {text!r}"
-    # 그리고 그 글자는 **앞 글자에 얹혀** 한 셀에 있다(칸을 안 먹는다).
+    # 그리고 그 글자는 **앞 글자에 얹혀** 한 셀에 있다.
+    # ★ pytmux-556 뒤로 `⚠`+VS16 은 2칸이라 뒤 칸이 연속 칸(`""`)이고 `B` 는 그 다음이다.
     assert line[2].data == "⚠️", repr(line[2].data)
-    assert line[3].data == "B", "선택자가 제 칸을 먹었다"
+    assert line[3].data == "", "VS16 이 ⚠ 를 2칸으로 넓히지 않았다"
+    assert line[4].data == "B", "넓어진 군집 뒤 자리가 틀렸다"
+    # 선택자 자체는 칸을 안 먹는다 — 그림 글자가 아닌 밑글자로 잰다.
+    p2 = Pane(-1, -1, 20, 3, vt_parser="native")
+    p2.feed("|A️B|".encode("utf-8"))
+    assert p2._main.buffer[0][2].data == "B", "선택자가 제 칸을 먹었다"
 
 
 async def test_an_unprintable_char_is_skipped_not_a_truncation():
@@ -927,6 +933,68 @@ async def test_grid_content_matches_an_independent_model():
             assert got == ref.text(y), (
                 f"cols={cols} row={y}\n  native={got!r}\n  참조  ={ref.text(y)!r}"
                 f"\n  조작={b''.join(trace)!r}")
+
+
+async def test_unicode_digits_in_csi_do_not_wedge_the_parser():
+    """`²`(U+00B2)는 `str.isdigit()` 가 참인데 `int()` 는 못 읽는다 — 종전엔 그 글자가
+    CSI 파라미터에 들어가 종결 바이트에서 ValueError 가 나고, GROUND 복귀가 그 뒤라 FSM 이
+    CSI 에 **갇혀** 그 패널의 출력이 영구히 멎었다(pytmux-34 서버 검수 #1).
+    되돌리면: isdigit 로 돌리면 ①이, GROUND 복귀를 뒤로 돌리면(핸들러 예외 시) ②가 운다."""
+    from pytmuxlib.nativescreen import NativeScrollbackScreen
+    for seq in ("\x1b[²m", "\x1b[²H", "\x1b[1;²r", "\x1b[³J"):
+        s = NativeScrollbackScreen(20, 4, history=10, ratio=0.5)
+        tk = VTTokenizer(s)
+        tk.feed(seq.encode())                       # ① 예외 없이
+        tk.feed(b"\x1b[Hhello")
+        got = "".join(s.buffer[0][x].data for x in range(5))
+        assert got == "hello", (seq, got)
+
+    # ② 어떤 핸들러가 터져도 다음 출력은 그려진다(GROUND 가 먼저 선다).
+    s = NativeScrollbackScreen(20, 4, history=10, ratio=0.5)
+
+    def boom(*_a, **_k):
+        raise ValueError("handler failure")
+    s.erase_in_display = boom                       # 토크나이저가 바인딩하기 전에
+    tk = VTTokenizer(s)
+    try:
+        tk.feed(b"\x1b[2J")
+    except ValueError:
+        pass
+    tk.feed(b"\x1b[Hok")
+    assert "".join(s.buffer[0][x].data for x in range(2)) == "ok"
+
+
+async def test_region_scroll_feeds_the_scrollback_like_tmux():
+    """스크롤 영역(top != 0)에서 밀려난 줄 — LF 와 SU 가 **같은 답**을 낸다(pytmux-509).
+
+    기댓값은 자작 참조가 아니라 **tmux 3.6a 실측**이다(2026-10-15 · macOS 상자 ·
+    `tmux new-session -x 20 -y 8` + `capture-pane -p -S -20` + `#{history_size}`):
+
+      | 같은 바이트(머리 HEAD1/HEAD2 · 영역 `ESC[3;7r`) | tmux 히스토리 |
+      |---|---|
+      | `R0\\n`..`R7\\n`(LF 로 넷 밀림)            | R0 R1 R2 R3 |
+      | `R0\\r\\n`..`R4` 뒤 `ESC[2S`               | R0 R1       |
+
+    종전에는 SU 경로만 `top == 0` 일 때 담아 둘째 줄이 빈 히스토리였다. 되돌리면 ②가
+    실패한다. 고정 머리(HEAD1/HEAD2)는 어느 경로로도 스크롤백에 안 들어간다(③)."""
+    from pytmuxlib.nativescreen import NativeScrollbackScreen
+
+    def run(data):
+        s = NativeScrollbackScreen(20, 8, history=100, ratio=0.5)
+        tk = VTTokenizer(s)
+        tk.feed(b"\x1b[2J\x1b[HHEAD1\r\nHEAD2\r\n\x1b[3;7r\x1b[3;1H" + data)
+        hist = ["".join(c.data for c in (row[x] for x in range(20))).rstrip()
+                for row in s.history.top]
+        return hist
+
+    lf = run(b"".join(b"R%d\r\n" % i for i in range(8)))
+    su = run(b"\r\n".join(b"R%d" % i for i in range(5)) + b"\x1b[2S")
+    # ① LF 경로
+    assert lf == ["R0", "R1", "R2", "R3"], lf
+    # ② SU 경로 — tmux 와 같게 담는다
+    assert su == ["R0", "R1"], su
+    # ③ 고정 머리는 스크롤백에 끼지 않는다
+    assert not any(h.startswith("HEAD") for h in lf + su), (lf, su)
 
 
 async def test_ed3_clears_the_scrollback():

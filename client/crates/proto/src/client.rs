@@ -35,6 +35,14 @@ pub enum AttachError {
     /// 멈추는 편이 원인을 알려 준다.
     #[error("{}", err_no_token(.0))]
     NoToken(String),
+    /// 루프백이 아닌 호스트에 **이 상자의 토큰**을 보내려 했다(검수 pytmux-34 #7).
+    ///
+    /// 토큰 파일은 호스트와 무관하게 로컬 상태 디렉터리에서 읽는다 — 그래서
+    /// `--socket tcp:10.0.0.5:5000` 은 이 상자의 라이브 서버 토큰을 평문 TCP 로 그 호스트에
+    /// 건넸다. 원격은 `remote-attach` 가 정식 길이다. 정말 그 호스트로 보내야 하면
+    /// [`ALLOW_REMOTE_TOKEN_ENV`] 를 `1` 로 세운다.
+    #[error("{}", err_non_loopback(.0))]
+    NonLoopback(String),
     #[error("{}", err_handshake(.0))]
     Handshake(#[from] FrameError),
 }
@@ -62,6 +70,29 @@ fn err_no_token(path: &str) -> String {
         &[("path", path)],
     )
 }
+
+fn err_non_loopback(host: &str) -> String {
+    base::i18n::tf(
+        "루프백이 아닌 호스트({host})에는 이 상자의 인증 토큰을 보내지 않는다 — 원격은 remote-attach 를 쓴다 (꼭 필요하면 PYTMUX_ALLOW_REMOTE_TOKEN=1)",
+        &[("host", host)],
+    )
+}
+
+/// 이 값이 `1` 이면 루프백이 아닌 TCP 호스트에도 로컬 토큰을 보낸다(검수 pytmux-34 #7).
+pub const ALLOW_REMOTE_TOKEN_ENV: &str = "PYTMUX_ALLOW_REMOTE_TOKEN";
+
+/// TCP 호스트가 **이 상자**인가 — 정본 `ipc.is_local_endpoint` 와 같은 규칙
+/// (`localhost`·빈 값·`::1`·`::ffff:127.0.0.1`·`127.*`).
+pub fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
+    matches!(host.as_str(), "localhost" | "" | "::1" | "::ffff:127.0.0.1") || host.starts_with("127.")
+}
+
+/// 쓰기 상한(검수 pytmux-34 #6). 쓰기는 **UI 스레드**(`CommandSink`)가 한다 — 상한이 없으면
+/// 서버 루프가 멈춘 동안의 큰 붙여넣기가 송신 버퍼를 채우고 창을 무기한 «응답 없음» 으로
+/// 만든다(× 버튼도 같은 스레드라 안 눌린다). 서버 루프의 알려진 정지(수 초 · `code_version`
+/// 4.5초 실측)보다 길게 잡아, 멀쩡한 서버를 상한이 끊는 일은 없게 한다.
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn err_handshake(err: &FrameError) -> String {
     base::i18n::tf("핸드셰이크 실패: {err}", &[("err", err.to_string().as_str())])
@@ -100,6 +131,14 @@ impl Connection {
         rows: u16,
     ) -> Result<Self, AttachError> {
         let name = endpoint.display();
+        // ★ 토큰을 **읽기 전에** 호스트를 본다(검수 pytmux-34 #7) — 읽고 나서 거르면 그
+        //   사이 어디로든 흘러갈 길이 생긴다.
+        if let Endpoint::Tcp { host, .. } = endpoint
+            && !is_loopback_host(host)
+            && std::env::var(ALLOW_REMOTE_TOKEN_ENV).as_deref() != Ok("1")
+        {
+            return Err(AttachError::NonLoopback(host.clone()));
+        }
         let token = endpoint::read_token(endpoint);
         let mut resolved: Option<u16> = None;
         let stream = match endpoint {
@@ -144,6 +183,9 @@ impl Connection {
         // 그럴 수 있다) 죽지 않아야 하므로, 타임아웃은 "끊겼다"가 아니라 "아직
         // 없다"로 해석한다 — `next_message` 가 `Ok(None)` 을 돌려준다.
         let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+        // 쓰기에는 **끊김으로 읽는** 상한을 건다(`WRITE_TIMEOUT` 문서 · 검수 pytmux-34 #6).
+        // 복제본(쓰기 절반)도 같은 소켓이라 여기서 한 번 걸면 된다.
+        let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
 
         // 확정 포트를 반영한 엔드포인트. 여기서부터의 진단은 전부 이것으로 말한다.
         let mut settled = endpoint.clone();
@@ -294,12 +336,14 @@ impl CommandSink {
     /// 보낸 뒤 로컬 상태를 고치지 않는다 — 서버 명령 대부분이 `FULL` 이라 전체 재동기가
     /// 뒤따르고, 그게 권위다.
     pub fn send(&mut self, command: &crate::command::Command) -> Result<(), FrameError> {
-        write_frame(&mut self.writer, &command.to_frame())
+        let result = write_frame(&mut self.writer, &command.to_frame());
+        self.fold_on_error(result)
     }
 
     /// 키 입력을 활성 패널로 보낸다.
     pub fn send_input(&mut self, data: impl AsRef<[u8]>) -> Result<(), FrameError> {
-        write_frame(&mut self.writer, &crate::command::Input::new(data))
+        let result = write_frame(&mut self.writer, &crate::command::Input::new(data));
+        self.fold_on_error(result)
     }
 
     /// 나가는 것 하나를 종류에 맞는 프레임으로 보낸다.
@@ -307,7 +351,19 @@ impl CommandSink {
     /// 이벤트 루프는 이것만 부른다 — 종류별로 부르는 함수가 갈리면 **큐를 종류별로
     /// 비우게 되고 사용자가 한 순서가 뒤집힌다**(`Outgoing` 문서 참조).
     pub fn send_outgoing(&mut self, item: &crate::command::Outgoing) -> Result<(), FrameError> {
-        write_frame(&mut self.writer, &item.to_frame())
+        let result = write_frame(&mut self.writer, &item.to_frame());
+        self.fold_on_error(result)
+    }
+
+    /// 쓰기가 실패하면 **연결을 접는다**(검수 pytmux-34 #6). 상한에 걸린 쓰기는 프레임을
+    /// 반쯤 보냈을 수 있어 그 뒤로 스트림이 어긋난다 — 이어 쓰면 서버가 본문 한복판을 길이
+    /// 프리픽스로 읽는다. 소켓을 닫으면 같은 소켓을 쥔 읽기 스레드가 깨어나 `Ended` 를 보내고,
+    /// 뷰는 평소의 재접속 경로를 탄다.
+    fn fold_on_error(&mut self, result: Result<(), FrameError>) -> Result<(), FrameError> {
+        if result.is_err() {
+            let _ = self.writer.get_ref().shutdown();
+        }
+        result
     }
 }
 
@@ -405,6 +461,90 @@ mod tests {
             .unwrap_err();
         let text = err.to_string();
         assert!(text.contains("/nonexistent/pytmux.sock"), "실제: {text}");
+    }
+
+    /// 시험용 TCP 엔드포인트 — 토큰 파일을 임시 자리에 만들어 `attach_to_endpoint` 가 실제
+    /// 경로 그대로 붙게 한다(전역 env 를 안 건드린다).
+    fn tcp_endpoint_with_token(host: &str, port: u16, tag: &str) -> (Endpoint, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "pytmux-client-test-{}-{tag}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let token = dir.join("t.token");
+        std::fs::write(&token, "secret-token-for-test").unwrap();
+        (
+            Endpoint::Tcp {
+                host: host.to_owned(),
+                port,
+                portfile: dir.join("t.port"),
+                token,
+            },
+            dir,
+        )
+    }
+
+    #[test]
+    fn the_local_token_never_goes_to_a_non_loopback_host() {
+        // ☠ 검수 pytmux-34 #7: `--socket tcp:<원격>:<포트>` 가 이 상자의 토큰을 그 호스트로
+        //   보냈다. **연결 전에** 거절해야 한다 — 그래서 닿을 수 없는 주소(TEST-NET-1)를 써도
+        //   connect 시간 없이 바로 돌아온다(연결을 시도했다면 상한까지 매달린다).
+        if std::env::var(ALLOW_REMOTE_TOKEN_ENV).as_deref() == Ok("1") {
+            return; // 이 상자가 일부러 허용해 둔 환경이면 잴 것이 없다
+        }
+        let (ep, dir) = tcp_endpoint_with_token("192.0.2.1", 5000, "remote");
+        let err = Connection::attach_to_endpoint(&ep, 80, 24).unwrap_err();
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(matches!(err, AttachError::NonLoopback(ref h) if h == "192.0.2.1"), "{err:?}");
+    }
+
+    #[test]
+    fn loopback_hosts_follow_the_canonical_rule() {
+        // 정본 `ipc.is_local_endpoint` 와 같은 표. 좁으면 로컬 서버에 못 붙고, 넓으면 토큰이 샌다.
+        for host in ["127.0.0.1", "127.1.2.3", "localhost", "LOCALHOST", "::1", "[::1]", "", "::ffff:127.0.0.1"] {
+            assert!(is_loopback_host(host), "{host:?} 를 원격으로 봤다");
+        }
+        for host in ["10.0.0.5", "192.168.0.2", "example.com", "128.0.0.1", "localhost.evil.com", "0.0.0.0"] {
+            assert!(!is_loopback_host(host), "{host:?} 를 루프백으로 봤다");
+        }
+    }
+
+    #[test]
+    fn a_stalled_server_makes_sends_fail_instead_of_freezing_the_ui() {
+        // ☠ 검수 pytmux-34 #6: 쓰기는 UI 스레드가 한다. 서버가 안 읽는 동안(루프 정지) 큰
+        //   붙여넣기를 하면 상한 없는 `write_all` 이 창을 무기한 막았다. 받기만 하고 안 읽는
+        //   «서버» 에 붙어 큰 입력을 밀어 넣고, 상한 안에 `Err` 로 돌아오는지 본다.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (park_tx, park_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let held = listener.accept().ok();
+            let _ = park_rx.recv();
+            drop(held);
+        });
+        let (ep, dir) = tcp_endpoint_with_token("127.0.0.1", port, "stall");
+        let conn = Connection::attach_to_endpoint(&ep, 80, 24).expect("붙지 못했다");
+        let mut sink = conn.split_sink().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let big = vec![b'x'; 1 << 20];
+            let mut errored = false;
+            for _ in 0..256 {
+                if sink.send_input(&big).is_err() {
+                    errored = true;
+                    break;
+                }
+            }
+            let _ = done_tx.send(errored);
+        });
+        let verdict = done_rx.recv_timeout(WRITE_TIMEOUT * 4);
+        let _ = park_tx.send(());
+        let _ = server.join();
+        let _ = std::fs::remove_dir_all(dir);
+        match verdict {
+            Ok(errored) => assert!(errored, "안 읽는 서버에 256 MiB 를 다 보냈다고 한다"),
+            Err(_) => panic!("안 읽는 서버에 쓰다가 매달렸다 — 연결에 쓰기 상한이 없다"),
+        }
     }
 
     #[test]

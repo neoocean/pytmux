@@ -203,11 +203,21 @@ class PtyHost:
                 with contextlib.suppress(Exception):
                     old.close()
             # 재연결: 미전송 버퍼를 패널별로 flush 해 갭 출력을 잇는다.
+            # ★ 패널마다 await 하지 않는다 — 전부 transport 에 **먼저** 넣고 drain 은 한 번
+            #   (pytmux-34 서버 검수 #4). 패널마다 drain 을 await 하면 그 틈에 아직 차례가
+            #   안 온 패널의 새 출력이 `_on_output` 으로 곧장 나가 **옛 pending 보다 앞섰다**
+            #   (순서 역전 → 세션 유지 재시작 뒤 화면 깨짐). 이 루프에는 await 이 없으므로
+            #   그 사이 `_on_output` 이 끼어들 수 없다.
+            wrote = False
             for pe in self.panes.values():
                 if pe.pending:
-                    await proto.write_frame(
-                        writer, proto.encode_data(pe.pane_id, bytes(pe.pending)))
+                    with contextlib.suppress(Exception):
+                        writer.write(proto.encode_data(pe.pane_id, bytes(pe.pending)))
                     pe.pending.clear()
+                    wrote = True
+            if wrote:
+                with contextlib.suppress(Exception):
+                    await writer.drain()
         try:
             frame, first = first, None         # 이미 읽은 첫 프레임부터 처리
             while True:

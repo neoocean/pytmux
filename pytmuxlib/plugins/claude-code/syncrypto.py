@@ -153,46 +153,103 @@ def save_master(path: str, master: bytes) -> None:
     **로그·스크린샷·에러 리포트에 이 값을 절대 싣지 말 것**."""
     if len(master) != MASTER_LEN:
         raise SyncCryptoError("마스터 키 길이 오류")
+    _write_private(path, base64.b64encode(master), replace=True)
+
+
+def harden_private_file(path: str) -> None:
+    """비밀 파일을 소유자 전용으로 조인다(pytmux-34 #1).
+
+    POSIX 는 0600 으로 충분하지만 **Windows 는 모드 비트가 ACL 을 바꾸지 않는다** —
+    PYTMUX_HOME 없는 기본 설치에서 DB 디렉터리는 소스 체크아웃 안이라 비시스템
+    드라이브 루트의 `Authenticated Users:(M)` 이 그대로 내려왔다(실측). 그래서
+    `ipc._harden_win_acl`(상속 끊고 현재 사용자 SID 전용)을 파일에 직접 건다.
+    실패는 무시한다(기존 ACL 유지 — 무회귀 우선, ipc 와 같은 정책)."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    if os.name == "nt":
+        try:
+            from pytmuxlib import ipc
+            ipc._harden_win_acl(path)
+        except Exception:       # noqa: BLE001 — 하드닝 실패가 저장을 막으면 안 된다
+            pass
+
+
+def _write_private(path: str, data: bytes, replace: bool) -> bool:
+    """`data` 를 **원자적으로** 소유자 전용 파일로 쓴다(pytmux-34 #4).
+
+    예전에는 `O_TRUNC` 로 연 뒤 write 했다 — 그 사이에 죽으면 0바이트 파일이 남고,
+    다음 읽기가 그것을 「손상」으로 보고 **새 신원을 만들어** 덮어썼다. 이제 같은
+    디렉터리의 임시 파일에 다 쓰고(하드닝까지 마친 뒤) 제자리에 놓는다.
+
+    replace=False 면 **이미 있으면 진다**(hard link 는 대상이 있으면 실패한다) — 두
+    스레드가 동시에 처음 만들 때 서로의 값을 덮어 같은 프로세스 안에서 신원이 갈리는
+    일을 막는다. 졌으면 False(호출자가 승자의 값을 다시 읽는다)."""
+    import tempfile
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
     try:
         os.chmod(d, 0o700)
     except OSError:
         pass
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=d)
     try:
-        os.write(fd, base64.b64encode(master))
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        harden_private_file(tmp)     # 제자리에 놓이기 **전에** 조인다(읽힐 창 없음)
+        if replace:
+            os.replace(tmp, path)
+            return True
+        try:
+            os.link(tmp, path)
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            # hard link 를 못 쓰는 파일시스템(FAT 등) — 존재를 먼저 보고 놓는다.
+            if os.path.exists(path):
+                return False
+            os.replace(tmp, path)
+            return True
     finally:
-        os.close(fd)
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def ensure_host_id(db_dir: str) -> str:
     """이 머신의 안정 식별자(`<db_dir>/host_id`, 0600). hostname 은 바뀌고 중복돼
-    조인 키로 못 쓴다(설계 §3.3) — 표시용 라벨로만 따로 싣는다."""
+    조인 키로 못 쓴다(설계 §3.3) — 표시용 라벨로만 따로 싣는다.
+
+    ⛔ **없을 때만** 만든다(pytmux-34 #4). 예전에는 읽기에서 난 **어떤** OSError 든
+    (백신·백업의 일시 공유 잠금 = Windows PermissionError 포함) 새 uuid 로 덮어썼다 —
+    그러면 옛 host 가 박힌 미전송 행이 `push_* WHERE host IS NULL OR host=?` 에서 영영
+    빠지고, 서버에서 내려온 자기 옛 레코드는 남의 것이 된다. 이제 파일이 없을 때만
+    만들고, 그 밖의 읽기 실패는 경로를 실은 SyncCryptoError 로 **하드 실패**한다
+    (마스터 키의 C-1 규율과 같다). 빈 파일은 옛 비원자 쓰기가 남긴 잔해라 다시 만든다."""
     path = os.path.join(db_dir, "host_id")
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            hid = f.read().strip()
+    for _ in range(3):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                hid = f.read().strip()
+        except FileNotFoundError:
+            hid = None
+        except (OSError, UnicodeDecodeError) as e:
+            raise SyncCryptoError(
+                "host_id 를 읽지 못했습니다(%s: %s) — 새로 만들지 않습니다"
+                " (만들면 이 머신의 동기화 신원이 갈립니다)" % (path, e)) from e
         if hid:
             return hid
-    except OSError:
-        pass
-    hid = uuid.uuid4().hex
-    os.makedirs(db_dir, exist_ok=True)
-    try:
-        os.chmod(db_dir, 0o700)
-    except OSError:
-        pass
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(fd, hid.encode("ascii"))
-    finally:
-        os.close(fd)
-    return hid
+        new = uuid.uuid4().hex.encode("ascii")
+        # 없으면 이기는 쪽만 놓는다. 빈 잔해 파일이면 덮어쓴다.
+        if _write_private(path, new, replace=(hid == "")):
+            return new.decode("ascii")
+    raise SyncCryptoError("host_id 를 만들지 못했습니다: %s" % path)
 
 
 # ── 초대 코드(사람이 옮기는 마스터 키) ──────────────────────────────────────

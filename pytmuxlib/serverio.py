@@ -517,6 +517,20 @@ class ServerIOMixin:
         return msg
 
     async def _send_full(self, client: ClientConn):
+        """full 재동기 한 벌 — **시한이 있다**(pytmux-34 서버 검수 #5).
+
+        종전엔 시한 없이 write_lock 을 쥐고 drain 했다. 소켓은 연 채 읽기를 멈춘 클라
+        (Ctrl+Z · 잠든 노트북의 ssh 터널)가 있으면, 같은 세션의 **다른 클라** hello·resize·
+        teardown 핸들러가 `await self._send_full(그 클라)` 에 무기한 묶였다(ping 을 안 보내는
+        클라는 아무도 안 떨궈 영영). 넘기면 그 클라를 떼어 낸다 — 재접속하면 full 로 복구된다."""
+        try:
+            await asyncio.wait_for(self._send_full_inner(client),
+                                   _CLIENT_WRITE_TIMEOUT * 2)
+        except asyncio.TimeoutError:
+            self._drop_slow_client(
+                client, f"full 재동기가 {_CLIENT_WRITE_TIMEOUT * 2:g}초를 넘었다")
+
+    async def _send_full_inner(self, client: ClientConn):
         sess = client.session
         if not sess:
             return
@@ -1683,6 +1697,11 @@ class ServerIOMixin:
                 msg = await read_msg(reader)
                 if msg is None:
                     break
+                if not isinstance(msg, dict):
+                    # 비-dict 프레임 하나가 연결을 끊지 않게(pytmux-34 서버 검수 #8) — 종전엔
+                    # 아래 except 의 `msg.get` 이 다시 터져 handle_client 가 끝났다.
+                    # 원격 리더(serverremote)가 이미 같은 가드를 둔다.
+                    continue
                 try:
                     mt = msg.get("t")
                     # 死-클라 회수용 생존 신호: 어떤 메시지든 받았으면 살아 있다.
