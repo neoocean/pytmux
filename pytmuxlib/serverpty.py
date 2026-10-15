@@ -9,6 +9,7 @@ import contextlib
 import gc
 import hmac
 import os
+import secrets
 import shlex
 import time
 
@@ -42,6 +43,15 @@ _RETIRE_GRACE = 2.0                 # 초 — 이 안에 안 죽으면 그때 SI
 _RETIRE_POLL = 0.05                 # 초 — 죽었나 되묻는 간격
 
 
+def _new_pane_key() -> str:
+    """패널 키(pytmux-527 §D2 — tmux 의 `TMUX_PANE` 자리). spawn 마다 무작위 16hex.
+
+    pane id 가 아닌 이유: `_panel_env` 는 Pane 이 생기기 **전에** 불린다. 그래서 키를
+    먼저 짓고 env(플러그인이 실을 때)와 Pane(`pane.pane_key`)에 같은 값을 준다. 재시작
+    직렬화(`Pane._RESUME_FIELDS`)로 넘어가 살아남은 셸의 env 와 계속 맞는다."""
+    return secrets.token_hex(8)
+
+
 def _has_query(data: bytes, carry: bytes, query: bytes) -> bool:
     """*data*(또는 직전 청크 꼬리 *carry* 와 걸친 경계)에 *query* 가 있는가."""
     return query in data or query in (carry + data[: len(query) - 1])
@@ -69,7 +79,8 @@ BURST_RUN = 3        # 연속 누적이 이 횟수 이상이면 버스트로 판
 class ServerPtyMixin:
     # ---- PTY/패널 생성 ----
     def _fork_shell(self, cols: int, rows: int, cwd: str | None = None,
-                    cmd: str | None = None, keep_shell: bool = False):
+                    cmd: str | None = None, keep_shell: bool = False,
+                    pane_key: str | None = None):
         """셸을 PTY 백엔드(pty_backend)에 띄우고 PtyProcess 핸들을 반환.
 
         OS 별 PTY/프로세스 분기는 전부 pty_backend 가 담당한다(Unix=pty.fork,
@@ -80,16 +91,19 @@ class ServerPtyMixin:
         """
         cols = max(MIN_W, cols)
         rows = max(MIN_H, rows)
-        argv, env = self._shell_argv_env(cmd, keep_shell=keep_shell)
+        argv, env = self._shell_argv_env(cmd, keep_shell=keep_shell,
+                                         pane_key=pane_key)
         return pty_backend.spawn(argv, cols=cols, rows=rows, cwd=cwd, env=env)
 
-    def _shell_argv_env(self, cmd: str | None = None, keep_shell: bool = False):
+    def _shell_argv_env(self, cmd: str | None = None, keep_shell: bool = False,
+                        pane_key: str | None = None):
         """셸 실행 argv + 환경을 만든다(인프로세스 spawn 과 host 모드 spawn 공용).
 
         cmd 가 주어지면 인터랙티브 셸 대신 `셸 -c <cmd>`(display-popup 라이브 PTY).
         OS 별 셸/플래그 분기는 여기 한 곳. host 모드(옵션 C)는 이 argv/env 를 host 로
-        넘겨 host 가 같은 셸을 띄운다."""
-        env = self._panel_env()
+        넘겨 host 가 같은 셸을 띄운다. `pane_key` 는 그 패널의 키(`_new_pane_key`) —
+        플러그인 `pane_env` 훅이 env 에 실을지 정한다."""
+        env = self._panel_env(pane_key)
         if pty_backend.IS_WINDOWS:
             shell = env.get("PYTMUX_SHELL") or env.get("COMSPEC") or "cmd.exe"
             # ★ `keep_shell` 은 **플래그로** 낸다(`/k`), 문자열 이어붙이기가 아니다.
@@ -142,11 +156,13 @@ class ServerPtyMixin:
         패널은 host_pane_id 로 식별한다(child_pid/master_fd 는 -1). 출력 누락이 없도록
         reader 등록(start_reader)을 host spawn **이전**에 한다."""
         cols, rows = max(MIN_W, cols), max(MIN_H, rows)
-        argv, env = self._shell_argv_env(cmd, keep_shell=keep_shell)
+        key = _new_pane_key()
+        argv, env = self._shell_argv_env(cmd, keep_shell=keep_shell, pane_key=key)
         pane_id = self._next_pane_id()
         proc = self._pty_host.make_pane(pane_id, cols, rows)
         pane = Pane(-1, -1, cols, rows,
                     vt_parser=getattr(self, "vt_parser", "native"))
+        pane.pane_key = key
         # 셸 통합(OSC 133/7) 관찰자. 플러그인이 없으면 훅이 무동작이다.
         pane.osc_handler = self.plugins.pane_osc
         pane.host_pane_id = pane_id
@@ -191,9 +207,13 @@ class ServerPtyMixin:
         if stale:
             self._log_error(f"ptyhost_pruned_orphan_panes={len(stale)}")
 
-    def _panel_env(self) -> dict:
+    def _panel_env(self, pane_key: str | None = None) -> dict:
         """패널 셸에 줄 환경을 만든다(os.environ 기반 + pytmux 표식·색·중첩 거부 래퍼).
-        spawn 에서 분리해 테스트가 PTY 없이 검증한다(특히 COLORTERM 일관성)."""
+        spawn 에서 분리해 테스트가 PTY 없이 검증한다(특히 COLORTERM 일관성).
+
+        `pane_key` 는 그 패널의 키다(`_new_pane_key` · pytmux-527 §D2). 코어는 그것을
+        env 에 **싣지 않는다** — 플러그인 `pane_env` 훅이 실을지 정한다(claude-code 의
+        statusline 심은 opt 가 켜졌을 때만 싣는다 = opt off 면 env 흔적 0)."""
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
         # COLORTERM=truecolor 를 명시 설정한다(요청 2026-06-16): pytmux 렌더 파이프라인은
@@ -209,6 +229,11 @@ class ServerPtyMixin:
         # 들어간 원격에서도 pytmux 중첩이 막히게 한다(docs/internal/HANDOFF.md §10). 로컬
         # 중첩은 위 $PYTMUX 가 담당한다.
         sshwrap.panel_env(env, ipc.default_state_dir())
+        # 플러그인 PATH/env 기여(pytmux-527 §D1) — sshwrap 과 같은 자리. 플러그인이
+        # 없으면 무동작(delete-to-disable).
+        reg = getattr(self, "plugins", None)
+        if reg is not None:
+            reg.pane_env(self, env, pane_key)
         return env
 
     def _attach_reader(self, pane: Pane) -> None:
@@ -223,10 +248,12 @@ class ServerPtyMixin:
                    cmd: str | None = None, keep_shell: bool = False) -> Pane:
         if self._pty_host is not None:        # host 모드(옵션 C, Windows 세션유지)
             return self._spawn_pane_host(cols, rows, cwd, cmd, keep_shell)
-        proc = self._fork_shell(cols, rows, cwd, cmd, keep_shell)
+        key = _new_pane_key()
+        proc = self._fork_shell(cols, rows, cwd, cmd, keep_shell, pane_key=key)
         fd = proc.fileno() if hasattr(proc, "fileno") else -1
         pane = Pane(proc.pid, fd, max(MIN_W, cols), max(MIN_H, rows),
                     vt_parser=getattr(self, "vt_parser", "native"))
+        pane.pane_key = key
         # 셸 통합(OSC 133/7) 관찰자. 플러그인이 없으면 훅이 무동작이다.
         pane.osc_handler = self.plugins.pane_osc
         pane.pty = proc
@@ -291,20 +318,23 @@ class ServerPtyMixin:
         self._stop_pane_feed(pane)          # 진행 중 드레인 취소(새 셸로 교체 전)
         if pane.pty is not None:
             self._retire_pty(pane.pty)      # SIGHUP → (백그라운드) 확인 사살
+        key = _new_pane_key()               # 새 셸 = 새 키(지난 셸의 관측과 안 섞인다)
         if self._pty_host is not None:      # host 모드: 새 원격 PTY 로 교체
-            argv, env = self._shell_argv_env(None)
+            argv, env = self._shell_argv_env(None, pane_key=key)
             pane_id = self._next_pane_id()
             proc = self._pty_host.make_pane(pane_id, pane.cols, pane.rows)
             pane.reinit(-1, -1, pane.cols, pane.rows)
+            pane.pane_key = key
             pane.host_pane_id = pane_id
             pane.pty = proc
             self._attach_reader(pane)
             self._pty_host.spawn(pane_id, argv, pane.cols, pane.rows,
                                  cwd=cwd, env=env)
             return
-        proc = self._fork_shell(pane.cols, pane.rows, cwd)
+        proc = self._fork_shell(pane.cols, pane.rows, cwd, pane_key=key)
         fd = proc.fileno() if hasattr(proc, "fileno") else -1
         pane.reinit(proc.pid, fd, pane.cols, pane.rows)
+        pane.pane_key = key
         pane.pty = proc
         self._attach_reader(pane)
 

@@ -127,6 +127,15 @@ def init_pane(pane) -> None:
     pane._retry_attempts = 0
     # 마지막 스캔 시 본 feed seq(dirty 게이팅; 코어 _feed_seq 와 비교).
     pane._scan_seq = -1
+    # pytmux-527 statusline 다리(ccsl): 이 패널에 적용한 마지막 sl 관측(dict|None)과
+    # «이보다 이른 관측은 지난 claude 세션의 것»으로 버리는 하한(epoch 초), 리셋 경계를
+    # 한 번만 알리기 위한 마지막 resets_at.
+    pane._cc_sl = None
+    pane._cc_sl_floor = 0.0
+    pane._cc_reset_seen = None
+    # pytmux-529 C3-1: SessionStart 훅이 이 패널의 세션 이름을 정했다는 표식(키워드|None).
+    # claude-code pane_osc 가 OSC 777 로, ccsl 이 파일 표식으로 세운다. name-sync 가 읽는다.
+    pane._cc_titled = None
 
 
 def reset_pane(pane) -> None:
@@ -158,6 +167,10 @@ def reset_pane(pane) -> None:
     pane._busy_exit_miss = 0         # busy 이탈 히스테리시스 리셋(§3.4)
     pane._hdr_claude = False         # 헤더 예약 디바운스 리셋
     pane._hdr_claude_miss = 0
+    pane._cc_sl = None               # pytmux-527: 새 셸 = 새 키 — 지난 관측을 버린다
+    pane._cc_sl_floor = 0.0
+    pane._cc_reset_seen = None
+    pane._cc_titled = None           # pytmux-529: 새 셸의 claude 는 표식을 다시 받는다
 
 
 # 재시작(re-exec) 직렬화 대상 — JSON 가능 스칼라/딕트만. (코어 _RESUME_FIELDS 에서

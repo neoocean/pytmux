@@ -284,7 +284,10 @@ async def _opts_namespace_body(reg, _S):
         # 2026-07-23 토큰 동기화(P2): 전송 설정도 plugin_opts 소유다 — 코어는
         # token_sync* 의 의미를 모른다(플러그인을 지우면 통째로 사라진다).
         "token_sync", "token_sync_url", "token_sync_sec",
-        "token_sync_accounts", "token_sync_encrypt"}
+        "token_sync_accounts", "token_sync_encrypt",
+        # pytmux-527 S1: statusline 다리(기본 끔). plugin_opts 소유 — 플러그인을 지우면
+        # 키째 사라진다(아래 ④).
+        "claude_statusline_bridge"}
     # (과사용 완화 설정 usage_gate_*·claude_model_hint 는 2026-06-22 제거됨.)
     # §7-4 deprecate shim: 구 opts.json 에 남은 token_budget_* 는 무시(속성 미설치).
     s4 = _S()

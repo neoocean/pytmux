@@ -974,6 +974,38 @@ class _ClaudeCodePlugin:
         (server_input→_track_prompt 등)과 같은 불변식에 기댄다 — self.plugins 에 claude 가
         있으면 Server 에 ServerClaudeMixin 도 합성돼 있다(프로덕션·정상 테스트 순서)."""
         server._init_token_state()
+        from . import ccsl
+        ccsl.init(server)                  # pytmux-527 statusline 다리의 런타임 상태
+
+    def pane_env(self, server, env, pane_key=None):
+        """패널 셸 env 에 statusline 심 PATH + `PYTMUX_PANE_KEY` 를 얹는다(pytmux-527
+        §D1·D2). opt `claude_statusline_bridge` 가 꺼져 있거나 Windows 면 **아무것도 안
+        한다**(Windows 는 BatBadBut 때문에 심을 안 깐다 — ccbridge 모듈 머리말)."""
+        from . import ccsl
+        ccsl.pane_env(server, env, pane_key)
+
+    def pane_osc(self, pane, code, param):
+        """SessionStart 훅의 띠 안 표식(OSC 777 `pytmux;cc-title;<key>;<b64 kw>`) —
+        pytmux-529 C3-1. **그 패널의 키와 같을 때만** `_cc_titled` 를 세운다: 패널 env 를
+        못 읽는 출력(`cat`·스크롤백·다른 패널)이 흉내낸 표식은 키가 달라 버려진다.
+        표식이 서면 name-sync 가 그 패널의 `/rename` 주입을 무장하지 않는다."""
+        if code != "777" or not param.startswith("pytmux;cc-title;"):
+            return
+        parts = param.split(";")
+        if len(parts) != 4:
+            return
+        key = getattr(pane, "pane_key", None)
+        if not key or parts[2] != key:
+            return
+        import base64
+        import binascii
+        try:
+            kw = base64.b64decode(parts[3], validate=True).decode("utf-8")
+        except (binascii.Error, ValueError, UnicodeDecodeError):
+            return
+        kw = "".join(ch for ch in kw if ch >= " " and ch != "\x7f").strip()
+        if kw:
+            pane._cc_titled = kw
 
     # ---- 토큰 설정 소유(S5 토큰 모듈화 T3) — 코어 server.py __init__·serverpersist
     # _save_opts 에서 이전. 코어는 키의 의미를 모르고, opts.json 의 plugin_opts
@@ -1027,7 +1059,13 @@ class _ClaudeCodePlugin:
                   ("token_sync_accounts", "", str),
                   # 레코드 암호화. **끄지 말 것** — 서버가 통째로 털렸을 때 남는 것이
                   # 암호문에서 평문으로 바뀐다(설계 §5.7). 현재 off 는 미구현(거부).
-                  ("token_sync_encrypt", True, bool))
+                  ("token_sync_encrypt", True, bool),
+                  # pytmux-527 S1: 패널 PATH 의 claude 심 + --settings 로 statusLine
+                  # JSON(rate_limits·context_window·model)을 받는다(ccbridge·ccsl).
+                  # 기본 OFF(사용자 결정 2026-10-15 — 기본 on 은 실측 뒤 따로 정한다).
+                  # off 면 PATH·env 에 흔적 0, 서버도 sl 파일을 안 읽는다(= 종전).
+                  # 토글: `pytmux cmd claude-statusline-bridge on|off`.
+                  ("claude_statusline_bridge", False, bool))
 
     def server_opts_init(self, server, opts):
         """opts.json → server 속성 설치(코어 __init__ 의 _opts.get 들을 이전).
@@ -1062,8 +1100,26 @@ class _ClaudeCodePlugin:
 
         지연 import: 동기화는 opt-in 이라 켜지 않은 사용자에게 import 비용도 지우지
         않는다. 이 디렉토리를 지우면 훅이 사라져 워커도 함께 사라진다."""
-        from . import tokensync
-        await tokensync.run_worker(server)
+        import asyncio
+        from . import ccsl, tokensync
+        # pytmux-527: statusline 파일 읽기 루프(opt off 면 매 바퀴 즉시 돌아간다)는 곁
+        # 태스크로 띄우고, 토큰 동기화 워커는 **종전처럼 이 태스크에서 곧바로** 돈다.
+        # ⚠ gather 로 둘 다 새 태스크에 실으면 워커의 첫 걸음이 한 바퀴 늦게 돌아, 그
+        #   동기 구간(~0.5초 · Windows 실측)이 서버 기동 직후가 아니라 클라 작업 한복판에
+        #   떨어진다 — test_redteam/test_client_capacity 의 루프 간극 오라클이 그것을 잡았다.
+        side = asyncio.ensure_future(ccsl.run_loop(server))
+        try:
+            try:
+                await tokensync.run_worker(server)
+            except asyncio.CancelledError:
+                raise
+            except Exception:                 # noqa: BLE001 — 한쪽이 죽어도 다른 쪽은 산다
+                log = getattr(server, "_log_error", None)
+                if callable(log):
+                    log("token_sync_worker")
+            await side
+        finally:
+            side.cancel()
 
     def server_opts_serialize(self, server):
         """server 속성 → opts.json plugin_opts 네임스페이스(코어 _save_opts 의
@@ -1319,6 +1375,9 @@ class _ClaudeCodePlugin:
         "claude-auto-yes": "set_claude_auto_yes",
         "auto-yes": "set_claude_auto_yes",
         "claude-token-debug": "set_token_debug",
+        # pytmux-527 S1: statusline 다리(기본 off). 헤드리스 CLI 토글만 둔다 — 클라 명령
+        # 표면(COMMANDS·픽스처)은 안 늘린다.
+        "claude-statusline-bridge": "set_claude_statusline_bridge",
     }
 
     # 원격 보기(federation) 릴레이 액션(Registry.relay_actions 가 코어 화이트리스트와

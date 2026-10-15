@@ -25,7 +25,7 @@ pub fn hangul_mode() -> Option<bool> {
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, SMTO_ABORTIFHUNG, SendMessageTimeoutW,
+        GetForegroundWindow, GetWindowThreadProcessId, SMTO_ABORTIFHUNG, SendMessageTimeoutW,
     };
 
     const WM_IME_CONTROL: u32 = 0x0283;
@@ -36,6 +36,14 @@ pub fn hangul_mode() -> Option<bool> {
     // 앞에 없으면 그 값은 우리 것이 아니므로 배지를 안 그린다(아래 `is_ours`).
     let fg = unsafe { GetForegroundWindow() };
     if fg == HWND::default() {
+        return None;
+    }
+    // ★ `is_ours` — 주석만 있고 검사가 없었다(pytmux-392 캡처 중 발견 · 2026-10-16).
+    //   그래서 우리 창이 뒤에 있으면 배지가 **남의 전경 앱**의 한/영을 보였고, 그 앱이
+    //   UIPI 로 질의를 거부하면(ACCESS_DENIED) 사라졌다 — 어느 쪽도 우리 창의 상태가 아니다.
+    let mut owner = 0u32;
+    unsafe { GetWindowThreadProcessId(fg, Some(&mut owner)) };
+    if !is_ours(owner, std::process::id()) {
         return None;
     }
     let ime = unsafe { ImmGetDefaultIMEWnd(fg) };
@@ -60,6 +68,25 @@ pub fn hangul_mode() -> Option<bool> {
         return None;
     }
     Some(out & IME_CMODE_NATIVE != 0)
+}
+
+/// 전경 창의 소유 프로세스가 우리인가 — 아니면 그 입력기 상태는 우리 것이 아니다.
+/// 0(못 읽음)은 우리 것이 아니다.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_ours(owner_pid: u32, my_pid: u32) -> bool {
+    owner_pid != 0 && owner_pid == my_pid
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_ours;
+
+    #[test]
+    fn the_badge_only_reads_our_own_foreground_window() {
+        assert!(is_ours(4242, 4242));
+        assert!(!is_ours(1111, 4242), "남의 전경 창의 한/영을 우리 배지로 그리면 안 된다");
+        assert!(!is_ours(0, 4242), "소유자를 못 읽으면 우리 것이 아니다");
+    }
 }
 
 /// Windows 가 아니면 언제나 `None` — 배지가 없다.

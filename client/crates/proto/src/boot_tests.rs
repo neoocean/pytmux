@@ -202,3 +202,28 @@ fn the_last_nonempty_line_is_the_reason() {
     assert_eq!(last_line(b"   \n\n"), None);
     assert_eq!(last_line(b""), None);
 }
+
+#[test]
+fn windows_prefers_pathext_over_an_extensionless_shim() {
+    // install.sh 가 만든 `pytmux`(#!/bin/sh) 와 `pytmux.cmd` 가 같은 디렉터리에 있을 때
+    // Windows 는 .cmd 를 집어야 한다 — 확장자 없는 파일을 집으면 서버 자동 기동이
+    // `os error 193` 으로 죽었다(2026-10-16 실측).
+    let dir = std::env::temp_dir().join(format!("pytmux-which-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pytmux"), b"#!/bin/sh\n").unwrap();
+    std::fs::write(dir.join("pytmux.cmd"), b"@echo off\r\n").unwrap();
+    let path = std::env::join_paths([dir.clone()]).unwrap();
+    let ext = std::ffi::OsString::from(".COM;.EXE;.BAT;.CMD");
+
+    let win = which_in("pytmux", &path, Some(&ext), true).expect("찾아야 한다");
+    // PATHEXT 철자(`.CMD`)로 붙여 찾으므로 대소문자는 가리지 않고 본다.
+    assert!(win.file_name().unwrap().to_string_lossy().eq_ignore_ascii_case("pytmux.cmd"),
+            "{win:?}");
+    // 이름에 확장자가 붙어 오면 그대로 본다.
+    let exact = which_in("pytmux.cmd", &path, Some(&ext), true).expect("찾아야 한다");
+    assert_eq!(exact.file_name().unwrap(), "pytmux.cmd");
+    // POSIX 는 종전대로 이름 그대로.
+    let posix = which_in("pytmux", &path, None, false).expect("찾아야 한다");
+    assert_eq!(posix.file_name().unwrap(), "pytmux");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -22,6 +22,10 @@ TUI 편집기로 설정한다.
 (`<config>/sessions/<pid>.json`)을 읽어 **이미 이름이 정해진 세션인지** 확인한다
 (`_session_named`) — 파일이 없거나 못 읽으면 근거 없음으로 보고 종전대로 진행하므로
 이 역시 결합 없는 best-effort 의존이다.
+pytmux-529 C3-1: claude-code 의 statusline 심을 받은 패널이면 SessionStart 훅이 세션 이름을
+먼저 정할 수 있다 — 그 표식(`pane._cc_titled`)과 `server._cc_pane_bridged` 를 **읽기만**
+하고(`_wait_cc_title`), 표식이 서면 `/rename` 주입을 무장하지 않는다. 훅은 이 모듈의
+`_match_keyword` 를 그대로 불러 쓴다(규칙 판정 한 벌).
 
 무게: 이 모듈은 textual 을 최상단에서 import 하지 않는다(서버 프로세스도 plugins.load()
 로 이걸 읽는다). socket/os/sys/json 과 코어 proc(pid 생존 확인)만 필요한 곳에서 쓴다."""
@@ -237,6 +241,36 @@ def _sanitize_rules(rules) -> list:
     return out
 
 
+# ---- SessionStart 훅 표식 대기(pytmux-529 C3-1) ----
+# claude-code 의 statusline 심이 깔린 패널에서는 claude 가 SessionStart 훅으로 세션 이름을
+# 스스로 정하고(`ccbridge.py session-start` 가 **이 모듈의 `_match_keyword` 를 그대로**
+# 부른다 — 규칙 판정 한 벌), OSC 777 표식을 낸다. claude-code 가 그것을 받아
+# `pane._cc_titled` 를 세운다. 이 모듈은 claude-code 를 import 하지 않는다 — 그 필드와
+# `server._cc_pane_bridged`(있으면)만 읽는다(`_claude` 를 읽는 것과 같은 소프트 의존).
+# 대기 = 훅 timeout 5초 + 여유. 대개 표식이 먼저 온다(훅은 claude 부팅 중에 돌고 `_claude`
+# 감지는 첫 footer 프레임 뒤다 — ⚠ 미측정).
+_CC_TITLE_WAIT = 10.0
+_CC_TITLE_POLL = 0.25
+
+
+async def _wait_cc_title(server, pane, t0) -> bool:
+    """이 패널의 세션 이름을 훅이 정했나 — 정했으면 True(주입 무장 안 함).
+
+    심을 안 받은 패널(옵션 off·Windows·옛 셸)은 기다리지 않고 False(= 종전 주입)."""
+    import asyncio
+    if getattr(pane, "_cc_titled", None):
+        return True
+    bridged = getattr(server, "_cc_pane_bridged", None)
+    if not callable(bridged) or not bridged(pane):
+        return False
+    loop = asyncio.get_event_loop()
+    while loop.time() - t0 < _CC_TITLE_WAIT:
+        await asyncio.sleep(_CC_TITLE_POLL)
+        if getattr(pane, "_cc_titled", None):
+            return True
+    return False
+
+
 class _NameSyncPlugin:
     name = "claude-name-sync"
     description = "디렉토리별 이름 동기화(지정 경로 Claude 실행 시 탭/패널·세션 이름 통일)"
@@ -339,6 +373,7 @@ class _NameSyncPlugin:
         async def _run():
             try:
                 loop = asyncio.get_event_loop()
+                t0 = loop.time()           # Claude 감지 시각 — 훅 표식 대기의 기준
                 cwd = await loop.run_in_executor(None, server._pane_cwd, pane)
             except Exception:
                 return
@@ -387,6 +422,13 @@ class _NameSyncPlugin:
             #     세션을 못 막아, 사용자가 의도적으로 바꾼 이름이 키워드로 되돌아갔다.
             #     파일 조회라 executor 로 오프로드한다(이벤트 루프 비블로킹).
             if getattr(pane, "_ns_last_kw", None) == kw:
+                return
+            # ③ pytmux-529 C3-1: SessionStart 훅이 이미 이 세션 이름을 정했으면(띠 안
+            #    표식 `_cc_titled`) 키 주입을 무장하지 않는다 — idle·컴포저·ConPTY 레이스가
+            #    원천적으로 없는 길이다. 심을 받은 패널이면 표식을 잠깐(_CC_TITLE_WAIT)
+            #    기다리고, 안 오면 종전대로 주입으로 간다(폴백: 원격 ssh·옛 CLI·훅 꺼짐).
+            if await _wait_cc_title(server, pane, t0):
+                pane._ns_last_kw = kw
                 return
             try:
                 named = await loop.run_in_executor(None, _session_named, cwd)

@@ -428,6 +428,11 @@ class Pane:
         # 식별자(서버 할당). None 이면 인프로세스 PTY(POSIX/비host). child_pid/master_fd 가
         # -1 이어도 이 id 로 재시작을 가로질러 패널을 재바인딩한다.
         self.host_pane_id = None
+        # 패널 키(pytmux-527 §D2 — tmux 의 TMUX_PANE 자리): 서버가 spawn 마다 짓는
+        # 무작위 16hex(serverpty._new_pane_key). 플러그인이 패널 셸 env 에 실어 그 셸에서
+        # 뜬 프로그램(claude statusline 래퍼 등)이 자기 패널을 밝히게 한다. 렌더 전용
+        # 패널은 None. 재시작 직렬화로 넘긴다 — 살아남은 셸의 env 와 계속 맞아야 한다.
+        self.pane_key = None
         # 플러그인 공용 패널 네임스페이스(S4). claude-code 가 pane_init 훅으로 Claude
         # 거동 필드(~40개: 상태/사용량/자동개입 타이머/권한모드/프롬프트 추적 등)를
         # 패널에 설치한다. 디렉토리 삭제 시 훅이 없어 그 필드가 안 생기고, 코어의 소수
@@ -492,6 +497,7 @@ class Pane:
         "_claude_account_manual",
         "_pending_rename",   # 재시작 중 보류된 탭→세션 리네임도 idle 경계에서 발동
         "bracketed",
+        "pane_key",          # pytmux-527 §D2 — 살아남은 셸 env 의 PYTMUX_PANE_KEY 와 맞춘다
     )
 
     def _serialize_line(self, line, columns: int) -> str:

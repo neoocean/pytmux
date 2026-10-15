@@ -26,6 +26,7 @@ import subprocess
 from pytmuxlib import ipc, proc, pty_backend
 from pytmuxlib.protocol import write_msg   # 세션 종료 시 클라 auto_token_log 푸시
 from . import fullscreen, tokens, transcript, usagedb, usagelog   # S5 T5: 토큰 DB 백엔드도 플러그인 소속(물리 이전)
+from . import ccsl                         # pytmux-527: statusline 다리(서버 쪽 소비)
 from .claude import (claude_account, claude_account_full, claude_api_error,
                      claude_feedback_prompt, fmt_long_turn_badge,
                      fmt_unknown_update,
@@ -973,6 +974,30 @@ class ServerClaudeMixin:
         self._save_opts()
         return self.claude_auto_yes
 
+    def set_claude_statusline_bridge(self, value=None):
+        """statusline 다리(pytmux-527 S1) 토글. value 미지정 시 반전. opts.json 영속(기본 OFF).
+
+        켜면 **다음에 뜨는 패널 셸**부터 PATH 에 심이 깔린다(떠 있는 셸의 env 는 못 바꾼다).
+        끄면 `settings.json`·`namesync.json` 을 지운다 — 이미 심을 PATH 에 가진 셸에서 새로
+        띄우는 claude 도 settings 가 없어 **주입 없이** 진짜 claude 로 간다. 이미 뜬 claude 는
+        그대로 간다(flag settings 는 프로세스 수명 · c1 §D5). 사용자 파일은 안 썼으므로
+        되돌릴 것이 없다."""
+        cur = bool(getattr(self, "claude_statusline_bridge", False))
+        self.claude_statusline_bridge = (not cur) if value is None else bool(value)
+        from . import ccbridge
+        if self.claude_statusline_bridge:
+            ccbridge.ensure_bridge(ccsl.cc_dir(self))
+        else:
+            ccbridge.disable_bridge(ccsl.cc_dir(self))
+            self._cc_ns_exported = None
+        self._save_opts()
+        return self.claude_statusline_bridge
+
+    def _cc_pane_bridged(self, p) -> bool:
+        """이 패널 셸이 statusline 심을 PATH 에 받았나(pytmux-529 — name-sync 가 SessionStart
+        표식을 기다릴지 정하는 데 쓴다). 심이 없는 패널은 기다릴 이유가 없다."""
+        return ccsl.pane_bridged(self, p)
+
     def _inject_keys(self, pane: Pane, data: bytes):
         """패널 PTY 로 raw 키 바이트를 보낸다(_pc_inject 와 달리 Enter 를 안 붙임).
         권한모드 순환(shift+tab=\\x1b[Z) 등 제어키 주입용."""
@@ -1109,7 +1134,20 @@ class ServerClaudeMixin:
         """모델 배지/프로브 감지 + 디바운스(_scan_claude 에서 추출 — 로드맵
         God-함수 분할, 동작 불변). 화면 배지(claude_model_badge)를 우선하고 없으면
         그림자 /usage 프로브 모델로 폴백, 강한(배지)/약한(프로브) 값 구분과
-        _MODEL_DEBOUNCE 로 서브에이전트 깜빡임을 흡수한다. 모델이 바뀌면 True."""
+        _MODEL_DEBOUNCE 로 서브에이전트 깜빡임을 흡수한다. 모델이 바뀌면 True.
+
+        pytmux-527: 이 패널이 statusline 관측(`_cc_sl`)을 가졌으면 그 `model` 이 권위다 —
+        CLI 가 지금 돌리는 모델을 그대로 준 값이라 배지 스크랩·프로브 폴백·디바운스가 필요
+        없다(관측이 없는 패널만 아래 종전 경로를 탄다)."""
+        slm = ccsl.pane_model(p)
+        if slm:
+            p._claude_model_cand = None
+            p._claude_model_cand_n = 0
+            if slm != p._claude_model or p._claude_model_weak:
+                p._claude_model = slm
+                p._claude_model_weak = False
+                return True
+            return False
         ch = False
         mdl = claude_model_badge(txt)
         mdl_from_probe = False
@@ -1587,6 +1625,13 @@ class ServerClaudeMixin:
                 p._claude_model_weak = False
                 p._claude_model_cand = None
                 p._claude_model_cand_n = 0
+                # pytmux-527: 확정 세션 종료를 지나온 새 claude — 같은 패널 키로 지난
+                # claude 가 남긴 statusline 관측을 버린다. 새 claude 는 부팅 중(footer
+                # 감지 전)에 한 번 쓰므로 경계보다 조금 이른 관측까지는 받는다.
+                p._cc_sl_floor = time.time() - ccsl.SESSION_FLOOR_SLACK
+                sl = getattr(p, "_cc_sl", None)
+                if isinstance(sl, dict) and (sl.get("observed_at") or 0) < p._cc_sl_floor:
+                    p._cc_sl = None
             if not p._claude_account_manual:
                 p._claude_account = None
                 p._claude_account_full = None
@@ -1620,6 +1665,13 @@ class ServerClaudeMixin:
                 # footer 전체 표시용 비별칭 계정(같은 판정). 스크랩에서 못 잡고
                 # 프로브 폴백을 쓰는 경우엔 전체가 없어 None → 클라가 별칭으로 폴백.
                 acct_full = claude_account_full(fr.txt)
+                if not acct:
+                    # pytmux-527: statusline 관측이 있으면 그 claude 의 `.claude.json`
+                    # (oauthAccount.emailAddress)이 이 패널의 계정이다 — 프로브(별도
+                    # 세션 · 「머신 하나 = 로그인 하나」 가정)보다 앞선다.
+                    acct, sl_full = ccsl.pane_account(self, p)
+                    if acct:
+                        acct_full = sl_full
                 if not acct:
                     # 폴백(요청 2026-06-12): 패널 자체 화면엔 계정 라벨
                     # ('<email>'s Organization)이 안 떠 미식별이면, 그림자
@@ -1830,7 +1882,8 @@ class ServerClaudeMixin:
                 # 토큰 문구가 잠시 사라져도(스크롤 등) 마지막 값을 보존하고, 세션이
                 # 끝나면(claude None) 비운다.
                 if new_cl:
-                    u = claude_usage(txt)
+                    # pytmux-527: statusline 관측이 있으면 그 ctx%(근사 없음)가 우선.
+                    u = ccsl.pane_ctx(p) or claude_usage(txt)
                     new_use = u if u is not None else p._claude_usage
                 else:
                     new_use = None
@@ -2084,6 +2137,11 @@ class ServerClaudeMixin:
         합계) 시그니처 유지용으로만 남는다."""
         if p is None or not p._claude:
             return None
+        # pytmux-527: 패널 **자기** statusline 관측의 5h% 가 있으면 그것 — 그 패널 계정의
+        # 한도라 아래 계정 불일치 fail-open 이 필요 없다(리셋이 지났으면 0).
+        own = ccsl.pane_5h(p)
+        if own is not None:
+            return own
         u = self._usage
         if not (u and isinstance(u.get("session"), dict)
                 and u["session"].get("pct") is not None):
@@ -2160,10 +2218,22 @@ class ServerClaudeMixin:
     async def refresh_usage(self):
         """M19 그림자 /usage 질의: executor 스레드에서 숨은 claude 를 띄워 /usage 패널을
         스크랩(usageprobe.query_usage)해 self._usage 에 저장하고 broadcast 한다. 사용자
-        화면 무간섭. 중복 호출은 무시. 결과 dict|None."""
+        화면 무간섭. 중복 호출은 무시. 결과 dict|None.
+
+        pytmux-527 S1: statusline 다리가 켜져 있으면 먼저 `sl/` 을 **즉시 다시 읽고**,
+        신선한 statusline 값이 있으면 숨은 claude 를 띄우지 않는다(프로브 = 폴백).
+        `refresh_usage` 액션(클라 `claude-usage`)의 뜻도 이것으로 바뀐다 — 이름·표면은 그대로."""
         if self._usage_busy:
             return self._usage
+        if ccsl.on(self):
+            if ccsl.tick(self):
+                ccsl.broadcast(self)
+            if ccsl.probe_suppressed(self):
+                self._usage_probe_skipped = getattr(self, "_usage_probe_skipped", 0) + 1
+                return self._usage
         self._usage_busy = True
+        # 계측(c1 관문 ⑥): 실제로 숨은 claude 를 띄운 횟수.
+        self._usage_probe_spawns = getattr(self, "_usage_probe_spawns", 0) + 1
         fut = None
         timings: dict = {}
         try:

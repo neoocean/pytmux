@@ -162,23 +162,45 @@ fn find_python() -> Option<String> {
 
 /// PATH 에서 실행 파일 하나를 찾는다(Windows 는 PATHEXT 도 본다).
 fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    let exts: Vec<OsString> = if cfg!(windows) {
-        let raw = std::env::var_os("PATHEXT")
+    which_in(
+        name,
+        &std::env::var_os("PATH")?,
+        std::env::var_os("PATHEXT").as_deref(),
+        cfg!(windows),
+    )
+}
+
+/// `which` 의 순수 판 — 시험이 환경변수를 안 건드리고 부른다.
+///
+/// ★ Windows 는 **PATHEXT 를 확장자 없는 이름보다 먼저** 본다(2026-10-16 실측). 종전엔 빈
+///   확장자를 맨 앞에 두어, `install.sh` 가 만든 `~/.local/bin/pytmux`(`#!/bin/sh` 셔뮬)를
+///   `pytmux.cmd` 보다 먼저 집었고 GUI 의 서버 자동 기동이 `%1 is not a valid Win32
+///   application (os error 193)` 로 죽었다. 확장자 없는 파일은 Windows 에서 실행할 수 없다 —
+///   이름 자체에 확장자가 붙어 온 경우(`pytmux.exe`)만 그대로 본다.
+pub(crate) fn which_in(
+    name: &str,
+    path: &std::ffi::OsStr,
+    pathext: Option<&std::ffi::OsStr>,
+    windows: bool,
+) -> Option<PathBuf> {
+    let exts: Vec<OsString> = if windows {
+        let raw = pathext
+            .map(OsString::from)
             .unwrap_or_else(|| OsString::from(".COM;.EXE;.BAT;.CMD"));
-        std::iter::once(OsString::new())
-            .chain(
-                raw.to_string_lossy()
-                    .split(';')
-                    .filter(|s| !s.is_empty())
-                    .map(OsString::from)
-                    .collect::<Vec<_>>(),
-            )
-            .collect()
+        let mut v: Vec<OsString> = raw
+            .to_string_lossy()
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(OsString::from)
+            .collect();
+        if std::path::Path::new(name).extension().is_some() {
+            v.insert(0, OsString::new());
+        }
+        v
     } else {
         vec![OsString::new()]
     };
-    for dir in std::env::split_paths(&path) {
+    for dir in std::env::split_paths(path) {
         for ext in &exts {
             let mut file = OsString::from(name);
             file.push(ext);

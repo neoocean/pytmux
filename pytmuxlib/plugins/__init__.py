@@ -413,6 +413,28 @@ class Registry:
             if fn is not None:
                 fn(server)
 
+    def pane_env(self, server, env, pane_key=None):
+        """패널 셸 env 를 만들 때(serverpty `_panel_env`) 플러그인이 PATH·env 를 보탠다.
+
+        자리는 ssh 래퍼(`sshwrap.panel_env`)와 같다 — 패널 셸에서 뜬 프로그램에만 걸리는
+        장치를 사용자 설정 파일을 안 고치고 까는 길이다. claude-code 가 statusline 심과
+        `PYTMUX_PANE_KEY` 를 여기서 얹는다(pytmux-527 §D1 · opt 가 켜졌을 때만).
+        `pane_key` 는 코어가 그 패널에 미리 지은 키다 — 실을지는 플러그인이 정한다.
+
+        ⛔ 한 플러그인의 실패가 **패널 spawn 을 막으면 안 된다** — 셸이 안 뜨는 것은 그
+        기능이 빠지는 것보다 훨씬 나쁘다. 예외는 삼키되 서버 로그에는 남긴다(시험의 서버
+        예외 가드가 센다). 플러그인이 없으면 무동작(delete-to-disable)."""
+        for p in self.plugins:
+            fn = getattr(p, "pane_env", None)
+            if fn is None:
+                continue
+            try:
+                fn(server, env, pane_key)
+            except Exception:
+                log = getattr(server, "_log_error", None)
+                if callable(log):
+                    log("pane_env")
+
     def server_opts_init(self, server, opts):
         """`Server.__init__` 에서 opts.json 로드 직후 1회 — 플러그인이 자기 소유 설정을
         opts dict 에서 읽어 server 속성으로 설치한다(S5 토큰 모듈화 T3). claude-code 가
