@@ -69,8 +69,13 @@ esac
 
 # cargo 홈은 환경변수가 있으면 그것이 정본이다(CI·격리 빌드가 옮겨 쓴다).
 CARGO_ROOT="${CARGO_HOME:-$HOME/.cargo}"
+# rustup 홈도 가린다(pytmux-463 · 2026-10-16 실측): 툴체인에 `rust-src` 가 깔린 상자에서는
+# rustc 가 표준 라이브러리 경로를 `/rustc/<hash>` 대신 **그 상자의 실경로**
+# (`<rustup 홈>/toolchains/<판>/lib/rustlib/src/rust/library/...`)로 박는다 — macOS 상자에서
+# 132건이 나와 아래 `check_mirror.py --scan` 이 이진을 거부했다. 없는 상자에서는 무동작이다.
+RUSTUP_ROOT="${RUSTUP_HOME:-$HOME/.rustup}"
 
-RUSTFLAGS="--remap-path-prefix=$REPO=/pytmux --remap-path-prefix=$CARGO_ROOT=/cargo $EXTRA"
+RUSTFLAGS="--remap-path-prefix=$REPO=/pytmux --remap-path-prefix=$CARGO_ROOT=/cargo --remap-path-prefix=$RUSTUP_ROOT=/rustup $EXTRA"
 export RUSTFLAGS
 
 echo "build_release: $OUT"
