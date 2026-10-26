@@ -10,6 +10,8 @@ Windows 서버가 기동 때 pty-host 에 못 붙으면 in-process 로 폴백하
   · 서버가 그 사유를 로그에 안 실으면(**호출부**) → test_the_server_logs_why_it_fell_back
   · 드라이런 회신에 `host_fail` 이 없으면 → test_the_dry_run_carries_the_reason_on_windows
   · 정본이 다시 「그래도 할까」를 물으면(**호출부**) → test_the_client_says_why_instead_of_asking
+  · host 기동 예산이 6초로 돌아가면(pytmux-565) → test_a_slow_host_gets_twenty_seconds
+  · 예산 실패 사유가 실제 예산을 안 말하면 → test_the_failure_names_the_budget_it_used
 """
 import asyncio
 
@@ -91,3 +93,47 @@ async def test_the_client_says_why_instead_of_asking():
         assert any("connect: TimeoutError" in t and sev == "error" for t, sev in shown), shown
 
     await _with_app(body)
+
+
+def test_a_slow_host_gets_twenty_seconds():
+    """pytmux-565 — 프로세스 생성에 5~8초가 붙는 상자에서 6초 예산은 host 를 놓쳤다
+    (2026-09-28 이후 기동 6회 전부 `endpoint not published yet`). 기본은 20초이고
+    환경 변수로 덮으며, 엉뚱한 값은 기본값으로 돌아간다."""
+    import os
+    keep = os.environ.pop("PYTMUX_PTY_HOST_BUDGET", None)
+    try:
+        assert ptyhostmgr._connect_budget() >= 20.0
+        for raw, want in (("45", 45.0), ("0", 20.0), ("-3", 20.0), ("abc", 20.0), ("", 20.0)):
+            os.environ["PYTMUX_PTY_HOST_BUDGET"] = raw
+            assert ptyhostmgr._connect_budget() == want, (raw, ptyhostmgr._connect_budget())
+    finally:
+        os.environ.pop("PYTMUX_PTY_HOST_BUDGET", None)
+        if keep is not None:
+            os.environ["PYTMUX_PTY_HOST_BUDGET"] = keep
+
+
+async def test_the_failure_names_the_budget_it_used():
+    """★ 호출부 — 폴링이 `_connect_budget()` 를 쓰고 사유에 그 값을 싣는다. 짧은 예산으로
+    «떴다고 했는데 안 붙는 host» 를 세워 실제 시한이 그 값인지 본다."""
+    import os
+    sock = "/nonexistent/pytmux-565/default.sock"
+    ptyhostmgr._LAST_FAILURE.pop(sock, None)
+
+    async def never(loop, sock_path, timeout):
+        ptyhostmgr._note_failure(sock_path, "endpoint not published yet")
+        return None
+
+    os.environ["PYTMUX_PTY_HOST_BUDGET"] = "0.3"
+    try:
+        with harness.patched(ptyhostmgr, _try_connect=never,
+                             _spawn_host=lambda sock_path: True):
+            loop = asyncio.get_running_loop()
+            t0 = loop.time()
+            assert await ptyhostmgr.ensure_connected(loop, sock) is None
+            took = loop.time() - t0
+    finally:
+        os.environ.pop("PYTMUX_PTY_HOST_BUDGET", None)
+    assert 0.25 <= took < 3.0, took
+    why = ptyhostmgr.last_failure(sock)
+    assert why and "within 0.3s" in why and "endpoint not published yet" in why, why
+    ptyhostmgr._LAST_FAILURE.pop(sock, None)

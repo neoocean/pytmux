@@ -370,6 +370,33 @@ def _mac_process_cwd(pid: int) -> Optional[str]:
         return None
 
 
+_PROCESS_BASIC_INFORMATION = None     # 지연 정의 캐시 — `_process_basic_information` 참조
+
+
+def _process_basic_information():
+    """`PROCESS_BASIC_INFORMATION` 구조체 클래스 — 프로세스 수명에 한 번만 짓는다(pytmux-565).
+
+    `_win_process_cwd` 는 패널 cwd 추정(servertree)이 부른다. 종전엔 호출마다 이 클래스를
+    새로 정의했다. `ctypes.POINTER` 에 싣지 않아 `_processentry32w` 처럼 영구히 남지는
+    않지만, 호출마다 클래스 1개·CField 5개를 만들고 gen2 수거가 거둘 때까지 산 객체로 남긴다.
+    같은 자리의 같은 결함이라 같은 캐시 관례로 맞춘다."""
+    global _PROCESS_BASIC_INFORMATION
+    if _PROCESS_BASIC_INFORMATION is None:
+        import ctypes
+
+        class PROCESS_BASIC_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("Reserved1", ctypes.c_void_p),
+                ("PebBaseAddress", ctypes.c_void_p),
+                ("Reserved2", ctypes.c_void_p * 2),
+                ("UniqueProcessId", ctypes.c_void_p),
+                ("Reserved3", ctypes.c_void_p),
+            ]
+
+        _PROCESS_BASIC_INFORMATION = PROCESS_BASIC_INFORMATION
+    return _PROCESS_BASIC_INFORMATION
+
+
 def _win_process_cwd(pid: int) -> Optional[str]:
     r"""Windows 전용: 대상 프로세스의 PEB 를 읽어 cwd 를 구한다.
 
@@ -400,14 +427,7 @@ def _win_process_cwd(pid: int) -> Optional[str]:
             wintypes.HANDLE, wintypes.LPCVOID, wintypes.LPVOID,
             ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
 
-        class PROCESS_BASIC_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("Reserved1", ctypes.c_void_p),
-                ("PebBaseAddress", ctypes.c_void_p),
-                ("Reserved2", ctypes.c_void_p * 2),
-                ("UniqueProcessId", ctypes.c_void_p),
-                ("Reserved3", ctypes.c_void_p),
-            ]
+        PROCESS_BASIC_INFORMATION = _process_basic_information()
 
         NtQueryInformationProcess = ntdll.NtQueryInformationProcess
         NtQueryInformationProcess.restype = ctypes.c_long  # NTSTATUS

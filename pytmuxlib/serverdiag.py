@@ -41,11 +41,22 @@ TOP_TYPES = 8
 
 
 def rss_bytes() -> int | None:
-    """상주 메모리(바이트). 못 알아내는 OS 에서는 `None`."""
+    """상주 메모리(바이트). 못 알아내는 OS 에서는 `None`.
+
+    Windows 는 `resource` 가 없어 종전엔 늘 `None` 이었다 — 서버 1.7GB 를 「Resident
+    memory ?」 로만 보여 줬다(pytmux-565). 그 OS 에서는 클라와 같은 길
+    (`clientdiag._win_rss` · `GetProcessMemoryInfo.WorkingSetSize`)로 **현재** 작업 집합을
+    낸다. ⚠ POSIX 갈래는 여전히 `ru_maxrss`(최고 수위)다."""
+    if os.name == "nt":
+        try:
+            from .clientdiag import _win_rss
+            return _win_rss()
+        except (OSError, ValueError, AttributeError):
+            return None
     try:
         import resource
     except ImportError:
-        return None                      # Windows
+        return None
     try:
         n = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     except Exception:

@@ -28,7 +28,24 @@ from . import ipc, proc, pty_backend, ptyhostclient, ptyhostproto as _proto
 # 늦게 알아챘다. 첫 시도를 곧바로 하고 촘촘히(5ms~) 지수 백오프 후 상한(0.1s)까지 폴하면
 # host 가 준비되는 즉시(≈현재 폴 간격 이내) 잡아 콜드 스타트 임계경로를 줄인다. 총 예산
 # (~6s)은 종전과 동일하게 유지(spawn 실패·웨지 시의 폴백 지연 상한 불변).
-_CONNECT_BUDGET = 6.0        # 폴링 총 예산(초) — 종전 60×0.1s 와 동일
+#
+# ☠ 6초는 느린 Windows 상자에서 부족했다(pytmux-565). 실시간 검사가 프로세스 생성마다
+# 5~8초를 붙이는 상자에서 로그인 직후 기동하면 host 가 6초 안에 portfile 을 못 내고
+# (`endpoint not published yet`) 서버가 in-process 로 떨어진다. 그 서버는 `:restart-server`
+# 로 코드를 못 바꾸므로 고친 누수(CL 81764)가 열흘 동안 반영되지 않았다(2026-09-28 이후
+# 기동 6회 전부 이 사유). spawn 자체가 실패하면 폴링 없이 곧바로 폴백하므로 예산을 늘려도
+# 늦어지는 것은 «떴는데 느린 host» 뿐이고, 서버는 이미 bind 뒤라 attach 예산과 무관하다.
+_CONNECT_BUDGET_DEFAULT = 20.0
+
+
+def _connect_budget() -> float:
+    """폴링 총 예산(초). `PYTMUX_PTY_HOST_BUDGET` 로 덮는다(잘못된 값은 기본값)."""
+    raw = (os.environ.get("PYTMUX_PTY_HOST_BUDGET") or "").strip()
+    try:
+        v = float(raw) if raw else _CONNECT_BUDGET_DEFAULT
+    except ValueError:
+        return _CONNECT_BUDGET_DEFAULT
+    return v if v > 0 else _CONNECT_BUDGET_DEFAULT
 _CONNECT_POLL_INITIAL = 0.005
 _CONNECT_POLL_BACKOFF = 1.6
 _CONNECT_POLL_CAP = 0.1
@@ -395,8 +412,9 @@ async def ensure_connected(loop, sock_path: str
         return None
     # G: 고정 0.1s 폴 대신 즉시 1회 시도 후 촘촘히(5ms~) 지수 백오프하며 상한(0.1s)까지
     #    폴한다 — host 준비를 ≈현재 폴 간격 이내로 잡는다(종전 최대 100ms 지연 제거). 총
-    #    예산(~6s)은 유지해 웨지/느린 host 의 폴백 상한은 종전과 같다.
-    deadline = loop.time() + _CONNECT_BUDGET
+    #    예산은 `_connect_budget()`(기본 20s · pytmux-565)이 웨지/느린 host 의 폴백 상한이다.
+    budget = _connect_budget()
+    deadline = loop.time() + budget
     delay = _CONNECT_POLL_INITIAL
     try:
         while True:
@@ -405,7 +423,7 @@ async def ensure_connected(loop, sock_path: str
                 return client
             if loop.time() >= deadline:
                 _note_failure(sock_path, f"pty-host did not come up within "
-                                         f"{_CONNECT_BUDGET:g}s — last attempt: "
+                                         f"{budget:g}s — last attempt: "
                                          f"{_LAST_FAILURE.get(sock_path, 'unknown')}")
                 return None
             await asyncio.sleep(min(delay, _CONNECT_POLL_CAP))

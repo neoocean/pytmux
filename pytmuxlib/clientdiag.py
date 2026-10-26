@@ -68,22 +68,42 @@ def peak_rss_bytes() -> int | None:
     return ru if sys.platform == "darwin" else ru * 1024
 
 
+_PMC_TYPE = None        # 지연 정의 캐시 — `_pmc_type` 참조
+
+
+def _pmc_type():
+    """`PROCESS_MEMORY_COUNTERS` 구조체 클래스 — 프로세스 수명에 한 번만 짓는다(pytmux-565).
+
+    ☠ 종전엔 `_win_rss` 가 부를 때마다 이 클래스를 새로 짓고 `ctypes.POINTER(_PMC)` 를
+    argtypes 에 실었다. `ctypes.POINTER` 는 결과를 클래스를 키로 영구 캐시하므로 부를
+    때마다 클래스 1개·CField 10개가 영영 남았다 — pytmux-505 의 `PROCESSENTRY32W` 와 같은
+    기제다. 서버 RSS(`serverdiag.rss_bytes`)도 이 함수를 쓰므로 캐시가 더 중요해졌다."""
+    global _PMC_TYPE
+    if _PMC_TYPE is None:
+        import ctypes
+        from ctypes import wintypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t),
+                        ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t)]
+
+        _PMC_TYPE = _PMC
+    return _PMC_TYPE
+
+
 def _win_rss() -> int | None:
     """Windows 현재 작업 집합(`GetProcessMemoryInfo.WorkingSetSize`)."""
     import ctypes
     from ctypes import wintypes
 
-    class _PMC(ctypes.Structure):
-        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
-                    ("PeakWorkingSetSize", ctypes.c_size_t),
-                    ("WorkingSetSize", ctypes.c_size_t),
-                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                    ("PagefileUsage", ctypes.c_size_t),
-                    ("PeakPagefileUsage", ctypes.c_size_t)]
-
+    _PMC = _pmc_type()
     pmc = _PMC()
     pmc.cb = ctypes.sizeof(_PMC)
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
