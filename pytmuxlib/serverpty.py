@@ -489,13 +489,16 @@ class ServerPtyMixin:
         self._gc_drain_depth += 1
 
     def _gc_drain_exit(self) -> None:
-        """드레인 종료: 마지막 드레인이면 GC 를 (원래 켜져 있었으면) 다시 켜고 1회
-        collect 해 드레인 창에서 미룬 회수를 즉시 처리한다."""
+        """드레인 종료: 마지막 드레인이면 GC 를 (원래 켜져 있었으면) 다시 켠다.
+
+        ⛔ 여기서 `gc.collect()` 를 부르지 않는다(pytmux-566). 인자 없는 collect 는 gen2
+        전체 수거라 산 객체 전부를 훑는데, busy Claude 패널은 드레인이 초당 여러 번 끝나
+        서버 CPU 의 62% 가 이 한 줄이었다(py-spy 실측). 미룬 회수는 다시 켠 자동 수거가
+        임계값대로 이어받는다."""
         if self._gc_drain_depth > 0:
             self._gc_drain_depth -= 1
         if self._gc_drain_depth == 0 and self._gc_was_enabled:
             gc.enable()
-            gc.collect()
 
     async def _feed_drain(self, pane: Pane):
         """버스트 바이트를 FEED_SLICE 단위로 먹이며 슬라이스마다 이벤트 루프에 양보.

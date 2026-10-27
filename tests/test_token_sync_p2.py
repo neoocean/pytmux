@@ -1084,6 +1084,8 @@ async def test_tls_failure_says_what_to_do():
     # 컨텍스트는 **검증하는** 기본값이어야 한다(끄는 순간 전송 무결성이 사라진다).
     ctx = tokensync._ssl_context()
     assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is True
+    # 프로세스당 한 번만 만든다(pytmux-566) — 회차마다 certifi 묶음을 다시 읽던 비용.
+    assert tokensync._ssl_context() is ctx, "호출마다 컨텍스트를 새로 만들었다"
 
 
 async def test_default_server_needs_no_configuration():

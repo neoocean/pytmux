@@ -5346,6 +5346,34 @@ async def test_feed_drain_disables_gc_during_burst():
         await teardown(srv, task, sock)
 
 
+async def test_feed_drain_exit_never_collects():
+    # pytmux-566: 드레인 종료마다 인자 없는 gc.collect()(gen2 전체 수거)를 부르면 busy
+    # Claude 패널에서 서버 CPU 의 62% 가 그 한 줄이었다. 다시 켜기만 하고 수거는
+    # 자동 임계값에 맡긴다 — 호출부까지 단언(헬퍼가 아니라 실제 드레인 경로).
+    import gc
+    from harness import patched
+    from pytmuxlib.model import Pane
+    from pytmuxlib.protocol import FEED_SLICE
+    srv, task, sock = await server_only()
+    gc_was = gc.isenabled()
+    calls = []
+    real = gc.collect
+    try:
+        gc.enable()
+        pane = Pane(0, -1, 80, 24)
+        with patched(gc, collect=lambda *a, **k: calls.append(a) or real(*a, **k)):
+            srv._on_pane_data(pane, (b"c" * FEED_SLICE) * 6)
+            await asyncio.sleep(0)
+            assert srv._gc_drain_depth == 1, "드레인이 시작되지 않았다"
+            await _drain_pane_feed(pane)
+        assert srv._gc_drain_depth == 0 and gc.isenabled()
+        assert calls == [], f"드레인 종료가 gc.collect 를 불렀다: {calls}"
+    finally:
+        if gc_was:
+            gc.enable()
+        await teardown(srv, task, sock)
+
+
 async def test_feed_drain_gc_balanced_on_cancel():
     # 드레인이 취소(패널 teardown/재attach)돼도 GC 가드 카운터가 균형을 유지해야 한다
     # — finally 의 _gc_drain_exit 가 항상 깊이를 되돌린다(GC 영구 꺼짐 방지).

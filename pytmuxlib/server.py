@@ -134,7 +134,7 @@ class Server(*_SERVER_BASES):
         # `Char` 네임드튜플을 새로 할당해 버스트 한 번에 수백만 객체가 생긴다. 순환 GC 가
         # 이를 주기적으로 훑으면 단일 슬라이스가 30~85ms 멈춰(측정) 이벤트 루프가 끊기고
         # 입력이 뚝뚝 끊긴다. drain 이 도는 동안만 GC 를 끄고(_gc_drain_depth 0→1) 모든
-        # drain 이 끝나면 다시 켜 1회 collect 한다(1→0). Char 는 불변값이라 순환이 없어
+        # drain 이 끝나면 다시 켠다(1→0 · collect 는 안 부른다 — pytmux-566). Char 는 불변값이라 순환이 없어
         # refcount 만으로 회수되므로 드레인 창 동안 누수 위험은 낮다.
         self._gc_drain_depth = 0
         self._gc_was_enabled = True

@@ -164,6 +164,9 @@ def http_transport(base_url: str, timeout: float = 15.0):
     return send
 
 
+_SSL_CTX = None
+
+
 def _ssl_context():
     """TLS 검증 컨텍스트. **검증을 끄지 않는다** — 끄면 이 설계의 전제(전송 무결성)가
     무너진다.
@@ -171,17 +174,26 @@ def _ssl_context():
     macOS 의 python.org 빌드는 시스템 루트 저장소를 쓰지 않아 기본 컨텍스트가 비어
     있고, 그러면 정상 서버인데도 CERTIFICATE_VERIFY_FAILED 가 난다(실기동에서 다른
     머신이 그랬다). certifi 가 있으면 그 번들을 쓰고, 없으면 그대로 두되 실패 시
-    **무엇을 해야 하는지** 알려 준다(_net_why)."""
+    **무엇을 해야 하는지** 알려 준다(_net_why).
+
+    프로세스당 한 번만 만든다(pytmux-566) — 워커가 회차마다 http_transport 를 새로
+    부르는데 그때마다 certifi 묶음을 다시 읽는 비용이 서버 CPU 표본의 4% 였다.
+    SSLContext 는 스레드 사이에 공유해도 된다."""
+    global _SSL_CTX
+    if _SSL_CTX is not None:
+        return _SSL_CTX
     import ssl
     ctx = ssl.create_default_context()
     try:
         import certifi
     except ImportError:
-        return ctx
-    try:
-        ctx.load_verify_locations(certifi.where())
-    except OSError:
-        pass
+        certifi = None
+    if certifi is not None:
+        try:
+            ctx.load_verify_locations(certifi.where())
+        except OSError:
+            pass
+    _SSL_CTX = ctx
     return ctx
 
 
