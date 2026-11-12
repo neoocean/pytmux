@@ -1333,25 +1333,25 @@ fn the_kill_tab_question_knows_which_situation_it_is_in() {
     let cases: [(TabFacts, Prompt, &str); 4] = [
         // 마지막 로컬 탭 + 원격 탭도 열림 → 원격 보기까지 끊긴다는 것을 함께 적는다.
         (
-            TabFacts { local: 1, has_remote: true, active_pinned: false },
+            TabFacts { local: 1, has_remote: true, active_pinned: false, active_remote: false },
             Prompt::KillTabLastRemote,
             "원격",
         ),
         // 마지막 로컬 탭 → 앱이 통째로 끝난다.
         (
-            TabFacts { local: 1, has_remote: false, active_pinned: false },
+            TabFacts { local: 1, has_remote: false, active_pinned: false, active_remote: false },
             Prompt::KillTabLast,
             "pytmux",
         ),
         // 여럿 중 고정 탭.
         (
-            TabFacts { local: 3, has_remote: false, active_pinned: true },
+            TabFacts { local: 3, has_remote: false, active_pinned: true, active_remote: false },
             Prompt::KillTabPinned,
             "고정",
         ),
         // 평범한 탭.
         (
-            TabFacts { local: 3, has_remote: false, active_pinned: false },
+            TabFacts { local: 3, has_remote: false, active_pinned: false, active_remote: false },
             Prompt::KillTab,
             "탭의 셸",
         ),
@@ -1369,10 +1369,30 @@ fn the_kill_tab_question_knows_which_situation_it_is_in() {
     // ★ **로컬** 수로 센다. 원격 탭이 함께 열려 있으면 전체 수는 2 이상이라, 전체로 세면
     //   마지막 로컬 탭을 닫는 경고가 통째로 빠진다(정본이 실제로 고친 결함).
     assert_eq!(
-        Prompt::kill_tab(&TabFacts { local: 1, has_remote: true, active_pinned: true }),
+        Prompt::kill_tab(&TabFacts { local: 1, has_remote: true, active_pinned: true, active_remote: false }),
         Prompt::KillTabLastRemote,
         "마지막 로컬 탭인데 고정 여부가 경고를 덮었다"
     );
+}
+
+#[test]
+fn closing_an_active_remote_tab_detaches_it_before_the_four_local_branches() {
+    // pytmux-601 · 정본 `confirm_kill_tab` 첫 갈래: 활성 탭이 원격이면 `kill_window`
+    // (서버가 거절한다) 대신 그 탭 하나를 분리하는 판을 띄운다. 로컬 탭이 하나뿐이어도
+    // 닫히는 것은 원격 탭이라 «pytmux 종료» 를 물으면 안 된다.
+    for (local, pinned) in [(1, false), (1, true), (3, false), (3, true)] {
+        let facts = TabFacts { local, has_remote: true, active_pinned: pinned, active_remote: true };
+        assert_eq!(Prompt::kill_tab(&facts), Prompt::DetachRemoteTab, "{facts:?}");
+    }
+    let mut screens = Screens::new();
+    screens.confirm_with(Prompt::DetachRemoteTab, "box1".to_owned());
+    assert_eq!(screens.confirm_title(), Some("원격 탭 분리"));
+    assert_ne!(screens.confirm_title(), Some("pytmux 종료"));
+    let q = screens.confirm_question();
+    assert!(q.contains("box1") && !q.contains("{host}"), "호스트 슬롯이 안 채워졌다: {q:?}");
+    assert_eq!(screens.confirm_detail(), "", "슬롯 값이 별도 줄로 또 보인다");
+    // 정본은 분리를 위험(붉은색)으로 칠하지 않는다(`confirm_popup` 에 danger 없음).
+    assert!(!Prompt::DetachRemoteTab.is_dangerous());
 }
 
 #[test]

@@ -1,0 +1,409 @@
+{
+  "_comment": "python3 scripts/gen_edge_scroll_fixture.py 로 생성. 출처 = pytmuxlib/clientwidgets.py 의 MultiplexerView._edge_scroll_delta · _AUTOSCROLL_SEC · _AUTOSCROLL_MAX.",
+  "tick_ms": 60,
+  "max": 3,
+  "cases": [
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": -8,
+      "delta": 3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": -7,
+      "delta": 3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": -6,
+      "delta": 3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": -5,
+      "delta": 3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": -4,
+      "delta": 3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": -3,
+      "delta": 2
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": -2,
+      "delta": 2
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": -1,
+      "delta": 1
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 0,
+      "delta": 1
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 1,
+      "delta": 0
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 2,
+      "delta": 0
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 3,
+      "delta": 0
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 4,
+      "delta": 0
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 5,
+      "delta": 0
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 6,
+      "delta": 0
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 7,
+      "delta": 0
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 8,
+      "delta": 0
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 9,
+      "delta": -1
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 10,
+      "delta": -1
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 11,
+      "delta": -2
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 12,
+      "delta": -2
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 13,
+      "delta": -3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 14,
+      "delta": -3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 15,
+      "delta": -3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 16,
+      "delta": -3
+    },
+    {
+      "pane_y": 0,
+      "pane_h": 10,
+      "y": 17,
+      "delta": -3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": -3,
+      "delta": 3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": -2,
+      "delta": 3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": -1,
+      "delta": 3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 0,
+      "delta": 3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 1,
+      "delta": 3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 2,
+      "delta": 2
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 3,
+      "delta": 2
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 4,
+      "delta": 1
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 5,
+      "delta": 1
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 6,
+      "delta": 0
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 7,
+      "delta": 0
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 8,
+      "delta": 0
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 9,
+      "delta": 0
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 10,
+      "delta": 0
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 11,
+      "delta": 0
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 12,
+      "delta": -1
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 13,
+      "delta": -1
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 14,
+      "delta": -2
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 15,
+      "delta": -2
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 16,
+      "delta": -3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 17,
+      "delta": -3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 18,
+      "delta": -3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 19,
+      "delta": -3
+    },
+    {
+      "pane_y": 5,
+      "pane_h": 8,
+      "y": 20,
+      "delta": -3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": -5,
+      "delta": 3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": -4,
+      "delta": 3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": -3,
+      "delta": 3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": -2,
+      "delta": 3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": -1,
+      "delta": 3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 0,
+      "delta": 2
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 1,
+      "delta": 2
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 2,
+      "delta": 1
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 3,
+      "delta": 1
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 4,
+      "delta": -1
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 5,
+      "delta": -2
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 6,
+      "delta": -2
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 7,
+      "delta": -3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 8,
+      "delta": -3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 9,
+      "delta": -3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 10,
+      "delta": -3
+    },
+    {
+      "pane_y": 3,
+      "pane_h": 1,
+      "y": 11,
+      "delta": -3
+    }
+  ]
+}

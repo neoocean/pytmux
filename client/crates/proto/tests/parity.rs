@@ -481,10 +481,13 @@ fn we_take_the_command(name: &str) -> bool {
     // 별칭도 **받는 것**이다(pytmux-470) — `killp` 를 치면 `kill-pane` 이 선다. 「무엇을
     // 받나」의 정본은 `base::resolve_command_name` 한 자리이고, 그 표가 정본과 같은지는
     // `command_alias_conformance.rs` 가 전수로 잰다.
-    let name = base::resolve_command_name(name);
+    let canonical = base::resolve_command_name(name);
     base::PALETTE
         .iter()
-        .any(|e| e.name == name || e.name.split(' ').next() == Some(name))
+        .any(|e| e.name == canonical || e.name.split(' ').next() == Some(canonical))
+        // 팔레트 줄이 없는 이름 — 명령 줄 실행기가 받나(pytmux-576 · 감춘 `monitor-bell`, 인자로
+        // 가르는 `setw`). 그 실행기가 **무엇을 내보내는지**는 `command_line_conformance.rs` 가 잰다.
+        || base::cmdline::knows(name)
 }
 
 /// 정본 스크롤 모드의 키 하나를 **우리도 받나**(누르면 무언가 하나).
@@ -790,12 +793,12 @@ static MEASURED_SCORE: &[(&str, usize, usize)] = &[
     // 갈래로 접는다) · `zoom` → `resize-pane -Z`(같은 이름의 정본 메뉴 항목과 같은 일)
     // ([[pytmux-576]] · 규칙과 액션 단언은 `command_alias_conformance.rs`).
     //
-    // 남는 둘은 **이름 하나 → 이름 하나**로는 못 받는다(그래서 이 표에 남는다):
-    //   · `monitor-bell` — 정본이 `"bell" in c` 로 다시 가르는 이름이고, 우리 팔레트는
-    //     그 줄을 사용자 결정으로 **감췄다**(`base::HIDDEN_SURFACES`).
-    //   · `setw` — 이름이 아니라 **인자**로 가른다(`setw monitor-bell on`). 줄째로 푸는
-    //     해석기가 필요하다([[pytmux-572]]).
-    ("client_cmds", 193, 195),
+    // 남던 둘은 **이름 하나 → 이름 하나**로는 못 받았다 — 명령 줄 실행기(`base::cmdline` ·
+    // [[pytmux-572]])가 받는다:
+    //   · `monitor-bell` — 정본이 `"bell" in c` 로 다시 가르는 이름이다. 팔레트에서 **감춘
+    //     줄**(`base::HIDDEN_SURFACES` · 사용자 결정)은 그대로 감추고, 치거나 `bind` 하면 먹는다.
+    //   · `setw` — 이름이 아니라 **인자**로 가른다(`setw monitor-bell on`).
+    ("client_cmds", 195, 195),
     // ★ **첫 회차에 여덟이 공백으로 보였는데 오라클이 틀린 것이었다**(pytmux-455).
     //   `j`/`k`·`ctrl+u`·`ctrl+v` 류는 정본에서도 `mode-keys`(vi·emacs) 에 딸린 키인데
     //   기본값만 물었다 — 셋 다 물으니 전수다. 「없다」로 적었으면 있는 것을 다시
@@ -889,8 +892,8 @@ fn print_the_score() {
         );
     }
     println!(
-        "\n  ⚠ `client_cmds` 의 남음은 **이름 하나로 못 받는 정본 이름**이다(`setw`·`monitor-bell` · 팔레트에 뜨는 이름은 \n\
-           하나도 안 빠진다 — `the_measured_axes_cover_every_name_canon_shows_in_its_palette`).\n\
+        "\n  ⚠ `client_cmds` 는 팔레트 이름 · 별칭 표 · 명령 줄 실행기(`base::cmdline` — 감춘 `monitor-bell` · 인자로 \n\
+           가르는 `setw`)가 받는 이름이다 — 그 줄이 **무엇을 내보내나**는 `command_line_conformance.rs` 가 잰다.\n\
            세는 단위가 「보여 주는 목록」에서 「받는 이름」으로 넓어진 것이 이 축의 뜻이다.\n"
     );
     println!("  모집단: 픽스처 칸 {} 중 축이 맡은 것 {} · 사유와 함께 뺀 것 {}\n",

@@ -72,6 +72,20 @@ fn remote_label_splits_host_from_name() {
 }
 
 #[test]
+fn the_host_to_detach_follows_the_canonical_rule_exactly() {
+    // pytmux-601: 정본 `_active_remote_host` — remote 플래그 + 이름이 `⇄` 로 시작 → 첫 `:` 앞.
+    let bar = bar();
+    assert_eq!(bar.tabs[2].remote_host(), Some("build-box"));
+    assert_eq!(bar.tabs[1].remote_host(), None, "로컬 탭인데 호스트가 나왔다");
+    // `⇄` 가 없으면 정본은 None(평소 탭 닫기로 간다) — 그리기용 `display` 와 갈린다.
+    let odd = Tab { name: "형식:다르다".into(), remote: true, ..Default::default() };
+    assert_eq!(odd.remote_host(), None);
+    // `:` 가 없으면 정본은 나머지 통째(`split(":", 1)[0]`).
+    let bare = Tab { name: "⇄box".into(), remote: true, ..Default::default() };
+    assert_eq!(bare.remote_host(), Some("box"));
+}
+
+#[test]
 fn malformed_remote_name_still_shows_something() {
     // 파싱 실패가 탭을 사라지게 하면 안 된다.
     let odd = Tab {

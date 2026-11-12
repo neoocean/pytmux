@@ -653,7 +653,7 @@ fn the_mode_has_to_match() {
     let c = Config::parse("bind -n q redraw
 ");
     let hit = |after| {
-        crate::config::user_action(&c.binds, after, Key::Char('q'), Mods::NONE)
+        crate::config::user_action(&c.binds, &c.aliases, after, Key::Char('q'), Mods::NONE)
     };
     assert!(hit(false).is_some());
     assert!(hit(true).is_none());
@@ -664,11 +664,11 @@ fn a_modifier_binding_matches_the_pressed_key() {
     let c = Config::parse("bind -n C-g redraw
 ");
     assert_eq!(
-        crate::config::user_action(&c.binds, false, Key::Char('g'), Mods::CTRL),
-        Some(crate::Action::Redraw)
+        crate::config::user_action(&c.binds, &c.aliases, false, Key::Char('g'), Mods::CTRL),
+        Some(crate::cmdline::Run::Act(crate::Action::Redraw))
     );
     assert_eq!(
-        crate::config::user_action(&c.binds, false, Key::Char('g'), Mods::NONE),
+        crate::config::user_action(&c.binds, &c.aliases, false, Key::Char('g'), Mods::NONE),
         None,
         "수정키 없이도 먹으면 그 글자를 못 친다"
     );

@@ -324,6 +324,12 @@ pub static EN: &[(&str, &str)] = &[
     ("닫기", "Close"),
     ("pytmux 종료", "Quit pytmux"),
     ("고정 탭 닫기", "Close pinned tab"),
+    // 원격 탭 닫기 = 분리(정본 `dialog.detach_remote_*` · pytmux-601).
+    ("원격 탭 분리", "Detach remote tab"),
+    (
+        "원격 탭 {host} 을(를) 분리할까요? 원격 셸은 그대로 두고 이 탭만 닫힙니다.",
+        "Detach remote tab {host}? The remote shell stays running; only this tab closes.",
+    ),
     ("이 탭을 닫을까? 탭의 셸이 종료된다.", "Close this tab? The tab's shells will end."),
     (
         "이 탭을 닫으면 pytmux 가 종료된다(모든 셸 종료). 닫을까?",

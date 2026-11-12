@@ -1,0 +1,1353 @@
+{
+  "_comment": "python3 scripts/gen_command_line_fixture.py 로 생성. 출처 = pytmuxlib/clientcmd.py::_CommandMixin._run_command(호출). pytmux-572.",
+  "cases": [
+    {
+      "key": "split -h",
+      "line": "split-window -h",
+      "effects": [
+        {
+          "wire": {
+            "action": "split",
+            "orient": "lr"
+          }
+        }
+      ]
+    },
+    {
+      "key": "split bare",
+      "line": "split-window",
+      "effects": [
+        {
+          "wire": {
+            "action": "split",
+            "orient": "tb"
+          }
+        }
+      ]
+    },
+    {
+      "key": "splitw -v",
+      "line": "splitw -v",
+      "effects": [
+        {
+          "wire": {
+            "action": "split",
+            "orient": "tb"
+          }
+        }
+      ]
+    },
+    {
+      "key": "kill-pane",
+      "line": "kill-pane",
+      "effects": [
+        {
+          "wire": {
+            "action": "kill_pane"
+          }
+        }
+      ]
+    },
+    {
+      "key": "new-window",
+      "line": "new-window",
+      "effects": [
+        {
+          "wire": {
+            "action": "new_window"
+          }
+        }
+      ]
+    },
+    {
+      "key": "new-claude-tab",
+      "line": "new-claude-tab",
+      "effects": [
+        {
+          "wire": {
+            "action": "new_window",
+            "path": "current",
+            "cmd": "claude"
+          }
+        }
+      ]
+    },
+    {
+      "key": "kill-tab",
+      "line": "kill-tab",
+      "effects": [
+        {
+          "wire": {
+            "action": "kill_window"
+          }
+        }
+      ]
+    },
+    {
+      "key": "next-tab",
+      "line": "next-tab",
+      "effects": [
+        {
+          "wire": {
+            "action": "next_window"
+          }
+        }
+      ]
+    },
+    {
+      "key": "prev",
+      "line": "prev",
+      "effects": [
+        {
+          "wire": {
+            "action": "prev_window"
+          }
+        }
+      ]
+    },
+    {
+      "key": "last",
+      "line": "last",
+      "effects": [
+        {
+          "wire": {
+            "action": "last_window"
+          }
+        }
+      ]
+    },
+    {
+      "key": "automatic-rename on",
+      "line": "automatic-rename on",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_auto_rename",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "setw automatic-rename off",
+      "line": "setw automatic-rename off",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_auto_rename",
+            "value": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "monitor-activity on",
+      "line": "monitor-activity on",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_monitor",
+            "which": "activity",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "monitor-bell",
+      "line": "monitor-bell",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_monitor",
+            "which": "bell"
+          }
+        }
+      ]
+    },
+    {
+      "key": "monitor-bell off",
+      "line": "monitor-bell off",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_monitor",
+            "which": "bell",
+            "value": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "setw monitor-bell on",
+      "line": "setw monitor-bell on",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_monitor",
+            "which": "bell",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "setw monitor-activity off",
+      "line": "setw monitor-activity off",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_monitor",
+            "which": "activity",
+            "value": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "pin",
+      "line": "pin",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_pinned",
+            "value": true,
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "key": "unpin",
+      "line": "unpin",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_pinned",
+            "value": false,
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "key": "pin-toggle",
+      "line": "pin-toggle",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_pinned",
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "key": "move-tab-left",
+      "line": "move-tab-left",
+      "effects": [
+        {
+          "wire": {
+            "action": "move_current_tab",
+            "where": "left"
+          }
+        }
+      ]
+    },
+    {
+      "key": "move-tab-last",
+      "line": "move-tab-last",
+      "effects": [
+        {
+          "wire": {
+            "action": "move_current_tab",
+            "where": "last"
+          }
+        }
+      ]
+    },
+    {
+      "key": "move-tab 2",
+      "line": "move-tab 2",
+      "effects": [
+        {
+          "wire": {
+            "action": "move_window",
+            "index": 1
+          }
+        }
+      ]
+    },
+    {
+      "key": "swap-tab 3",
+      "line": "swap-tab 3",
+      "effects": [
+        {
+          "wire": {
+            "action": "swap_window",
+            "index": 2
+          }
+        }
+      ]
+    },
+    {
+      "key": "choose-tree",
+      "line": "choose-tree",
+      "effects": [
+        {
+          "wire": {
+            "action": "request_tree"
+          }
+        }
+      ]
+    },
+    {
+      "key": "select-pane -L",
+      "line": "select-pane -L",
+      "effects": [
+        {
+          "wire": {
+            "action": "select_pane",
+            "dir": "left"
+          }
+        }
+      ]
+    },
+    {
+      "key": "select-pane -T",
+      "line": "select-pane -T build log",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_pane_title",
+            "title": "build log"
+          }
+        }
+      ]
+    },
+    {
+      "key": "rename-pane",
+      "line": "rename-pane build",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_pane_title",
+            "title": "build"
+          }
+        }
+      ]
+    },
+    {
+      "key": "select-tab 3",
+      "line": "select-tab 3",
+      "effects": [
+        {
+          "wire": {
+            "action": "select_window",
+            "index": 2
+          }
+        }
+      ]
+    },
+    {
+      "key": "select-tab -1",
+      "line": "select-tab -1",
+      "effects": [
+        {
+          "wire": {
+            "action": "select_window",
+            "index": 4
+          }
+        }
+      ]
+    },
+    {
+      "key": "rename-tab work",
+      "line": "rename-tab work",
+      "effects": [
+        {
+          "wire": {
+            "action": "rename_window",
+            "name": "work"
+          }
+        }
+      ]
+    },
+    {
+      "key": "resize-pane -Z",
+      "line": "resize-pane -Z",
+      "effects": [
+        {
+          "wire": {
+            "action": "zoom"
+          }
+        }
+      ]
+    },
+    {
+      "key": "resize-pane -L",
+      "line": "resize-pane -L",
+      "effects": [
+        {
+          "wire": {
+            "action": "resize_dir",
+            "dir": "left",
+            "cells": 3
+          }
+        }
+      ]
+    },
+    {
+      "key": "resize-pane -D 5",
+      "line": "resize-pane -D 5",
+      "effects": [
+        {
+          "wire": {
+            "action": "resize_dir",
+            "dir": "down",
+            "cells": 5
+          }
+        }
+      ]
+    },
+    {
+      "key": "zoom",
+      "line": "zoom",
+      "effects": [
+        {
+          "wire": {
+            "action": "zoom"
+          }
+        }
+      ]
+    },
+    {
+      "key": "select-layout preset",
+      "line": "select-layout even-horizontal",
+      "effects": [
+        {
+          "wire": {
+            "action": "select_layout",
+            "preset": "even-horizontal"
+          }
+        }
+      ]
+    },
+    {
+      "key": "select-layout",
+      "line": "select-layout",
+      "effects": [
+        {
+          "wire": {
+            "action": "cycle_layout"
+          }
+        }
+      ]
+    },
+    {
+      "key": "next-layout",
+      "line": "next-layout",
+      "effects": [
+        {
+          "wire": {
+            "action": "cycle_layout"
+          }
+        }
+      ]
+    },
+    {
+      "key": "rotate-window",
+      "line": "rotate-window",
+      "effects": [
+        {
+          "wire": {
+            "action": "rotate",
+            "forward": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "rotate-window -D",
+      "line": "rotate-window -D",
+      "effects": [
+        {
+          "wire": {
+            "action": "rotate",
+            "forward": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "swap-pane -U",
+      "line": "swap-pane -U",
+      "effects": [
+        {
+          "wire": {
+            "action": "swap_pane",
+            "forward": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "swap-pane -D",
+      "line": "swap-pane -D",
+      "effects": [
+        {
+          "wire": {
+            "action": "swap_pane",
+            "forward": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "swap-pane -t",
+      "line": "swap-pane -t 1",
+      "effects": [
+        {
+          "wire": {
+            "action": "swap_pane_to",
+            "id": 11,
+            "to_id": 12
+          }
+        }
+      ]
+    },
+    {
+      "key": "break-pane",
+      "line": "break-pane",
+      "effects": [
+        {
+          "wire": {
+            "action": "break_pane"
+          }
+        }
+      ]
+    },
+    {
+      "key": "join-pane -h",
+      "line": "join-pane -h",
+      "effects": [
+        {
+          "wire": {
+            "action": "join_pane",
+            "orient": "lr"
+          }
+        }
+      ]
+    },
+    {
+      "key": "respawn-pane",
+      "line": "respawn-pane",
+      "effects": [
+        {
+          "wire": {
+            "action": "respawn_pane"
+          }
+        }
+      ]
+    },
+    {
+      "key": "synchronize-panes on",
+      "line": "synchronize-panes on",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_sync",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "setw synchronize-panes off",
+      "line": "setw synchronize-panes off",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_sync",
+            "value": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "syncp",
+      "line": "syncp",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_sync"
+          }
+        }
+      ]
+    },
+    {
+      "key": "pane-border-status on",
+      "line": "pane-border-status on",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_border_status",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "setw pane-border-status off",
+      "line": "setw pane-border-status off",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_border_status",
+            "value": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "inactive-dim off",
+      "line": "inactive-dim off",
+      "effects": [
+        {
+          "local": "message"
+        }
+      ]
+    },
+    {
+      "key": "strip-box-drawing on",
+      "line": "strip-box-drawing on",
+      "effects": [
+        {
+          "local": "message"
+        }
+      ]
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "line": "inactive-dim-ratio 0.25",
+      "effects": [
+        {
+          "local": "message"
+        }
+      ]
+    },
+    {
+      "key": "settings",
+      "line": "settings",
+      "effects": [
+        {
+          "local": "screen:SettingsScreen"
+        }
+      ]
+    },
+    {
+      "key": "detach -a",
+      "line": "detach -a",
+      "effects": [
+        {
+          "wire": {
+            "action": "detach_others"
+          }
+        }
+      ]
+    },
+    {
+      "key": "detach",
+      "line": "detach",
+      "effects": [
+        {
+          "local": "exit"
+        }
+      ]
+    },
+    {
+      "key": "kill-server",
+      "line": "kill-server",
+      "effects": [
+        {
+          "local": "confirm_kill_server"
+        }
+      ]
+    },
+    {
+      "key": "remote-attach",
+      "line": "remote-attach box1",
+      "effects": [
+        {
+          "wire": {
+            "action": "remote_attach",
+            "host": "box1"
+          }
+        }
+      ]
+    },
+    {
+      "key": "remote-attach via",
+      "line": "remote-attach C via B",
+      "effects": [
+        {
+          "wire": {
+            "action": "remote_attach",
+            "host": "C",
+            "via": "B"
+          }
+        }
+      ]
+    },
+    {
+      "key": "remote-new-tab",
+      "line": "remote-new-tab box1",
+      "effects": [
+        {
+          "wire": {
+            "action": "remote_new_window",
+            "host": "box1"
+          }
+        }
+      ]
+    },
+    {
+      "key": "remote-detach host",
+      "line": "remote-detach box1",
+      "effects": [
+        {
+          "wire": {
+            "action": "remote_detach",
+            "host": "box1"
+          }
+        }
+      ]
+    },
+    {
+      "key": "remote-detach",
+      "line": "remote-detach",
+      "effects": [
+        {
+          "wire": {
+            "action": "remote_detach"
+          }
+        }
+      ]
+    },
+    {
+      "key": "merge-remote-tab",
+      "line": "merge-remote-tab",
+      "effects": [
+        {
+          "local": "merge_remote_tab_picker"
+        }
+      ]
+    },
+    {
+      "key": "restart-server",
+      "line": "restart-server",
+      "effects": [
+        {
+          "local": "message"
+        },
+        {
+          "wire": {
+            "action": "request_restart_check"
+          }
+        }
+      ]
+    },
+    {
+      "key": "restart-check",
+      "line": "restart-check",
+      "effects": [
+        {
+          "wire": {
+            "action": "request_restart_check"
+          }
+        }
+      ]
+    },
+    {
+      "key": "restart-all",
+      "line": "restart-all",
+      "effects": [
+        {
+          "local": "message"
+        },
+        {
+          "wire": {
+            "action": "request_restart_check"
+          }
+        }
+      ]
+    },
+    {
+      "key": "reconnect",
+      "line": "reconnect",
+      "effects": [
+        {
+          "local": "reconnect_now"
+        }
+      ]
+    },
+    {
+      "key": "redraw",
+      "line": "redraw",
+      "effects": [
+        {
+          "wire": {
+            "action": "request_redraw"
+          }
+        }
+      ]
+    },
+    {
+      "key": "paste-clipboard",
+      "line": "paste-clipboard",
+      "effects": [
+        {
+          "local": "paste_os_clipboard"
+        }
+      ]
+    },
+    {
+      "key": "send-keys C-c",
+      "line": "send-keys C-c",
+      "effects": [
+        {
+          "input": "03"
+        }
+      ]
+    },
+    {
+      "key": "send-keys words",
+      "line": "send-keys ls Enter",
+      "effects": [
+        {
+          "input": "6c730d"
+        }
+      ]
+    },
+    {
+      "key": "send-keys -l",
+      "line": "send-keys -l Enter",
+      "effects": [
+        {
+          "input": "456e746572"
+        }
+      ]
+    },
+    {
+      "key": "send-escape",
+      "line": "send-escape",
+      "effects": [
+        {
+          "input": "1b"
+        }
+      ]
+    },
+    {
+      "key": "paste-buffer 2",
+      "line": "paste-buffer 2",
+      "effects": [
+        {
+          "wire": {
+            "action": "paste_buffer",
+            "index": 2
+          }
+        }
+      ]
+    },
+    {
+      "key": "paste-buffer",
+      "line": "paste-buffer",
+      "effects": [
+        {
+          "wire": {
+            "action": "paste_buffer",
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "key": "capture-pane -S",
+      "line": "capture-pane -S",
+      "effects": [
+        {
+          "wire": {
+            "action": "capture_pane",
+            "full": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "capture-pane",
+      "line": "capture-pane",
+      "effects": [
+        {
+          "wire": {
+            "action": "capture_pane",
+            "full": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "pipe-pane",
+      "line": "pipe-pane cat",
+      "effects": [
+        {
+          "wire": {
+            "action": "pipe_pane",
+            "cmd": "cat"
+          }
+        }
+      ]
+    },
+    {
+      "key": "save-layout",
+      "line": "save-layout",
+      "effects": [
+        {
+          "wire": {
+            "action": "save_layout"
+          }
+        }
+      ]
+    },
+    {
+      "key": "restore-layout",
+      "line": "restore-layout",
+      "effects": [
+        {
+          "wire": {
+            "action": "restore_layout"
+          }
+        }
+      ]
+    },
+    {
+      "key": "layout-save dev",
+      "line": "layout-save dev",
+      "effects": [
+        {
+          "wire": {
+            "action": "save_tab_layout",
+            "name": "dev"
+          }
+        }
+      ]
+    },
+    {
+      "key": "layout-load dev",
+      "line": "layout-load dev",
+      "effects": [
+        {
+          "wire": {
+            "action": "load_tab_layout",
+            "name": "dev",
+            "new": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "layout-load -n dev",
+      "line": "layout-load -n dev",
+      "effects": [
+        {
+          "wire": {
+            "action": "load_tab_layout",
+            "name": "dev",
+            "new": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "layout-load-new dev",
+      "line": "layout-load-new dev",
+      "effects": [
+        {
+          "wire": {
+            "action": "load_tab_layout",
+            "name": "dev",
+            "new": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "layout-list",
+      "line": "layout-list",
+      "effects": [
+        {
+          "wire": {
+            "action": "list_layouts"
+          }
+        }
+      ]
+    },
+    {
+      "key": "choose-buffer",
+      "line": "choose-buffer",
+      "effects": [
+        {
+          "wire": {
+            "action": "request_buffers"
+          }
+        }
+      ]
+    },
+    {
+      "key": "clear-history",
+      "line": "clear-history",
+      "effects": [
+        {
+          "wire": {
+            "action": "clear_history"
+          }
+        }
+      ]
+    },
+    {
+      "key": "single-border on",
+      "line": "single-border on",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_single_border",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "coalesce-repaints off",
+      "line": "coalesce-repaints off",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_coalesce",
+            "value": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "win-mouse-motion on",
+      "line": "win-mouse-motion on",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_win_mouse_motion",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "nest-auto-attach off",
+      "line": "nest-auto-attach off",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_nest_auto_attach",
+            "value": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "exit-empty on",
+      "line": "exit-empty on",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_exit_empty",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "window-size latest",
+      "line": "window-size latest",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_window_size",
+            "value": "latest"
+          }
+        }
+      ]
+    },
+    {
+      "key": "window-size",
+      "line": "window-size",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_window_size"
+          }
+        }
+      ]
+    },
+    {
+      "key": "vt-parser native",
+      "line": "vt-parser native",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_vt_parser",
+            "value": "native"
+          }
+        },
+        {
+          "local": "message"
+        }
+      ]
+    },
+    {
+      "key": "lang en",
+      "line": "lang en",
+      "effects": []
+    },
+    {
+      "key": "version",
+      "line": "version",
+      "effects": [
+        {
+          "wire": {
+            "action": "request_version"
+          }
+        }
+      ]
+    },
+    {
+      "key": "display-popup",
+      "line": "display-popup -w 80 -h 20 htop",
+      "effects": [
+        {
+          "wire": {
+            "action": "popup_open",
+            "cmd": "htop",
+            "title": "htop",
+            "w": 80,
+            "h": 20
+          }
+        }
+      ]
+    },
+    {
+      "key": "display-popup -C",
+      "line": "display-popup -C",
+      "effects": [
+        {
+          "wire": {
+            "action": "popup_close"
+          }
+        }
+      ]
+    },
+    {
+      "key": "popup-close",
+      "line": "popup-close",
+      "effects": [
+        {
+          "wire": {
+            "action": "popup_close"
+          }
+        }
+      ]
+    },
+    {
+      "key": "source-file path",
+      "line": "source-file /tmp/x.conf",
+      "effects": [
+        {
+          "reload": "/tmp/x.conf"
+        }
+      ]
+    },
+    {
+      "key": "source-file",
+      "line": "source-file",
+      "effects": [
+        {
+          "reload": null
+        }
+      ]
+    },
+    {
+      "key": "set",
+      "line": "set status-bg red",
+      "effects": [
+        {
+          "set": [
+            "status-bg",
+            "red"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "show-options",
+      "line": "show-options",
+      "effects": [
+        {
+          "local": "show_options"
+        }
+      ]
+    },
+    {
+      "key": "set-hook",
+      "line": "set-hook after-new-window display-message hi",
+      "effects": []
+    },
+    {
+      "key": "display-message",
+      "line": "display-message hello world",
+      "effects": [
+        {
+          "local": "message"
+        }
+      ]
+    },
+    {
+      "key": "debug-stats",
+      "line": "debug-stats",
+      "effects": [
+        {
+          "wire": {
+            "action": "debug_stats"
+          }
+        },
+        {
+          "local": "screen:InfoScreen"
+        }
+      ]
+    },
+    {
+      "key": "show-hooks",
+      "line": "show-hooks",
+      "effects": [
+        {
+          "local": "screen:InfoScreen"
+        }
+      ]
+    },
+    {
+      "key": "bind-key",
+      "line": "bind-key x send-keys C-c",
+      "effects": [
+        {
+          "local": "message"
+        }
+      ]
+    },
+    {
+      "key": "unbind-key",
+      "line": "unbind-key x",
+      "effects": [
+        {
+          "local": "message"
+        }
+      ]
+    },
+    {
+      "key": "list-keys",
+      "line": "list-keys",
+      "effects": [
+        {
+          "local": "screen:InfoScreen"
+        }
+      ]
+    },
+    {
+      "key": "plugins",
+      "line": "plugins",
+      "effects": [
+        {
+          "local": "screen:PluginManagerScreen"
+        }
+      ]
+    },
+    {
+      "key": "help",
+      "line": "help",
+      "effects": [
+        {
+          "local": "screen:CommandListScreen"
+        }
+      ]
+    },
+    {
+      "key": "run-shell",
+      "line": "run-shell 'echo hi'",
+      "effects": [
+        {
+          "shell": "echo hi"
+        }
+      ]
+    },
+    {
+      "key": "run-shell -b",
+      "line": "run-shell -b 'echo hi'",
+      "effects": [
+        {
+          "shell": "echo hi"
+        }
+      ]
+    },
+    {
+      "key": "run-shell words",
+      "line": "run-shell echo hi there",
+      "effects": [
+        {
+          "shell": "echo"
+        }
+      ]
+    },
+    {
+      "key": "if-shell",
+      "line": "if-shell 'test -f x' 'display-message yes' 'display-message no'",
+      "effects": [
+        {
+          "if": [
+            "test -f x",
+            "display-message yes",
+            "display-message no"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "if-shell then",
+      "line": "if-shell true 'send-keys foo'",
+      "effects": [
+        {
+          "if": [
+            "true",
+            "send-keys foo",
+            null
+          ]
+        }
+      ]
+    },
+    {
+      "key": "version alias",
+      "line": "about",
+      "effects": [
+        {
+          "wire": {
+            "action": "request_version"
+          }
+        }
+      ]
+    }
+  ]
+}

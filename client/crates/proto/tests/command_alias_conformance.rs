@@ -290,8 +290,9 @@ fn what_we_still_cannot_take_is_named_with_a_reason() {
         //     이름을 **사용자 결정으로 감췄다**(`base::HIDDEN_SURFACES` · §10-21ⓜ) —
         //     받으려면 「감춘 줄」을 팔레트 밖에서 찾는 길이 따로 있어야 한다.
         //   · `setw` — 이름이 아니라 **인자**로 가른다(`setw monitor-bell on`). 이름
-        //     하나를 이름 하나로 옮기는 이 표로는 못 받는다 — 줄째로 푸는 해석기가 필요하다
-        //     (pytmux-572 의 «명령 줄 실행기»).
+        //     하나를 이름 하나로 옮기는 이 표로는 못 받는다.
+        // ★ 둘 다 **이 표 밖에서** 받는다 — 명령 줄 실행기(`base::cmdline` · pytmux-572/576).
+        //   아래 `the_two_left_by_the_table_are_taken_by_the_executor` 가 액션으로 단언한다.
         "monitor-bell",
         "setw",
     ]
@@ -302,6 +303,29 @@ fn what_we_still_cannot_take_is_named_with_a_reason() {
         left, want,
         "아직 못 받는 이름이 달라졌다 — 사유와 함께 이 목록을 고칠 것"
     );
+}
+
+#[test]
+fn the_two_left_by_the_table_are_taken_by_the_executor() {
+    // pytmux-576 — 별칭 표가 못 접는 둘을 명령 줄 실행기가 **정본과 같은 일로** 받나. 명령
+    // 프롬프트(목록에 걸린 줄이 없으면 친 줄을 실행기로 넘긴다)와 설정 파일 `bind` 가 같은
+    // 함수(`base::cmdline::run_line`)를 지난다 — 두 입구를 다 단언한다.
+    //   정본: `monitor-bell` → `set_monitor(which="bell", value=None)` ·
+    //         `setw monitor-bell on` → `set_monitor(which="bell", value=True)`.
+    use base::cmdline::{Aliases, Run};
+    for (line, want) in [
+        ("monitor-bell", base::Action::ToggleMonitorBell),
+        ("monitor-bell off", base::Action::SetMonitor { bell: true, on: false }),
+        ("setw monitor-bell on", base::Action::SetMonitor { bell: true, on: true }),
+        ("setw monitor-activity off", base::Action::SetMonitor { bell: false, on: false }),
+    ] {
+        assert_eq!(base::cmdline::run_line(line, &Aliases::default()), Some(Run::Act(want)), "`:{line}`");
+        let bind = base::config::Bind::parse(&format!("bind x {line}")).expect("bind 줄");
+        assert_eq!(bind.action(), Some(want), "`bind x {line}`");
+    }
+    // 감춤은 그대로다 — 목록에는 안 뜬다(§10-21ⓜ 사용자 결정).
+    assert!(base::palette_matches("monitor-bell").iter().all(|i| base::PALETTE[*i].name != "monitor-bell"));
+    assert!(base::cmdline::knows("setw") && base::cmdline::knows("monitor-bell"));
 }
 
 #[test]

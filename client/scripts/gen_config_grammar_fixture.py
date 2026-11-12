@@ -80,6 +80,11 @@ DIRECTIVE_CASES = [
     ("bind args", "bind y select-tab 3", "인자 있는 명령 — 정본은 아무 명령 줄이나 돌린다"),
     ("bind -n", "bind -n F5 next-tab", "prefix 없이 바로(root table)"),
     ("bind -n args", "bind -n M-z resize-pane -Z", "root table + 플래그를 품은 이름"),
+    ("bind -n Enter", "bind -n Enter next-tab", "이름 키 — 대문자 철자(pytmux-600)"),
+    ("bind -n PageUp", "bind -n PageUp next-tab", "이름 키 — 낙타 철자(pytmux-600)"),
+    ("bind -n PPage", "bind -n PPage next-tab", "이름 키 — tmux 별칭 철자(pytmux-600)"),
+    ("bind -n Home", "bind -n Home next-tab", "이름 키(pytmux-600)"),
+    ("bind C-Left", "bind C-Left next-tab", "수정키 + 이름 키(pytmux-600)"),
     ("alias", "alias sp split-window -h", "사용자 명령 별칭"),
     ("hook", "hook after-new-window display-message made", "`hook` 철자"),
     ("set-hook", "set-hook client-attached display-message hi", "`set-hook` 철자"),
@@ -160,6 +165,27 @@ def main() -> int:
     if apply is None:
         sys.exit(f"{cpath} 에 apply_option 이 없다 — 뽑는 방법이 틀렸다")
     apply_options = _compared(apply, _is_name("name"))
+    # ⓕ `source-file` 이 다시 읽는 칸 — `client.py::reload_config`(중첩 함수)가 `cfg` 에서 꺼내는
+    #    열쇠 전수(`cfg["k"]` · `cfg.get("k", …)`). pytmux-574 의 «다시 읽으면 바뀌나» 모집단이다.
+    reload = _func(ctree, "reload_config")
+    if reload is None:
+        sys.exit(f"{cpath} 에 reload_config 가 없다 — 뽑는 방법이 틀렸다")
+    reload_keys = set()
+    for sub in ast.walk(reload):
+        if (isinstance(sub, ast.Subscript) and isinstance(sub.value, ast.Name)
+                and sub.value.id == "cfg" and isinstance(sub.slice, ast.Constant)):
+            reload_keys.add(sub.slice.value)
+        if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "get" and isinstance(sub.func.value, ast.Name)
+                and sub.func.value.id == "cfg" and sub.args
+                and isinstance(sub.args[0], ast.Constant)):
+            reload_keys.add(sub.args[0].value)
+        if (isinstance(sub, ast.Compare) and isinstance(sub.left, ast.Constant)
+                and any(isinstance(c, ast.Name) and c.id == "cfg" for c in sub.comparators)):
+            reload_keys.add(sub.left.value)
+    reload_keys = sorted(reload_keys)
+    if not reload_keys:
+        sys.exit("reload_config 가 읽는 칸을 하나도 못 찾았다 — 뽑는 방법이 틀렸다")
     for label, got in (("지시어", directives), ("set 옵션", load_options),
                        ("apply_option 옵션", apply_options)):
         if not got:
@@ -199,6 +225,19 @@ def main() -> int:
             got = read(line)
             return {k: _jsonable(v) for k, v in sorted(got.items()) if base.get(k) != v}
 
+        # ⓔ 이름 키 — 정본 `_tmux_key_to_textual` 이 접는 철자 전수(pytmux-600). 토큰은 정본 표
+        #    `_NAMED_KEYS` 의 열쇠마다 낙타·대문자 철자 + F-키 + 수정키 조합이다. 기대값은 정본이 낸다.
+        from pytmuxlib import keymap as _km  # noqa: E402
+        tokens = []
+        for k in sorted(_km._NAMED_KEYS):
+            tokens += [k.capitalize(), k.upper()]
+        tokens += ["F1", "F5", "f12", "C-Left", "M-PageUp", "C-M-Home", "C-F5", "S-Tab",
+                   "C-S-Tab", "M-Enter", "C-x", "M-q", "q", "G"]
+        named_keys = []
+        for tok in dict.fromkeys(tokens):
+            named_keys.append({"token": tok, "canon": _km._tmux_key_to_textual(tok)})
+        named_table = sorted(_km._NAMED_KEYS)
+
         cases = []
         seen_directives = set()
         for key, line, why in DIRECTIVE_CASES:
@@ -235,6 +274,9 @@ def main() -> int:
             "load_options": load_options,
             "apply_options": apply_options,
             "cases": cases,
+            "named_key_table": named_table,
+            "reload_keys": reload_keys,
+            "named_keys": named_keys,
         }, f, ensure_ascii=False, indent=2)
         f.write("\n")
     print(f"지시어 {len(directives)} · set 옵션 {len(load_options)} · "

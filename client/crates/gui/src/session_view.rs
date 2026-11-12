@@ -538,6 +538,9 @@ pub struct SessionView {
     tab_drag: Option<usize>,
     /// 드래그 중 가리키는 드롭 대상 탭(강조용).
     tab_drag_over: Option<usize>,
+    /// 원격 탭 분리 확인 판을 연 순간의 `(host, 병합 전역 index)`(pytmux-601). 정본은
+    /// 판을 열 때 람다가 그 둘을 잡는다 — 판이 떠 있는 동안 상태가 바뀌어도 **물은 탭**을 뗀다.
+    remote_detach_target: Option<(String, usize)>,
     /// 상태줄을 마지막으로 다시 그린 시각(`status-interval`).
     last_status: Instant,
     /// 커서 깜빡임을 마지막으로 뒤집은 시각(`cursor-blink-interval`).
@@ -620,6 +623,12 @@ pub struct SessionView {
     /// 스크롤을 여기 두고, 움직인 칸수를 그 산수에 넣어 **상대 Δ** 로 보낸다(서버의
     /// 스크롤 명령은 절대 위치가 없다 · `Scroll::by`).
     sb_drag: Option<SbDrag>,
+    /// 선택 끌기 중 가장자리 **자동 스크롤**(pytmux-579 · 정본 `_autoscroll` 타이머).
+    /// `None` = 멈춤. 판정·속도는 core(`base::edge_scroll`)가 든다.
+    autoscroll: Option<AutoScroll>,
+    /// 패널 **헤더를 잡아 끄는 중**(pick-up · pytmux-580 · 정본 `_pickup`·`_pickup_over`·
+    /// `_pickup_moved`). 놓을 때 [`Self::pane_drop_commands`] 가 뜻을 정한다.
+    pane_drag: Option<PaneDrag>,
     /// 시험이 읽는 **마지막으로 복사한 글**(pytmux-539) — 헤드리스에서는 OS 클립보드를
     /// 되읽을 수 없고, 되읽어도 그것이 이 창의 것인지 알 수 없다.
     #[cfg(test)]
@@ -787,6 +796,12 @@ struct CanvasBox {
     win_h: f32,
 }
 
+/// 설정 하나를 **이번 판에** 먹이는 한 함수 — 기동과 `source-file` 이 같이 지난다(pytmux-574).
+/// 몸통은 proto 한 곳이다(`proto::config_apply` — 뷰 없이 시험으로 잰다).
+fn apply_config_globals(config: &base::Config, state: &mut SessionState) {
+    proto::config_apply::apply_config_globals(config, state);
+}
+
 impl SessionView {
     pub fn new(link: ServerLink, ctx: &mut ViewContext<Self>) -> Self {
         // 고정폭 + 보조 글꼴. 규칙은 `mono_font` 한 곳이다(데모 뷰와 같은 것을 부른다).
@@ -840,12 +855,12 @@ impl SessionView {
         // 설정은 **한 번만** 읽는다 — 설정 화면이 바꾸면 이 값을 고치고 파일에 쓴다.
         let config = base::Config::load();
         let mut state = SessionState::new();
-        state.set_inactive_dim(config.inactive_dim, config.inactive_dim_ratio);
+        // 설정을 이번 판에 먹이는 자리는 **한 함수**다 — `source-file` 이 다시 읽은 뒤에도
+        // 같은 함수를 지난다(pytmux-574).
+        apply_config_globals(&config, &mut state);
         // 「패널 번호는 내가 그린다」 — 합성기가 그 칸을 안 찍게 한다(pytmux-461).
         // ⛔ 이 한 줄이 없으면 같은 번호가 **두 벌** 뜬다(합성기 글자 + 우리 배지).
         state.draw_pane_numbers_natively();
-        // 폭 판정은 프로세스 전역이다(compose::set_ambiguous_wide 문서 참조).
-        proto::compose::set_ambiguous_wide(config.ambiguous_width == "wide");
         let arghist = proto::arghist::ArgHist::for_socket(link.socket());
         Self {
             state,
@@ -877,6 +892,7 @@ impl SessionView {
             session_edit: None,
             tab_drag: None,
             tab_drag_over: None,
+            remote_detach_target: None,
             last_status: Instant::now(),
             last_blink: Instant::now(),
             blink_on: true,
@@ -899,6 +915,8 @@ impl SessionView {
             paste_requested: false,
             dragging: None,
             sb_drag: None,
+            autoscroll: None,
+            pane_drag: None,
             #[cfg(test)]
             copied_for_test: None,
             #[cfg(test)]
@@ -1301,14 +1319,20 @@ impl SessionView {
         // 사용자가 적은 것이 영영 안 먹고, 그건 "설정했는데 안 먹는다"의 한 가지다.
         if !self.config.binds.is_empty() {
             let after_prefix = self.mode.mode() == InputMode::Prefix;
-            if let Some(action) =
-                base::config::user_action(&self.config.binds, after_prefix, key, mods)
-            {
+            // 걸린 명령 줄은 명령 줄 실행기를 지난다(pytmux-572) — `bind x send-keys C-c` 같은
+            // 인자 있는 줄도 정본 `_run_command` 처럼 돈다.
+            if let Some(run) = base::config::user_action(
+                &self.config.binds,
+                &self.config.aliases,
+                after_prefix,
+                key,
+                mods,
+            ) {
                 // prefix 모드는 **키 하나만** 붙잡는다(tmux 와 같다).
                 if after_prefix {
                     self.mode.reset();
                 }
-                self.apply_action(action);
+                self.run_command_run(run);
                 return true;
             }
         }
@@ -1492,7 +1516,26 @@ impl SessionView {
                     // ★ 팔레트에서 고른 것은 **액션으로 되돌려 같은 길**을 태운다 —
                     // 그래야 `kill-pane` 을 골라도 확인 화면이 뜬다(명령을 바로 보내면
                     // 그 화면을 건너뛴다).
-                    if screen_before == Some(Screen::Commands) {
+                    //
+                    // ★ 친 이름이 **사용자 별칭**(`alias sp split-window -h`)이면 목록에서 고른
+                    //   줄이 아니라 친 줄이 뜻이다 — 정본 `:` 줄은 별칭을 이름 해석 **앞**에서
+                    //   푼다(pytmux-573). 정본 후보 목록에는 별칭이 안 뜨므로 우리도 안 띄운다.
+                    // ★ 목록에 **걸린 줄이 없는** 이름도 같다 — 팔레트에서 감춘 `monitor-bell` ·
+                    //   인자로 가르는 `setw monitor-bell on`(pytmux-576)은 목록에 없지만 정본
+                    //   `:` 줄에서는 먹는다. 친 줄을 명령 줄 실행기에 그대로 넘긴다.
+                    if screen_before == Some(Screen::Commands)
+                        && (base::cmdline::is_alias(&filter_before, &self.config.aliases)
+                            || self
+                                .palette_pick(cat_before.as_deref(), &filter_before, row)
+                                .is_none())
+                    {
+                        let line = if arg_before.is_empty() {
+                            filter_before.clone()
+                        } else {
+                            format!("{filter_before} {arg_before}")
+                        };
+                        self.run_command_line(&line);
+                    } else if screen_before == Some(Screen::Commands) {
                         match self.palette_pick(cat_before.as_deref(), &filter_before, row) {
                             // ★ 인자를 그 줄에서 이어 쳤으면 **물음 판을 안 띄운다**
                             //   (pytmux-7 — 정본 `:` 줄과 같은 손). 고른 줄의 이름에
@@ -2009,12 +2052,9 @@ impl SessionView {
                 return true;
             }
             // 설정 파일을 다시 읽는다. 서버와 무관하고 **이번 판에 바로 먹는다**.
+            // 경로를 준 `source-file <경로>` 는 명령 줄 실행기가 [`Self::reload_config`] 로 바로 보낸다.
             Action::SourceFile => {
-                self.config = base::Config::load();
-                self.mode.set_prefix(self.config.prefix);
-                self.state
-                    .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
-                        self.state.note_notice(t("설정을 다시 읽었다"));
+                self.reload_config(None);
                 return true;
             }
             // 지금 탭이 원격이 아니면 **합칠 대상이 없다** — 빈 화면을 띄우는 대신
@@ -3124,6 +3164,18 @@ impl SessionView {
             self.dragging = Some(divider.split_id);
             return false;
         }
+        // ★ 패널 **헤더**(위 테두리 행 · border-status 제목줄)는 pick-up 이다(pytmux-580 ·
+        //   정본 `on_mouse_down` 의 `_header_pane_at`). 경계 판정 **다음**이라 분할 경계와
+        //   겹치는 윗변은 리사이즈가 먼저다(정본과 같은 순서). 누를 때는 들기만 한다 —
+        //   클릭인지 끌기인지는 뗄 때 정한다(클릭 = 그 패널로 포커스).
+        if self.mode.mode() == InputMode::Normal
+            && let Some(src) = self.header_pane_at(x, y)
+        {
+            self.selection = None;
+            self.press = None;
+            self.pane_drag = Some(PaneDrag { src, press: at, moved: false, over: None });
+            return true;
+        }
         // ★ 밑줄이 그어진 자리는 **그 뜻이 먼저**다(§10-21ⓥ2·ⓧ2). 그어 놓고 눌렀는데
         //   선택 드래그가 시작되면 그 밑줄이 거짓말이 된다. 경계보다는 뒤다 — 저건
         //   잡는 자리이고 이건 글 위다(겹치지 않는다).
@@ -3284,6 +3336,33 @@ impl SessionView {
             }
             return true;
         }
+        if let Some(mut d) = self.pane_drag {
+            // 드롭 대상 강조만 갱신한다 — 판정은 뗄 때 한 번이다(정본 `on_mouse_move`).
+            // 캔버스 밖(`None`)은 탭바 쪽이다: 패널 강조를 끄고 **탭 끌기의 hover 장치**로
+            // 가리킨 탭을 밝힌다(지금 탭은 놓아도 아무 일이 없으니 안 밝힌다).
+            let (over, tab_over) = match at {
+                None => {
+                    d.moved = true;
+                    let active = self.state.tabs().tabs.iter().position(|t| t.active);
+                    (None, self.hovered_tab().filter(|&i| Some(i) != active))
+                }
+                Some(p) => {
+                    // ★ 정본 규칙 그대로 — **다른 패널 위에 오면** 움직인 것이다(임계를 안 쓴다 ·
+                    //   `mouse-drag-threshold` 는 정본에서 선택 끌기에만 걸린다). 제 패널 안에서
+                    //   흔들린 것은 아무리 멀어도 클릭이다.
+                    let over = self.state.pane_at(p.0, p.1).filter(|&id| id != d.src);
+                    if over.is_some() {
+                        d.moved = true;
+                    }
+                    (over, None)
+                }
+            };
+            let changed = over != d.over || tab_over != self.tab_drag_over || d.moved;
+            d.over = over;
+            self.pane_drag = Some(d);
+            self.tab_drag_over = tab_over;
+            return changed;
+        }
         if self.tab_drag.is_some() {
             // 드롭 대상 표시만 갱신한다 — 판정은 뗄 때 한 번이다(TUI 와 같다).
             let over = self.hovered_tab();
@@ -3299,6 +3378,16 @@ impl SessionView {
         }
         // 캔버스 밖(탭바·상태줄 위)의 드래그는 캔버스 일이 아니다.
         let Some(at) = at else {
+            // ★ 단, **선택을 끄는 중**이면 캔버스 위(탭바 쪽)로 나간 것이다(pytmux-579) —
+            //   정본은 그 자리를 음수 y 로 받아 위로 계속 굴린다. 우리 자리표는 캔버스 위를
+            //   `None` 으로 주므로 y = −1 로 본다(⚠ 왼쪽 여백 밖도 `None` 이라 같은 갈래다).
+            if self.selection.is_some()
+                && let Some((pane, _, _)) = self.press
+            {
+                let x = self.autoscroll.map_or(0, |a| a.ptr.0);
+                self.set_autoscroll(pane, -1, x);
+                return true;
+            }
             return false;
         };
         let (x, y) = at;
@@ -3357,6 +3446,70 @@ impl SessionView {
         {
             selection.extend_to(focus);
         }
+        // 가장자리에 닿았으면 타이머로 굴린다 · 안으로 돌아오면 멈춘다(pytmux-579 · 정본
+        // `on_mouse_move` 의 `_autoscroll_set(_edge_scroll_delta(event.y))`).
+        if self.selection.is_some() {
+            self.set_autoscroll(pane, y as i32, x);
+        }
+        true
+    }
+
+    /// 포인터 행 `y` 로 자동 스크롤을 켜거나 끈다(정본 `_autoscroll_set` — 멱등).
+    ///
+    /// 이미 구르는 중이면 **간격을 다시 세지 않는다** — 정본도 타이머를 새로 걸지 않고
+    /// 델타만 바꾼다(포인터가 움직일 때마다 간격이 처음부터면 계속 움직이는 손에는 영영
+    /// 안 구른다).
+    fn set_autoscroll(&mut self, pane: i64, y: i32, x: u16) {
+        let delta = self
+            .state
+            .pane_rect(pane)
+            .map_or(0, |(_, py, _, ph)| base::edge_scroll::delta(py as i32, ph as i32, y));
+        if delta == 0 {
+            self.autoscroll = None;
+            return;
+        }
+        let ptr = (x, y.clamp(0, u16::MAX as i32) as u16);
+        match self.autoscroll.as_mut() {
+            Some(a) if a.pane == pane => {
+                a.delta = delta;
+                a.ptr = ptr;
+            }
+            _ => {
+                self.autoscroll = Some(AutoScroll {
+                    pane,
+                    delta,
+                    ptr,
+                    next: Instant::now() + base::edge_scroll::TICK,
+                })
+            }
+        }
+    }
+
+    /// 자동 스크롤 한 박자(정본 `_autoscroll_tick`). 굴렸으면 `true`.
+    ///
+    /// 끌기가 끝났으면(선택이 없으면) **스스로 멈춘다** — 뗌을 놓쳐도 안 구르게(정본과 같다).
+    /// 굴리기 전에 선택 끝점을 지금 스크롤의 절대 행으로 다시 잡는다: 서버가 보낸 직전
+    /// 구름이 반영된 자리라, 구를 때마다 선택이 그만큼 넓어진다.
+    pub(crate) fn tick_autoscroll(&mut self, now: Instant) -> bool {
+        let Some(a) = self.autoscroll else {
+            return false;
+        };
+        if self.selection.is_none() {
+            self.autoscroll = None;
+            return false;
+        }
+        if let Some(focus) = self.abs_in_pane(a.pane, a.ptr.0, a.ptr.1)
+            && let Some(selection) = self.selection.as_mut()
+        {
+            selection.extend_to(focus);
+        }
+        if now < a.next {
+            return false;
+        }
+        if let Some(live) = self.autoscroll.as_mut() {
+            live.next = now + base::edge_scroll::TICK;
+        }
+        self.push_scroll(a.pane, a.delta as i64);
         true
     }
 
@@ -3515,12 +3668,27 @@ impl SessionView {
 
     /// 놓았다. **여기서 클릭과 드래그가 갈린다.**
     pub fn handle_mouse_up(&mut self, at: Option<(u16, u16)>) -> bool {
+        // 떼면 자동 스크롤은 **어디서 떼든** 멈춘다(pytmux-579 · 정본 `on_mouse_up` 첫 줄).
+        self.autoscroll = None;
         if self.sb_drag.take().is_some() {
             return true;
         }
         if let Some(src) = self.tab_drag.take() {
             self.tab_drag_over = None;
             self.drop_tab(src, at);
+            return true;
+        }
+        if let Some(d) = self.pane_drag.take() {
+            self.tab_drag_over = None;
+            let target = match at {
+                Some((x, y)) => PaneDropAt::Canvas(self.state.pane_at(x, y)),
+                None => self.chrome_drop_spot(),
+            };
+            let active_tab = self.state.tabs().tabs.iter().find(|t| t.active).map(|t| t.index);
+            let commands = Self::pane_drop_commands(d.src, d.moved, target, active_tab);
+            for command in commands {
+                self.pending.push(Outgoing::Command(command));
+            }
             return true;
         }
         // 화면이 떠 있으면 캔버스 뗌도 죽는다(N2). 미결 상태만 비운다 — 팝업이 뜨기
@@ -4012,8 +4180,8 @@ impl SessionView {
         // 셸 결과는 스레드에서 온다 — 퍼올리기와 같은 자리에서 줍는다(TUI 는
         // `tick_clock` 이 같은 일을 한다).
         let (shell, next) = self.take_shell_result();
-        if let Some(action) = next {
-            self.apply_action(action);
+        if let Some(run) = next {
+            self.run_command_run(run);
         }
         // 원격에 올린 그림도 스레드에서 온다 — 셸 결과와 **같은 자리**에서 줍는다.
         let pasted = self.take_remote_image();
@@ -4023,6 +4191,8 @@ impl SessionView {
         // (GUI 에는 TUI 의 프레임 루프에 해당하는 자리가 여기뿐이다).
         let mut dirty = self.tick_clock() || shell || pasted || copied;
         dirty |= self.tick_thumb();
+        // 선택 끌기의 가장자리 자동 스크롤(pytmux-579) — 포인터가 멈춰 있어도 흐른다.
+        dirty |= self.tick_autoscroll(Instant::now());
         // 입력기 배지는 서버 메시지와 무관하게 바뀐다 — 시계와 같은 자리에서 잰다.
         dirty |= self.tick_ime();
         let mut arrived = 0usize;
@@ -4786,7 +4956,16 @@ impl SessionView {
             local: tabs.iter().filter(|t| !t.remote).count(),
             has_remote: tabs.iter().any(|t| t.remote),
             active_pinned: tabs.iter().any(|t| t.active && t.pinned),
+            active_remote: self.active_remote_target().is_some(),
         }
+    }
+
+    /// 활성 탭이 원격 탭이면 `(host, 병합 전역 index)` — 정본 `_active_remote_host()` 와
+    /// `_active_tab_index()` 의 짝(pytmux-601). 원격 탭 닫기를 `kill_window`(서버가 거절)
+    /// 대신 그 탭 하나의 `remote_detach` 로 보낼 때 쓴다.
+    fn active_remote_target(&self) -> Option<(String, usize)> {
+        let tab = self.state.tabs().tabs.iter().find(|t| t.active)?;
+        Some((tab.remote_host()?.to_owned(), tab.index))
     }
 
     /// 활성 탭 이름 — 고정 탭 경고의 `{name}` 슬롯을 채운다(물음은 `&'static str` 이라
@@ -4804,7 +4983,13 @@ impl SessionView {
     /// 탭 닫기 확인을 **상황에 맞는 문구로** 연다.
     fn confirm_kill_tab(&mut self) {
         let prompt = base::Prompt::kill_tab(&self.tab_facts());
-        if prompt == base::Prompt::KillTabPinned {
+        if prompt == base::Prompt::DetachRemoteTab {
+            // 정본 `confirm_kill_tab` 첫 갈래 — 호스트·자리는 **지금** 잡는다(람다와 같다).
+            let target = self.active_remote_target();
+            let host = target.as_ref().map(|(h, _)| h.clone()).unwrap_or_default();
+            self.remote_detach_target = target;
+            self.screens.confirm_with(prompt, host);
+        } else if prompt == base::Prompt::KillTabPinned {
             let name = self.active_tab_name();
             self.screens.confirm_with(prompt, name);
         } else {
@@ -4951,6 +5136,100 @@ impl SessionView {
             }
             None => {}
         }
+    }
+
+    /// 그 칸이 어느 패널의 **헤더**인가(정본 `_header_pane_at` 그대로 · pytmux-580).
+    ///
+    /// 테두리 상자가 있으면 그 **윗변 한 행 전체**가 손잡이다(제목 글자 유무와 무관).
+    /// 상자가 없으면 `border-status` 일 때 내용 한 줄 위의 제목줄이다. 차례는 배치 순서 —
+    /// 먼저 맞는 패널이 이긴다(정본 루프와 같다).
+    fn header_pane_at(&self, x: u16, y: u16) -> Option<i64> {
+        let layout = self.state.layout()?;
+        layout
+            .panes
+            .iter()
+            .find(|p| match p.boxrect {
+                Some([bx, by, bw, _]) => y == by && bx <= x && x < bx + bw,
+                None => {
+                    layout.border_status && p.y >= 1 && y == p.y - 1 && p.x <= x && x < p.x + p.w
+                }
+            })
+            .map(|p| p.id)
+    }
+
+    /// 캔버스 밖에서 놓았을 때 그 자리 — 탭 · `[+]` · 그 밖(hover 로 가른다 · 탭 끌기와 같은 장치).
+    fn chrome_drop_spot(&self) -> PaneDropAt {
+        let tabs = &self.state.tabs().tabs;
+        if let Some(i) = self.hovered_tab() {
+            return tabs.get(i).map_or(PaneDropAt::OffCanvas, |t| PaneDropAt::Tab(t.index));
+        }
+        if self.mouse_over(&self.chrome_click_states, tabs.len()) {
+            return PaneDropAt::New;
+        }
+        PaneDropAt::OffCanvas
+    }
+
+    /// 패널 헤더를 놓았을 때 나갈 명령(정본 `on_mouse_up` pick-up 갈래 — **순수 판정**).
+    ///
+    /// | 놓은 자리 | 정본 | 여기 |
+    /// |---|---|---|
+    /// | 다른 탭 | `select_pane_id(src)` → `move_pane_to_tab(id, to)` | 같다 |
+    /// | 지금 탭 · 탭바 빈 곳 | 강조만 끈다 | 빈 목록 |
+    /// | `[+]` | `select_pane_id(src)` → `break_pane` | 같다 |
+    /// | 다른 패널(끌었다) | `swap_pane_to(id, to_id)` | 같다 |
+    /// | 제자리 · 안 끌었다 | `select_pane_id(src)`(포커스) | 같다(이미 활성이어도) |
+    ///
+    /// 탭·`[+]` 앞의 `select_pane_id` 는 **늘** 싣는다 — `break_pane` 은 활성 패널에 걸리므로
+    /// 그 순서가 계약이다(정본도 거르지 않는다). 원격 보기에서는 서버가 `move_pane_to_tab`·
+    /// `break_pane` 을 거절하고 `swap_pane_to` 는 중계한다 — 클라는 정본처럼 가리지 않는다.
+    pub(crate) fn pane_drop_commands(
+        src: i64,
+        moved: bool,
+        at: PaneDropAt,
+        active_tab: Option<usize>,
+    ) -> Vec<Command> {
+        match at {
+            PaneDropAt::Tab(to) if Some(to) != active_tab => vec![
+                Command::SelectPaneId { id: src },
+                Command::MovePaneToTab { id: src, to },
+            ],
+            PaneDropAt::New => vec![Command::SelectPaneId { id: src }, Command::BreakPane],
+            PaneDropAt::Canvas(Some(to_id)) if moved && to_id != src => {
+                vec![Command::SwapPaneTo { id: src, to_id }]
+            }
+            // 캔버스 안의 그 밖(클릭 · 제자리) = 정본 `select_pane_id(src)` — **늘** 보낸다
+            // (이미 활성 패널이어도 · 정본이 거르지 않는다).
+            PaneDropAt::Canvas(_) => vec![Command::SelectPaneId { id: src }],
+            _ => Vec::new(),
+        }
+    }
+
+    /// 헤더 끌기 중 드롭 대상 패널 위의 강조(pytmux-580) — GUI 의 그림(허용 갈림 ⓑ).
+    /// 정본은 그 패널을 `_pickup_over` 로 다시 칠한다 — 우리는 테두리 한 겹을 띄운다.
+    fn pane_drop_hint(&self) -> Option<Box<dyn Element>> {
+        let over = self.pane_drag?.over?;
+        let (px, py, pw, ph) = self.state.pane_rect(over)?;
+        let (cw, ch) = self.cell_px.get()?;
+        let cv = self.canvas_px.get()?;
+        let hint = Container::new(Rect::new().finish())
+            .with_background_color(theme::HOVER)
+            .with_border(Border::all(2.).with_border_color(theme::FOCUS))
+            .with_corner_radius(theme::PILL_RADIUS)
+            .finish();
+        let sized = ConstrainedBox::new(hint)
+            .with_width(pw as f32 * cw)
+            .with_height(ph as f32 * ch)
+            .finish();
+        Some(
+            Align::new(
+                Container::new(sized)
+                    .with_padding_left(cv.left + px as f32 * cw)
+                    .with_padding_top(cv.top + py as f32 * ch)
+                    .finish(),
+            )
+            .top_left()
+            .finish(),
+        )
     }
 
     pub fn chrome_click(&mut self, target: base::chrome::ClickTarget) -> bool {
@@ -7190,21 +7469,13 @@ impl SessionView {
             }));
             return;
         }
-        match base::hooks::resolve(&format!("{name} {arg}")) {
-            // 인자를 받는 명령 — 물음의 답으로 **바로** 넘긴다(판을 안 띄운다).
-            Some(base::hooks::HookRun::Answer(prompt, answer)) => {
-                self.apply_answer(prompt, answer);
-            }
-            // 인자를 안 받는 명령에 인자를 쳤다 — 명령은 살리고 인자는 버린다.
-            // (조용히 아무 일도 안 하는 것보다 낫다. 정본도 같은 자리에서 이름을 살린다.)
-            Some(base::hooks::HookRun::Act(action)) => {
-                self.apply_action(action);
-            }
+        // 인자를 받는 명령은 물음의 답으로 **바로** 넘기고(판을 안 띄운다), 인자를 안 받는
+        // 명령에 인자를 쳤으면 명령은 살리고 인자는 버린다 — 둘 다 명령 줄 실행기가 정한다
+        // (pytmux-572 · 훅·`bind` 와 같은 한 벌).
+        if !self.run_command_line(&format!("{name} {arg}")) {
             // 여기 오면 고른 줄의 이름이 표에 없다는 뜻이다 — 액션으로 되돌린다.
-            None => {
-                if let PalettePick::Action(action) = pick {
-                    self.apply_action(action);
-                }
+            if let PalettePick::Action(action) = pick {
+                self.apply_action(action);
             }
         }
     }
@@ -8350,14 +8621,26 @@ impl SessionView {
             Ok(_) => {
                 self.config = base::Config::load();
                 self.mode.set_prefix(self.config.prefix);
-                self.state
-                    .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
-                        self.state.note_notice(format!("set {option} {value}"));
+                apply_config_globals(&self.config, &mut self.state);
+                self.state.note_notice(format!("set {option} {value}"));
             }
             Err(err) => self
                 .state
                 .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())])),
         }
+    }
+
+    /// `source-file [경로]` — 설정 파일을 다시 읽어 **기동 때와 같은 적용 함수**를 지난다
+    /// (pytmux-574 · 정본 `reload_config(path)`).
+    ///
+    /// 경로 규칙은 정본과 같다([`base::Config::load_from`]): 준 경로가 없으면 기본 탐색으로
+    /// 떨어진다. 다시 읽으면 바뀌는 칸 전수는 `proto/tests/config_grammar_conformance.rs`
+    /// (`source_file_rereads_every_field_canon_reloads`)가 정본 `reload_config` 와 칸마다 잰다.
+    fn reload_config(&mut self, path: Option<&str>) {
+        self.config = base::Config::load_from(path);
+        self.mode.set_prefix(self.config.prefix);
+        apply_config_globals(&self.config, &mut self.state);
+        self.state.note_notice(t("설정을 다시 읽었다"));
     }
 
     /// 셸 명령을 **스레드에서** 돌린다(패리티 G8p). 두 뷰가 같은 표다.
@@ -8380,7 +8663,7 @@ impl SessionView {
     /// 액션을 **여기서 안 부르는** 이유: `if-shell` 의 뒤 명령은 확인 화면을 세울 수도
     /// 있어 뷰 문맥이 필요한데, 이 함수는 주기 갱신에서 불린다. 할 일만 돌려주고
     /// 실행은 문맥이 있는 호출부가 한다.
-    fn take_shell_result(&mut self) -> (bool, Option<base::Action>) {
+    fn take_shell_result(&mut self) -> (bool, Option<base::cmdline::Run>) {
         let Some(outcome) = self.shell_result.lock().ok().and_then(|mut s| s.take()) else {
             return (false, None);
         };
@@ -8399,10 +8682,12 @@ impl SessionView {
                         ));
                     return (true, None);
                 };
+                // then/else 는 **명령 줄**이다 — 정본 `_if_shell` 이 `_run_command` 로 재귀하듯
+                // 같은 실행기를 지난다(pytmux-572 · 종전에는 팔레트 이름 그대로만 찾아
+                // `send-keys foo` 같은 인자 있는 줄이 「모르는 명령」이었다).
                 if let Some(name) = picked {
-                    let name = base::resolve_command_name(&name).to_owned();
-                    match base::PALETTE.iter().find(|e| e.name == name) {
-                        Some(entry) => return (true, Some(entry.action)),
+                    match base::cmdline::run_line(&name, &self.config.aliases) {
+                        Some(run) => return (true, Some(run)),
                         None => self
                             .state
                             .note_error(tf("모르는 명령이다: {name}", &[("name", &name)])),
@@ -9285,6 +9570,17 @@ impl SessionView {
     /// 입구가 둘이다 — 사람이 물음에 답한 길과, **훅이 물음을 건너뛰고 대답을 바로
     /// 넣는 길**([`base::hooks::HookRun::Answer`]).
     fn apply_answer(&mut self, prompt: Prompt, answer: String) {
+        // 원격 탭 분리(pytmux-601)는 판을 연 순간 잡은 `(host, index)` 를 싣는다 — 대답
+        // 글자에는 그 둘이 없어서 아래 표(`answered`)로 못 옮긴다.
+        if prompt == Prompt::DetachRemoteTab {
+            if let Some((host, index)) = self.remote_detach_target.take() {
+                self.pending.push(Outgoing::Command(Command::RemoteDetach {
+                    host,
+                    index: Some(index),
+                }));
+            }
+            return;
+        }
         // 인자 이력에 남긴다(파이썬 arghist — 다음에 같은 물음에서 후보로 뜬다).
         if let Some(bucket) = proto::arghist::bucket(prompt) {
             self.arghist.record(bucket, &answer);
@@ -9396,19 +9692,39 @@ impl SessionView {
 
     /// 사건이 났다 — 걸린 훅이 있으면 **사람이 친 것과 같은 길**로 돌린다(패리티 G8u).
     fn fire_hooks(&mut self, events: &[base::hooks::HookEvent]) {
-        use base::hooks::HookRun;
         for event in events {
             let Some(line) = self.config.hooks.get(event.name()).map(str::to_owned) else {
                 continue;
             };
-            match base::hooks::resolve(&line) {
-                Some(HookRun::Act(action)) => {
-                    self.apply_action(action);
-                }
-                Some(HookRun::Answer(prompt, answer)) => self.apply_answer(prompt, answer),
-                // 모르는 이름은 조용히 넘긴다(정본과 같다).
-                None => {}
+            // 모르는 이름은 조용히 넘긴다(정본과 같다).
+            self.run_command_line(&line);
+        }
+    }
+
+    /// 명령 줄 한 줄을 돌린다 — 훅 · `if-shell` 의 then/else · 별칭이 지나는 **한 입구**
+    /// (pytmux-572). 해석은 core 한 벌([`base::cmdline::run_line`] · 사용자 별칭까지)이다.
+    fn run_command_line(&mut self, line: &str) -> bool {
+        match base::cmdline::run_line(line, &self.config.aliases) {
+            Some(run) => {
+                self.run_command_run(run);
+                true
             }
+            None => false,
+        }
+    }
+
+    /// 명령 줄 실행기가 정한 일을 한다. 각 갈래는 **사람이 친 것과 같은 길**이다 — 액션은
+    /// 팔레트에서 고른 것처럼, 대답은 물음에 답한 것처럼.
+    fn run_command_run(&mut self, run: base::cmdline::Run) {
+        use base::cmdline::Run;
+        match run {
+            Run::Act(action) => {
+                self.apply_action(action);
+            }
+            Run::Answer(prompt, answer) => self.apply_answer(prompt, answer),
+            Run::Flip(key) => self.flip_config(key),
+            Run::IfShell { cond, then, otherwise } => self.spawn_shell(cond, Some(then), otherwise),
+            Run::SourceFile(path) => self.reload_config(path.as_deref()),
         }
     }
 
@@ -9417,97 +9733,12 @@ impl SessionView {
     /// **빈 대답은 아무 일도 아니다** — 이름을 지우고 Enter 를 친 사람이 탭 이름을
     /// 빈 문자열로 만들려던 것은 아니다(서버가 그걸 받으면 탭바에서 그 탭이 사라진 것처럼
     /// 보인다).
+    ///
+    /// ★ 표는 **proto 한 곳**이다(`proto::answer::answer_command` · pytmux-572) — 명령 줄
+    ///   실행기가 넘긴 대답이 서버로 무엇을 내보내는지를 뷰 없이 정본 픽스처와 재려고 옮겼다.
+    ///   갈래를 더할 때는 그쪽에 더한다.
     fn answered(prompt: Prompt, answer: &str) -> Option<Command> {
-        let answer = answer.trim();
-        match prompt {
-            Prompt::RenameTab => (!answer.is_empty()).then(|| Command::RenameWindow {
-                name: answer.to_owned(),
-            }),
-            // 숫자가 아니면 아무 일도 안 한다 — 짐작해서 0번으로 옮기면 사용자는 자기가
-            // 무엇을 했는지 모른다.
-            Prompt::MoveTab => answer
-                .parse::<usize>()
-                .ok()
-                .map(|index| Command::MoveWindow { index }),
-            Prompt::KillPane => Some(Command::KillPane),
-            // 넷 다 하는 일은 같다 — **문구만** 상황을 안다(무엇을 잃는지가 다르다).
-            Prompt::KillTab
-            | Prompt::KillTabLast
-            | Prompt::KillTabLastRemote
-            | Prompt::KillTabPinned => Some(Command::KillWindow),
-            // 설정은 **서버에 시킬 일이 아니다** — 우리 설정 파일과 이번 판의 키맵을
-            // 고치는 것이라 호출부에서 따로 처리한다(위 `Answered` 갈래).
-            // 빈 제목은 **되돌리기**다(서버가 기본 제목으로 돌린다) — 지우고 Enter 를
-            // 친 사람의 뜻이 그거다.
-            Prompt::RenamePane => Some(Command::SetPaneTitle {
-                title: answer.to_owned(),
-            }),
-            // 숫자가 아니면 아무 일도 안 한다 — 짐작해서 0번과 바꾸면 사용자는 자기가
-            // 무엇을 했는지 모른다(탭 이동과 같은 규칙).
-            Prompt::SwapTab => answer
-                .parse::<usize>()
-                .ok()
-                .map(|index| Command::SwapTab { index }),
-            // 플러그인이 물은 것은 **서버 명령이 아니라** 그 플러그인의 액션이라
-            // 여기서 명령으로 옮기지 않는다(`answer_plugin_ask` 가 앞에서 가로챈다).
-            Prompt::PluginAsk => None,
-            // 빈 이름은 아무 일도 아니다 — 이름 없는 배치는 다시 못 찾는다.
-            Prompt::SaveTabLayout => (!answer.is_empty()).then(|| Command::SaveTabLayout {
-                name: answer.to_owned(),
-            }),
-            Prompt::LoadTabLayout => (!answer.is_empty()).then(|| Command::LoadTabLayout {
-                name: answer.to_owned(),
-                new: false,
-            }),
-            Prompt::LoadTabLayoutNew => (!answer.is_empty()).then(|| Command::LoadTabLayout {
-                name: answer.to_owned(),
-                new: true,
-            }),
-            // 빈 대답이 **뜻을 갖는다** — 파이프를 끈다(원격 떼기와 같은 부류).
-            Prompt::PipePane => Some(Command::PipePane {
-                cmd: answer.to_owned(),
-            }),
-            Prompt::JoinPane => answer.parse::<usize>().ok().map(|src| Command::JoinPane {
-                src,
-                horizontal: false,
-            }),
-            // 서버에 시킬 일이 아니다 — 우리 상태줄·설정 파일이라 호출부가 처리한다.
-            Prompt::DisplayMessage | Prompt::DefaultPath | Prompt::ClaudeCommand | Prompt::SetOption
-            | Prompt::SendKeys | Prompt::BindKey | Prompt::UnbindKey
-            | Prompt::RunShell | Prompt::IfShell | Prompt::DisplayPopup => None,
-            // 상태줄 넷과 커서 색은 **설정 파일**이 주인이라 서버에 시킬 일이 없다.
-            Prompt::StatusLeft | Prompt::StatusRight | Prompt::StatusBg | Prompt::StatusFg
-            | Prompt::CursorColor | Prompt::FontFamily => None,
-            // 훅도 클라 안에서 끝난다(`base::hooks`).
-            Prompt::SetHook => None,
-            Prompt::SetPrefix => None,
-            Prompt::KillServer => Some(Command::KillServer),
-            // 재시작 둘은 아래 갈래에서 이미 처리된다(부수효과가 둘이라 명령 하나로
-            // 못 옮긴다).
-            Prompt::RestartServer | Prompt::RestartAll => None,
-            // 빈 host 는 아무 일도 아니다 — 어느 상자에 붙을지 모르는 채로 보내면
-            // 서버가 빈 이름으로 ssh 를 띄운다.
-            // `C via B`(다중홉) 문법까지 여기서 갈린다 — 파싱은 proto 한 곳이다.
-            Prompt::RemoteAttach => Command::remote_attach(answer),
-            Prompt::RemoteNewTab => (!answer.is_empty()).then(|| Command::RemoteNewTab {
-                host: answer.to_owned(),
-            }),
-            // 떼기는 **빈 값이 곧 뜻**이다(전부) — 위 둘과 갈리는 자리다.
-            Prompt::RemoteDetach => Some(Command::RemoteDetach {
-                host: answer.to_owned(),
-            }),
-            // 빈 대답은 검색이 아니다(파이썬도 값이 있어야 보낸다). 새 검색은 위(과거)
-            // 방향부터 — `/` 물음의 문구가 그 약속이다.
-            Prompt::SearchScrollback => (!answer.is_empty()).then(|| Command::Search {
-                query: Some(answer.to_owned()),
-                down: false,
-            }),
-            // 빈 대답은 검색이 아니다(정본도 값이 있어야 보낸다). `awaiting_search_all`
-            // 는 이 명령을 실제로 큐에 넣는 호출부(§`Action::SearchAll` 처리)가 켠다 —
-            // 여기서는 명령 모양만 짓는다.
-            Prompt::SearchAll => (!answer.is_empty())
-                .then(|| Command::SearchAll { query: answer.to_owned() }),
-        }
+        proto::answer::answer_command(prompt, answer)
     }
 
     /// 입력·확인 화면(패리티 G4).
@@ -11554,6 +11785,10 @@ impl View for SessionView {
         for bar in self.sticky_bars() {
             body = body.with_child(bar);
         }
+        // 패널 헤더 끌기의 드롭 대상(pytmux-580) — 같은 층.
+        if let Some(hint) = self.pane_drop_hint() {
+            body = body.with_child(hint);
+        }
         // 붙여넣은 그림의 썸네일(pytmux-472) — 캔버스 위·판 아래(달력과 같은 순서).
         if let Some(thumb) = self.pasted_thumb_element() {
             body = body.with_child(thumb);
@@ -12280,6 +12515,46 @@ struct OsCopyDone {
 /// 성공·실패 **양쪽 다 붙인다**(정본과 같다). 실패했다고 아무것도 안 붙이면 사용자는
 /// 스크린샷을 다시 찍는 수밖에 없는데, 로컬 경로라도 손에 쥐면 스스로 옮길 수 있다 —
 /// 다만 그것이 원격에서 안 열린다는 **경고와 함께** 준다.
+/// 패널 헤더 pick-up(pytmux-580).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PaneDrag {
+    /// 들고 있는 패널.
+    src: i64,
+    /// 누른 자리(진단용 — 정본 pick-up 은 임계를 안 쓴다).
+    press: (u16, u16),
+    /// 다른 패널 위에 왔거나 캔버스 밖(탭바 쪽)으로 나갔나(정본 `_pickup_moved`) — 아니면 클릭이다.
+    moved: bool,
+    /// 지금 가리키는 **다른** 패널(놓으면 맞바꾼다 · 강조용).
+    over: Option<i64>,
+}
+
+/// 패널 헤더를 놓은 자리(pytmux-580) — 정본 `on_mouse_up` 의 pick-up 갈래가 가르는 넷.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum PaneDropAt {
+    /// 탭바의 탭 위(그 탭의 전역 index).
+    Tab(usize),
+    /// 탭바의 `[+]` 위.
+    New,
+    /// 캔버스 밖이지만 탭도 `[+]` 도 아니다(정본 `event.y < 0` 의 «그 밖»).
+    OffCanvas,
+    /// 캔버스 안 — 그 자리의 패널(없으면 `None`).
+    Canvas(Option<i64>),
+}
+
+/// 선택 끌기 중 가장자리 자동 스크롤의 상태(pytmux-579).
+#[derive(Debug, Clone, Copy)]
+struct AutoScroll {
+    /// 선택을 시작한 패널 — 정본 `_scroll_during_drag` 도 그 패널만 굴린다.
+    pane: i64,
+    /// 한 번에 보낼 `scroll` 델타(+ 위/과거 · − 아래/최신).
+    delta: i32,
+    /// 마지막 포인터 자리(캔버스 칸) — 구른 뒤 선택 끝점을 그 자리의 **새 절대 행**으로
+    /// 다시 잡는다(정본 `sync_selection` 이 하는 일).
+    ptr: (u16, u16),
+    /// 다음에 구를 시각(정본 `set_interval(_AUTOSCROLL_SEC)` — 첫 구름도 한 간격 뒤다).
+    next: Instant,
+}
+
 /// 잡은 스크롤바 썸(pytmux-521) — 잡은 순간의 자리와 스크롤. 끌기의 산수는 core 다.
 #[derive(Debug, Clone, Copy)]
 struct SbDrag {

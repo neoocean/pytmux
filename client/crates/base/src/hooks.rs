@@ -24,7 +24,6 @@
 //! 탭 개수는 **직전 값이 0이면 발화하지 않는다**(정본의 `if self._prev_winc and …`).
 //! 붙자마자 탭 셋이 보이는 것은 "탭이 셋 생긴" 것이 아니라 원래 있던 것이다.
 
-use crate::keymap::{Action, PALETTE};
 use crate::screens::Prompt;
 
 /// 코어가 스스로 발화하는 사건 셋. 이름은 정본과 **글자까지 같아야 한다** —
@@ -202,20 +201,12 @@ impl HookWatcher {
     }
 }
 
-/// 훅에 걸린 명령 한 줄을 **무엇으로 돌릴지**.
+/// 훅에 걸린 명령 한 줄을 **무엇으로 돌릴지** — 명령 줄 실행기의 결과 그대로다(pytmux-572).
 ///
-/// # 왜 두 갈래인가
-///
-/// 우리 클라에는 "명령 한 줄을 통째로 해석하는" 입구가 없다 — 팔레트는 이름을 골라
-/// **액션**을 일으키고, 인자가 필요한 것은 물음을 띄운다. 훅은 사람이 없는 자리라
-/// 물음을 띄울 수 없으므로, 인자가 있는 줄은 **물음을 건너뛰고 대답을 바로 넣는다.**
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HookRun {
-    /// 인자 없는 것 — 팔레트에서 고른 것과 **같은 길**로 간다(확인 화면도 그대로 뜬다).
-    Act(Action),
-    /// 인자 있는 것 — 그 물음에 이 대답이 나온 것처럼 처리한다.
-    Answer(Prompt, String),
-}
+/// 종전에는 이 모듈이 자기 해석기와 두 갈래(`Act`·`Answer`)를 들고 있었다. 명령 줄을 푸는
+/// 자리가 입구마다 따로면 갈린다 — 이제 [`crate::cmdline::run_line`] 한 벌이고, 이 이름은
+/// 그 결과의 옛 이름으로만 남는다.
+pub use crate::cmdline::Run as HookRun;
 
 /// 인자를 받는 명령의 이름 → 그 인자를 묻는 물음.
 ///
@@ -268,41 +259,11 @@ pub fn arg_prompt(name: &str) -> Option<Prompt> {
         .map(|(_, prompt)| *prompt)
 }
 
-/// 명령 한 줄을 돌릴 수 있는 것으로 옮긴다. 모르는 이름은 `None` — **조용히 넘긴다**
-/// (정본도 그렇다. 훅이 도는 자리에는 오류를 볼 사람이 없다).
+/// 명령 한 줄을 돌릴 수 있는 것으로 옮긴다 — 사용자 별칭 없이 [`crate::cmdline::run_line`].
 ///
-/// 순서가 규칙이다: **줄 전체가 팔레트 이름과 같은지 먼저** 본다. 팔레트에는
-/// `split-window -h` 처럼 **플래그를 이름에 품은** 항목이 있어서, 첫 낱말만 떼면 그게
-/// `split-window` + 인자 `-h` 로 잘못 갈린다.
+/// 별칭까지 풀어야 하는 자리(설정을 든 뷰)는 `run_line(line, &config.aliases)` 를 직접 부른다.
 pub fn resolve(line: &str) -> Option<HookRun> {
-    let line = line.trim();
-    if line.is_empty() {
-        return None;
-    }
-    let whole = line.to_ascii_lowercase();
-    if let Some(entry) = PALETTE
-        .iter()
-        .find(|e| e.name.to_ascii_lowercase() == whole)
-    {
-        return Some(HookRun::Act(entry.action));
-    }
-    // 자르는 자리는 **core 한 벌**이다(pytmux-7) — 팔레트가 거르는 자리와 같아야
-    // `remote-attach host1` 이 목록에서는 걸리는데 여기서는 안 걸리는 일이 없다.
-    let (name, arg) = crate::screens::split_first_space(line);
-    let arg = arg.trim();
-    let lower = name.to_ascii_lowercase();
-    if let Some((_, prompt)) = ARG_COMMANDS.iter().find(|(n, _)| *n == lower) {
-        // 인자가 비었으면 물음을 띄우는 편이 낫다 — `run-shell` 만 적어 둔 훅에
-        // 빈 명령을 돌리면 아무 일도 안 하고 이유도 안 남는다.
-        if !arg.is_empty() {
-            return Some(HookRun::Answer(*prompt, arg.to_owned()));
-        }
-    }
-    // 인자 없는 별칭·이름(예: `redraw`)은 팔레트가 이미 잡았다. 남은 것은 모르는 이름.
-    PALETTE
-        .iter()
-        .find(|e| e.name.to_ascii_lowercase() == lower)
-        .map(|e| HookRun::Act(e.action))
+    crate::cmdline::run_line(line, &crate::cmdline::Aliases::default())
 }
 
 #[cfg(test)]

@@ -142,6 +142,12 @@ pub enum Command {
     SwapPane { forward: bool },
     /// 활성 패널을 새 탭으로 떼어낸다.
     BreakPane,
+    /// 패널 `id` 와 `to_id` 를 맞바꾼다 — 패널 헤더를 끌어 다른 패널 위에 놓았다
+    /// (정본 `clientwidgets.py` `on_mouse_up` 의 pick-up 갈래 · pytmux-580).
+    SwapPaneTo { id: i64, to_id: i64 },
+    /// 패널 `id` 를 전역 index `to` 탭으로 옮긴다 — 패널 헤더를 탭바의 탭 위에 놓았다
+    /// (정본 `move_pane_to_tab` · pytmux-580). 원격 보기에서는 서버가 거절한다(정본과 같다).
+    MovePaneToTab { id: i64, to: usize },
     /// 방향으로 패널을 고른다.
     SelectPaneDir { dir: Dir },
     /// 방향으로 패널 경계를 민다. `cells` 는 한 번에 미는 칸 수다.
@@ -332,7 +338,11 @@ pub enum Command {
     /// 어휘는 '윈도우'다(이 저장소 전체가 같은 어긋남을 안고 있다).
     RemoteNewTab { host: String },
     /// 원격 붙임을 푼다. `host` 가 비면 **전부**다.
-    RemoteDetach { host: String },
+    ///
+    /// `index` 는 **병합 전역 탭 index** 다 — 실으면 서버(`remote_detach_tab`)가 그 원격
+    /// 탭 **하나만** 떼고 같은 호스트의 다른 원격 탭은 남긴다(정본 `confirm_kill_tab` 이
+    /// 원격 탭의 `[x]` 에서 그렇게 보낸다 · pytmux-601). `None` 이면 호스트 전체다.
+    RemoteDetach { host: String, index: Option<usize> },
     /// 활성 패널의 제목을 바꾼다(`prefix T`).
     SetPaneTitle { title: String },
     /// 플러그인 하나를 켜고 끈다(패리티 G7).
@@ -480,6 +490,8 @@ impl Command {
             Command::Rotate { .. } => "rotate",
             Command::SwapPane { .. } => "swap_pane",
             Command::BreakPane => "break_pane",
+            Command::SwapPaneTo { .. } => "swap_pane_to",
+            Command::MovePaneToTab { .. } => "move_pane_to_tab",
             Command::SelectPaneDir { .. } => "select_pane",
             Command::ResizeDir { .. } => "resize_dir",
             Command::TogglePin { .. } => "set_pinned",
@@ -592,6 +604,8 @@ impl Command {
             Command::Rotate { forward } | Command::SwapPane { forward } => {
                 json!({ "forward": forward })
             }
+            Command::SwapPaneTo { id, to_id } => json!({ "id": id, "to_id": to_id }),
+            Command::MovePaneToTab { id, to } => json!({ "id": id, "to": to }),
             Command::SelectPaneDir { dir } => json!({ "dir": dir.as_str() }),
             Command::ResizeDir { dir, cells } => {
                 json!({ "dir": dir.as_str(), "cells": cells })
@@ -635,12 +649,16 @@ impl Command {
             Command::RemoteNewTab { host } => json!({ "host": host }),
             // 빈 host 는 **키를 아예 안 싣는다** — 파이썬 클라와 같다(빈 문자열을 실으면
             // 서버는 "그 이름의 원격"을 찾다가 아무것도 못 떼고 조용히 끝난다).
-            Command::RemoteDetach { host } => {
-                if host.is_empty() {
-                    json!({})
-                } else {
-                    json!({ "host": host })
+            Command::RemoteDetach { host, index } => {
+                let mut args = serde_json::Map::new();
+                if !host.is_empty() {
+                    args.insert("host".into(), json!(host));
                 }
+                // 정본과 같다 — 자리를 알 때만 싣는다(안 실으면 호스트 전체가 끊긴다).
+                if let Some(index) = index {
+                    args.insert("index".into(), json!(index));
+                }
+                serde_json::Value::Object(args)
             }
             Command::SetPluginEnabled { name, on } => json!({ "name": name, "on": on }),
             Command::SetPaneTitle { title } => json!({ "title": title }),
@@ -796,6 +814,8 @@ impl Command {
             Command::Rotate { forward: true },
             Command::SwapPane { forward: false },
             Command::BreakPane,
+            Command::SwapPaneTo { id: 1, to_id: 2 },
+            Command::MovePaneToTab { id: 1, to: 2 },
             Command::SelectPaneDir { dir: Dir::LEFT },
             Command::ResizeDir { dir: Dir::UP, cells: 3 },
             Command::TogglePin { index: None },
@@ -836,7 +856,7 @@ impl Command {
             Command::RestartServer,
             Command::RemoteAttach { host: "box1".into(), via: Some("box0".into()) },
             Command::RemoteNewTab { host: "box1".into() },
-            Command::RemoteDetach { host: String::new() },
+            Command::RemoteDetach { host: String::new(), index: None },
             Command::SetPluginEnabled { name: "clock".into(), on: false },
             Command::SetPaneTitle { title: "build".into() },
             Command::JumpPrompt { direction: "up" },
@@ -1277,6 +1297,8 @@ mod tests {
             Command::Rotate { .. } => 20,
             Command::SwapPane { .. } => 21,
             Command::BreakPane => 22,
+            Command::SwapPaneTo { .. } => 73,
+            Command::MovePaneToTab { .. } => 74,
             Command::SelectPaneDir { .. } => 23,
             Command::ResizeDir { .. } => 24,
             Command::TogglePin { .. } => 25,
@@ -1340,7 +1362,7 @@ mod tests {
     }
 
     /// `variant_index` 가 돌려주는 값의 가짓수. 변형을 늘리면 여기도 늘려야 한다.
-    const VARIANT_COUNT: usize = 73;
+    const VARIANT_COUNT: usize = 75;
 
     #[test]
     fn all_covers_every_variant() {
@@ -1356,6 +1378,22 @@ mod tests {
             "all() 에 빠진 변형이 있다(variant_index {missing:?}) — \
              빠진 변형은 서버 명령 표와 대조되지 않는다"
         );
+    }
+
+    #[test]
+    fn remote_detach_carries_the_tab_index_only_when_it_is_known() {
+        // pytmux-601: 정본은 원격 탭의 `[x]` 에서 `remote_detach(host, index=<병합 전역
+        // index>)` 를 보내 그 탭 **하나만** 뗀다. index 를 잃으면 호스트 전체가 끊긴다.
+        let one = Command::RemoteDetach { host: "box1".into(), index: Some(2) }.to_frame();
+        assert_eq!(one["action"], "remote_detach");
+        assert_eq!(one["host"], "box1");
+        assert_eq!(one["index"], 2);
+        // 팔레트의 `remote-detach <host>` 는 정본처럼 host 만 싣는다 — index 키가 없다.
+        let all = Command::RemoteDetach { host: "box1".into(), index: None }.to_frame();
+        assert!(all.get("index").is_none(), "{all}");
+        // 빈 host 는 키를 아예 안 싣는다(종전 규칙 그대로).
+        let none = Command::RemoteDetach { host: String::new(), index: None }.to_frame();
+        assert!(none.get("host").is_none(), "{none}");
     }
 
     #[test]

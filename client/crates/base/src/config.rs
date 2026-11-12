@@ -208,6 +208,10 @@ pub struct Config {
     /// 설정 파일의 `hook`/`set-hook` 줄을 그대로 담는다 — **모르는 이벤트 이름도**
     /// 버리지 않는다(플러그인이 자기 사건을 쓴다. `hooks` 모듈 문서 참조).
     pub hooks: crate::hooks::Hooks,
+    /// 사용자 명령 별칭 — 설정 파일의 `alias <이름> <명령…>`(pytmux-573 · 정본 `cfg["aliases"]`).
+    ///
+    /// 푸는 자리는 명령 줄 실행기 한 곳이다([`crate::cmdline::run_line`] — 이름 해석 **앞**).
+    pub aliases: crate::cmdline::Aliases,
     /// UI 언어(`lang ko|en` · 별칭 `language`). 빈 값이면 "안 정했다" — 시동이
     /// 환경 변수로 넘어간다([`crate::i18n::resolve`]). 파이썬과 **같은 파일·같은
     /// 키**라 두 클라가 설정을 공유한다(G5 결정).
@@ -434,6 +438,7 @@ impl Default for Config {
             mouse_drag_threshold: 3,
             ambiguous_width: "auto".to_owned(),
             hooks: crate::hooks::Hooks::default(),
+            aliases: crate::cmdline::Aliases::default(),
             lang: String::new(),
             font_scale: 1.0,
             font_family: String::new(),
@@ -472,7 +477,15 @@ pub fn redirect_writes(path: PathBuf) {
 impl Config {
     /// 설정 파일을 찾아 읽는다. 없으면 기본값이다(오류가 아니다).
     pub fn load() -> Self {
-        match Self::path() {
+        Self::load_from(None)
+    }
+
+    /// `source-file <경로>` 의 읽기(pytmux-574) — 정본 `load_config(path)` 와 같은 규칙이다:
+    /// 준 경로는 탐색 차례의 **맨 앞 후보**일 뿐이라, 그 파일이 없으면 **기본 탐색으로
+    /// 떨어진다**(정본은 그때 아무 말도 안 한다). `~`·환경변수는 펴지 않는다 — 정본도
+    /// `os.path.isfile(path)` 를 그대로 묻는다.
+    pub fn load_from(explicit: Option<&str>) -> Self {
+        match Self::path_from(explicit) {
             Some(path) => std::fs::read_to_string(path)
                 .map(|text| Self::parse(&text))
                 .unwrap_or_default(),
@@ -482,7 +495,15 @@ impl Config {
 
     /// 읽을 파일. 탐색 순서는 파이썬 클라와 같다.
     pub fn path() -> Option<PathBuf> {
+        Self::path_from(None)
+    }
+
+    /// [`Config::path`] 앞에 **명시 경로** 하나를 세운 탐색(정본 `load_config(path)` 의 `candidates`).
+    pub fn path_from(explicit: Option<&str>) -> Option<PathBuf> {
         let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Some(given) = explicit.filter(|p| !p.is_empty()) {
+            candidates.push(PathBuf::from(given));
+        }
         if let Some(explicit) = std::env::var_os("PYTMUX_CONFIG") {
             candidates.push(PathBuf::from(explicit));
         }
@@ -571,6 +592,15 @@ impl Config {
             // `hook <이벤트> <명령>` · `set-hook <이벤트> <명령>` — 파이썬 `keymap.py`
             // 가 받는 두 철자 그대로다. 값에 공백이 드므로 위 `set` 과 같은 규칙으로
             // **줄의 나머지 전부**를 명령으로 삼는다.
+            // `alias <이름> <명령…>` — 정본 `keymap.load_config` 와 같은 규칙(낱말이 셋 이상일
+            // 때만 · 명령은 나머지 낱말을 공백 하나로 이은 것).
+            if word == "alias" {
+                let rest: Vec<&str> = parts.collect();
+                if rest.len() >= 2 {
+                    config.aliases.set(rest[0], &rest[1..].join(" "));
+                }
+                continue;
+            }
             if word == "hook" || word == "set-hook" {
                 if let Some(rest) = line.split_once(char::is_whitespace).map(|(_, r)| r)
                     && let Some(crate::hooks::SetHook::Set { event, command }) =
@@ -596,7 +626,10 @@ impl Config {
             }
             let value = value.as_str();
             // `bind` 는 `set` 이 아니다 — 위에서 걸러졌으므로 여기서 다시 본다.
-            match normalize_opt(option).as_str() {
+            // ★ 옵션 별칭(`tabbar` → `tab-bar`)을 **쓰기와 같은 표**로 접은 뒤 가른다(pytmux-600).
+            //   종전에는 [`OPT_ALIASES`] 를 쓰기(`edit_option`)만 봐서 `set tabbar auto` 가
+            //   읽기에서 조용히 무시됐다 — 정본 `keymap.load_config` 는 둘 다 받는다.
+            match canonical_opt(option).as_str() {
                 "prefix" => {
                     if let Some(prefix) = parse_key(value) {
                         config.prefix = prefix;
@@ -1840,6 +1873,18 @@ fn normalize_opt(name: &str) -> String {
     name.replace('_', "-").to_ascii_lowercase()
 }
 
+/// 옵션 이름을 [`OPT_ALIASES`] 의 **정규 이름**으로 접는다(`tabbar` → `tab-bar`). 읽기
+/// (`Config::parse`)와 쓰기(`edit_option`)가 같은 표를 보게 하는 자리다(pytmux-600).
+fn canonical_opt(name: &str) -> String {
+    let key = normalize_opt(name);
+    OPT_ALIASES
+        .iter()
+        .find(|(canon, aliases)| {
+            normalize_opt(canon) == key || aliases.iter().any(|a| normalize_opt(a) == key)
+        })
+        .map_or(key, |(canon, _)| normalize_opt(canon))
+}
+
 /// `key` 와 같은 설정을 뜻하는 모든 철자(정규형).
 fn alias_set(key: &str) -> Vec<String> {
     let key = normalize_opt(key);
@@ -1968,15 +2013,20 @@ impl Bind {
         })
     }
 
-    /// 이 바인딩이 걸린 액션. 팔레트에 없는 명령이면 `None`.
+    /// 이 바인딩이 걸린 명령 줄이 뜻하는 일 — 정본 `_run_command` 와 같은 실행기를 지난다
+    /// (pytmux-572). 종전에는 줄 전체를 팔레트 이름으로만 찾아 `bind x send-keys C-c` 같은
+    /// **인자 있는 명령이 읽히되 눌러도 아무 일도 안 했다.**
+    pub fn run(&self, aliases: &crate::cmdline::Aliases) -> Option<crate::cmdline::Run> {
+        crate::cmdline::run_line(&self.command, aliases)
+    }
+
+    /// 이 바인딩이 **액션 하나**로 끝나면 그 액션(별칭 없이 푼 결과). 인자를 물음의 대답으로
+    /// 넘기는 줄(`send-keys C-c`)은 `None` — 그런 줄까지 보려면 [`Bind::run`].
     pub fn action(&self) -> Option<Action> {
-        // 정본이 받는 별칭(`bind-key X killp`)도 받는다(pytmux-470) — 설정 파일은 사람이
-        // 손으로 쓰는 자리라 tmux 이름이 그대로 들어오는 것이 오히려 보통이다.
-        let name = crate::resolve_command_name(&self.command);
-        crate::PALETTE
-            .iter()
-            .find(|e| e.name == name)
-            .map(|e| e.action)
+        match self.run(&crate::cmdline::Aliases::default())? {
+            crate::cmdline::Run::Act(action) => Some(action),
+            _ => None,
+        }
     }
 }
 
@@ -2048,37 +2098,149 @@ fn rewrite_binds(
     Ok(target)
 }
 
-/// `bind` 의 키 표기를 [`binding_name`](crate::keys::binding_name) 표기로.
+/// 정본 `keymap._MOD_PREFIXES` 와 같은 수정키 접두(소문자). 값은 우리 이름 표기의 수정키다.
+const MOD_PREFIXES: &[(&str, &str)] = &[
+    ("c-", "ctrl"),
+    ("ctrl-", "ctrl"),
+    ("m-", "alt"),
+    ("meta-", "alt"),
+    ("a-", "alt"),
+    ("alt-", "alt"),
+    ("s-", "shift"),
+    ("shift-", "shift"),
+];
+
+/// 정본 `keymap._NAMED_KEYS` 와 같은 이름 키 표(소문자 tmux/일반 이름 → 우리 이름).
 ///
-/// `C-x` → `ctrl-x`, `M-x` → `alt-x`, 대문자 하나 → `shift-X`. 나머지는 그대로 둔다
-/// (`f5`·`enter` 같은 이름은 이미 우리 표기다).
-pub fn normalize_bind_key(key: &str) -> String {
-    let lower = key.to_ascii_lowercase();
-    if let Some(rest) = lower.strip_prefix("c-") {
-        return format!("ctrl-{rest}");
-    }
-    if let Some(rest) = lower.strip_prefix("m-") {
-        return format!("alt-{rest}");
-    }
-    let mut chars = key.chars();
-    if let (Some(c), None) = (chars.next(), chars.next())
-        && c.is_ascii_uppercase()
+/// 우리 이름([`crate::keys::binding_name_with`])이 정본의 Textual 이름과 같은 글자라 값도
+/// 같다. 손으로 옮긴 표이므로 `proto/tests/config_grammar_conformance.rs` 가 정본 픽스처의
+/// 이름 키 전수로 「그 키를 누르면 걸리나」를 잰다(pytmux-600).
+const NAMED_KEYS: &[(&str, &str)] = &[
+    ("up", "up"),
+    ("down", "down"),
+    ("left", "left"),
+    ("right", "right"),
+    ("home", "home"),
+    ("end", "end"),
+    ("pageup", "pageup"),
+    ("ppage", "pageup"),
+    ("pgup", "pageup"),
+    ("pagedown", "pagedown"),
+    ("npage", "pagedown"),
+    ("pgdn", "pagedown"),
+    ("tab", "tab"),
+    ("space", "space"),
+    ("enter", "enter"),
+    ("return", "enter"),
+    ("escape", "escape"),
+    ("esc", "escape"),
+    ("bspace", "backspace"),
+    ("backspace", "backspace"),
+    ("bs", "backspace"),
+    ("delete", "delete"),
+    ("dc", "delete"),
+    ("del", "delete"),
+    ("insert", "insert"),
+    ("ic", "insert"),
+];
+
+/// 수정키를 뗀 기본 키 이름 — 정본 `_normalize_base` 와 같다(F-키 → `f5`, 이름 키 → 표,
+/// 글자 하나 → 소문자). 모르는 여러 글자면 `None`.
+fn normalize_base_key(base: &str) -> Option<String> {
+    let low = base.to_ascii_lowercase();
+    if low.len() >= 2
+        && let Some(digits) = low.strip_prefix('f')
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && let Ok(n) = digits.parse::<u32>()
     {
-        return format!("shift-{c}");
+        return Some(format!("f{n}"));
     }
-    key.to_owned()
+    if let Some((_, name)) = NAMED_KEYS.iter().find(|(k, _)| *k == low) {
+        return Some((*name).to_owned());
+    }
+    (base.chars().count() == 1).then(|| base.to_lowercase())
+}
+
+/// `bind` 의 키 표기를 [`binding_name_with`](crate::keys::binding_name_with) 표기로 — 정본
+/// `keymap._tmux_key_to_textual` 과 같은 규칙이다(pytmux-600).
+///
+/// - 수정키(`C-`·`M-`·`S-` · 풀네임 포함)는 임의 순서로 쌓인다. 우리 표기는 `ctrl-alt-…` 차례이고
+///   `shift` 는 기본 키에 붙는다(`ctrl-shift-tab`).
+/// - 수정키가 없으면 **F-키·이름 키만** 접는다(`F5` → `f5` · `PageUp`·`PPage` → `pageup` ·
+///   `Enter` → `enter`). 종전에는 소문자화가 수정키가 있을 때만이라 `bind -n F5 …` 가 `F5` 로
+///   저장되고, 누를 때 찾는 이름은 `f5` 라 **읽히되 눌러도 안 걸렸다.**
+/// - 수정키 없는 대문자 하나는 `shift-X` 다(우리 이름 표기 — 정본은 글자로 맞춘다).
+/// - 모르는 표기는 원문 그대로 둔다(정본과 같다 — 오타는 걸리지 않는 바인딩으로 남는다).
+pub fn normalize_bind_key(key: &str) -> String {
+    let raw = key.trim();
+    if raw.is_empty() {
+        return key.to_owned();
+    }
+    let (mut ctrl, mut alt, mut shift) = (false, false, false);
+    let mut rest = raw;
+    'strip: loop {
+        let low = rest.to_ascii_lowercase();
+        for (pre, which) in MOD_PREFIXES {
+            if low.starts_with(pre) && rest.len() > pre.len() {
+                match *which {
+                    "ctrl" => ctrl = true,
+                    "alt" => alt = true,
+                    _ => shift = true,
+                }
+                rest = &rest[pre.len()..];
+                continue 'strip;
+            }
+        }
+        break;
+    }
+    if !(ctrl || alt || shift) {
+        let mut chars = raw.chars();
+        if let (Some(c), None) = (chars.next(), chars.next()) {
+            return if c.is_ascii_uppercase() { format!("shift-{c}") } else { raw.to_owned() };
+        }
+        let low = raw.to_ascii_lowercase();
+        let is_fkey = low.len() >= 2
+            && low.strip_prefix('f').is_some_and(|d| d.bytes().all(|b| b.is_ascii_digit()));
+        if is_fkey || NAMED_KEYS.iter().any(|(k, _)| *k == low) {
+            return normalize_base_key(raw).unwrap_or_else(|| raw.to_owned());
+        }
+        return raw.to_owned();
+    }
+    let Some(base) = normalize_base_key(rest) else {
+        return raw.to_owned();
+    };
+    let mut out = String::new();
+    if ctrl {
+        out.push_str("ctrl-");
+    }
+    if alt {
+        out.push_str("alt-");
+    }
+    if shift {
+        out.push_str("shift-");
+    }
+    out.push_str(&base);
+    out
 }
 
 /// 사용자가 건 키를 찾는다 — 이 키에 걸린 액션이 있으면 그것.
 ///
 /// `after_prefix` 는 지금 모드다(prefix 를 누른 뒤인가). **모드가 다르면 안 찾는다** —
 /// `bind -n q` 를 걸어 둔 사람이 prefix 뒤에 `q` 를 눌렀을 때 그게 발동하면 안 된다.
-pub fn user_action(binds: &[Bind], after_prefix: bool, key: Key, mods: Mods) -> Option<Action> {
+///
+/// 걸린 명령 줄은 명령 줄 실행기를 지난다([`Bind::run`] — 사용자 별칭까지 푼다 · pytmux-572).
+pub fn user_action(
+    binds: &[Bind],
+    aliases: &crate::cmdline::Aliases,
+    after_prefix: bool,
+    key: Key,
+    mods: Mods,
+) -> Option<crate::cmdline::Run> {
     let name = crate::keys::binding_name_with(key, mods)?;
     binds
         .iter()
         .filter(|b| b.after_prefix == after_prefix && b.key == name)
-        .find_map(Bind::action)
+        .find_map(|b| b.run(aliases))
 }
 
 /// `on`/`true`/`1`/`yes` 를 참으로(파이썬 `load_config` 와 같은 목록).

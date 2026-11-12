@@ -751,6 +751,11 @@ fn binding_name(key: Key) -> Option<String> {
         // 이름이 없으면 서버가 준 `keys` 표에서 영영 안 찾아진다.
         Key::Home => "home".to_owned(),
         Key::Insert => "insert".to_owned(),
+        // 백스페이스·Delete — 사용자 `bind -n BSpace …`(정본 `_NAMED_KEYS` 의 `bspace`·`dc`)가
+        // 걸릴 자리다. 이름이 없으면 설정 파일에 적어도 영영 안 찾아진다(pytmux-600 · 우리 표
+        // `BINDINGS` 에는 두 키가 없으므로 내장 동작은 안 바뀐다).
+        Key::Backspace => "backspace".to_owned(),
+        Key::Delete => "delete".to_owned(),
         Key::ShiftDelete => "shift-delete".to_owned(),
         // F1~F12 — Home 과 **같은 이유로** 이름이 있다: 우리 표(`BINDINGS`)에는 한 줄도
         // 없지만 **플러그인 스펙이 가져간다**(mdir 의 `F10` 트리·`F5` 복사 … =

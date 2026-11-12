@@ -1,4 +1,5 @@
 use super::*;
+use crate::keymap::Action;
 
 #[test]
 fn a_hook_can_be_set_read_and_unset() {

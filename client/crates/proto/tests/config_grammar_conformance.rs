@@ -42,7 +42,19 @@ struct Case {
 }
 
 #[derive(Deserialize)]
+struct NamedKey {
+    token: String,
+    canon: String,
+}
+
+#[derive(Deserialize)]
 struct Fx {
+    /// 정본 `_NAMED_KEYS` 의 열쇠 전수(이름 키 칸의 모집단).
+    named_key_table: Vec<String>,
+    /// 키 철자마다 정본 `_tmux_key_to_textual` 이 낸 이름(pytmux-600).
+    named_keys: Vec<NamedKey>,
+    /// 정본 `client.py::reload_config` 가 `cfg` 에서 다시 꺼내는 칸 전수(pytmux-574).
+    reload_keys: Vec<String>,
     directives: Vec<String>,
     bind_flags: Vec<String>,
     load_options: Vec<String>,
@@ -70,28 +82,6 @@ fn canon_commands() -> BTreeSet<String> {
 /// GUI 가 **못 받는** 줄 — (픽스처 칸의 열쇠, 이슈, 사유). 열쇠로 찾는다(줄 번호가 아니다).
 const DIVERGENT: &[(&str, &str, &str)] = &[
     (
-        "bind args",
-        "pytmux-572",
-        "`Bind::action` 이 팔레트 이름 그대로만 찾는다 — 인자 있는 명령(`select-tab 3`)은 \
-         읽히되 누르면 아무 일도 안 한다",
-    ),
-    (
-        "bind -n",
-        "pytmux-600",
-        "`normalize_bind_key` 가 이름 키(`F5`)를 소문자로 안 접는다 — 저장은 `F5`, 누를 때 찾는 \
-         이름은 `f5` 라 눌러도 안 걸린다",
-    ),
-    (
-        "set tabbar",
-        "pytmux-600",
-        "`Config::parse` 가 옵션 별칭 `tabbar` 를 모른다(`OPT_ALIASES` 는 쓰기만 본다)",
-    ),
-    (
-        "alias",
-        "pytmux-573",
-        "`Config::parse` 가 `alias` 줄을 건너뛴다(사용자 명령 별칭 칸이 없다)",
-    ),
-    (
         "set mouse-debug",
         "pytmux-575",
         "런타임 `set` 만 받는 옵션 — GUI 에 없다",
@@ -110,7 +100,7 @@ const DIVERGENT: &[(&str, &str, &str)] = &[
 ];
 
 /// [`DIVERGENT`] 의 상한 — ⛔ **올리지 않는다.** 줄을 고쳤으면 같은 CL 에서 내린다.
-const DIVERGENT_CEILING: usize = 8;
+const DIVERGENT_CEILING: usize = 4;
 
 /// tmux 표기(`C-a`·`M-x`)를 정본이 들고 있는 Textual 표기(`ctrl+a`·`alt+x`)로.
 fn textual(tmux: &str) -> String {
@@ -190,8 +180,14 @@ fn gui_read(c: &base::Config, key: &str, canon: &Value) -> Result<Value, String>
             }
             Value::Object(m)
         }
-        // 우리 설정에는 사용자 별칭 칸이 **없다** — 그 줄은 읽히지 않는다(pytmux-573).
-        "aliases" => Value::Null,
+        // 사용자 명령 별칭(pytmux-573) — 적은 이름 그대로 · 명령은 낱말을 공백 하나로 이은 것.
+        "aliases" => {
+            let mut m = Map::new();
+            for (name, command) in c.aliases.iter() {
+                m.insert(name.to_owned(), json!(command));
+            }
+            Value::Object(m)
+        }
         other => {
             return Err(format!(
                 "정본 칸 `{other}` 의 짝을 이 시험이 모른다 — `gui_read` 에 더할 것"
@@ -210,56 +206,61 @@ fn canon_norm(key: &str, value: &Value) -> Value {
     }
 }
 
-/// 설정 파일의 키 표기(`r`·`C-x`·`M-z`·`F5`)를 **사용자가 실제로 누르는 키**로.
+/// 정본이 저장한 키 이름(Textual 표기 `ctrl+left`·`pageup`·`f5`·`G`)을 **사용자가 실제로 누르는
+/// 키**로. 설정 파일의 철자가 아니라 **정본이 그 철자를 접은 결과**에서 출발한다 — 그래야
+/// 「정본이 이 키로 읽은 줄을, 우리도 이 키를 누르면 돌리나」를 잰다(우리 `Bind` 가 저장한 표기를
+/// 다시 읽으면 「저장한 대로 읽었다」만 잰다).
 ///
-/// 우리 `Bind` 가 저장한 표기를 다시 읽지 않는다 — 그러면 「저장한 대로 읽었다」만 재고
-/// 「그 키를 누르면 걸린다」를 못 잰다. 수정키는 tmux 접두(`C-`·`M-`)로 떼고, 나머지는
-/// 백엔드가 주는 키 이름을 읽는 [`base::keys::from_name`] 에 넘긴다(글자 하나면 그 글자).
-fn press(token: &str) -> Option<(base::keys::Key, base::keys::Mods)> {
-    let mut rest = token;
+/// `None` = 우리 이름 표기로 **나타낼 수 없는 키**(`shift+left` 같은 것 — 이 클라의 키 이름
+/// 표에 없다).
+fn press_canon(textual: &str) -> Option<(base::keys::Key, base::keys::Mods)> {
     let mut mods = base::keys::Mods { ctrl: false, alt: false };
-    loop {
-        if let Some(r) = rest.strip_prefix("C-") {
-            mods.ctrl = true;
-            rest = r;
-        } else if let Some(r) = rest.strip_prefix("M-") {
-            mods.alt = true;
-            rest = r;
-        } else {
-            break;
+    let mut shift = false;
+    let mut parts: Vec<&str> = textual.split('+').collect();
+    let base_name = parts.pop()?;
+    for m in parts {
+        match m {
+            "ctrl" => mods.ctrl = true,
+            "alt" => mods.alt = true,
+            "shift" => shift = true,
+            _ => return None,
         }
     }
-    let mut chars = rest.chars();
+    let mut chars = base_name.chars();
     let key = match (chars.next(), chars.next()) {
-        (Some(c), None) => base::keys::Key::Char(c),
-        _ => base::keys::from_name(&rest.to_ascii_lowercase(), false, None)?,
+        (Some(c), None) if !shift => base::keys::Key::Char(c),
+        _ => base::keys::from_name(base_name, shift, None)?,
     };
-    Some((key, mods))
+    base::keys::binding_name_with(key, mods).map(|_| (key, mods))
 }
 
-/// `bind` 줄의 키를 실제로 눌렀을 때 **걸린 명령이 도나**. 정본은 그 명령이 정본 명령이면
-/// 돌린다(`_run_command`) — 우리는 `user_action` 이 액션을 내야 돈다.
-fn bound_command_runs(line: &str, config: &base::Config) -> Option<Result<(), String>> {
-    let mut words = line.split_whitespace();
+/// `bind` 줄을 정본이 읽은 키로 눌렀을 때 **걸린 명령이 도나**. 정본은 그 명령이 정본 명령이면
+/// 돌린다(`_run_command`) — 우리는 `user_action` 이 할 일을 내야 돈다.
+fn bound_command_runs(case: &Case, config: &base::Config) -> Option<Result<(), String>> {
+    let mut words = case.line.split_whitespace();
     if words.next()? != "bind" {
         return None;
     }
-    let mut key = words.next()?;
-    let after_prefix = key != "-n";
-    if !after_prefix {
-        key = words.next()?;
-    }
-    let head = words.next()?;
+    let read = case.read.as_ref()?;
+    let (after_prefix, table) = match (read.get("bindings"), read.get("root_bindings")) {
+        (Some(t), _) => (true, t),
+        (None, Some(t)) => (false, t),
+        _ => return None,
+    };
+    let (canon_key, command) = table.as_object()?.iter().next()?;
+    let head = command.as_str()?.split_whitespace().next()?;
     if !canon_commands().contains(head) {
         return Some(Err(format!("정본도 `{head}` 를 모른다 — 대표 줄을 고를 것")));
     }
-    let Some((k, mods)) = press(key) else {
-        return Some(Err(format!("키 `{key}` 를 우리가 못 읽는다")));
+    let Some((k, mods)) = press_canon(canon_key) else {
+        return Some(Err(format!("정본 키 `{canon_key}` 를 우리가 못 누른다")));
     };
     Some(
-        match base::config::user_action(&config.binds, after_prefix, k, mods) {
+        match base::config::user_action(&config.binds, &config.aliases, after_prefix, k, mods) {
             Some(_) => Ok(()),
-            None => Err(format!("`{key}` 를 눌러도 아무 일도 안 한다(정본은 그 명령을 돌린다)")),
+            None => Err(format!(
+                "`{canon_key}` 를 눌러도 아무 일도 안 한다(정본은 그 명령을 돌린다)"
+            )),
         },
     )
 }
@@ -284,7 +285,7 @@ fn verdict(case: &Case, parsed: &base::Config) -> Result<(), String> {
             diffs.push(format!("`{key}`: 정본 {want} · 우리 {got}"));
         }
     }
-    if let Some(Err(why)) = bound_command_runs(&case.line, parsed) {
+    if let Some(Err(why)) = bound_command_runs(case, parsed) {
         diffs.push(why);
     }
     if diffs.is_empty() {
@@ -390,6 +391,117 @@ fn the_population_is_the_whole_canon_parser() {
     let got: BTreeSet<String> =
         fx.cases.iter().filter(|c| c.runtime).map(|c| c.key.clone()).collect();
     assert_eq!(got, want, "런타임 칸이 정본 `apply_option` − `load_config` 와 다르다");
+}
+
+#[test]
+fn every_key_spelling_folds_to_the_key_canon_binds() {
+    // pytmux-600 ⓑ — `bind -n F5 …` 가 `F5` 로 저장되고 누를 때 찾는 이름은 `f5` 라 발동하지
+    // 않았다. 철자마다: 정본이 접은 이름의 키를 **실제로 누를 때** 우리가 찾는 이름 ==
+    // 우리 `normalize_bind_key` 가 그 철자를 접은 이름.
+    let fx = fixture();
+    let mut wrong = Vec::new();
+    let mut measured = 0;
+    for nk in &fx.named_keys {
+        let Some((k, mods)) = press_canon(&nk.canon) else {
+            // 우리가 못 누르는 키 — 지금은 하나도 없어야 한다(있으면 이름 표에 빠진 키다).
+            wrong.push(format!("`{}` → 정본 `{}` — 그 키에 우리 이름이 없다", nk.token, nk.canon));
+            continue;
+        };
+        let want = base::keys::binding_name_with(k, mods).expect("press_canon 이 이름을 확인했다");
+        let got = base::config::normalize_bind_key(&nk.token);
+        measured += 1;
+        if got != want {
+            wrong.push(format!("`{}` → 정본 `{}` = 우리 이름 `{want}` · 우리가 접은 것 `{got}`", nk.token, nk.canon));
+        }
+    }
+    assert!(wrong.is_empty(), "키 철자가 정본과 다르게 접힌다:\n  {}", wrong.join("\n  "));
+    // 모집단 — 정본 이름 키 표의 열쇠가 전부 토큰에 있다.
+    for name in &fx.named_key_table {
+        assert!(
+            fx.named_keys.iter().any(|nk| nk.token.eq_ignore_ascii_case(name)),
+            "정본 이름 키 `{name}` 의 철자가 픽스처에 없다"
+        );
+    }
+    assert_eq!(measured, fx.named_keys.len(), "못 잰 철자가 있다");
+}
+
+#[test]
+fn an_alias_line_runs_its_command_from_the_prompt_and_from_bind() {
+    // pytmux-573 관문 — `alias sp split-window -h` 를 읽은 설정에서 `sp` 가 명령 프롬프트(명령 줄
+    // 실행기)와 `bind` 두 입구에서 **그 명령과 같은 일**을 하나. 정본은 이름 해석 앞에서 별칭을
+    // 풀고 뒤에 친 인자를 붙인다(`self.aliases[c] + " " + args`).
+    let fx = fixture();
+    let mut measured = 0;
+    for case in fx.cases.iter().filter(|c| c.line.starts_with("alias ")) {
+        let read = case.read.as_ref().and_then(|r| r.get("aliases")).and_then(Value::as_object);
+        for (name, expansion) in read.into_iter().flatten() {
+            let expansion = expansion.as_str().expect("별칭 명령은 글자다");
+            let config = base::Config::parse(&format!("{}\nbind -n F9 {name}", case.line));
+            let want = base::cmdline::run_line(expansion, &base::cmdline::Aliases::default());
+            assert!(want.is_some(), "대표 줄의 명령 `{expansion}` 을 우리가 모른다 — 대표 줄을 고를 것");
+            assert_eq!(base::cmdline::run_line(name, &config.aliases), want, "프롬프트 `:{name}`");
+            let pressed = base::config::user_action(
+                &config.binds,
+                &config.aliases,
+                false,
+                base::keys::Key::Function(9),
+                base::keys::Mods { ctrl: false, alt: false },
+            );
+            assert_eq!(pressed, want, "`bind -n F9 {name}`");
+            measured += 1;
+        }
+    }
+    assert!(measured > 0, "별칭 대표 줄이 하나도 없다 — 통과가 아니라 고장이다");
+}
+
+#[test]
+fn source_file_rereads_every_field_canon_reloads() {
+    // pytmux-574 — 정본 `reload_config(path)` 가 갱신하는 칸마다: 그 칸을 바꾸는 대표 줄 하나를
+    // **임시 파일에 써서** `source-file <그 경로>` 의 읽기(`Config::load_from`)로 읽으면 그 칸이
+    // 정본이 읽은 값으로 서나. 뷰는 다시 읽은 설정을 통째로 갈아 끼우고(`self.config`) 설정 밖
+    // 상태는 기동과 같은 한 함수(`proto::config_apply`)로 민다 — 아래 둘째 시험이 그쪽을 잰다.
+    let fx = fixture();
+    let dir = std::env::temp_dir().join(format!("pytmux-reload-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("임시 디렉터리");
+    let mut wrong = Vec::new();
+    for key in &fx.reload_keys {
+        let Some(case) = fx
+            .cases
+            .iter()
+            .filter(|c| divergent(&c.key).is_none())
+            .find(|c| c.read.as_ref().is_some_and(|r| r.contains_key(key)))
+        else {
+            wrong.push(format!("`{key}` 를 바꾸는 대표 줄이 픽스처에 없다"));
+            continue;
+        };
+        let path = dir.join(format!("{}.conf", key));
+        std::fs::write(&path, format!("{}\n", case.line)).expect("임시 설정 파일");
+        let reread = base::Config::load_from(path.to_str());
+        if let Err(why) = verdict(case, &reread) {
+            wrong.push(format!("`{key}` [{}] — {why}", case.line));
+        }
+    }
+    // 없는 경로 — 정본은 그 후보를 건너뛰고 **기본 탐색으로 떨어진다**(아무 말도 안 한다).
+    let missing = dir.join("no-such-file.conf");
+    assert_eq!(
+        base::Config::load_from(missing.to_str()),
+        base::Config::load(),
+        "없는 경로를 주면 기본 탐색과 같아야 한다(정본 `load_config` 의 candidates)"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(wrong.is_empty(), "다시 읽어도 안 바뀌는 칸:\n  {}", wrong.join("\n  "));
+}
+
+#[test]
+fn reload_pushes_the_state_outside_the_config_like_startup() {
+    // pytmux-574 — 설정 밖의 상태(폭 판정 전역)는 기동과 같은 한 함수가 민다. 종전 `source-file`
+    // 은 그 함수를 안 지나 `set ambiguous-width wide` 가 다시 읽기로는 안 먹었다.
+    let mut state = proto::SessionState::new();
+    let wide = base::Config::parse("set ambiguous-width wide");
+    proto::config_apply::apply_config_globals(&wide, &mut state);
+    assert!(proto::compose::ambiguous_wide(), "wide 를 다시 읽었는데 폭 판정이 안 바뀌었다");
+    proto::config_apply::apply_config_globals(&base::Config::parse(""), &mut state);
+    assert!(!proto::compose::ambiguous_wide(), "기본으로 다시 읽었는데 폭 판정이 남았다");
 }
 
 #[test]

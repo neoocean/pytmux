@@ -73,6 +73,20 @@ impl Tab {
         }
     }
 
+    /// 원격 탭을 **떼려면** 서버에 줄 호스트(정본 `client.py::_active_remote_host` 와 같은 판정).
+    ///
+    /// 정본은 `remote` 플래그가 서 있고 이름이 `⇄` 로 시작할 때만 호스트를 돌려준다(첫 `:`
+    /// 앞까지). 그 밖이면 `None` — 정본은 그때 원격 갈래를 건너뛰고 평소 탭 닫기로 간다.
+    /// [`Tab::display`] 와 갈래가 다른 것은 의도다: 그쪽은 **그리기**라 모양이 어긋나도 이름을
+    /// 살리고, 이쪽은 **서버에 보낼 값**이라 정본과 한 글자도 다르면 안 된다(pytmux-601).
+    pub fn remote_host(&self) -> Option<&str> {
+        if !self.remote {
+            return None;
+        }
+        let rest = self.name.strip_prefix('⇄')?;
+        Some(rest.split_once(':').map_or(rest, |(host, _)| host))
+    }
+
     /// 사용자에게 보여 줄 이름. 원격 탭은 접두사를 떼고 호스트를 따로 돌려준다.
     ///
     /// **판정은 `remote` 플래그로 하고**, 이름은 그 뒤에 꾸미기 위해서만 쪼갠다.

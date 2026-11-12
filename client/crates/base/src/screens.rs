@@ -716,6 +716,11 @@ pub enum Prompt {
     KillTabLastRemote,
     /// **고정 탭**을 닫는다(고정은 "상시 유지" 의도라 한 단계 더 막는다).
     KillTabPinned,
+    /// 활성 탭이 **원격**(병합) 탭일 때의 「탭 닫기」 — 셸을 죽이지 않고 그 탭 하나만
+    /// 뗀다(정본 `confirm_kill_tab` 의 첫 갈래 · `dialog.detach_remote_*` · pytmux-601).
+    /// `{host}` 슬롯은 [`Screens::detail`] 이 채운다. 답은 뷰가 `RemoteDetach{host, index}`
+    /// 로 옮긴다(호스트·자리는 확인 판을 연 순간에 잡는다 — 정본의 람다와 같다).
+    DetachRemoteTab,
 }
 
 /// 탭 닫기 확인이 알아야 하는 사실들. 뷰가 채운다 — core 는 탭 목록을 모른다
@@ -728,6 +733,8 @@ pub struct TabFacts {
     pub local: usize,
     pub has_remote: bool,
     pub active_pinned: bool,
+    /// 활성 탭이 원격(병합) 탭이고 그 호스트를 안다(정본 `_active_remote_host()` 가 None 이 아님).
+    pub active_remote: bool,
 }
 
 impl Prompt {
@@ -736,6 +743,12 @@ impl Prompt {
     /// 판정을 core 에 두는 이유는 늘 같다 — 두 뷰가 각자 갈래를 세면 한쪽 클라만
     /// 경고를 빠뜨린다. 그리고 **빠뜨리는 쪽이 하필 되돌릴 수 없는 자리**다.
     pub fn kill_tab(facts: &TabFacts) -> Prompt {
+        // ★ 정본은 이 갈래를 **네 갈래보다 앞에** 둔다 — 원격 탭에서 `kill_window` 를 보내면
+        // 서버가 거절한다(«원격 탭에서는 사용할 수 없는 명령입니다»). 로컬 탭이 하나뿐이어도
+        // 닫히는 것은 원격 탭이라 «pytmux 종료» 를 물으면 안 된다.
+        if facts.active_remote {
+            return Prompt::DetachRemoteTab;
+        }
         match (facts.local <= 1, facts.has_remote, facts.active_pinned) {
             (true, true, _) => Prompt::KillTabLastRemote,
             (true, false, _) => Prompt::KillTabLast,
@@ -753,6 +766,8 @@ impl Prompt {
         Some(crate::i18n::t(match self {
             Prompt::KillTabLast | Prompt::KillTabLastRemote => "pytmux 종료",
             Prompt::KillTabPinned => "고정 탭 닫기",
+            // 정본 `dialog.detach_remote_title`.
+            Prompt::DetachRemoteTab => "원격 탭 분리",
             Prompt::KillTab => "탭 닫기",
             Prompt::KillPane => "패널 닫기",
             Prompt::KillServer => "서버 종료",
@@ -802,7 +817,7 @@ impl Prompt {
     ///
     /// 채우는 물음은 detail 을 **따로 줄로 보이면 안 된다** — 같은 낱말이 두 번 뜬다.
     pub fn detail_fills_a_slot(self) -> bool {
-        matches!(self, Prompt::KillTabPinned)
+        matches!(self, Prompt::KillTabPinned | Prompt::DetachRemoteTab)
     }
 
     /// 화면에 적을 물음. 뷰가 각자 지으면 같은 물음이 화면마다 달라 보인다.
@@ -821,6 +836,10 @@ impl Prompt {
             }
             Prompt::KillTabPinned => {
                 "고정 탭 '{name}' 을(를) 닫을까? 고정 탭은 상시 유지용이다 — 탭의 셸이 종료된다."
+            }
+            // 정본 `dialog.detach_remote_msg` 그대로(`{host}` 는 detail 이 채운다).
+            Prompt::DetachRemoteTab => {
+                "원격 탭 {host} 을(를) 분리할까요? 원격 셸은 그대로 두고 이 탭만 닫힙니다."
             }
             Prompt::RenamePane => "패널 제목:",
             Prompt::SwapTab => "맞바꿀 탭 번호:",
@@ -1350,7 +1369,9 @@ impl Screens {
         {
             return first.to_owned();
         }
-        if prompt.detail_fills_a_slot() {
+        if prompt == Prompt::DetachRemoteTab {
+            crate::i18n::tf(prompt.question(), &[("host", &self.detail)])
+        } else if prompt.detail_fills_a_slot() {
             crate::i18n::tf(prompt.question(), &[("name", &self.detail)])
         } else {
             crate::i18n::t(prompt.question()).to_string()
@@ -2514,7 +2535,7 @@ const HANGUL_JONG: [Option<char>; 28] = [
 /// 한글(두벌식 IME 로 잘못 입력된 영문)을 QWERTY 영문으로 되돌린다 — 정본
 /// `pytmuxlib/clientutil.py` `hangul_to_qwerty` 와 동형(pytmux-176). 완성형 음절은
 /// 초/중/종성으로 분해, 낱자/복합자모는 표로 변환. 비-한글은 그대로 둔다.
-fn hangul_to_qwerty(text: &str) -> String {
+pub(crate) fn hangul_to_qwerty(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         let o = ch as u32;

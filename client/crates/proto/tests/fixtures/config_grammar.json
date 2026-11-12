@@ -141,6 +141,56 @@
       }
     },
     {
+      "key": "bind -n Enter",
+      "line": "bind -n Enter next-tab",
+      "why": "이름 키 — 대문자 철자(pytmux-600)",
+      "read": {
+        "root_bindings": {
+          "enter": "next-tab"
+        }
+      }
+    },
+    {
+      "key": "bind -n PageUp",
+      "line": "bind -n PageUp next-tab",
+      "why": "이름 키 — 낙타 철자(pytmux-600)",
+      "read": {
+        "root_bindings": {
+          "pageup": "next-tab"
+        }
+      }
+    },
+    {
+      "key": "bind -n PPage",
+      "line": "bind -n PPage next-tab",
+      "why": "이름 키 — tmux 별칭 철자(pytmux-600)",
+      "read": {
+        "root_bindings": {
+          "pageup": "next-tab"
+        }
+      }
+    },
+    {
+      "key": "bind -n Home",
+      "line": "bind -n Home next-tab",
+      "why": "이름 키(pytmux-600)",
+      "read": {
+        "root_bindings": {
+          "home": "next-tab"
+        }
+      }
+    },
+    {
+      "key": "bind C-Left",
+      "line": "bind C-Left next-tab",
+      "why": "수정키 + 이름 키(pytmux-600)",
+      "read": {
+        "bindings": {
+          "ctrl+left": "next-tab"
+        }
+      }
+    },
+    {
       "key": "alias",
       "line": "alias sp split-window -h",
       "why": "사용자 명령 별칭",
@@ -513,6 +563,316 @@
       "line": "set status-format 1 #S extra",
       "runtime": true,
       "why": "런타임 `set` 만 받는 옵션(정본 `apply_option`)"
+    }
+  ],
+  "named_key_table": [
+    "backspace",
+    "bs",
+    "bspace",
+    "dc",
+    "del",
+    "delete",
+    "down",
+    "end",
+    "enter",
+    "esc",
+    "escape",
+    "home",
+    "ic",
+    "insert",
+    "left",
+    "npage",
+    "pagedown",
+    "pageup",
+    "pgdn",
+    "pgup",
+    "ppage",
+    "return",
+    "right",
+    "space",
+    "tab",
+    "up"
+  ],
+  "reload_keys": [
+    "aliases",
+    "bindings",
+    "claude_command",
+    "default_path",
+    "hooks",
+    "mode_keys",
+    "mouse",
+    "prefix",
+    "root_bindings",
+    "status_bg",
+    "status_fg",
+    "status_left",
+    "status_right",
+    "tab_bar_always"
+  ],
+  "named_keys": [
+    {
+      "token": "Backspace",
+      "canon": "backspace"
+    },
+    {
+      "token": "BACKSPACE",
+      "canon": "backspace"
+    },
+    {
+      "token": "Bs",
+      "canon": "backspace"
+    },
+    {
+      "token": "BS",
+      "canon": "backspace"
+    },
+    {
+      "token": "Bspace",
+      "canon": "backspace"
+    },
+    {
+      "token": "BSPACE",
+      "canon": "backspace"
+    },
+    {
+      "token": "Dc",
+      "canon": "delete"
+    },
+    {
+      "token": "DC",
+      "canon": "delete"
+    },
+    {
+      "token": "Del",
+      "canon": "delete"
+    },
+    {
+      "token": "DEL",
+      "canon": "delete"
+    },
+    {
+      "token": "Delete",
+      "canon": "delete"
+    },
+    {
+      "token": "DELETE",
+      "canon": "delete"
+    },
+    {
+      "token": "Down",
+      "canon": "down"
+    },
+    {
+      "token": "DOWN",
+      "canon": "down"
+    },
+    {
+      "token": "End",
+      "canon": "end"
+    },
+    {
+      "token": "END",
+      "canon": "end"
+    },
+    {
+      "token": "Enter",
+      "canon": "enter"
+    },
+    {
+      "token": "ENTER",
+      "canon": "enter"
+    },
+    {
+      "token": "Esc",
+      "canon": "escape"
+    },
+    {
+      "token": "ESC",
+      "canon": "escape"
+    },
+    {
+      "token": "Escape",
+      "canon": "escape"
+    },
+    {
+      "token": "ESCAPE",
+      "canon": "escape"
+    },
+    {
+      "token": "Home",
+      "canon": "home"
+    },
+    {
+      "token": "HOME",
+      "canon": "home"
+    },
+    {
+      "token": "Ic",
+      "canon": "insert"
+    },
+    {
+      "token": "IC",
+      "canon": "insert"
+    },
+    {
+      "token": "Insert",
+      "canon": "insert"
+    },
+    {
+      "token": "INSERT",
+      "canon": "insert"
+    },
+    {
+      "token": "Left",
+      "canon": "left"
+    },
+    {
+      "token": "LEFT",
+      "canon": "left"
+    },
+    {
+      "token": "Npage",
+      "canon": "pagedown"
+    },
+    {
+      "token": "NPAGE",
+      "canon": "pagedown"
+    },
+    {
+      "token": "Pagedown",
+      "canon": "pagedown"
+    },
+    {
+      "token": "PAGEDOWN",
+      "canon": "pagedown"
+    },
+    {
+      "token": "Pageup",
+      "canon": "pageup"
+    },
+    {
+      "token": "PAGEUP",
+      "canon": "pageup"
+    },
+    {
+      "token": "Pgdn",
+      "canon": "pagedown"
+    },
+    {
+      "token": "PGDN",
+      "canon": "pagedown"
+    },
+    {
+      "token": "Pgup",
+      "canon": "pageup"
+    },
+    {
+      "token": "PGUP",
+      "canon": "pageup"
+    },
+    {
+      "token": "Ppage",
+      "canon": "pageup"
+    },
+    {
+      "token": "PPAGE",
+      "canon": "pageup"
+    },
+    {
+      "token": "Return",
+      "canon": "enter"
+    },
+    {
+      "token": "RETURN",
+      "canon": "enter"
+    },
+    {
+      "token": "Right",
+      "canon": "right"
+    },
+    {
+      "token": "RIGHT",
+      "canon": "right"
+    },
+    {
+      "token": "Space",
+      "canon": "space"
+    },
+    {
+      "token": "SPACE",
+      "canon": "space"
+    },
+    {
+      "token": "Tab",
+      "canon": "tab"
+    },
+    {
+      "token": "TAB",
+      "canon": "tab"
+    },
+    {
+      "token": "Up",
+      "canon": "up"
+    },
+    {
+      "token": "UP",
+      "canon": "up"
+    },
+    {
+      "token": "F1",
+      "canon": "f1"
+    },
+    {
+      "token": "F5",
+      "canon": "f5"
+    },
+    {
+      "token": "f12",
+      "canon": "f12"
+    },
+    {
+      "token": "C-Left",
+      "canon": "ctrl+left"
+    },
+    {
+      "token": "M-PageUp",
+      "canon": "alt+pageup"
+    },
+    {
+      "token": "C-M-Home",
+      "canon": "alt+ctrl+home"
+    },
+    {
+      "token": "C-F5",
+      "canon": "ctrl+f5"
+    },
+    {
+      "token": "S-Tab",
+      "canon": "shift+tab"
+    },
+    {
+      "token": "C-S-Tab",
+      "canon": "ctrl+shift+tab"
+    },
+    {
+      "token": "M-Enter",
+      "canon": "alt+enter"
+    },
+    {
+      "token": "C-x",
+      "canon": "ctrl+x"
+    },
+    {
+      "token": "M-q",
+      "canon": "alt+q"
+    },
+    {
+      "token": "q",
+      "canon": "q"
+    },
+    {
+      "token": "G",
+      "canon": "G"
     }
   ]
 }

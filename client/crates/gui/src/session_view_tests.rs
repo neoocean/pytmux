@@ -3932,6 +3932,145 @@ fn three_cells_start_a_selection_and_copy_it() {
     assert!(mouse_reports(&out).is_empty(), "끌기가 클릭으로도 샜다: {out:?}");
 }
 
+// ── 선택 끌기 가장자리 자동 스크롤(pytmux-579 · 정본 `_edge_scroll_delta`·`_autoscroll_*`) ──
+
+fn scrolls(out: &[Outgoing]) -> Vec<(Option<i64>, Option<i32>)> {
+    out.iter()
+        .filter_map(|o| match o {
+            Outgoing::Scroll(s) => Some((s.pane, s.delta)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `k` 박자 뒤의 시각 — 타이머를 손으로 돌린다(실시간을 기다리지 않는다).
+fn beat(k: u32) -> Instant {
+    Instant::now() + base::edge_scroll::TICK * k
+}
+
+#[test]
+fn holding_a_selection_drag_at_the_bottom_edge_keeps_scrolling_until_release() {
+    // ★ 호출부 오라클(관문 ①②) — 가장자리에 **머무르면** (이동 이벤트가 더 안 와도)
+    //   `scroll{delta}` 가 반복해 나가고, 떼면 멈춘다.
+    let (mut view, sent) = mouse_app_view(3);
+    view.handle_mouse_down((7, 10), false);
+    view.handle_mouse_drag(Some((7, 23))); // 패널(h=24)의 끝 행 = 경계 포함
+    assert!(view.selection.is_some(), "끌었는데 선택이 안 섰다 — 단언이 공허해진다");
+    view.pump_headless();
+    assert!(scrolls(&sent.lock().unwrap()).is_empty(), "한 간격도 안 지났는데 굴렀다");
+    for k in 1..=3 {
+        assert!(view.tick_autoscroll(beat(k)), "{k}번째 박자에 안 굴렀다");
+        view.pump_headless();
+    }
+    assert_eq!(
+        scrolls(&sent.lock().unwrap()),
+        vec![(Some(1), Some(-1)); 3],
+        "끝 행에 머무는 동안 한 박자에 한 줄씩 아래로 굴러야 한다"
+    );
+    // 더 멀리 나가면 빨라진다(정본: 최대 3행/박자).
+    view.handle_mouse_drag(Some((7, 40)));
+    assert!(view.tick_autoscroll(beat(5)));
+    view.pump_headless();
+    assert_eq!(scrolls(&sent.lock().unwrap()).last(), Some(&(Some(1), Some(-3))));
+    // 떼면 멈춘다 — 그 뒤 몇 박자가 지나도 안 나간다.
+    view.handle_mouse_up(Some((7, 40)));
+    // 뗌이 타이머를 직접 끈다(정본 `on_mouse_up` 첫 줄). 박자의 자가 정지(선택 없음)는
+    // 그 뒤의 이중 안전이라 아래 큐 단언만으로는 이 줄이 빠져도 모른다.
+    assert!(view.autoscroll.is_none(), "뗐는데 자동 스크롤 타이머가 남았다");
+    let before = scrolls(&sent.lock().unwrap()).len();
+    for k in 6..=8 {
+        assert!(!view.tick_autoscroll(beat(k)), "뗐는데 굴렀다");
+        view.pump_headless();
+    }
+    assert_eq!(scrolls(&sent.lock().unwrap()).len(), before, "뗀 뒤에도 scroll 이 나갔다");
+}
+
+#[test]
+fn the_pump_itself_drives_the_autoscroll_timer() {
+    // 배선 오라클 — 박자를 손으로 돌리는 위 시험들은 `pump` 가 타이머를 안 불러도 통과한다.
+    // 실제 창에서 구르는 것은 33ms 펌프뿐이니 그 자리를 따로 잰다.
+    let (mut view, sent) = mouse_app_view(3);
+    view.handle_mouse_down((7, 10), false);
+    view.handle_mouse_drag(Some((7, 23)));
+    view.autoscroll.as_mut().expect("가장자리인데 자동 스크롤이 안 섰다").next =
+        Instant::now() - base::edge_scroll::TICK;
+    view.pump_headless();
+    assert_eq!(scrolls(&sent.lock().unwrap()), vec![(Some(1), Some(-1))], "펌프가 타이머를 안 돌렸다");
+}
+
+#[test]
+fn coming_back_inside_the_pane_stops_the_autoscroll() {
+    let (mut view, sent) = mouse_app_view(3);
+    view.handle_mouse_down((7, 10), false);
+    view.handle_mouse_drag(Some((7, 0))); // 위 경계 행
+    assert!(view.tick_autoscroll(beat(1)));
+    view.pump_headless();
+    assert_eq!(scrolls(&sent.lock().unwrap()), vec![(Some(1), Some(1))], "위 경계에서 위로 안 굴렀다");
+    view.handle_mouse_drag(Some((7, 10))); // 안으로 돌아왔다
+    for k in 2..=4 {
+        assert!(!view.tick_autoscroll(beat(k)), "안으로 돌아왔는데 굴렀다");
+    }
+    view.pump_headless();
+    assert_eq!(scrolls(&sent.lock().unwrap()).len(), 1);
+    assert!(view.selection.is_some(), "멈춘 것은 스크롤이지 선택이 아니다");
+}
+
+#[test]
+fn dragging_above_the_canvas_keeps_scrolling_up() {
+    // 캔버스 위(탭바 쪽)는 자리표가 `None` 으로 준다 — 정본의 음수 y 와 같게 위로 구른다.
+    let (mut view, sent) = mouse_app_view(3);
+    view.handle_mouse_down((7, 10), false);
+    view.handle_mouse_drag(Some((7, 5)));
+    assert!(view.selection.is_some());
+    view.handle_mouse_drag(None);
+    assert!(view.tick_autoscroll(beat(1)));
+    view.pump_headless();
+    assert_eq!(scrolls(&sent.lock().unwrap()), vec![(Some(1), Some(1))]);
+    // 클릭(선택 없음)의 `None` 끌기는 아무것도 안 굴린다(대조군).
+    let (mut view, sent) = mouse_app_view(3);
+    view.handle_mouse_down((7, 10), false);
+    view.handle_mouse_drag(None);
+    assert!(!view.tick_autoscroll(beat(1)));
+    view.pump_headless();
+    assert!(scrolls(&sent.lock().unwrap()).is_empty());
+}
+
+#[test]
+fn the_selection_end_follows_the_rows_that_scroll_in() {
+    // 관문 ③ — 구른 만큼 선택이 넓어진다. 서버가 새 `top` 을 보내면 같은 포인터 자리가
+    // 더 과거의 절대 행이 된다(정본 `sync_selection`).
+    let (mut view, tx, _sent) = harness();
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 24, "active": 1,
+        "panes": [{"id": 1, "x": 0, "y": 0, "w": 80, "h": 24, "title": "sh", "active": true}]
+    }))
+    .unwrap();
+    let screen = |top: usize| -> ServerMessage {
+        serde_json::from_value(serde_json::json!({
+            "t": "screen", "pane": 1,
+            "rows": [[["0123456789abcdef", {}]]],
+            "cursor": null, "wrap": [], "top": top
+        }))
+        .unwrap()
+    };
+    for msg in [layout, screen(100)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.config.mouse = true;
+    view.config.mouse_drag_copy = base::config::DragCopy::On;
+    view.config.mouse_drag_threshold = 3;
+    view.handle_mouse_down((7, 10), false);
+    view.handle_mouse_drag(Some((7, 0)));
+    let row = |v: &SessionView| v.selection.as_ref().map(|s| s.focus.line);
+    assert_eq!(row(&view), Some(100), "끝점이 위 경계 행이 아니다");
+    // 서버가 한 줄 굴린 화면을 보냈다 → 다음 박자에 끝점이 그 행으로 따라간다.
+    tx.send(LinkEvent::Message(Box::new(screen(99)))).unwrap();
+    view.pump_headless();
+    view.tick_autoscroll(beat(1));
+    assert_eq!(row(&view), Some(99), "굴렀는데 선택 끝점이 안 따라왔다");
+}
+
 #[test]
 fn threshold_one_starts_on_the_first_cell_as_before() {
     // `set mouse-drag-threshold 1` — 종전 손맛을 원하는 사람의 길(관문 ③).
@@ -4085,6 +4224,75 @@ fn a_hook_argument_skips_the_question_and_goes_straight_out() {
         )),
         "인자 있는 훅이 안 돌았다: {out:?}"
     );
+}
+
+// ── 명령 줄 실행기를 지나는 세 입구(pytmux-572 · 573 · 574) — 큐 오라클 ─────────────────
+
+#[test]
+fn a_hook_with_send_keys_sends_the_keys_to_the_pane() {
+    // 정본 `_fire_hook` → `_run_command("send-keys C-c")` → 패널에 0x03.
+    let out = sent_after_hook(
+        "after-new-window send-keys C-c",
+        vec![layout_one_pane(), status_with(1, false), status_with(2, false)],
+    );
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Input(b) if b == &vec![3u8])),
+        "훅의 send-keys 가 패널에 안 갔다: {out:?}"
+    );
+}
+
+#[test]
+fn a_bound_key_with_arguments_runs_the_whole_command_line() {
+    // pytmux-572 관문 ① — 종전에는 `Bind::action` 이 팔레트 이름만 찾아 **읽히되 무동작**이었다.
+    let (mut view, _tx, sent) = harness();
+    view.state.apply(layout_one_pane());
+    view.config = base::Config::parse("alias cc send-keys C-c\nbind -n F9 send-keys C-c\nbind -n F8 cc");
+    for key in [Key::Function(9), Key::Function(8)] {
+        sent.lock().unwrap().clear();
+        assert!(view.handle_key(key, Mods::NONE), "{key:?} 를 아무도 안 받았다");
+        view.pump_headless();
+        let out = sent.lock().unwrap().clone();
+        assert!(
+            out.iter().any(|o| matches!(o, Outgoing::Input(b) if b == &vec![3u8])),
+            "{key:?} 에 건 명령 줄이 안 돌았다(별칭 포함): {out:?}"
+        );
+    }
+}
+
+#[test]
+fn if_shell_then_runs_a_command_line_with_arguments() {
+    // pytmux-572 관문 ② — then 이 인자 있는 명령이다(종전에는 「모르는 명령이다」).
+    let (mut view, _tx, sent) = harness();
+    view.state.apply(layout_one_pane());
+    view.config = base::Config::parse("bind -n F9 if-shell true 'send-keys foo'");
+    view.handle_key(Key::Function(9), Mods::NONE);
+    // 조건은 스레드에서 돈다 — 안 기다리면 아무 일도 안 일어난 채로 통과한다.
+    let mut hit = false;
+    for _ in 0..200 {
+        view.pump_headless();
+        if sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Input(b) if b == b"foo")) {
+            hit = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(hit, "if-shell 의 then 이 안 돌았다: {:?}", sent.lock().unwrap());
+}
+
+#[test]
+fn source_file_with_a_path_reads_that_file_and_pushes_the_globals() {
+    // pytmux-574 — 경로를 받고, 다시 읽은 뒤 **기동과 같은 적용 함수**를 지난다(폭 판정 전역까지).
+    let dir = std::env::temp_dir().join(format!("pytmux-gui-source-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("x.conf");
+    std::fs::write(&path, "set mouse off\nset ambiguous-width wide\nalias sp split-window -h\n").unwrap();
+    let (mut view, _tx, _sent) = harness();
+    assert!(view.run_command_line(&format!("source-file {}", path.display())));
+    assert!(!view.config.mouse, "그 파일을 안 읽었다");
+    assert_eq!(view.config.aliases.get("sp"), Some("split-window -h"), "별칭을 다시 안 읽었다");
+    assert!(proto::compose::ambiguous_wide(), "다시 읽은 뒤 폭 판정이 안 바뀌었다");
+    proto::compose::set_ambiguous_wide(false);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -4662,6 +4870,159 @@ fn a_tab_drag_released_nowhere_falls_back_to_select() {
             .any(|o| matches!(o, Outgoing::Command(Command::MoveTab { .. } | Command::JoinPane { .. }))),
         "빈 자리 드롭이 재정렬/합치기로 샜다: {out:?}"
     );
+}
+
+// ── 패널 헤더 끌기(pick-up · pytmux-580 · 정본 `on_mouse_down/move/up` 의 `_pickup`) ──
+
+/// 좌우 두 패널(상자 있음) · 오른쪽(2)이 활성 · 탭 셋(0 활성).
+fn two_boxed_panes(threshold: u16) -> (SessionView, Sent) {
+    let (mut view, tx, sent) = harness();
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 10, "active": 2,
+        "panes": [
+            {"id": 1, "x": 1, "y": 1, "w": 38, "h": 8, "box": [0, 0, 40, 10], "title": "a"},
+            {"id": 2, "x": 41, "y": 1, "w": 38, "h": 8, "box": [40, 0, 40, 10], "title": "b",
+             "active": true}
+        ]
+    }))
+    .unwrap();
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({"t": "status", "windows": [
+        {"index": 0, "name": "하나", "active": true},
+        {"index": 1, "name": "둘"},
+    ]}))
+    .unwrap();
+    for msg in [layout, status] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.config.mouse = true;
+    view.config.mouse_drag_threshold = threshold;
+    (view, sent)
+}
+
+fn pane_commands(out: &[Outgoing]) -> Vec<Command> {
+    out.iter()
+        .filter_map(|o| match o {
+            Outgoing::Command(
+                c @ (Command::SwapPaneTo { .. }
+                | Command::MovePaneToTab { .. }
+                | Command::BreakPane
+                | Command::SelectPaneId { .. }),
+            ) => Some(c.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn dragging_a_pane_header_onto_another_pane_swaps_them() {
+    // 관문 ① 갈래 ⓐ — 헤더(상자 윗변) → 다른 패널 위에서 뗌 = `swap_pane_to{id, to_id}`.
+    let (mut view, sent) = two_boxed_panes(3);
+    assert!(view.handle_mouse_down((10, 0), false), "헤더 누름을 안 먹었다");
+    assert!(view.selection.is_none() && view.press.is_none(), "헤더 누름이 선택으로 샜다");
+    view.handle_mouse_drag(Some((50, 4)));
+    assert_eq!(view.pane_drag.and_then(|d| d.over), Some(2), "드롭 대상이 안 섰다(강조 재료)");
+    view.handle_mouse_up(Some((50, 4)));
+    view.pump_headless();
+    assert_eq!(
+        pane_commands(&sent.lock().unwrap()),
+        vec![Command::SwapPaneTo { id: 1, to_id: 2 }],
+        "헤더를 다른 패널에 놓았는데 맞바꾸기가 아니다"
+    );
+}
+
+#[test]
+fn a_header_wobble_inside_its_own_pane_is_a_click_that_only_focuses() {
+    // 관문 ② — 정본 `_pickup_moved` 규칙: **다른 패널 위에 와야** 끌기다(임계는 안 쓴다).
+    // 제 패널 안에서 멀리 흔들고 떼도 클릭 = `select_pane_id(src)`.
+    let (mut view, sent) = two_boxed_panes(3);
+    view.handle_mouse_down((10, 0), false);
+    view.handle_mouse_drag(Some((30, 6))); // 20칸 — 그래도 제 패널 안이다
+    assert_eq!(view.pane_drag.map(|d| d.moved), Some(false), "제 패널 안인데 움직인 것으로 쳤다");
+    view.handle_mouse_up(Some((30, 6)));
+    view.pump_headless();
+    assert_eq!(
+        pane_commands(&sent.lock().unwrap()),
+        vec![Command::SelectPaneId { id: 1 }],
+        "헤더 클릭은 그 패널 포커스여야 한다(정본 `select_pane_id(src)`)"
+    );
+}
+
+#[test]
+fn one_cell_onto_another_pane_is_already_a_drag_like_the_canon() {
+    // 정본은 이 경로에 `mouse-drag-threshold` 를 안 건다 — 한 칸이라도 다른 패널 위면 끌기다.
+    let (mut view, sent) = two_boxed_panes(3);
+    view.handle_mouse_down((39, 0), false);
+    view.handle_mouse_drag(Some((40, 1)));
+    assert_eq!(view.pane_drag.and_then(|d| d.over), Some(2), "다른 패널 위인데 대상을 안 밝혔다");
+    view.handle_mouse_up(Some((40, 1)));
+    view.pump_headless();
+    assert_eq!(pane_commands(&sent.lock().unwrap()), vec![Command::SwapPaneTo { id: 1, to_id: 2 }]);
+}
+
+#[test]
+fn clicking_the_header_of_the_active_pane_still_sends_select_pane_id() {
+    // 정본은 클릭 갈래에서 `select_pane_id(src)` 를 **거르지 않는다**(이미 활성이어도).
+    let (mut view, sent) = two_boxed_panes(3);
+    view.handle_mouse_down((50, 0), false); // 오른쪽(2) = 활성 패널의 헤더
+    view.handle_mouse_up(Some((50, 0)));
+    view.pump_headless();
+    assert_eq!(pane_commands(&sent.lock().unwrap()), vec![Command::SelectPaneId { id: 2 }]);
+}
+
+#[test]
+fn a_header_dropped_back_on_itself_does_not_swap() {
+    let (mut view, sent) = two_boxed_panes(3);
+    view.handle_mouse_down((10, 0), false);
+    view.handle_mouse_drag(Some((20, 5)));
+    view.handle_mouse_up(Some((20, 5)));
+    view.pump_headless();
+    let out = pane_commands(&sent.lock().unwrap());
+    assert_eq!(out, vec![Command::SelectPaneId { id: 1 }], "제자리에 놓으면 정본처럼 포커스만");
+}
+
+#[test]
+fn pane_drop_commands_follow_the_canon_table() {
+    // 관문 ① 셋을 순수 판정으로 — 정본 `on_mouse_up` 의 pick-up 갈래 그대로.
+    use super::PaneDropAt as At;
+    let f = SessionView::pane_drop_commands;
+    assert_eq!(
+        f(3, true, At::Tab(1), Some(0)),
+        vec![Command::SelectPaneId { id: 3 }, Command::MovePaneToTab { id: 3, to: 1 }],
+        "다른 탭 = 그 탭으로 옮기기(포커스 먼저)"
+    );
+    assert_eq!(f(3, true, At::Tab(0), Some(0)), vec![], "지금 탭 위 = 아무 일 없음");
+    assert_eq!(
+        f(3, true, At::New, Some(0)),
+        vec![Command::SelectPaneId { id: 3 }, Command::BreakPane],
+        "[+] = 새 탭으로 떼기(포커스 먼저 — break_pane 은 활성 패널에 걸린다)"
+    );
+    assert_eq!(f(3, true, At::OffCanvas, Some(0)), vec![], "탭바 빈 곳 = 아무 일 없음");
+    assert_eq!(f(3, true, At::Canvas(Some(4)), Some(0)), vec![Command::SwapPaneTo { id: 3, to_id: 4 }]);
+    let focus = vec![Command::SelectPaneId { id: 3 }];
+    assert_eq!(f(3, false, At::Canvas(Some(4)), Some(0)), focus, "안 끌었으면 맞바꾸지 않고 포커스");
+    assert_eq!(f(3, true, At::Canvas(Some(3)), Some(0)), focus);
+    assert_eq!(f(3, true, At::Canvas(None), Some(0)), focus);
+}
+
+#[test]
+fn the_header_hit_is_the_box_top_row_or_the_border_status_title_row() {
+    // 정본 `_header_pane_at` — 상자 윗변 한 행 전체 · 상자가 없으면 border-status 제목줄.
+    let (view, _sent) = two_boxed_panes(3);
+    assert_eq!(view.header_pane_at(0, 0), Some(1));
+    assert_eq!(view.header_pane_at(39, 0), Some(1));
+    assert_eq!(view.header_pane_at(40, 0), Some(2));
+    assert_eq!(view.header_pane_at(10, 1), None, "내용 첫 줄은 헤더가 아니다");
+    let (mut view, tx, _sent) = harness();
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 10, "active": 1, "border_status": true,
+        "panes": [{"id": 7, "x": 0, "y": 1, "w": 80, "h": 9, "title": "sh", "active": true}]
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(layout))).unwrap();
+    view.pump_headless();
+    assert_eq!(view.header_pane_at(5, 0), Some(7), "border-status 제목줄이 손잡이가 아니다");
+    assert_eq!(view.header_pane_at(5, 1), None);
 }
 
 // ── 그리기 오라클 — "화면에 무엇이 보이나"를 Scene 에서 기계로 잰다 (G8s 의 남은 빚) ──
@@ -7260,6 +7621,86 @@ fn a_tab_drag_lights_the_tab_under_the_pointer_as_the_drop_target() {
     );
 }
 
+#[test]
+fn a_pane_header_dropped_on_a_tab_or_on_plus_sends_the_canon_commands() {
+    // pytmux-580 관문 ① 갈래 ⓑⓒ — **호출부** 오라클. 탭 끌기와 같은 hover 장치(진짜 이벤트를
+    // 요소 트리에 흘린다)로 «어느 탭/`[+]` 위인가»를 세우고, `handle_mouse_up(None)` 이 큐에
+    // 무엇을 싣는지 잰다. 누름의 뜻(헤더 pick-up)은 뷰에 직접 세운다 — 헤더 판정·임계는
+    // 위 캔버스 시험들이 잰다(헤드리스 프레젠터는 액션을 안 나른다 · 위 시험 주석).
+    use warpui::platform::WindowStyle;
+    use warpui::{EntityIdSet, Presenter, WindowInvalidation};
+    use warpui_core::event::{Event, ModifiersState};
+    let (to_tab, lit, to_plus) = warpui::App::test((), move |mut app| async move {
+        let (link, tx, _sent) = ServerLink::detached("/tmp/test.sock");
+        let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+        for msg in three_tabs() {
+            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+        }
+        view.pump_headless();
+        view.config.mouse = true;
+        let (window_id, handle) = app.add_window(WindowStyle::NotStealFocus, move |_| view);
+        let mut presenter = Presenter::new(window_id);
+        let mut updated = EntityIdSet::default();
+        updated.insert(app.root_view_id(window_id).unwrap());
+        let invalidation = WindowInvalidation { updated, ..Default::default() };
+        app.update(move |ctx| {
+            presenter.invalidate(invalidation.clone(), ctx);
+            let scene = presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            let at = |exact: bool, needle: &str| {
+                let t = scene
+                    .painted_texts()
+                    .find(|t| if exact { t.text == needle } else { t.text.contains(needle) })
+                    .unwrap_or_else(|| panic!("{needle} 이 안 그려졌다"));
+                vec2f(t.bounds.origin().x() + 1., t.bounds.origin().y() + t.bounds.height() / 2.)
+            };
+            let (a, b, plus) = (at(false, "하나"), at(false, "둘"), at(true, "+"));
+            let mut results = Vec::new();
+            for (from, to) in [(a, b), (b, plus)] {
+                presenter.dispatch_event(
+                    Event::LeftMouseDown { position: from, modifiers: ModifiersState::default(), click_count: 1, is_first_mouse: false },
+                    ctx,
+                );
+                handle.update(ctx, |v, _| {
+                    v.pending.clear();
+                    v.pane_drag = Some(PaneDrag { src: 1, press: (0, 0), moved: true, over: None });
+                });
+                presenter.dispatch_event(
+                    Event::LeftMouseDragged { position: to, modifiers: ModifiersState::default() },
+                    ctx,
+                );
+                results.push(handle.update(ctx, |v, _| {
+                    v.handle_mouse_drag(None);
+                    let lit = v.tab_drag_over;
+                    v.handle_mouse_up(None);
+                    let out: Vec<Command> = v
+                        .pending
+                        .iter()
+                        .filter_map(|o| match o {
+                            Outgoing::Command(c) => Some(c.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    (out, lit)
+                }));
+            }
+            let (to_plus, _) = results.pop().unwrap();
+            let (to_tab, lit) = results.pop().unwrap();
+            (to_tab, lit, to_plus)
+        })
+    });
+    assert_eq!(lit, Some(1), "헤더를 끌고 둘째 탭 위로 갔는데 그 탭이 드롭 대상으로 안 밝았다");
+    assert_eq!(
+        to_tab,
+        vec![Command::SelectPaneId { id: 1 }, Command::MovePaneToTab { id: 1, to: 1 }],
+        "탭 위에 놓았는데 move_pane_to_tab 이 아니다"
+    );
+    assert_eq!(
+        to_plus,
+        vec![Command::SelectPaneId { id: 1 }, Command::BreakPane],
+        "[+] 위에 놓았는데 break_pane 이 아니다"
+    );
+}
+
 /// 8×8 진짜 PNG 한 장(pytmux-472 오라클용).
 fn tiny_png() -> String {
     let path = std::env::temp_dir().join(format!("pytmux-gui-test-thumb-{}.png", std::process::id()));
@@ -8734,6 +9175,133 @@ fn every_uppercase_binding_is_reachable_from_a_shifted_keystroke() {
             "{name}: 표 이름으로 안 돌아간다"
         );
     }
+}
+
+/// 로컬 1 + 원격 2(같은 호스트) · 원격 `#2` 가 활성 — pytmux-601 의 자리.
+fn remote_tab_active() -> Vec<ServerMessage> {
+    vec![
+        layout_one_pane(),
+        serde_json::from_value(serde_json::json!({
+            "t": "status",
+            "windows": [
+                {"index": 0, "name": "로컬"},
+                {"index": 1, "name": "⇄box:하나", "remote": true},
+                {"index": 2, "name": "⇄box:둘", "remote": true, "active": true},
+            ]
+        }))
+        .unwrap(),
+    ]
+}
+
+#[test]
+fn closing_a_remote_tab_detaches_that_one_tab_on_every_road() {
+    // ★ pytmux-601 · 정본 `confirm_kill_tab` 첫 갈래와 `clientcmd` 의 `kill-tab` 갈래:
+    // 활성 탭이 원격이면 `kill_window`(서버가 «원격 탭에서는 사용할 수 없는 명령입니다» 로
+    // 거절한다) 대신 `remote_detach(host, index=<병합 전역 index>)` 로 **그 탭 하나만** 뗀다.
+    //
+    // 길 셋을 모두 잰다 — `[x]` 클릭 · 팔레트 `kill-tab` · 키(`Action::KillTab` = prefix `&`·
+    // 탭바 `x`). 셋 다 같은 확인 판을 거쳐 같은 명령이 나가야 한다.
+    use base::chrome::ClickTarget;
+    use base::TabSpot;
+    type Road = fn(&mut SessionView);
+    let roads: [(&str, Road); 3] = [
+        ("[x] 클릭", |v| {
+            v.chrome_click(ClickTarget::Spot(TabSpot::Close));
+        }),
+        ("팔레트 kill-tab", |v| {
+            v.handle_key(Key::Escape, Mods::NONE);
+            v.pump_headless();
+            v.handle_key(Key::Char(':'), Mods::NONE);
+            v.pump_headless();
+            for c in "kill-tab".chars() {
+                v.handle_key(Key::Char(c), Mods::NONE);
+                v.pump_headless();
+            }
+            v.handle_key(Key::Enter, Mods::NONE);
+        }),
+        ("키(KillTab)", |v| {
+            v.apply_action_for_test(base::Action::KillTab);
+        }),
+    ];
+    for (name, road) in roads {
+        let (mut view, tx, sent) = harness();
+        for msg in remote_tab_active() {
+            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+        }
+        view.pump_headless();
+        road(&mut view);
+        view.pump_headless();
+        // 확인 판의 제목이 «pytmux 종료» 가 아니다(로컬 탭이 하나뿐인데도) — 닫히는 것은 원격 탭이다.
+        assert_eq!(
+            view.screens.confirm_title(),
+            Some("원격 탭 분리"),
+            "{name}: 확인 판이 원격 분리가 아니다"
+        );
+        assert!(
+            view.screens.confirm_question().contains("box"),
+            "{name}: 물음에 호스트가 없다: {:?}",
+            view.screens.confirm_question()
+        );
+        // 확인 전에는 아무것도 안 나간다.
+        assert!(
+            !sent.lock().unwrap().iter().any(|o| matches!(
+                o,
+                Outgoing::Command(Command::RemoteDetach { .. } | Command::KillWindow)
+            )),
+            "{name}: 확인 없이 나갔다"
+        );
+        view.handle_key(Key::Char('y'), Mods::NONE);
+        view.pump_headless();
+        let out = sent.lock().unwrap().clone();
+        let detach: Vec<_> = out
+            .iter()
+            .filter_map(|o| match o {
+                Outgoing::Command(Command::RemoteDetach { host, index }) => {
+                    Some((host.clone(), *index))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            detach,
+            vec![("box".to_owned(), Some(2))],
+            "{name}: 활성 원격 탭 하나를 떼는 명령이 아니다: {out:?}"
+        );
+        assert!(
+            !out.iter().any(|o| matches!(o, Outgoing::Command(Command::KillWindow))),
+            "{name}: 원격 탭에 kill_window 가 나갔다(서버가 거절한다): {out:?}"
+        );
+    }
+}
+
+#[test]
+fn closing_a_local_tab_next_to_remote_ones_still_kills_the_window() {
+    // 대조군: 활성이 **로컬** 탭이면 정본은 네 갈래(여기선 마지막 로컬 + 원격 열림)로
+    // 가고 `kill_window` 를 보낸다 — 원격 갈래가 로컬 탭까지 삼키면 안 된다.
+    let (mut view, tx, sent) = harness();
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [
+            {"index": 0, "name": "로컬", "active": true},
+            {"index": 1, "name": "⇄box:하나", "remote": true},
+        ]
+    }))
+    .unwrap();
+    for msg in [layout_one_pane(), status] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.apply_action_for_test(base::Action::KillTab);
+    view.pump_headless();
+    assert_eq!(view.screens.confirm_title(), Some("pytmux 종료"));
+    view.handle_key(Key::Char('y'), Mods::NONE);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(out.iter().any(|o| matches!(o, Outgoing::Command(Command::KillWindow))), "{out:?}");
+    assert!(
+        !out.iter().any(|o| matches!(o, Outgoing::Command(Command::RemoteDetach { .. }))),
+        "{out:?}"
+    );
 }
 
 #[test]

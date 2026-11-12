@@ -18,6 +18,7 @@
 
 // 연결 계층은 이제 OS 중립이다(전송만 갈린다 — `transport` 참조). 예전에는 여기가
 // `#[cfg(unix)]` 였고, 그게 Windows 지원의 첫 관문이었다.
+pub mod answer;
 pub mod client;
 pub mod blocks;
 /// 서버가 없으면 **정본이 띄운다**(직접 spawn 을 다시 적지 않는다).
@@ -27,6 +28,7 @@ pub mod canvas;
 pub mod clock;
 pub mod command;
 pub mod compose;
+pub mod config_apply;
 pub mod diag;
 pub mod arghist;
 /// 플러그인 화면 **칸**의 의미 등급(`ok`·`warn`·`crit` — pytmux-419 ⑥).
