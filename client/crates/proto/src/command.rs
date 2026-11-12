@@ -2423,15 +2423,18 @@ pub fn selection_to_buffer(text: &str) -> Option<Command> {
 ///
 /// 글자 수는 바이트가 아니라 **글자**로 센다 — 한글 한 자가 3자로 보이면 사용자가 자기
 /// 선택을 못 알아본다.
+///
+/// ★ 글은 **정본 그대로**다(pytmux-655 · 정본 `_do_copy_text`: `msg.copied_chars` + 클립보드에
+/// 들어갔을 때만 `msg.clipboard_suffix`). 선택 복사와 알림 이력의 `c` 가 같은 한 마디를 쓴다 —
+/// 둘 다 서버 버퍼에 먼저 넣으므로 클립보드가 안 돼도 「복사됨」은 참말이다.
 pub fn copy_note(chars: usize, to_clipboard: bool) -> String {
-    use base::i18n::tf;
+    use base::i18n::{t, tf};
 
-    let n = chars.to_string();
+    let mut line = tf("{n} chars 복사됨", &[("n", &chars.to_string())]);
     if to_clipboard {
-        tf("{n}자 복사됨", &[("n", &n)])
-    } else {
-        tf("{n}자 복사됨(pytmux 버퍼만 — OS 클립보드 도구 없음)", &[("n", &n)])
+        line.push_str(t(" (클립보드)"));
     }
+    line
 }
 
 #[cfg(test)]
@@ -2469,11 +2472,13 @@ mod copy_tests {
 
     #[test]
     fn a_failed_clipboard_is_said_out_loud() {
-        // "복사됨"만 말하면 다른 앱에 붙여넣으려던 사용자는 왜 안 되는지 못 찾는다.
-        let ok = copy_note(3, true);
-        let no = copy_note(3, false);
-        assert_ne!(ok, no);
-        assert!(no.contains("OS 클립보드"), "{no}");
-        assert!(ok.starts_with("3자"), "{ok}");
+        // 정본 `_do_copy_text` 그대로 — 클립보드에 들어갔을 때만 「(클립보드)」 가 붙는다(서버
+        // 버퍼에는 둘 다 들어갔다).
+        let ok = base::i18n::with_locale("ko", || copy_note(3, true));
+        let no = base::i18n::with_locale("ko", || copy_note(3, false));
+        assert_eq!(ok, "3 chars 복사됨 (클립보드)");
+        assert_eq!(no, "3 chars 복사됨");
+        let en = base::i18n::with_locale("en", || copy_note(3, true));
+        assert_eq!(en, "3 chars copied (clipboard)");
     }
 }

@@ -85,12 +85,9 @@ pub static EN: &[(&str, &str)] = &[
     ),
     // ── blocks.rs ──
     ("(명령 미상)", "(command unknown)"),
-    // ── command.rs — copy_note ──
-    ("{n}자 복사됨", "{n} chars copied"),
-    (
-        "{n}자 복사됨(pytmux 버퍼만 — OS 클립보드 도구 없음)",
-        "{n} chars copied (pytmux buffer only — no OS clipboard tool)",
-    ),
+    // ── command.rs — copy_note · 정본 `msg.copied_chars` + `msg.clipboard_suffix` 그대로(pytmux-655) ──
+    ("{n} chars 복사됨", "{n} chars copied"),
+    (" (클립보드)", " (clipboard)"),
     // ── link.rs ──
     ("기록판이 망가졌습니다", "the recording pad is broken"),
     ("보낼 연결이 없습니다", "no connection to send on"),

@@ -250,56 +250,12 @@ fn the_tone_ruler_bites() {
 
 // ── 3. 모든 물음이 영어로 ────────────────────────────────────────────────────────
 
-/// 물음 전수 — ⚠ 새 변형을 더하면 여기에도 적는다(`Prompt` 에 전수 목록이 없다).
-const ALL_PROMPTS: &[Prompt] = &[
-    Prompt::RenameTab,
-    Prompt::MoveTab,
-    Prompt::KillPane,
-    Prompt::KillTab,
-    Prompt::RenamePane,
-    Prompt::SwapTab,
-    Prompt::PluginAsk,
-    Prompt::PipePane,
-    Prompt::JoinPane,
-    Prompt::DisplayMessage,
-    Prompt::DefaultPath,
-    Prompt::ClaudeCommand,
-    Prompt::StatusLeft,
-    Prompt::StatusRight,
-    Prompt::StatusBg,
-    Prompt::StatusFg,
-    Prompt::CursorColor,
-    Prompt::FontFamily,
-    Prompt::SetOption,
-    Prompt::SetHook,
-    Prompt::SendKeys,
-    Prompt::DisplayPopup,
-    Prompt::RunShell,
-    Prompt::IfShell,
-    Prompt::BindKey,
-    Prompt::UnbindKey,
-    Prompt::SaveTabLayout,
-    Prompt::LoadTabLayout,
-    Prompt::LoadTabLayoutNew,
-    Prompt::SetPrefix,
-    Prompt::KillServer,
-    Prompt::RestartServer,
-    Prompt::RestartAll,
-    Prompt::RemoteAttach,
-    Prompt::RemoteNewTab,
-    Prompt::RemoteDetach,
-    Prompt::SearchScrollback,
-    Prompt::SearchAll,
-    Prompt::KillTabLast,
-    Prompt::KillTabLastRemote,
-    Prompt::KillTabPinned,
-    Prompt::DetachRemoteTab,
-];
-
 #[test]
 fn every_prompt_question_has_an_english_face() {
+    // 물음 전수는 `Prompt::all()` — 변형을 더하면 컴파일이 그 목록에도 더하게 한다(pytmux-655).
     let mut wrong = Vec::new();
-    for prompt in ALL_PROMPTS {
+    assert!(Prompt::all().len() >= 40, "물음 전수가 너무 적다: {}", Prompt::all().len());
+    for prompt in Prompt::all() {
         let en = i18n::with_locale("en", || prompt.question().to_owned());
         if has_hangul(&en) {
             wrong.push(format!("{prompt:?}: {en:?}"));

@@ -13869,6 +13869,35 @@ fn copying_a_notice_does_not_wait_for_the_clipboard_tool() {
     assert!(said, "복사가 끝났는데 결과 알림이 안 떴다");
 }
 
+fn failing_copier(_text: &str) -> bool {
+    false
+}
+
+#[test]
+fn a_notice_copy_fills_the_server_buffer_even_when_the_clipboard_fails() {
+    // pytmux-655 · 정본 `copy_text`: 서버 버퍼(`set_buffer`)에 먼저 넣고 OS 클립보드는 따로 —
+    // 클립보드가 안 돼도 「{n} chars 복사됨」(꼬리 「(클립보드)」 없이)이다. 종전 GUI 는 서버 버퍼에
+    // 안 넣고 오류 한 줄만 냈다.
+    let (mut view, sent) = view_with_two_notices();
+    view.os_copier = failing_copier;
+    view.handle_key(Key::Down, Mods::NONE);
+    view.handle_key(Key::Char('c'), Mods::NONE);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut said = None;
+    while std::time::Instant::now() < deadline && said.is_none() {
+        view.pump_headless();
+        said = view.state.notices().find(|n| n.text.contains("chars 복사됨")).map(|n| n.text.clone());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let said = said.expect("복사 결과 알림이 안 떴다");
+    assert!(!said.contains("클립보드"), "클립보드가 실패했는데 들어갔다고 말했다: {said}");
+    assert!(
+        sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Command(Command::SetBuffer { .. }))),
+        "알림 복사가 서버 버퍼에 안 들어갔다: {:?}",
+        sent.lock().unwrap()
+    );
+}
+
 // ── pytmux-581 · 버튼 없는 이동(1003) ─────────────────────────────────────────
 //
 // 정본은 `on_mouse_move` 끝에서 1003 앱에만 `move`(cb 35)를 넘긴다. 같은 칸 반복이 없는

@@ -426,7 +426,7 @@ pub static EN: &[(&str, &str)] = &[
     ("arg\u{0004}선택지", "choice"),
     // `debug-stats` 서버 절반의 「세션」 — 정본 `diag.sessions` 는 복수형이다(pytmux-627 ②).
     ("diag\u{0004}세션", "Sessions"),
-    ("(↑↓ 줄 · ←→ 값 · Enter 실행 · Esc 취소)", "(↑↓ row · ←→ value · Enter run · Esc cancel)"),
+    ("(←→ 값 · Enter 실행 · Esc 취소)", "(←→ value · Enter run · Esc cancel)"),
     ("(아무 키나 닫기)", "(any key closes)"),
     (
         "(↑↓ 고르기 · h/v 방향 · Enter 합치기 · Esc 취소)",

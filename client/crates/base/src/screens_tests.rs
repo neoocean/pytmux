@@ -2008,3 +2008,19 @@ fn home_and_end_scroll_a_plugin_text_screen() {
     assert_eq!(screens.press(Key::Home, Mods::NONE), Some(ScreenKey::Consumed));
     assert_eq!(screens.scroll(), 0);
 }
+
+#[test]
+fn the_layout_presets_cycle_their_value_with_left_and_right_like_the_canon_option_form() {
+    // pytmux-655 — 정본 `select-layout` 은 인자 폼이라 ←→ 가 값을 **돌린다**(제목 「←→ 값 · Enter 실행」).
+    let mut screens = Screens::new();
+    screens.open(Screen::Layouts);
+    screens.set_list_view(5, 3);
+    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 1);
+    assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.press(Key::Left, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 2, "← 가 맨 앞에서 끝으로 안 돌았다");
+    assert_eq!(screens.press(Key::Right, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 0, "→ 가 끝에서 맨 앞으로 안 돌았다");
+    assert_eq!(screens.press(Key::Enter, Mods::NONE), Some(ScreenKey::Chosen(0)));
+}

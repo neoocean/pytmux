@@ -10384,6 +10384,11 @@ impl SessionView {
             self.copied_for_test = Some(text.clone());
         }
         let chars = text.chars().count();
+        // 정본 `copy_text` 와 같은 규칙(pytmux-655) — **서버 버퍼에 먼저** 넣고 OS 클립보드는
+        // 일 스레드로. 클립보드가 안 되는 상자에서도 pytmux 안 붙여넣기는 된다(선택 복사와 같은 길).
+        if let Some(cmd) = proto::command::selection_to_buffer(&text) {
+            self.pending.push(Outgoing::Command(cmd));
+        }
         self.spawn_os_copy(text, OsCopyWhat::Notice(chars));
     }
 
@@ -10415,13 +10420,10 @@ impl SessionView {
                 (OsCopyWhat::Path(full), false) => self
                     .state
                     .note_error(tf("경로를 복사하지 못했습니다: {path}", &[("path", full)])),
-                // 정본 알림 이력의 `c` = `copy_text` → `msg.copied_chars` + `msg.clipboard_suffix`
-                // (pytmux-595 — 같은 뜻의 정본 글 그대로).
-                (OsCopyWhat::Notice(n), true) => self.state.note_notice(
-                    tf("{n} chars 복사됨", &[("n", n.to_string().as_str())]) + t(" (클립보드)"),
-                ),
-                (OsCopyWhat::Notice(_), false) => {
-                    self.state.note_error(t("알림을 복사하지 못했습니다").to_owned())
+                // 정본 알림 이력의 `c` = `copy_text` → `msg.copied_chars` + 클립보드에 들어갔을
+                // 때만 `msg.clipboard_suffix`(pytmux-655 — 서버 버퍼에는 이미 넣었다 · `copy_notice`).
+                (OsCopyWhat::Notice(n), ok) => {
+                    self.state.note_notice(proto::command::copy_note(*n, ok))
                 }
             }
         }

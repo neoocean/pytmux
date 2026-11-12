@@ -567,7 +567,9 @@ impl Screen {
             Screen::Hooks => "(아무 키나 닫기 · ↑↓ 스크롤)",
             Screen::Layouts => "(↑↓ 고르기 · Enter 적용 · Esc 취소)",
             Screen::SavedLayouts => "(↑↓ 고르기 · Enter 불러오기 · Esc 취소)",
-            Screen::Options => "(↑↓ 줄 · ←→ 값 · Enter 실행 · Esc 취소)",
+            // 「↑↓ 줄」 은 뺐다(pytmux-655 — 꼬리줄의 진실 자가 잡았다): 인자 폼은 전부 **한 줄**
+            // 이라(`options::COMMAND_OPTIONS`) ↑↓ 가 할 일이 없다. 정본 제목과 같은 키만 말한다.
+            Screen::Options => "(←→ 값 · Enter 실행 · Esc 취소)",
             Screen::Version => "(아무 키나 닫기)",
             Screen::RestartCheck => "(아무 키나 닫기 · ↑↓ 스크롤)",
             Screen::ShellOutput => "(아무 키나 닫기 · ↑↓ 스크롤)",
@@ -850,6 +852,106 @@ pub struct TabFacts {
 }
 
 impl Prompt {
+    /// 물음 **전수** — [`Screen::all`] 과 같은 장치다(pytmux-655). 아래 `match` 에 와일드카드가
+    /// 없으므로 변형을 더하면 여기가 안 컴파일된다(그때 배열에도 더하게 된다). 「모든 물음이
+    /// 영어로 나온다」 같은 자가 손 목록 대신 이것을 쓴다 — 손 목록은 새 물음을 조용히 빠뜨린다.
+    pub fn all() -> &'static [Prompt] {
+        const fn exhaustive(p: Prompt) -> usize {
+            match p {
+                Prompt::RenameTab => 0,
+                Prompt::MoveTab => 1,
+                Prompt::KillPane => 2,
+                Prompt::KillTab => 3,
+                Prompt::RenamePane => 4,
+                Prompt::SwapTab => 5,
+                Prompt::PluginAsk => 6,
+                Prompt::PipePane => 7,
+                Prompt::JoinPane => 8,
+                Prompt::DisplayMessage => 9,
+                Prompt::DefaultPath => 10,
+                Prompt::ClaudeCommand => 11,
+                Prompt::StatusLeft => 12,
+                Prompt::StatusRight => 13,
+                Prompt::StatusBg => 14,
+                Prompt::StatusFg => 15,
+                Prompt::CursorColor => 16,
+                Prompt::FontFamily => 17,
+                Prompt::SetOption => 18,
+                Prompt::SetHook => 19,
+                Prompt::SendKeys => 20,
+                Prompt::DisplayPopup => 21,
+                Prompt::RunShell => 22,
+                Prompt::IfShell => 23,
+                Prompt::BindKey => 24,
+                Prompt::UnbindKey => 25,
+                Prompt::SaveTabLayout => 26,
+                Prompt::LoadTabLayout => 27,
+                Prompt::LoadTabLayoutNew => 28,
+                Prompt::SetPrefix => 29,
+                Prompt::KillServer => 30,
+                Prompt::RestartServer => 31,
+                Prompt::RestartAll => 32,
+                Prompt::RemoteAttach => 33,
+                Prompt::RemoteNewTab => 34,
+                Prompt::RemoteDetach => 35,
+                Prompt::SearchScrollback => 36,
+                Prompt::SearchAll => 37,
+                Prompt::KillTabLast => 38,
+                Prompt::KillTabLastRemote => 39,
+                Prompt::KillTabPinned => 40,
+                Prompt::DetachRemoteTab => 41,
+            }
+        }
+        const ALL: &[Prompt] = &[
+            Prompt::RenameTab,
+            Prompt::MoveTab,
+            Prompt::KillPane,
+            Prompt::KillTab,
+            Prompt::RenamePane,
+            Prompt::SwapTab,
+            Prompt::PluginAsk,
+            Prompt::PipePane,
+            Prompt::JoinPane,
+            Prompt::DisplayMessage,
+            Prompt::DefaultPath,
+            Prompt::ClaudeCommand,
+            Prompt::StatusLeft,
+            Prompt::StatusRight,
+            Prompt::StatusBg,
+            Prompt::StatusFg,
+            Prompt::CursorColor,
+            Prompt::FontFamily,
+            Prompt::SetOption,
+            Prompt::SetHook,
+            Prompt::SendKeys,
+            Prompt::DisplayPopup,
+            Prompt::RunShell,
+            Prompt::IfShell,
+            Prompt::BindKey,
+            Prompt::UnbindKey,
+            Prompt::SaveTabLayout,
+            Prompt::LoadTabLayout,
+            Prompt::LoadTabLayoutNew,
+            Prompt::SetPrefix,
+            Prompt::KillServer,
+            Prompt::RestartServer,
+            Prompt::RestartAll,
+            Prompt::RemoteAttach,
+            Prompt::RemoteNewTab,
+            Prompt::RemoteDetach,
+            Prompt::SearchScrollback,
+            Prompt::SearchAll,
+            Prompt::KillTabLast,
+            Prompt::KillTabLastRemote,
+            Prompt::KillTabPinned,
+            Prompt::DetachRemoteTab,
+        ];
+        assert!(
+            ALL.iter().enumerate().all(|(i, p)| exhaustive(*p) == i),
+            "Prompt::all() 의 차례가 어긋났다 — 전수 목록이 아니다"
+        );
+        ALL
+    }
     /// 지금 상황에 맞는 「탭 닫기」 물음(정본 `client.py` 의 네 갈래와 같은 판정).
     ///
     /// 판정을 core 에 두는 이유는 늘 같다 — 두 뷰가 각자 갈래를 세면 한쪽 클라만
@@ -2281,6 +2383,23 @@ impl Screens {
         let Some(screen) = self.top() else {
             return self.press_list(key);
         };
+        // 레이아웃 프리셋: 정본은 `select-layout` 의 **인자 폼**이라 `←→` 가 값을 돌린다(제목도
+        // 「←→ 값 · Enter 실행」 이다 · pytmux-655). 우리 판은 목록이라 `←→` 를 «앞·다음 값» 으로
+        // 받는다(돌아간다 — 정본 인자 폼의 순환과 같다). `↑↓` 는 종전대로 더 받는다.
+        if screen == Screen::Layouts && matches!(key, Key::Left | Key::Right) {
+            let n = self.list_total;
+            if n == 0 {
+                return self.press_list(if key == Key::Right { Key::Down } else { Key::Up });
+            }
+            let last = n - 1;
+            let cur = self.selected.min(last);
+            self.selected = match key {
+                Key::Right => if cur >= last { 0 } else { cur + 1 },
+                _ => if cur == 0 { last } else { cur - 1 },
+            };
+            self.follow_cursor();
+            return ScreenKey::Consumed;
+        }
         match ListNav::of(screen) {
             ListNav::Legacy => self.press_list(key),
             ListNav::Scroll => match key {
