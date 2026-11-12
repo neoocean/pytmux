@@ -19,7 +19,7 @@
 //! # 살아 있는가는 붙어 보고 판정한다
 //!
 //! 소켓 파일·포트파일은 서버가 죽은 뒤에도 잠깐 남는다(루트 `CLAUDE.md` ⛔ — `kill-server`
-//! 는 0.2초 지연 shutdown, 실측 1.5초 안에 사라진다). 그래서 [`attach_or_start`] 는 파일
+//! 는 0.2초 지연 shutdown, 실측 1.5초 안에 사라진다). 그래서 [`connect_or_start`] 는 파일
 //! 존재를 묻지 않고 **먼저 붙어 본다**. 실패 사유가 "서버가 없다" 부류일 때만 띄운다.
 
 use std::ffi::OsString;
@@ -418,18 +418,21 @@ fn no_window(_command: &mut Command) {}
 /// tmux 의 `attach` 가 서버를 띄우는 것과 같은 모델이고, 정본 클라도 같은 순서다
 /// (`launcher.main` 의 `need_spawn`). GUI 만 데모로 떨어지면 사용자는 자기 세션이
 /// 사라졌다고 읽는다.
-pub fn attach_or_start(cols: u16, rows: u16) -> Result<ServerLink, BootError> {
+///
+/// ★ **연결만 한다** — hello 는 뷰가 격자를 잰 뒤 [`ServerLink::send_hello`] 로 보낸다
+/// (pytmux-639 G6 · [`ServerLink::connect`] 문서). 서버가 있나·토큰을 받나는 연결에서 갈린다.
+pub fn connect_or_start() -> Result<ServerLink, BootError> {
     // 좀비 서버(pytmux-586 G4) — 정본 `existing_server_usable` 와 같은 물음을 붙기 **전에**.
     if let Some(endpoint) = crate::endpoint::resolve()
         && refuses_auth(&endpoint)
     {
         start_server_at(None)?;
     }
-    match ServerLink::attach(cols, rows) {
+    match ServerLink::connect() {
         Ok(link) => Ok(link),
         Err(e) if means_no_server(&e) => {
             start_server()?;
-            Ok(ServerLink::attach(cols, rows)?)
+            Ok(ServerLink::connect()?)
         }
         Err(e) => Err(e.into()),
     }
@@ -440,16 +443,18 @@ pub fn attach_or_start(cols: u16, rows: u16) -> Result<ServerLink, BootError> {
 /// 정본 `main` 은 `--socket` 을 받아도 `need_spawn` 이면 `spawn_server(sock_path)` 로 그 자리에
 /// 띄운다. 「지목받은 곳은 폴백하지 않는다」는 **다른 서버·데모로 가지 않는다**는 뜻이지
 /// 그 자리에 띄우지 않는다는 뜻이 아니다.
-pub fn attach_or_start_at(spec: &str, cols: u16, rows: u16) -> Result<ServerLink, BootError> {
+///
+/// [`connect_or_start`] 처럼 **연결만** 한다.
+pub fn connect_or_start_at(spec: &str) -> Result<ServerLink, BootError> {
     let endpoint = crate::endpoint::parse(spec);
     if endpoint.probe() && refuses_auth(&endpoint) {
         start_server_at(Some(spec))?;
     }
-    match ServerLink::attach_to(spec, cols, rows) {
+    match ServerLink::connect_to(spec) {
         Ok(link) => Ok(link),
         Err(e) if means_no_server(&e) => {
             start_server_at(Some(spec))?;
-            Ok(ServerLink::attach_to(spec, cols, rows)?)
+            Ok(ServerLink::connect_to(spec)?)
         }
         Err(e) => Err(e.into()),
     }

@@ -26,6 +26,7 @@ pub mod build;
 pub mod chrome;
 pub mod cmdline;
 pub mod config;
+pub mod crash;
 pub mod diag;
 pub mod editor;
 pub mod edge_scroll;

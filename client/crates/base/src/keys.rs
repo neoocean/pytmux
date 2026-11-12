@@ -1140,7 +1140,7 @@ pub fn from_name(
 /// `crates/proto/tests/key_bytes_conformance.rs`(정본에서 뽑은 격자 `key_grid.json`).
 ///
 /// ⚠ `Mods.alt` 에는 Cmd/Meta 도 들어온다(`gui` 의 `key_from_keystroke`) — 정본은 호스트 단말이
-/// Cmd 를 안 주므로 그 조합을 못 받는다(DIVERGE(pytmux-598) ⓒ OS 창 통합 · 그 자리에 적혀 있다).
+/// Cmd 를 안 주므로 그 조합을 못 받는다(DIVERGE(cmd-as-alt) ⓒ OS 창 통합 · 그 자리에 적혀 있다).
 pub fn encode(key: Key, mods: Mods) -> Option<Vec<u8>> {
     // (Shift 를 키 쪽에 접은 변형인가, 수식 없는 짝)
     let (shift, plain) = match key {

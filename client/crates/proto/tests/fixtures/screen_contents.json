@@ -1,0 +1,542 @@
+{
+  "_comment": "python3 scripts/gen_screen_contents.py 로 생성. 출처 = pytmuxlib/clientscreens.py 판 클래스의 i18n 열쇠(AST) · i18n.t 로 푼 ko/en · clientutil.COMMAND_OPTIONS.",
+  "screens": {
+    "ChooseBufferScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": null,
+      "hint": null
+    },
+    "ChooseLayoutScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": null,
+      "hint": null
+    },
+    "ChooseTreeScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": null,
+      "hint": null
+    },
+    "CommandListScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": "screen.cmdlist_sub",
+      "hint": {
+        "ko": "타이핑 검색 · ←→/클릭 탭 · ↑↓ 명령 · Home/End 처음·끝 · Enter 선택 · Esc 닫기",
+        "en": "Type to search · ←→/click tabs · ↑↓ commands · Home/End first·last · Enter select · Esc close"
+      }
+    },
+    "CommandOptionsScreen": {
+      "title_key": "screen.options_title",
+      "title": {
+        "ko": "{cmd} 옵션 · ←→ 값 · Enter 실행 · Esc",
+        "en": "{cmd} options · ←→ value · Enter run · Esc"
+      },
+      "hint_key": null,
+      "hint": null
+    },
+    "ComposePromptScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": "compose.hint",
+      "hint": {
+        "ko": "Enter 전송 · Shift+Enter 줄바꿈 · Esc 메뉴 · Shift+방향키/Ctrl+A 선택",
+        "en": "Enter send · Shift+Enter newline · Esc menu · Shift+arrows/Ctrl+A select"
+      }
+    },
+    "ConfirmScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": "screen.confirm_sub",
+      "hint": {
+        "ko": "←→ 이동 · Enter 확정 · y/n · Esc 취소",
+        "en": "←→ move · Enter confirm · y/n · Esc cancel"
+      }
+    },
+    "InfoScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": null,
+      "hint": null
+    },
+    "InfoTabsScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": "screen.infotabs_sub",
+      "hint": {
+        "ko": "←→ 탭·닫기[x] · ↑↓ 항목 · Enter/Esc 닫기",
+        "en": "←→ tabs·close[x] · ↑↓ items · Enter/Esc close"
+      }
+    },
+    "MenuScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": null,
+      "hint": null
+    },
+    "MergeRemoteTabScreen": {
+      "title_key": "screen.merge_remote_title",
+      "title": {
+        "ko": "원격 탭 머지 → {dir} · Enter 선택 · h/v 방향 · Esc",
+        "en": "Merge remote tab → {dir} · Enter select · h/v dir · Esc"
+      },
+      "hint_key": null,
+      "hint": null
+    },
+    "NoticeHistoryScreen": {
+      "title_key": "screen.notice_history_title",
+      "title": {
+        "ko": "알림 이력 (최근 {n})",
+        "en": "Notice history (last {n})"
+      },
+      "hint_key": "screen.notice_history_hint",
+      "hint": {
+        "ko": "↑↓ PgUp/PgDn Home/End 이동 · ⏎ 전문 · c 복사 · Esc 닫기",
+        "en": "↑↓ PgUp/PgDn Home/End move · ⏎ full text · c copy · Esc close"
+      }
+    },
+    "PluginManagerScreen": {
+      "title_key": "plugins.title",
+      "title": {
+        "ko": "플러그인 관리",
+        "en": "Plugin manager"
+      },
+      "hint_key": "plugins.hint",
+      "hint": {
+        "ko": "Space/Enter 토글 · Esc 닫기 · 서버 기여 플러그인은 재시작에 완전 반영",
+        "en": "Space/Enter toggle · Esc close · server-contributed plugins fully apply on restart"
+      }
+    },
+    "PromptScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": null,
+      "hint": null
+    },
+    "SearchResultsScreen": {
+      "title_key": "screen.search_all_title",
+      "title": {
+        "ko": "전역 검색 «{q}» — {n}건 · 패널 {panes}개",
+        "en": "Search all «{q}» — {n} hits · {panes} panes"
+      },
+      "hint_key": "screen.search_all_sub",
+      "hint": {
+        "ko": "↑↓ 이동 · Enter 그 자리로 · Esc 닫기",
+        "en": "↑↓ move · Enter jump there · Esc close"
+      }
+    },
+    "SettingsScreen": {
+      "title_key": "screen.settings_title",
+      "title": {
+        "ko": "설정",
+        "en": "Settings"
+      },
+      "hint_key": "screen.settings_sub",
+      "hint": {
+        "ko": "↑↓ 이동 · ←→ 값 변경 · Tab/클릭 카테고리 · Enter 입력/열기 · Esc 닫기",
+        "en": "↑↓ move · ←→ change · Tab/click category · Enter edit/open · Esc close"
+      }
+    },
+    "TabSwitcherScreen": {
+      "title_key": null,
+      "title": null,
+      "hint_key": "screen.tab_switcher_sub",
+      "hint": {
+        "ko": "Tab 다음 · Shift+Tab 이전 · Enter 전환 · Esc 취소",
+        "en": "Tab next · Shift+Tab prev · Enter switch · Esc cancel"
+      }
+    }
+  },
+  "options": {
+    "split-window": [
+      {
+        "label": "방향",
+        "choices": [
+          [
+            "좌우 분할 │ (-h)",
+            "-h"
+          ],
+          [
+            "상하 분할 ─ (-v)",
+            "-v"
+          ]
+        ]
+      }
+    ],
+    "select-pane": [
+      {
+        "label": "이동",
+        "choices": [
+          [
+            "◀ 왼쪽",
+            "-L"
+          ],
+          [
+            "▶ 오른쪽",
+            "-R"
+          ],
+          [
+            "▲ 위",
+            "-U"
+          ],
+          [
+            "▼ 아래",
+            "-D"
+          ]
+        ]
+      }
+    ],
+    "resize-pane": [
+      {
+        "label": "동작",
+        "choices": [
+          [
+            "줌 토글 ⛶",
+            "-Z"
+          ],
+          [
+            "◀ 왼쪽",
+            "-L"
+          ],
+          [
+            "▶ 오른쪽",
+            "-R"
+          ],
+          [
+            "▲ 위",
+            "-U"
+          ],
+          [
+            "▼ 아래",
+            "-D"
+          ]
+        ]
+      }
+    ],
+    "select-layout": [
+      {
+        "label": "프리셋",
+        "choices": [
+          [
+            "바둑판 tiled",
+            "tiled"
+          ],
+          [
+            "가로 균등 even-horizontal",
+            "even-horizontal"
+          ],
+          [
+            "세로 균등 even-vertical",
+            "even-vertical"
+          ],
+          [
+            "메인 세로 main-vertical",
+            "main-vertical"
+          ],
+          [
+            "메인 가로 main-horizontal",
+            "main-horizontal"
+          ]
+        ]
+      }
+    ],
+    "capture-pane": [
+      {
+        "label": "범위",
+        "choices": [
+          [
+            "보이는 영역",
+            ""
+          ],
+          [
+            "스크롤백 전체 -S",
+            "-S"
+          ]
+        ]
+      }
+    ],
+    "synchronize-panes": [
+      {
+        "label": "동기화",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "monitor-activity": [
+      {
+        "label": "활동",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "monitor-bell": [
+      {
+        "label": "벨",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "inactive-dim": [
+      {
+        "label": "비활성흐리게",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "strip-box-drawing": [
+      {
+        "label": "테두리제거",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "inactive-dim-ratio": [
+      {
+        "label": "흐리게세기",
+        "choices": [
+          [
+            "아주 옅게 0.10",
+            "0.10"
+          ],
+          [
+            "옅게 0.18",
+            "0.18"
+          ],
+          [
+            "보통 0.30",
+            "0.30"
+          ],
+          [
+            "진하게 0.45",
+            "0.45"
+          ]
+        ]
+      }
+    ],
+    "automatic-rename": [
+      {
+        "label": "자동이름",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "single-border": [
+      {
+        "label": "단일테두리",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "coalesce-repaints": [
+      {
+        "label": "리페인트합치기",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "nest-auto-attach": [
+      {
+        "label": "중첩자동승격",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "exit-empty": [
+      {
+        "label": "세션0개시종료",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "win-mouse-motion": [
+      {
+        "label": "윈도우모션",
+        "choices": [
+          [
+            "토글",
+            ""
+          ],
+          [
+            "켜기",
+            "on"
+          ],
+          [
+            "끄기",
+            "off"
+          ]
+        ]
+      }
+    ],
+    "vt-parser": [
+      {
+        "label": "VT파서",
+        "choices": [
+          [
+            "pyte",
+            "pyte"
+          ],
+          [
+            "native",
+            "native"
+          ]
+        ]
+      }
+    ],
+    "window-size": [
+      {
+        "label": "공유크기",
+        "choices": [
+          [
+            "smallest",
+            "smallest"
+          ],
+          [
+            "latest",
+            "latest"
+          ],
+          [
+            "largest",
+            "largest"
+          ]
+        ]
+      }
+    ],
+    "lang": [
+      {
+        "label": "언어",
+        "choices": [
+          [
+            "한국어",
+            "ko"
+          ],
+          [
+            "English",
+            "en"
+          ]
+        ]
+      }
+    ]
+  }
+}

@@ -500,14 +500,20 @@ fn source_file_rereads_every_field_canon_reloads() {
 
 #[test]
 fn reload_pushes_the_state_outside_the_config_like_startup() {
-    // pytmux-574 — 설정 밖의 상태(폭 판정 전역)는 기동과 같은 한 함수가 민다. 종전 `source-file`
-    // 은 그 함수를 안 지나 `set ambiguous-width wide` 가 다시 읽기로는 안 먹었다.
+    // pytmux-574 — 설정 밖의 상태(딤)는 기동과 같은 한 함수가 민다.
+    // ⛔ 모호폭은 **안 민다**(pytmux-578 · 정본 `reload_config` 는 `ambiguous_width` 를 안 건드린다 —
+    //    모호폭은 기동 때 감지 · 런타임 `set ambiguous-width` 만 바꾼다). 종전(묶음 2)에는 이 함수가
+    //    폭 판정 전역을 밀어, 서버에 안 알린 채 클라 폭만 바뀌었다.
     let mut state = proto::SessionState::new();
-    let wide = base::Config::parse("set ambiguous-width wide");
-    proto::config_apply::apply_config_globals(&wide, &mut state);
-    assert!(proto::compose::ambiguous_wide(), "wide 를 다시 읽었는데 폭 판정이 안 바뀌었다");
-    proto::config_apply::apply_config_globals(&base::Config::parse(""), &mut state);
-    assert!(!proto::compose::ambiguous_wide(), "기본으로 다시 읽었는데 폭 판정이 남았다");
+    for line in ["set ambiguous-width wide", "set ambiguous-width narrow", ""] {
+        let before = proto::compose::ambiguous_wide();
+        proto::config_apply::apply_config_globals(&base::Config::parse(line), &mut state);
+        assert_eq!(
+            proto::compose::ambiguous_wide(),
+            before,
+            "다시 읽기({line:?})가 모호폭 판정을 바꿨다 — 정본 reload_config 는 그 칸을 안 건드린다"
+        );
+    }
 }
 
 #[test]

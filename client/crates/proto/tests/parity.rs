@@ -223,7 +223,7 @@ static COMMANDS: &[Item] = &[
     i("window-size", Done, "설정 화면 → 다음 값 · 팔레트"),
 ];
 
-/// prefix 모드 키(`clientutil.PREFIX_KEYS`). 네이티브에는 prefix 모드가 아직 없다.
+/// prefix 모드 키(`clientutil.PREFIX_KEYS`).
 static PREFIX_KEYS: &[Item] = &[
     i("p_P", Done, "탭 고정 토글"),
     i("p_T", Done, "prefix T - 패널 제목 입력"),

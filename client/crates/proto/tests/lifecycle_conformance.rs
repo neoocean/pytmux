@@ -133,7 +133,7 @@ fn every_canonical_branch_ends_the_same_way() {
                 let (attempts, texts, relaunch) = run_step(&mut lc, input, sc.connect_ok, i as f64);
                 let (want, want_relaunch) = canon_texts(step);
                 if flag("_relaunch_on_restart") {
-                    // DIVERGE(pytmux-598): relaunch 순서 — 정본(POSIX)은 EOF 에서 시도 없이
+                    // DIVERGE(relaunch-order): relaunch 순서 — 정본(POSIX)은 EOF 에서 시도 없이
                     // execv, (Windows)는 제자리 재접속 + «클라 코드 미갱신» 안내. 우리는
                     // OS 와 무관하게 **제자리에서 붙은 뒤** 다시 띄운다.
                     assert_eq!(attempts, 1, "[{}] 먼저 제자리에서 붙어야 한다", sc.name);
@@ -181,4 +181,88 @@ fn the_texts_are_the_canonical_catalog_in_both_locales() {
     let fill = |s: String| s.replace("{server}", "2").replace("{client}", "1");
     assert_eq!(base::i18n::with_locale("ko", || mismatch.message()), fill(ko("msg.proto_mismatch")));
     assert_eq!(base::i18n::with_locale("en", || mismatch.message()), fill(en("msg.proto_mismatch")));
+}
+
+fn raw() -> serde_json::Value {
+    serde_json::from_str(include_str!("fixtures/lifecycle.json")).expect("픽스처를 못 읽었다")
+}
+
+/// degraded 자동 회복(pytmux-639) — 정본 `_net_sample` 을 실제로 돌린 차례와 우리 RTT 이력
+/// (`proto::rtt::RttHist`)이 **같은 표본에서** 회복을 걸고 외곽선이 같은 표본에서 켜지나.
+#[test]
+fn degraded_watchdog_fires_like_the_canon() {
+    let fx = raw();
+    let d = &fx["degraded"];
+    assert_eq!(d["recover_n"].as_u64(), Some(u64::from(base::lifecycle::RECOVER_N)));
+    let threshold = d["threshold"].as_f64().unwrap();
+    let scenarios = d["scenarios"].as_array().unwrap();
+    assert!(scenarios.len() >= 3);
+    for sc in scenarios {
+        let name = sc["name"].as_str().unwrap();
+        let mut hist = proto::rtt::RttHist::default();
+        hist.local = sc["local"].as_bool().unwrap();
+        hist.threshold = threshold;
+        let mut fired = Vec::new();
+        let mut degraded = Vec::new();
+        for (i, ch) in sc["seq"].as_str().unwrap().chars().enumerate() {
+            let rtt = if ch == 'b' { threshold * 2.0 } else { threshold / 4.0 };
+            if hist.sample(i as f64, rtt) {
+                fired.push(i as u64 + 1);
+            }
+            degraded.push(hist.degraded);
+        }
+        let want: Vec<u64> = sc["fired"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["at"].as_u64().unwrap())
+            .collect();
+        assert_eq!(fired, want, "{name}: 회복을 건 표본");
+        let want_deg: Vec<bool> =
+            sc["degraded"].as_array().unwrap().iter().map(|b| b.as_bool().unwrap()).collect();
+        assert_eq!(degraded, want_deg, "{name}: 빨간 외곽선");
+    }
+}
+
+/// 크래시 자가 재기동(pytmux-639 G10) — 정본 `run_client` 를 실제로 돌린 결과와 `base::crash`.
+#[test]
+fn crash_relaunch_decides_like_the_canon() {
+    let fx = raw();
+    let c = &fx["crash"];
+    assert_eq!(c["env"].as_str(), Some(base::crash::ENV));
+    assert_eq!(c["max"].as_u64(), Some(u64::from(base::crash::MAX)));
+    assert_eq!(c["window"].as_f64(), Some(base::crash::LOOP_WINDOW));
+    assert_eq!(
+        c["log_header"].as_str().map(|s| format!("\n{s}\n")),
+        Some(base::crash::log_header("{stamp}", 0, "{ver}").replace("pid=0", "pid={pid}"))
+    );
+    let mut crashed = 0;
+    for case in c["cases"].as_array().unwrap() {
+        if !case["crash"].as_bool().unwrap() {
+            // 정상 종료는 셈을 지운다(정본 2560) — 우리 `restart::relaunch` 가 지운다(코드 리뷰 몫).
+            assert!(case["env_after"].is_null(), "{case}");
+            continue;
+        }
+        crashed += 1;
+        let prev = case["prev"].as_str();
+        let elapsed = case["elapsed"].as_f64().unwrap();
+        let ours = base::crash::decide(prev, elapsed);
+        match case["relaunch"].as_str() {
+            Some(n) => assert_eq!(
+                ours,
+                base::crash::Decision::Relaunch(n.parse().unwrap()),
+                "{case}"
+            ),
+            None => {
+                assert_eq!(ours, base::crash::Decision::GiveUp, "{case}");
+                assert_eq!(case["exit"].as_i64(), Some(1), "{case}");
+                assert_eq!(
+                    case["stderr"].as_str().unwrap(),
+                    base::crash::giveup_text("{path}"),
+                    "포기 글이 정본과 다르다"
+                );
+            }
+        }
+    }
+    assert!(crashed >= 10, "크래시 갈래가 너무 적다: {crashed}");
 }

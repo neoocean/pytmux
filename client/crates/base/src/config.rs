@@ -237,7 +237,8 @@ pub struct Config {
     /// 정본(TUI)의 글자 크기는 **호스트 단말**이 정한다 — 우리가 건드릴 자리가 없다.
     /// 그래도 설정 파일은 두 클라가 공유하므로(G5 결정 3) 파이썬 쪽 파서가 모르는
     /// 줄로 조용히 넘긴다(`keymap.load_config` 의 if/elif 는 모르는 옵션을 버린다 —
-    /// 확인함). 이 갈림은 패리티 표에 **`iv`** 로 선언한다.
+    /// 확인함). 이 갈림은 `proto/tests/common/divergence.rs` 대장의 설정 축에 선언한다
+    /// (`iv` 는 없는 장치다 · pytmux-626).
     pub font_scale: f32,
     /// 고정폭 글꼴 이름(빈 값 = 자동 — `mono_font::CANDIDATES` 의 첫 성공).
     ///
@@ -254,7 +255,7 @@ pub struct Config {
     /// (`mono_font::pick_preferred` 의 셋째 값).
     ///
     /// `font-scale` 과 같은 **GUI 전용 키**다 — 파이썬 파서가 모르는 줄로 넘긴다.
-    /// 패리티 표에 `iv` 로 선언한다.
+    /// 갈림은 `proto/tests/common/divergence.rs` 대장의 설정 축에 선언한다(pytmux-626).
     pub font_family: String,
     /// 커서의 **모양**([`CURSOR_STYLES`] 중 하나 · 기본 `hollow`).
     ///
@@ -522,7 +523,7 @@ impl Config {
         if let Some(sink) = WRITE_SINK.get() {
             return sink.clone();
         }
-        // DIVERGE(pytmux-598): 정본 `config_path_for_write` 는 `$PYTMUX_CONFIG` 를 **파일이 있을
+        // DIVERGE(pytmux-config-write): 정본 `config_path_for_write` 는 `$PYTMUX_CONFIG` 를 **파일이 있을
         // 때만** 후보로 본다. 우리는 서 있으면 무조건 그 자리에 쓴다 — 안전 레시피(「설정 파일은
         // 따로 격리한다」 · client/CLAUDE.md)가 그 동작에 기대고, 없는 파일을 지목한 사람의 뜻도
         // 그쪽이다.
@@ -975,7 +976,7 @@ pub const SETTINGS: &[Setting] = &[
     // ★ **GUI 만의 넷이다**(`pytmux/pytmux-161`) — 정본의 커서는 **호스트 단말의
     //   하드웨어 커서**라 모양·색·깜빡임을 그 단말이 정한다(파이썬 클라는 자리만
     //   `app.cursor_position` 으로 옮긴다). `font-scale` 과 같은 부류라, 갈림은
-    //   `category_conformance` 의 `SETTINGS_OURS` 에 사유와 함께 선언한다.
+    //   `proto/tests/common/divergence.rs` 대장의 설정 축에 사유와 함께 선언한다(pytmux-626).
     Setting {
         key: "cursor-style",
         cat: "표시",
@@ -1525,6 +1526,8 @@ impl Setting {
             "claude-command" => values.claude_command.clone(),
             "strip-box-drawing" => on(values.strip_box_drawing),
             "copy-unwrap" => on(values.copy_unwrap),
+            // ⚠ 이 줄이 없어 설정 판이 `?` 를 보였다(정본 = on) — pytmux-568 의 기본값 자가 잡았다.
+            "set-clipboard" => on(values.set_clipboard),
             "alt-scroll" => on(values.alt_scroll),
             "set-titles" => on(values.set_titles),
             "mode-keys" => values.mode_keys.clone(),
@@ -1584,6 +1587,33 @@ pub enum SettingPick {
     Ask(Prompt, String),
 }
 
+/// 서버 토글 줄을 **값을 단 액션**으로 — 정본 설정 판은 `_cycle` 이 다음 값을 골라
+/// `apply_setting(desc, "on"|"off")` 로 **명시해** 보낸다. 종전 GUI 는 값 없는 토글(서버가 뒤집기)을
+/// 보내, 둘이 붙어 있거나 status 가 늦으면 «끄려던 것이 켜졌다»(pytmux-568 이 잰 갈림).
+///
+/// 지금 값을 모르면(`?` — 구버전 서버의 exit-empty) 정본 `_cycle` 처럼 앞으로는 `on`, 뒤로는 `off` 다.
+fn toggle_with_value(action: Action, current: &str, forward: bool) -> Action {
+    let on = match current {
+        "on" => false,
+        "off" => true,
+        _ => forward,
+    };
+    toggle_to(action, on)
+}
+
+/// 토글 액션 → 같은 옵션을 `on` 으로 정하는 액션. 값을 실을 짝이 없는 액션은 그대로 둔다.
+fn toggle_to(action: Action, on: bool) -> Action {
+    match action {
+        Action::ToggleServerOption(opt) => Action::SetServerOption(opt, on),
+        Action::ToggleAutoRename => Action::SetAutoRename(on),
+        Action::ToggleMonitorActivity => Action::SetMonitor { bell: false, on },
+        Action::ToggleMonitorBell => Action::SetMonitor { bell: true, on },
+        Action::ToggleSync => Action::SetSync(on),
+        Action::ToggleBorderStatus => Action::SetBorderStatus(on),
+        other => other,
+    }
+}
+
 /// 설정 화면의 `row` 번째 줄을 골랐다(`Enter` — 앞으로 돈다).
 pub fn setting_pick(row: usize, values: &SettingValues) -> Option<SettingPick> {
     setting_pick_dir(row, values, true)
@@ -1601,7 +1631,9 @@ pub fn setting_pick_dir(
 ) -> Option<SettingPick> {
     let setting = SETTINGS.get(row)?;
     Some(match setting.kind {
-        SettingKind::Toggle(action) => SettingPick::Act(action),
+        SettingKind::Toggle(action) => {
+            SettingPick::Act(toggle_with_value(action, &setting.value(values), forward))
+        }
         SettingKind::Text(prompt) => SettingPick::Ask(prompt, setting.value(values)),
         SettingKind::ConfigToggle => SettingPick::Flip(setting.key),
         // 다음 값을 **여기서** 골라 뷰에 넘긴다 — 뷰가 목록을 순회하면 두 뷰가 갈린다.
@@ -1654,8 +1686,9 @@ pub fn setting_pick_at(row: usize, values: &SettingValues, index: usize) -> Opti
         return None;
     }
     Some(match setting.kind {
-        // 서버 토글·설정 토글은 **뒤집기**뿐이다 — 지금과 다른 값을 찍었으니 뒤집으면 된다.
-        SettingKind::Toggle(action) => SettingPick::Act(action),
+        // 서버 토글은 **찍은 값을 명시**해 보낸다(정본 `apply_setting(desc, val)` 와 같다 · pytmux-568) ·
+        // 설정 토글은 뒤집기다 — 지금과 다른 값을 찍었으니 뒤집으면 된다.
+        SettingKind::Toggle(action) => SettingPick::Act(toggle_to(action, want == "on")),
         SettingKind::ConfigToggle => SettingPick::Flip(setting.key),
         SettingKind::ConfigEnum(_) => SettingPick::Set(setting.key, want),
         SettingKind::Enum(opt) => SettingPick::Act(Action::SetEnum(opt, want)),
@@ -2198,73 +2231,10 @@ impl Bind {
     }
 }
 
-/// `bind` 한 줄을 설정 파일에 **덧붙인다**(같은 키가 이미 있으면 그 줄을 갈아 끼운다).
-///
-/// `set` 과 달리 옵션 하나가 아니라 **키마다 한 줄**이라 `edit_option` 을 못 쓴다.
-pub fn write_bind(line: &str) -> std::io::Result<PathBuf> {
-    let Some(bind) = Bind::parse(line) else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            crate::i18n::t("bind 줄이 아니다"),
-        ));
-    };
-    rewrite_binds(|kept| {
-        kept.push(format!(
-            "bind {}{} {}",
-            if bind.after_prefix { "" } else { "-n " },
-            bind.key,
-            bind.command
-        ));
-    }, Some(&bind))
-}
-
-/// `bind` 한 줄을 **지운다**. 없으면 파일은 그대로다.
-pub fn erase_bind(spec: &str) -> std::io::Result<PathBuf> {
-    let mut parts = spec.split_whitespace();
-    let first = parts.next().unwrap_or_default();
-    let (after_prefix, key) = if first == "-n" {
-        (false, parts.next().unwrap_or_default())
-    } else {
-        (true, first)
-    };
-    let target = Bind {
-        after_prefix,
-        key: normalize_bind_key(key),
-        command: String::new(),
-    };
-    rewrite_binds(|_| {}, Some(&target))
-}
-
-/// 설정 파일의 `bind` 줄들을 다시 쓴다 — `drop` 과 **같은 키**인 줄을 빼고, `add` 가
-/// 넣는 줄을 끝에 붙인다. 그 밖의 줄(주석·`set`·모르는 지시어)은 **그대로 둔다**.
-fn rewrite_binds(
-    add: impl FnOnce(&mut Vec<String>),
-    drop: Option<&Bind>,
-) -> std::io::Result<PathBuf> {
-    let target = Config::path_for_write();
-    let before = std::fs::read_to_string(&target).unwrap_or_default();
-    let newline = if before.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut kept: Vec<String> = Vec::new();
-    for line in before.lines() {
-        let same = drop.is_some_and(|d| {
-            Bind::parse(line.trim())
-                .is_some_and(|b| b.after_prefix == d.after_prefix && b.key == d.key)
-        });
-        if !same {
-            kept.push(line.to_owned());
-        }
-    }
-    add(&mut kept);
-    if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut text = kept.join(newline);
-    if !text.is_empty() {
-        text.push_str(newline);
-    }
-    crate::atomicfile::write(&target, &text)?;
-    Ok(target)
-}
+// ⛔ 종전 `write_bind`·`erase_bind`·`rewrite_binds`(설정 파일의 `bind` 줄을 고쳐 쓰던 셋)는
+//    CL 84394(pytmux-607 — 런타임 bind 는 세션만)부터 아무도 안 불러 지웠다(pytmux-626).
+//    런타임 바인딩은 [`bind_in_session`]·[`unbind_in_session`] 이고, 영속은 사용자가 설정
+//    파일에 `bind` 줄을 적는 길 하나다(정본과 같다).
 
 /// 정본 `keymap._MOD_PREFIXES` 와 같은 수정키 접두(소문자). 값은 우리 이름 표기의 수정키다.
 const MOD_PREFIXES: &[(&str, &str)] = &[
@@ -2606,6 +2576,7 @@ impl ConfigEnv {
 
 /// `PYTMUX_HOME` 을 정본처럼 편다 — `os.path.abspath(os.path.expanduser(h))`(pytmux-586 G9).
 /// 앞머리 `~` 를 홈으로, 상대경로는 지금 디렉터리 기준 절대경로로, `.`·`..` 는 글자로 접는다.
+// DIVERGE(tilde-user): `~other/…` 는 펴지 않는다(정본 expanduser 는 그 사용자 홈으로 편다 · pytmux-643).
 pub fn normalize_home(raw: Option<PathBuf>, home: Option<&std::path::Path>) -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok();
     normalize_home_in(raw?, home, cwd.as_deref())

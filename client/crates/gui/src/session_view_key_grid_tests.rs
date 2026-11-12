@@ -2,28 +2,28 @@
 //!
 //! `proto/tests/key_bytes_conformance.rs` 는 `base::keys::encode` 가 정본 격자(`key_grid.json`)와
 //! 같은지 잰다. 이 자는 그 앞 — 상류 `Keystroke` 가 `keydown_action` 을 지나 **원시 키로 가는지,
-//! 아니면 GUI 가 가로채는지** — 를 잰다. 가로채는 칸은 [`INTERCEPTS`] 에 이름과 사유로 선언한다.
+//! 아니면 GUI 가 가로채는지** — 를 잰다. 가로채는 칸은 갈림 대장에 이름과 사유로 선언한다.
 //!
-//! # INTERCEPTS — 선언된 가로채기만 허용한다
+//! # 선언된 가로채기만 허용한다
 //!
 //! 전부 허용 갈림 ⓒ(OS 창 통합)다: 정본은 호스트 단말 안에 살아 그 조합을 **단말이** 처리한다
 //! (붙여넣기 · 글자 크기 · 탭 · 전체 화면). GUI 에는 바깥 단말이 없어 우리가 받는다.
-//! 갈림 대장(`proto/tests/common/divergence.rs`)에 키 입력 축이 서면 이 표를 그리로 옮긴다
-//! (`DIVERGE(pytmux-598)`). 걸린 줄이 더는 안 가로채지면 그것도 실패다(낡은 예외).
+//! 그 칸들의 정본은 **갈림 대장**(`proto/tests/common/divergence.rs` · `CanonDiffers` · 축 `WindowChord`)이다
+//! (pytmux-598·628). 여기는 대장을 그대로 읽어 격자와 맞댄다 — 대장에 없는 가로채기는 울고, 대장
+//! 줄이 더는 안 가로채지면 그것도 실패다(낡은 예외).
 
 use super::*;
 use serde_json::Value;
 
-/// (칸 이름, 왜).
-const INTERCEPTS: &[(&str, &str)] = &[
-    ("ctrl+shift+v", "ⓒ 붙여넣기 — 터미널 관례 별칭(`paste_entry` · 정본은 바깥 단말이 붙여넣는다)"),
-    ("ctrl+=", "ⓒ 글자 크기 키우기(`font_scale_chord` · 정본은 호스트 단말이 한다)"),
-    ("ctrl+-", "ⓒ 글자 크기 줄이기(`font_scale_chord`)"),
-    ("ctrl+0", "ⓒ 글자 크기 되돌리기(`font_scale_chord`)"),
-    ("ctrl+tab", "ⓒ 다음 탭(`tab_switch_chord` · 독립 앱이라 받을 수 있다)"),
-    ("ctrl+shift+tab", "ⓒ 이전 탭(`tab_switch_chord`)"),
-    ("alt+enter", "ⓒ 전체 화면(`is_fullscreen_chord`)"),
-];
+#[path = "../../proto/tests/common/divergence.rs"]
+mod divergence;
+
+/// 대장의 창 조합키 줄 — (칸 이름, 왜).
+fn intercepts() -> Vec<(&'static str, &'static str)> {
+    let rows = divergence::canon_differs(divergence::Axis::WindowChord);
+    assert!(!rows.is_empty(), "대장에 창 조합키 줄이 없다 — 대장을 못 읽었다");
+    rows.into_iter().map(|row| (row.name, row.why)).collect()
+}
 
 fn grid() -> Vec<Value> {
     let v: Value = serde_json::from_str(include_str!("../../proto/tests/fixtures/key_grid.json"))
@@ -51,7 +51,8 @@ fn keystroke(row: &Value) -> (warpui::keymap::Keystroke, String) {
 fn every_grid_chord_reaches_the_pane_with_the_canonical_bytes_or_is_a_declared_intercept() {
     let rows = grid();
     let mut wrong = Vec::new();
-    let mut stale: Vec<&str> = INTERCEPTS.iter().map(|i| i.0).collect();
+    let intercepts = intercepts();
+    let mut stale: Vec<&str> = intercepts.iter().map(|i| i.0).collect();
     for row in &rows {
         if row["chrome"].as_bool() == Some(true) {
             continue; // 정본이 패널로 보내기 전에 먹는 키 — 모드 전이 자들이 잰다
@@ -59,7 +60,7 @@ fn every_grid_chord_reaches_the_pane_with_the_canonical_bytes_or_is_a_declared_i
         let chord = row["chord"].as_str().unwrap();
         let (ks, chars) = keystroke(row);
         let action = SessionView::keydown_action(&ks, &chars);
-        let declared = INTERCEPTS.iter().any(|i| i.0 == chord);
+        let declared = intercepts.iter().any(|i| i.0 == chord);
         match action {
             Some(ViewAction::RawKey(key, mods)) => {
                 if declared {
@@ -74,14 +75,14 @@ fn every_grid_chord_reaches_the_pane_with_the_canonical_bytes_or_is_a_declared_i
                 }
             }
             _ if declared => stale.retain(|s| *s != chord),
-            other => wrong.push(format!("{chord}: 선언 안 된 가로채기 {other:?}")),
+            other => wrong.push(format!("{chord}: 대장(WindowChord)에 없는 가로채기 {other:?}")),
         }
     }
     assert!(wrong.is_empty(), "격자 칸이 정본과 갈린다:\n  {}", wrong.join("\n  "));
-    assert!(stale.is_empty(), "INTERCEPTS 줄이 더는 안 가로채진다 — 지울 것: {stale:?}");
+    assert!(stale.is_empty(), "대장의 창 조합키 줄이 더는 안 가로채진다 — 대장에서 지울 것: {stale:?}");
 }
 
-/// Cmd(맥)·Super 는 Alt 로 친다 — 정본은 호스트 단말에서 Cmd 를 받을 수 없다(ⓒ · DIVERGE(pytmux-598)).
+/// Cmd(맥)·Super 는 Alt 로 친다 — 정본은 호스트 단말에서 Cmd 를 받을 수 없다(ⓒ · DIVERGE(cmd-as-alt)).
 /// 지금 동작을 못 박는다(사람 결정 2026-11-13): Cmd+← 는 Alt+← 와 같은 바이트다.
 #[test]
 fn cmd_is_sent_as_alt_a_declared_divergence() {

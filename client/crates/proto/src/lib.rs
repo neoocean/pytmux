@@ -24,6 +24,7 @@ pub mod blocks;
 /// 서버가 없으면 **정본이 띄운다**(직접 spawn 을 다시 적지 않는다).
 pub mod boot;
 
+mod ambig_table;
 pub mod canvas;
 pub mod clock;
 pub mod command;

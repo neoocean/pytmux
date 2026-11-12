@@ -695,7 +695,7 @@ pub const NATIVE_OVERLAYS: &[NativeOverlay] = &[
 ];
 
 /// 클라 → 서버 첫 프레임.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Hello {
     pub t: &'static str,
     pub proto: u32,
@@ -709,6 +709,13 @@ pub struct Hello {
     /// 붙을 세션 이름. 없으면 서버가 기본 세션을 준다.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+    /// 모호폭 모드 — wide 일 때만 `"wide"` 를 싣는다(정본 `_hello_msg` 와 같다 · pytmux-578).
+    ///
+    /// ⚠ 서버는 이 칸이 **없으면 narrow 로 되돌린다**(`serverio` hello 처리 — 서버 전역 하나,
+    /// 마지막 hello/`set_ambig` 가 이긴다). 그래서 wide 인 클라가 이 칸을 빠뜨리면 붙는 순간
+    /// 다른 클라가 세운 wide 까지 풀린다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ambig: Option<&'static str>,
 }
 
 impl Hello {
@@ -721,7 +728,14 @@ impl Hello {
             caps: CAPS,
             token: None,
             session: None,
+            ambig: None,
         }
+    }
+
+    /// 모호폭 모드를 싣는다(wide 면 `ambig:"wide"`, 아니면 칸 없음 — 정본과 같은 모양).
+    pub fn with_ambig_wide(mut self, wide: bool) -> Self {
+        self.ambig = wide.then_some("wide");
+        self
     }
 
     pub fn with_token(mut self, token: Option<String>) -> Self {
@@ -795,6 +809,7 @@ mod tests {
         assert_eq!(json["cols"], 80);
         assert_eq!(json["token"], "tok");
         assert!(json.get("session").is_none(), "없는 필드는 안 보낸다");
+        assert!(json.get("ambig").is_none(), "narrow 는 칸을 안 싣는다(정본과 같은 모양)");
         // 능력을 광고하지 않으면 서버가 그 프레임을 아예 안 보낸다 — 기능이 조용히
         // 안 되고, 증상은 "그 패널엔 아무것도 없다"와 구분되지 않는다.
         assert_eq!(
@@ -812,6 +827,15 @@ mod tests {
                 "plugin_screen"
             ])
         );
+    }
+
+    #[test]
+    fn hello_carries_ambig_wide_like_the_canon_hello() {
+        // 정본 `_hello_msg`: `if cellwidth.ambiguous_wide(): hello["ambig"] = "wide"` (pytmux-578).
+        let wide = serde_json::to_value(Hello::new(80, 24).with_ambig_wide(true)).unwrap();
+        assert_eq!(wide["ambig"], "wide");
+        let narrow = serde_json::to_value(Hello::new(80, 24).with_ambig_wide(false)).unwrap();
+        assert!(narrow.get("ambig").is_none(), "{narrow}");
     }
 
     #[test]

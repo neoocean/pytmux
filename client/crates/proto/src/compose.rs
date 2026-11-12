@@ -82,10 +82,51 @@ pub fn char_cells_in(ch: char, ambiguous_wide: bool) -> usize {
     if ch.width() == Some(2) {
         return 2;
     }
-    if ambiguous_wide && ch.width_cjk() == Some(2) {
+    // ★ wide 모드는 **정본 표 그대로** 넓힌다(pytmux-578 · `ambig_table` — 생성기가 찍은 것).
+    //   종전에는 `width_cjk() == Some(2)` 로 물었는데 정본과 두 군데서 갈렸다: ⓐ 선·블록
+    //   (U+2500–259F)은 EAW 'A' 여도 정본이 한 칸으로 둔다(CJK 단말도 격자 정렬을 위해 한 칸으로
+    //   그린다 — 2 로 세면 테두리 줄이 두 배로 밀린다) ⓑ `unicode-width` 0.2 의 `width_cjk` 는
+    //   라틴-1 모호폭(`é`·`ß`·`Æ` …) 247자를 한 칸으로 준다.
+    if ambiguous_wide && is_widened_ambiguous(ch) {
         return 2;
     }
     1
+}
+
+/// 정본 wide 모드가 한 칸 → 두 칸으로 올리는 글자인가(`ambig_table` 이분 탐색).
+fn is_widened_ambiguous(ch: char) -> bool {
+    let o = ch as u32;
+    crate::ambig_table::AMBIGUOUS_WIDENED
+        .binary_search_by(|&(a, b)| {
+            if b < o {
+                std::cmp::Ordering::Less
+            } else if a > o {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
+/// `ambiguous-width` 설정값을 **판정값**(wide 인가)으로 푼다 — 정본 `apply_option` 의 별칭 그대로
+/// (`wide`·`2`·`double`·`full` = wide · `auto` = 기동 때 잰 값 · 그 밖 = narrow · pytmux-578).
+pub fn resolve_ambiguous(setting: &str, measured_wide: bool) -> bool {
+    match setting.trim().to_ascii_lowercase().as_str() {
+        "auto" => measured_wide,
+        "wide" | "2" | "double" | "full" => true,
+        _ => false,
+    }
+}
+
+/// 정본 auto 감지가 재는 글자(`launcher._AMBIG_PROBE_CH`) — 모호폭(EAW 'A')이고 좁은 단말은 한 칸,
+/// CJK 단말은 두 칸으로 그린다. GUI 는 단말 대신 **제 글꼴**에서 이 글자의 전진폭을 잰다.
+pub const AMBIG_PROBE_CH: char = '·';
+
+/// 글꼴 실측으로 모호폭을 정한다 — 모호폭 글자의 전진폭이 ASCII 한 칸의 1.5배 이상이면 wide.
+/// 정본 감지(CPR 로 전진 칸 ≥ 2 면 wide)와 같은 물음을 픽셀로 묻는다. 못 쟀으면(0·NaN) narrow.
+pub fn ambig_wide_from_advance(ascii_px: f32, ambig_px: f32) -> bool {
+    ascii_px.is_finite() && ambig_px.is_finite() && ascii_px > 0.0 && ambig_px >= 1.5 * ascii_px
 }
 
 /// 이 글자가 격자에서 **밀어내는 칸수**(advance). 폭 0 글자는 `0` 이다.
@@ -363,18 +404,45 @@ mod ambiguous_tests {
 
     #[test]
     fn ambiguous_chars_widen_only_in_wide_mode() {
-        // ★ `─`(EAW=A)는 폰트·로케일에 따라 한 칸이기도 두 칸이기도 하다. 서버와 클라의
+        // ★ `°`(EAW=A)는 폰트·로케일에 따라 한 칸이기도 두 칸이기도 하다. 서버와 클라의
         // 판정이 갈리면 **그 줄 전체가 밀린다**.
-        assert_eq!(char_cells_in('─', false), 1);
-        assert_eq!(char_cells_in('─', true), 2);
         assert_eq!(char_cells_in('°', false), 1);
         assert_eq!(char_cells_in('°', true), 2);
+        // 선·블록은 EAW=A 여도 wide 모드에서 한 칸이다(정본 `is_ambiguous` · pytmux-578).
+        assert_eq!(char_cells_in('─', false), 1);
+        assert_eq!(char_cells_in('─', true), 1);
+    }
+
+    #[test]
+    fn the_setting_resolves_like_the_canon_apply_option() {
+        // 정본 `client.apply_option("ambiguous-width", v)` 의 별칭 그대로.
+        for v in ["wide", "2", "double", "full", " WIDE "] {
+            assert!(resolve_ambiguous(v, false), "{v}");
+        }
+        for v in ["narrow", "1", "single", "half", "off", "", "모름"] {
+            assert!(!resolve_ambiguous(v, true), "{v}");
+        }
+        assert!(resolve_ambiguous("auto", true));
+        assert!(!resolve_ambiguous("auto", false));
+    }
+
+    #[test]
+    fn the_font_probe_reads_a_double_advance_as_wide() {
+        assert!(ambig_wide_from_advance(8.0, 16.0));
+        assert!(ambig_wide_from_advance(8.0, 12.0));
+        assert!(!ambig_wide_from_advance(8.0, 8.0));
+        assert!(!ambig_wide_from_advance(8.0, 11.9));
+        // 못 쟀으면 narrow(정본 감지의 무응답 = narrow).
+        assert!(!ambig_wide_from_advance(0.0, 16.0));
+        assert!(!ambig_wide_from_advance(f32::NAN, 16.0));
     }
 
     #[test]
     fn the_unambiguous_widths_do_not_move() {
         // 모호폭 모드가 다른 글자까지 건드리면 안 된다.
-        for ch in ['a', ' ', '한', '漢', '\u{0301}'] {
+        // ⚠ 결합 표시 `U+0301` 은 EAW 'A' 라 정본 `char_cells` 도 wide 에서 2 로 올린다 — 그 글자의
+        //   자리는 `char_advance`(폭 0)가 정하므로 여기 대조군에서 뺐다(pytmux-578).
+        for ch in ['a', ' ', '한', '漢'] {
             assert_eq!(
                 char_cells_in(ch, false),
                 char_cells_in(ch, true),
@@ -389,8 +457,8 @@ mod ambiguous_tests {
     fn the_global_switch_moves_char_cells() {
         // 전역이라 순서가 있다 — 끝에 되돌린다(다른 테스트가 좁은 모드를 기대한다).
         set_ambiguous_wide(true);
-        assert_eq!(char_cells('─'), 2);
+        assert_eq!(char_cells('°'), 2);
         set_ambiguous_wide(false);
-        assert_eq!(char_cells('─'), 1);
+        assert_eq!(char_cells('°'), 1);
     }
 }

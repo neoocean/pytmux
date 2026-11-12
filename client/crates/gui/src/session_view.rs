@@ -754,6 +754,16 @@ pub struct SessionView {
     /// 이유로 그 자리에서 반영한다). 글꼴 등록에는 `ctx` 가 필요해 대답을 받는 자리
     /// (`apply_answer`)에서는 못 하고, `ctx` 를 쥔 프레임 진입에서 화해시킨다.
     font_want: String,
+    /// 기동 때 **글꼴을 재서** 얻은 모호폭(`ambiguous-width auto` 의 값 · pytmux-578). 정본
+    /// `_ambig_auto_wide` 와 같은 자리 — 런타임 `set ambiguous-width auto` 는 다시 재지 않고 이 값을 쓴다.
+    ambig_auto_wide: bool,
+    /// 이 뷰가 마지막으로 정한 모호폭 판정값(전역 [`proto::compose::ambiguous_wide`] 에 민 값).
+    ///
+    /// 전역은 프로세스 하나라 나란히 도는 시험이 뷰를 세울 때마다 덮는다 — 시험은 이 칸을 본다.
+    ambig_wide: bool,
+    /// 미룬 hello 를 기다리기 시작한 때(pytmux-639 G6). 첫 레이아웃이 격자를 재면 그 크기로
+    /// 보내고, [`HELLO_DEFER_MAX`] 가 지나도 레이아웃이 없으면 지금 아는 크기로 보낸다.
+    hello_since: std::time::Instant,
     /// 크롬(탭·팝업 틀·상태줄) 글꼴 — 가변폭. 못 찾으면 `font`(고정폭) 그대로다.
     /// 캔버스는 항상 `font` 로 그린다(격자는 고정폭이 계약이다).
     ui_font: FamilyId,
@@ -806,7 +816,8 @@ enum PaletteHit {
 enum PalettePick {
     /// 코어 액션 — **액션으로 되돌려 같은 길**을 태운다(확인 화면 등을 건너뛰지 않게).
     Action(Action),
-    /// 플러그인 명령 이름. 실행 화면은 아직 없다(설계 P4) — 조용히 버리지 않는다.
+    /// 플러그인 명령 이름 — 이름만 서버로 보내고(`PluginCmd`) 화면이 필요한 명령은 서버가
+    /// 스펙으로 연다(`Screen::PluginView` · pytmux-35 · 종전 «실행 화면은 아직 없다»는 낡은 말 · pytmux-626).
     Plugin(String),
 }
 
@@ -843,23 +854,15 @@ struct CanvasBox {
 
 /// 설정 하나를 **이번 판에** 먹이는 한 함수 — 기동과 `source-file` 이 같이 지난다(pytmux-574).
 /// 몸통은 proto 한 곳이다(`proto::config_apply` — 뷰 없이 시험으로 잰다).
+/// ⚠ 모호폭은 여기서 **안 민다**(정본 `reload_config` 가 안 건드린다 · pytmux-578) — 기동은
+/// [`SessionView::with_fonts`]/[`SessionView::new`], 런타임은 [`SessionView::apply_ambiguous`].
 fn apply_config_globals(config: &base::Config, state: &mut SessionState) {
     proto::config_apply::apply_config_globals(config, state);
-    #[cfg(test)]
-    LAST_AMBIG_PUSH.with(|c| c.set(Some(config.ambiguous_width == "wide")));
 }
 
-#[cfg(test)]
-thread_local! {
-    /// **이 스레드**가 마지막으로 전역에 민 폭 판정(시험 전용 관측점).
-    ///
-    /// `proto::compose::ambiguous_wide()` 는 프로세스 전역이라, 나란히 도는 시험이 뷰를 세울
-    /// 때마다(`SessionView::new` → 이 함수) 그 값을 덮는다. 「다시 읽으면 폭 판정이 밀리나」를
-    /// 전역으로 단언하면 그 사이에 다른 시험이 끼어들어 가짜로 붉어진다(2026-11-13 게이트에서
-    /// 실제로 떨어졌다). 단언은 스레드마다 따로인 이 값으로 한다 — 호출부를 겨눈다.
-    pub(crate) static LAST_AMBIG_PUSH: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-}
+/// 미룬 hello 의 백스톱(pytmux-639 G6). 첫 레이아웃이 이만큼 안 오면 지금 아는 크기로 보낸다 —
+/// 서버는 hello 를 `HANDSHAKE_TIMEOUT`(10초)까지만 기다리고 그 뒤로는 연결을 닫는다.
+pub(crate) const HELLO_DEFER_MAX: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl SessionView {
     pub fn new(link: ServerLink, ctx: &mut ViewContext<Self>) -> Self {
@@ -870,15 +873,22 @@ impl SessionView {
         //   가 첫 프레임에 안 먹으면 「적었는데 다음 기동에나 먹는다」가 된다.
         //   ⚠ `Config::load` 는 파일 한 번 읽기라 두 번 불러도 값이 같다(순수).
         let want = base::Config::load().font_family;
-        let (font, ui_font, missed) = warpui::fonts::Cache::handle(ctx).update(ctx, |cache, _| {
-            let (mono, missed) = mono_font::install_preferred(cache, &want);
-            (mono, theme::install_ui(cache).unwrap_or(mono), missed)
-        });
+        let (font, ui_font, missed, ambig_measured) =
+            warpui::fonts::Cache::handle(ctx).update(ctx, |cache, _| {
+                let (mono, missed) = mono_font::install_preferred(cache, &want);
+                // `ambiguous-width auto` 의 실측(pytmux-578) — 글꼴을 깐 바로 여기, 창의 첫
+                // 레이아웃(= 미룬 hello · G6)보다 **먼저**라 첫 hello 가 이 값을 싣는다.
+                let measured = mono_font::ambiguous_glyph_is_wide(cache, mono);
+                (mono, theme::install_ui(cache).unwrap_or(mono), missed, measured)
+            });
         // 키를 받으려면 포커스가 있어야 한다. 없으면 이벤트가 이 뷰까지 오지 않고,
         // 증상은 "창은 떴는데 아무 키도 안 먹는다"다(데모 뷰가 이미 같은 줄을 갖는다).
         ctx.focus_self();
         let mut view = Self::with_fonts(link, font, ui_font);
         view.font_want = want;
+        view.ambig_auto_wide = ambig_measured;
+        view.ambig_wide = proto::compose::resolve_ambiguous(&view.config.ambiguous_width, ambig_measured);
+        proto::compose::set_ambiguous_wide(view.ambig_wide);
         // ⛔ **조용히 넘어가지 않는다**(pytmux-408 ③). 「적었는데 아무 일도 안 일어난다」가
         //    이 부류에서 제일 나쁜 결과다 — 사용자는 자기 오타인지 앱이 무시한 것인지 못
         //    가린다. 떨어진 것은 맞지만 **무엇이 없었는지**는 말한다.
@@ -933,6 +943,11 @@ impl SessionView {
         // 설정을 이번 판에 먹이는 자리는 **한 함수**다 — `source-file` 이 다시 읽은 뒤에도
         // 같은 함수를 지난다(pytmux-574).
         apply_config_globals(&config, &mut state);
+        // 모호폭은 **기동 때만** 설정에서 정한다(정본 `run_client` 의 감지 · `reload_config` 는 안
+        // 건드린다 · pytmux-578). `auto` 의 실측은 창 문맥이 있는 [`new`](Self::new) 가 덮어쓴다 —
+        // 여기(시험 문)는 잴 글꼴이 없으니 narrow 로 본다(정본의 «못 재면 narrow»).
+        let ambig_wide = proto::compose::resolve_ambiguous(&config.ambiguous_width, false);
+        proto::compose::set_ambiguous_wide(ambig_wide);
         // 「패널 번호는 내가 그린다」 — 합성기가 그 칸을 안 찍게 한다(pytmux-461).
         // ⛔ 이 한 줄이 없으면 같은 번호가 **두 벌** 뜬다(합성기 글자 + 우리 배지).
         state.draw_pane_numbers_natively();
@@ -1031,6 +1046,9 @@ impl SessionView {
             countdown_secs: 0,
             font,
             font_want: String::new(),
+            ambig_auto_wide: false,
+            ambig_wide,
+            hello_since: std::time::Instant::now(),
             ui_font,
             claude: Vec::new(),
             claude_mode: None,
@@ -1056,7 +1074,7 @@ impl SessionView {
         let mods = Mods {
             ctrl: keystroke.ctrl,
             // meta/cmd 도 ESC 접두(Alt)로 취급한다 — 단말이 구분해 주지 않는다.
-            // DIVERGE(pytmux-598): ⓒ OS 창 통합 — 정본은 호스트 단말에서 Cmd 를 받을 수 없다
+            // DIVERGE(cmd-as-alt): ⓒ OS 창 통합 — 정본은 호스트 단말에서 Cmd 를 받을 수 없다
             //   (단말이 제 단축키로 먹는다). 그래서 Cmd+← 는 Alt+← 와 같은 `CSI 1;3D` 다(사람 결정
             //   2026-11-13 · 자 `key_grid::cmd_is_sent_as_alt_a_declared_divergence`).
             alt: keystroke.alt || keystroke.meta || keystroke.cmd,
@@ -1093,6 +1111,7 @@ impl SessionView {
         // ★ 탭 전환(§10-21ⓕ·ⓕ2) — 독립 앱이라 이 조합을 가로챌 수 있다
         //   (정본은 터미널 안이라 못 한다). 패널 안 프로그램의 `Ctrl+Tab` 이
         //   사라지는 것은 제보가 감수한 결정이다.
+        // DIVERGE(ctrl+tab,ctrl+shift+tab): 대장 줄이 잃는 것(`bind -n`·패널 키)을 적는다(pytmux-628).
         if let Some(forward) = Self::tab_switch_chord(keystroke) {
             return Some(ViewAction::AltTab(forward));
         }
@@ -1129,7 +1148,7 @@ impl SessionView {
     /// (Windows Terminal 도 왼쪽 `Ctrl+Alt` 를 AltGr 로 친다), 배열이 아무것도 안 내거나 제어
     /// 문자를 내면 진짜 조합키(`Ctrl+Alt+A` → `ESC ^A`)다. `Cmd`/`Super` 가 섞이면 OS·앱
     /// 단축키 쪽이라 손대지 않는다.
-    // DIVERGE(pytmux-598): ⓒ OS 창 통합 — 정본은 호스트 단말이 AltGr 를 글자로 풀어 준다.
+    // DIVERGE(altgr): ⓒ OS 창 통합 — 정본은 호스트 단말이 AltGr 를 글자로 풀어 준다.
     //   자 `key_grid::altgr_with_a_printed_char_sends_the_char_not_the_chord`.
     fn altgr_text<'a>(keystroke: &warpui::keymap::Keystroke, chars: &'a str) -> Option<&'a str> {
         if !(keystroke.ctrl && keystroke.alt) || keystroke.cmd || keystroke.meta {
@@ -1193,8 +1212,8 @@ impl SessionView {
     /// 2026-11-13): 맥 `Cmd+V` 와 `Ctrl+Shift+V` 는 단말이 가로채 bracketed paste 로 주는
     /// 조합이라 단말 붙여넣기, `Ctrl+V` 와 맥 밖의 `Super+V` 는 정본이 키로 받으니 clipboard.
     /// `mac` 을 인자로 받는 것은 두 OS 의 갈래를 한 상자에서 재기 위해서다.
-    // DIVERGE(pytmux-598): ⓒ OS 창 통합 — Ctrl+Shift+V·Cmd+V 붙여넣기는 정본에서 호스트 단말의 몫이다
-    //   (Ctrl+V 는 정본도 크롬 키로 잡는다). 자 `key_grid::INTERCEPTS`.
+    // DIVERGE(ctrl+shift+v): ⓒ OS 창 통합 — Ctrl+Shift+V·Cmd+V 붙여넣기는 정본에서 호스트 단말의 몫이다
+    //   (Ctrl+V 는 정본도 크롬 키로 잡는다). 자 = 갈림 대장 `WindowChord` × 키 격자.
     pub(crate) fn paste_entry(keystroke: &warpui::keymap::Keystroke, mac: bool) -> Option<PasteEntry> {
         if !Self::is_paste_chord(keystroke) {
             return None;
@@ -1240,8 +1259,8 @@ impl SessionView {
     /// ⚠ 키 **이름**을 여기 적지 않는다 — 이름 표의 주인은 core 다
     /// (`base::keys::from_name` · 계층 게이트 ④가 그것을 강제한다). 그래서 조합을
     /// 중립 키로 옮긴 뒤 그 값과 견준다.
-    // DIVERGE(pytmux-598): ⓒ OS 창 통합 — Alt+Enter(정본은 `ESC CR` 을 패널로 · 레거시 단말에선 CR).
-    //   자 `key_grid::INTERCEPTS`.
+    // DIVERGE(alt+enter): ⓒ OS 창 통합 — Alt+Enter(정본은 `ESC CR` 을 패널로 · 레거시 단말에선 CR).
+    //   자 = 갈림 대장 `WindowChord` × 키 격자.
     fn is_fullscreen_chord(keystroke: &warpui::keymap::Keystroke) -> bool {
         (keystroke.alt || keystroke.meta)
             && !(keystroke.ctrl || keystroke.shift || keystroke.cmd)
@@ -1263,7 +1282,8 @@ impl SessionView {
     /// 도는" 동선이고, **ⓕ 의 동작은 거기서 저절로 나온다** — 짧게 눌렀다 떼면 스위처가
     /// 열리자마자(커서는 다음 탭에 있다 = ⓔ2) 확정되므로 곧 "다음 탭으로"다. 두 제보를
     /// 각자 배선하면 같은 키가 두 갈래로 처리된다.
-    // DIVERGE(pytmux-598): ⓒ OS 창 통합 — Ctrl+Tab·Ctrl+Shift+Tab(정본은 패널로 HT·CSI Z). 자 `key_grid::INTERCEPTS`.
+    // DIVERGE(ctrl+tab,ctrl+shift+tab): ⓒ OS 창 통합 — Ctrl+Tab·Ctrl+Shift+Tab(정본은 패널로 HT·CSI Z).
+    // 자 = `session_view_key_grid_tests.rs`(대장의 창 조합키 줄을 격자로 맞댄다).
     fn tab_switch_chord(keystroke: &warpui::keymap::Keystroke) -> Option<bool> {
         if !keystroke.ctrl || keystroke.alt || keystroke.meta || keystroke.cmd {
             return None;
@@ -1354,8 +1374,8 @@ impl SessionView {
     /// 그건 조용하다. 숫자패드 `+`(`add`)도 같은 자리다.
     ///
     /// 순수 함수로 빼는 이유도 붙여넣기와 같다 — 창 없이 물을 수 있어야 오라클이 선다.
-    // DIVERGE(pytmux-598): ⓒ OS 창 통합 — Ctrl+=/−/0 글자 크기(정본은 호스트 단말이 한다 · Ctrl+− 는
-    //   정본에서 0x1f 가 패널로 간다). 자 `key_grid::INTERCEPTS`.
+    // DIVERGE(ctrl+=,ctrl+-,ctrl+0): ⓒ OS 창 통합 — Ctrl+=/−/0 글자 크기(정본은 호스트 단말이 한다 · Ctrl+− 는
+    //   정본에서 0x1f 가 패널로 간다). 자 = 갈림 대장 `WindowChord` × 키 격자.
     fn font_scale_chord(keystroke: &warpui::keymap::Keystroke) -> Option<Action> {
         if !keystroke.ctrl || keystroke.alt || keystroke.meta || keystroke.cmd {
             return None;
@@ -1746,9 +1766,6 @@ impl SessionView {
                             Some(PalettePick::Action(action)) => {
                                 self.run_command_run(base::cmdline::palette_run(action));
                             }
-                            // ★ 플러그인 명령은 **아직 화면이 없다**(설계 P4).
-                            //   조용히 버리지 않는다 — 목록에 보이는데 눌러도 아무 일이
-                            //   안 나면 사용자는 자기가 잘못 골랐다고 읽는다(설계 §8-5).
                             // ★ 플러그인 명령은 **이름만 보낸다**(pytmux-35). 종전에는
                             //   전부 "화면을 달라"(`plugin_open`)였는데, 상태를 바꾸는
                             //   명령에는 통째로 틀린 길이라 서버가 거절했고 사용자에게는
@@ -3473,6 +3490,17 @@ impl SessionView {
     /// 보내기 실패는 **한 번만** 알린다 — 연결이 끊기면 매 프레임 같은 줄이 쏟아져
     /// 진짜 원인이 로그에서 묻힌다. 화면에는 `ended` 로 이미 드러난다.
     fn flush_outgoing(&mut self) {
+        // ★ **hello 가 첫 프레임이어야 한다**(pytmux-639 G6). 서버는 첫 프레임이 hello 가
+        //   아니면 연결을 닫는다 — 미룬 동안 쌓인 것(포커스·ping·키)은 hello 뒤로 붙든다.
+        //   첫 레이아웃이 안 오면(창이 아직 안 섰다) 백스톱이 지금 아는 크기로 보낸다.
+        if self.link.hello_pending() {
+            if self.hello_since.elapsed() < HELLO_DEFER_MAX {
+                return;
+            }
+            let (cols, rows) = self.size.reported();
+            log::warn!("첫 레이아웃이 {HELLO_DEFER_MAX:?} 안에 안 왔다 — {cols}x{rows} 로 hello");
+            self.send_deferred_hello(cols, rows);
+        }
         let mut failed = None;
         for item in self.pending.drain(..) {
             if let Err(reason) = self.link.send(&item) {
@@ -3491,6 +3519,21 @@ impl SessionView {
             log::warn!("서버로 못 보냈다: {reason}");
             let size = self.size.reported();
             for happening in self.supervisor.send_failed(&mut self.link, size) {
+                self.apply_lifecycle(happening);
+            }
+        }
+    }
+
+    /// 미룬 hello 를 **이 크기로** 보낸다(pytmux-639 G6) — 모호폭은 지금 판정값이다(pytmux-578).
+    ///
+    /// 크기 보고기도 그 크기에서 다시 시작한다 — 서버는 hello 의 크기를 이미 알므로 같은 크기의
+    /// Resize 를 또 보낼 까닭이 없다(정본도 hello 뒤 첫 resize 는 크기가 바뀔 때다).
+    fn send_deferred_hello(&mut self, cols: u16, rows: u16) {
+        self.size = SizeReporter::new(cols, rows);
+        let (cols, rows) = self.size.reported();
+        if let Err(reason) = self.link.send_hello(cols, rows, self.ambig_wide) {
+            log::warn!("hello 를 못 보냈다: {reason}");
+            for happening in self.supervisor.send_failed(&mut self.link, (cols, rows)) {
                 self.apply_lifecycle(happening);
             }
         }
@@ -3747,6 +3790,7 @@ impl SessionView {
             }));
             return true;
         }
+        // DIVERGE(ctrl-click-mac): 맥만 상류가 Ctrl+왼쪽을 우클릭으로 바꿔 준다(아래 마지막 줄).
         // ★ **Ctrl+클릭은 무동작**이다(pytmux-569 · 정본 `on_mouse_down` 「컨텍스트 메뉴는 순수
         //   우클릭으로만」). 정본 차례 그대로 — 그보다 앞인 갈래(스티키 바 · 밑줄 · Shift 의 앱
         //   넘김)만 산다. 맥은 상류가 Ctrl+왼쪽을 우클릭으로 바꿔 주므로 여기 안 온다(OS 관례 ⓒ).
@@ -4787,6 +4831,17 @@ impl SessionView {
         else {
             return;
         };
+        self.report_grid(cols, rows);
+    }
+
+    /// 잰 격자를 서버에 알린다 — 아직 hello 전이면 **hello 가** 그 크기를 싣는다(pytmux-639 G6 ·
+    /// 정본은 처음부터 실제 격자로 hello 한다). 창 없는 오라클도 이 자리로 들어온다.
+    pub(crate) fn report_grid(&mut self, cols: u16, rows: u16) {
+        if self.link.hello_pending() {
+            log::info!("첫 격자로 hello: {cols}x{rows}");
+            self.send_deferred_hello(cols, rows);
+            return;
+        }
         if let Some(frame) = self.size.update(cols, rows) {
             log::info!("창에 맞춘 격자: {}x{}", frame.cols, frame.rows);
             self.pending.push(Outgoing::Resize(frame));
@@ -5177,9 +5232,20 @@ impl SessionView {
                             if now >= ts {
                                 // 임계는 설정 파일 값이다(pytmux-535 · 정본 `net_rtt_threshold`).
                                 // 표본마다 다시 실어 `source-file` 로 바꾼 값도 바로 먹는다.
+                                // 로컬이면 외곽선도 자동 회복도 없다(정본 `_net_local` · §10-F).
+                                let local = self.supervisor.lifecycle().local;
                                 let rtt = self.state.rtt_mut();
                                 rtt.threshold = self.config.net_rtt_threshold;
-                                rtt.sample(now, now - ts);
+                                rtt.local = local;
+                                // degraded 자동 회복(pytmux-639 · 정본 `_net_sample` → `reconnect_now("auto")`):
+                                // 원격에서 나쁜 표본이 20 번 이어지면 소켓만 새로 세운다(서버는 산다).
+                                if rtt.sample(now, now - ts) {
+                                    let size = self.size.reported();
+                                    for happening in self.supervisor.degraded(&mut self.link, size) {
+                                        self.apply_lifecycle(happening);
+                                    }
+                                    dirty = true;
+                                }
                             }
                         }
                         if matches!(self.screens.top(), Some(Screen::InfoTabs)) {
@@ -6833,7 +6899,7 @@ impl SessionView {
     /// 활성 탭 안의 닫기 ×. 종전 `[x]` 와 같은 자리 색인(탭들+1)·같은 액션
     /// (`Spot(Close)` → 확인 화면)이다.
     ///
-    // DIVERGE(pytmux-598): 자리 — 정본 `clientio._draw_tab_close` 는 `[x]` 를 **활성 패널의
+    // DIVERGE(tab-close-x): 자리 — 정본 `clientio._draw_tab_close` 는 `[x]` 를 **활성 패널의
     //   상단 테두리 행** 오른쪽에 글자로 찍는다. GUI 는 같은 뜻(현재 탭 닫기)·같은 길
     //   (`confirm_kill_tab` → 원격/마지막/고정/보통 확인 갈래 · 정본 `confirm_kill_tab`)·
     //   같은 상시성(포인터 없이 늘 그림)을 **활성 탭 칩 안의 ×** 로 낸다(허용 갈림 ⓑ 그림 —
@@ -8999,7 +9065,7 @@ impl SessionView {
                 dirty = true;
             }
             Happening::ResetNet => self.state.rtt_mut().reset_after_reconnect(),
-            // DIVERGE(pytmux-598): relaunch 순서 — 정본은 EOF 에서 곧장 execv 하지만
+            // DIVERGE(relaunch-order): relaunch 순서 — 정본은 EOF 에서 곧장 execv 하지만
             // 우리는 제자리에서 다시 붙은 **뒤에** 띄운다(빨리 뜨는 이진이 execv 중인
             // 서버를 «없음» 으로 읽고 두 번째 서버를 세우지 않게 · `base::lifecycle` 문서).
             Happening::Relaunch => match base::restart::relaunch() {
@@ -9009,7 +9075,7 @@ impl SessionView {
                 }
                 Err(why) => self.state.note_error(why),
             },
-            // DIVERGE(pytmux-598): ⓒ 정본은 이 글을 단말에 남기고 앱을 끝낸다. GUI 는
+            // DIVERGE(exit-keeps-window): ⓒ 정본은 이 글을 단말에 남기고 앱을 끝낸다. GUI 는
             // 창을 닫으면 글이 사라지므로 창을 남기고 바닥 줄에 건다(수동 reconnect 가
             // 그 자리에서 되살린다).
             Happening::Ended(text) => {
@@ -9846,7 +9912,9 @@ impl SessionView {
             remote_title: self.config.remote_title.clone(),
             status_interval: self.config.status_interval,
             mouse_drag_threshold: self.config.mouse_drag_threshold,
-            ambiguous_width: self.config.ambiguous_width.clone(),
+            // 정본 `setting_current` 는 **판정값**을 보인다(`wide`/`narrow` — `auto` 가
+            // 무엇으로 풀렸는지가 사용자가 알고 싶은 것이다 · pytmux-578).
+            ambiguous_width: if self.ambig_wide { "wide" } else { "narrow" }.to_owned(),
             vt_parser: flags.vt_parser.clone(),
             window_size: flags.window_size.clone(),
             sync: flags.sync,
@@ -9959,7 +10027,12 @@ impl SessionView {
                 self.config = base::Config::load();
                 self.mode.set_prefix(self.config.prefix);
                 apply_config_globals(&self.config, &mut self.state);
-                self.state.note_notice(format!("set {option} {value}"));
+                if matches!(option, "ambiguous-width" | "ambiguous_width") {
+                    // 정본 `apply_option` 은 이 옵션에서 서버까지 맞추고 제 글로 알린다.
+                    self.apply_ambiguous(value);
+                } else {
+                    self.state.note_notice(format!("set {option} {value}"));
+                }
             }
             Err(err) => self
                 .state
@@ -10081,11 +10154,35 @@ impl SessionView {
             return;
         };
         self.config = next;
-        proto::compose::set_ambiguous_wide(self.config.ambiguous_width == "wide");
+        if matches!(key, "ambiguous-width" | "ambiguous_width") {
+            let value = self.config.ambiguous_width.clone();
+            self.apply_ambiguous(&value);
+        }
         if let Err(err) = written {
             self.state
                 .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())]));
         }
+    }
+
+    /// 런타임 `set ambiguous-width <값>` — 정본 `apply_option` → `_apply_ambiguous_wide`(pytmux-578).
+    ///
+    /// ⓐ 값 풀이는 정본 별칭 그대로이고 `auto` 는 **기동 때 잰 값**이다(다시 재지 않는다 —
+    /// 정본 `_ambig_auto_wide`). ⓑ 서버에는 **값이 같아도 언제나** `set_ambig` 를 보낸다
+    /// (pytmux-507 — 두 전역이 어긋난 상태에서 같은 값을 다시 세우는 것이 유일한 화해 길이다).
+    /// 아직 hello 전이면 hello 가 그 값을 싣는다. ⓒ 알림은 정본과 같은 글(카탈로그 밖 원문).
+    fn apply_ambiguous(&mut self, value: &str) {
+        let wide = proto::compose::resolve_ambiguous(value, self.ambig_auto_wide);
+        self.ambig_wide = wide;
+        proto::compose::set_ambiguous_wide(wide);
+        if !self.link.hello_pending() {
+            self.pending.push(Outgoing::SetAmbig { wide });
+        }
+        let auto = value.trim().eq_ignore_ascii_case("auto");
+        self.state.note_notice(format!(
+            "모호폭: {}{}",
+            if wide { "wide(2칸)" } else { "narrow(1칸)" },
+            if auto { " · auto" } else { "" }
+        ));
     }
 
     /// 설정 화면에서 받은 새 prefix 를 반영한다(패리티 G5b). TUI 와 같은 표다.
@@ -13467,6 +13564,21 @@ impl View for SessionView {
             // (`pytmux-162`): 유연한 자식이 둘이 되면 남는 높이가 반씩 갈려, 캔버스는
             // 아랫변을 절반만 내리고 나머지 절반이 다시 빈 띠로 남는다.
             None => {
+                // ★ hello 를 미룬 동안(pytmux-639 G6)에는 캔버스가 없어 칸 자리표도 없다 — 그러면
+                //   `report_size` 가 격자를 못 재 hello 가 백스톱(80×24)으로 나간다(실측 2026-11-13).
+                //   캔버스 첫 줄이 앉을 자리에 **ASCII 한 칸**을 그려 자리표를 남긴다(캔버스와 같은
+                //   글꼴·배율 — 같은 칸 크기다). ⚠ 캔버스의 자리표는 ASCII 가 처음 나오는 줄에
+                //   앉고 첫 줄은 대개 패널 윗변(`┌──┐` — ASCII 없음)이라 **둘째 줄**이다 — 여기도
+                //   한 줄 내려 앉혀야 hello 의 행 수가 첫 화면 뒤의 격자와 같다(실측: 첫 줄에 두면
+                //   hello 161x45 → 곧바로 Resize 161x44).
+                if self.link.hello_pending() {
+                    let blank = Text::new_inline(" ".to_owned(), self.font, self.scaled(13.));
+                    column = column.with_child(blank.finish()).with_child(
+                        Text::new_inline(" ".to_owned(), self.font, self.scaled(13.))
+                            .with_saved_char_position(0, Self::CELL_PROBE.to_owned())
+                            .finish(),
+                    );
+                }
                 column = column
                     .with_child(self.text(t("첫 화면을 기다리는 중…"), 14., palette::DIM));
                 column =

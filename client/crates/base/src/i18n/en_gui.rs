@@ -6,11 +6,6 @@
 pub static EN: &[(&str, &str)] = &[
     // ── 빈 상태(pytmux-405) ──
     ("찾는 중…", "Searching…"),
-    // 플러그인 표면(Tier A) — 아직 화면이 없는 기여를 눌렀을 때.
-    (
-        "플러그인 명령 {name} 은 이 클라에 아직 화면이 없습니다 — 터미널 클라(pytmux)에서 쓰세요",
-        "Plugin command {name} has no screen in this client yet — use the terminal client (pytmux)",
-    ),
     // ── root_view.rs — 블록 데모 창 제목 줄(TUI 데모와 같은 원문 — 여기가 주인) ──
     ("pytmux-gui · 블록 데모", "pytmux-gui · block demo"),
     // ── session_view.rs — 글자 배율 한 마디(§10-21ⓐ) ──

@@ -1,0 +1,550 @@
+{
+  "_comment": "python3 scripts/gen_plugin_hooks.py 로 생성. 출처 = pytmuxlib/plugins/__init__.py Registry(AST) · pytmuxlib/client*.py 의 호출 · plugins._discover() · serverio._plugin_surface.",
+  "plugins": [
+    "blocks",
+    "calendar",
+    "claude-code",
+    "claude-name-sync",
+    "claude-prompt-history",
+    "claude-resume",
+    "claude-token-usage-view",
+    "clock",
+    "ime-indicator",
+    "mdir",
+    "ncd",
+    "p4-show-submitted-changelists",
+    "rec"
+  ],
+  "client_hooks": [
+    "attach_client",
+    "client_caps",
+    "client_click",
+    "client_close_overlay",
+    "client_hit",
+    "client_input_badge",
+    "client_key",
+    "client_mode_key",
+    "client_overlay",
+    "client_overlay_covers",
+    "client_overlay_key",
+    "client_panes_changed",
+    "client_prompt_text",
+    "client_render",
+    "client_status",
+    "client_status_tabs",
+    "client_statusbar",
+    "client_statusbar_badges",
+    "client_statusbar_init",
+    "client_statusbar_update",
+    "client_tab_glyph",
+    "client_tick",
+    "client_unload",
+    "command_option_current",
+    "command_options",
+    "commands",
+    "completions",
+    "handle_command",
+    "handle_message",
+    "noarg",
+    "pane_scoped",
+    "settings"
+  ],
+  "server_hooks": [
+    "handle_server_request",
+    "menu_items",
+    "option_state_keys",
+    "pane_blocks",
+    "pane_blocks_changed",
+    "pane_claude_tail",
+    "pane_closing",
+    "pane_cwd",
+    "pane_env",
+    "pane_init",
+    "pane_osc",
+    "pane_reset",
+    "pane_restore",
+    "pane_serialize",
+    "plugin_badges",
+    "plugin_cells",
+    "plugin_command_action",
+    "plugin_dim_panes",
+    "plugin_native",
+    "plugin_overlay_action",
+    "plugin_screen",
+    "plugin_screen_closed",
+    "plugin_triggers",
+    "relay_actions",
+    "server_command",
+    "server_control",
+    "server_filter_rows",
+    "server_init",
+    "server_input",
+    "server_mixins",
+    "server_opts_init",
+    "server_opts_serialize",
+    "server_pane_overview",
+    "server_paste",
+    "server_pending",
+    "server_pty_output",
+    "server_scan",
+    "server_shutdown",
+    "server_status",
+    "upstream_caps"
+  ],
+  "cells": [
+    {
+      "hook": "attach_client",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "claude-name-sync"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "claude-resume"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "claude-token-usage-view"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "clock"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "mdir"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "ncd"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "p4-show-submitted-changelists"
+    },
+    {
+      "hook": "attach_client",
+      "plugin": "rec"
+    },
+    {
+      "hook": "client_caps",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "client_click",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "client_click",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "client_close_overlay",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "client_close_overlay",
+      "plugin": "claude-token-usage-view"
+    },
+    {
+      "hook": "client_close_overlay",
+      "plugin": "clock"
+    },
+    {
+      "hook": "client_hit",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "client_hit",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "client_input_badge",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "client_key",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "client_mode_key",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "client_overlay",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "client_overlay",
+      "plugin": "claude-token-usage-view"
+    },
+    {
+      "hook": "client_overlay",
+      "plugin": "clock"
+    },
+    {
+      "hook": "client_overlay_covers",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "client_overlay_covers",
+      "plugin": "clock"
+    },
+    {
+      "hook": "client_overlay_key",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "client_panes_changed",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "client_prompt_text",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "client_render",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "client_render",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "client_render",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "client_render",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "client_status",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "client_status",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "client_status",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "client_status_tabs",
+      "plugin": "rec"
+    },
+    {
+      "hook": "client_statusbar",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "client_statusbar_badges",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "client_statusbar_badges",
+      "plugin": "rec"
+    },
+    {
+      "hook": "client_statusbar_init",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "client_statusbar_init",
+      "plugin": "rec"
+    },
+    {
+      "hook": "client_statusbar_update",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "client_statusbar_update",
+      "plugin": "rec"
+    },
+    {
+      "hook": "client_tab_glyph",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "client_tick",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "client_tick",
+      "plugin": "claude-token-usage-view"
+    },
+    {
+      "hook": "client_tick",
+      "plugin": "clock"
+    },
+    {
+      "hook": "client_tick",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "client_unload",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "command_option_current",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "command_options",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "command_options",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "command_options",
+      "plugin": "rec"
+    },
+    {
+      "hook": "commands",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "commands",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "commands",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "commands",
+      "plugin": "claude-name-sync"
+    },
+    {
+      "hook": "commands",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "commands",
+      "plugin": "claude-resume"
+    },
+    {
+      "hook": "commands",
+      "plugin": "claude-token-usage-view"
+    },
+    {
+      "hook": "commands",
+      "plugin": "clock"
+    },
+    {
+      "hook": "commands",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "commands",
+      "plugin": "mdir"
+    },
+    {
+      "hook": "commands",
+      "plugin": "ncd"
+    },
+    {
+      "hook": "commands",
+      "plugin": "p4-show-submitted-changelists"
+    },
+    {
+      "hook": "commands",
+      "plugin": "rec"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "claude-name-sync"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "claude-resume"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "claude-token-usage-view"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "clock"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "mdir"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "ncd"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "p4-show-submitted-changelists"
+    },
+    {
+      "hook": "handle_command",
+      "plugin": "rec"
+    },
+    {
+      "hook": "handle_message",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "handle_message",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "handle_message",
+      "plugin": "claude-name-sync"
+    },
+    {
+      "hook": "handle_message",
+      "plugin": "claude-resume"
+    },
+    {
+      "hook": "handle_message",
+      "plugin": "mdir"
+    },
+    {
+      "hook": "handle_message",
+      "plugin": "ncd"
+    },
+    {
+      "hook": "handle_message",
+      "plugin": "p4-show-submitted-changelists"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "claude-code"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "claude-name-sync"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "claude-resume"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "claude-token-usage-view"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "clock"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "ime-indicator"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "mdir"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "ncd"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "p4-show-submitted-changelists"
+    },
+    {
+      "hook": "noarg",
+      "plugin": "rec"
+    },
+    {
+      "hook": "pane_scoped",
+      "plugin": "blocks"
+    },
+    {
+      "hook": "pane_scoped",
+      "plugin": "calendar"
+    },
+    {
+      "hook": "pane_scoped",
+      "plugin": "claude-prompt-history"
+    },
+    {
+      "hook": "pane_scoped",
+      "plugin": "claude-token-usage-view"
+    },
+    {
+      "hook": "pane_scoped",
+      "plugin": "clock"
+    },
+    {
+      "hook": "settings",
+      "plugin": "claude-code"
+    }
+  ],
+  "bridges": [
+    "plugin_surface.command_options",
+    "plugin_surface.commands",
+    "plugin_surface.menu_items",
+    "plugin_surface.noarg",
+    "plugin_surface.pane_scoped",
+    "plugin_surface.setting_cats",
+    "plugin_surface.settings",
+    "plugin_badges",
+    "plugin_cells",
+    "plugin_command_action",
+    "plugin_dim_panes",
+    "plugin_native",
+    "plugin_overlay_action",
+    "plugin_screen",
+    "plugin_screen_closed",
+    "plugin_triggers"
+  ]
+}

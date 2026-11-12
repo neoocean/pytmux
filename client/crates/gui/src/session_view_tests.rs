@@ -3620,6 +3620,43 @@ fn bye_says_the_canonical_terminated_line_and_does_not_reconnect() {
     assert!(pushers.lock().unwrap().is_empty());
 }
 
+/// pong 을 `rtt` 초 왕복으로 `n` 번 먹인다.
+fn feed_pongs(view: &mut SessionView, tx: &std::sync::mpsc::Sender<LinkEvent>, n: usize, rtt: f64) {
+    for _ in 0..n {
+        let ts = view.pinger.now() - rtt;
+        tx.send(LinkEvent::Message(Box::new(ServerMessage::Pong { ts: Some(ts) }))).unwrap();
+        view.pump_headless();
+    }
+}
+
+#[test]
+fn a_remote_link_reconnects_after_twenty_bad_pongs() {
+    // pytmux-639 · 정본 `_net_sample`: 원격에서 임계 초과가 `net_recover_n`(20) 번 이어지면
+    // 강제 재접속(`reconnect_now("auto")`). 상태기계와 감독자는 있었고 **부르는 자리**가 없었다.
+    let (mut view, tx, _sent) = harness();
+    let (connect, pushers) = reattaching_connector();
+    view.supervisor = proto::supervise::Supervisor::with_connector(false, connect);
+    feed_pongs(&mut view, &tx, 19, 0.9);
+    assert!(!view.supervisor.attempting() && pushers.lock().unwrap().is_empty(), "19 번에 걸었다");
+    assert!(view.state.rtt().degraded, "원격인데 외곽선이 안 빨개졌다");
+    feed_pongs(&mut view, &tx, 1, 0.9);
+    pump_until(&mut view, |_| !pushers.lock().unwrap().is_empty());
+    let notices: Vec<String> = view.state.notices().map(|n| n.line()).collect();
+    assert!(!notices.is_empty(), "재접속 알림이 없다");
+}
+
+#[test]
+fn a_local_link_never_reconnects_on_bad_pongs_nor_turns_red() {
+    // 정본 `_net_local` — 로컬 RTT 스파이크는 이벤트 루프 지터다(§10-F).
+    let (mut view, tx, _sent) = harness();
+    let (connect, pushers) = reattaching_connector();
+    view.supervisor = proto::supervise::Supervisor::with_connector(true, connect);
+    feed_pongs(&mut view, &tx, 45, 0.9);
+    view.pump_headless();
+    assert!(pushers.lock().unwrap().is_empty() && !view.supervisor.attempting(), "로컬인데 다시 붙었다");
+    assert!(!view.state.rtt().degraded, "로컬인데 외곽선이 빨개졌다");
+}
+
 #[test]
 fn restarting_then_eof_reconnects_and_says_restart_done() {
     let (mut view, tx, _sent) = harness();
@@ -4596,24 +4633,108 @@ fn if_shell_then_runs_a_command_line_with_arguments() {
 
 #[test]
 fn source_file_with_a_path_reads_that_file_and_pushes_the_globals() {
-    // pytmux-574 — 경로를 받고, 다시 읽은 뒤 **기동과 같은 적용 함수**를 지난다(폭 판정 전역까지).
+    // pytmux-574 — 경로를 받고, 다시 읽은 뒤 **기동과 같은 적용 함수**를 지난다.
+    // ⛔ pytmux-578 — 그 함수는 모호폭을 **안 바꾼다**(정본 `reload_config` 는 그 칸을 안 건드린다).
     let dir = std::env::temp_dir().join(format!("pytmux-gui-source-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("x.conf");
     std::fs::write(&path, "set mouse off\nset ambiguous-width wide\nalias sp split-window -h\n").unwrap();
-    let (mut view, _tx, _sent) = harness();
+    let (mut view, _tx, sent) = harness();
+    let before = view.ambig_wide;
     assert!(view.run_command_line(&format!("source-file {}", path.display())));
+    view.pump_headless();
     assert!(!view.config.mouse, "그 파일을 안 읽었다");
     assert_eq!(view.config.aliases.get("sp"), Some("split-window -h"), "별칭을 다시 안 읽었다");
-    // 전역(`proto::compose::ambiguous_wide()`)이 아니라 **이 스레드가 민 값**을 본다 — 전역은
-    // 나란히 도는 시험이 뷰를 세울 때마다 덮는다(가짜 적색 · `LAST_AMBIG_PUSH` 문서).
-    assert_eq!(
-        super::LAST_AMBIG_PUSH.with(|c| c.get()),
-        Some(true),
-        "다시 읽은 뒤 폭 판정을 전역에 안 밀었다"
+    // 전역이 아니라 **이 뷰가 정한 값**을 본다 — 전역은 나란히 도는 시험이 뷰를 세울 때마다 덮는다.
+    assert_eq!(view.ambig_wide, before, "다시 읽기가 모호폭 판정을 바꿨다(정본은 안 바꾼다)");
+    assert!(
+        !sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::SetAmbig { .. })),
+        "다시 읽기가 set_ambig 를 보냈다: {:?}",
+        sent.lock().unwrap()
     );
-    proto::compose::set_ambiguous_wide(false);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn set_ambiguous_width_tells_the_server_even_when_the_value_is_unchanged() {
+    // pytmux-578 · 정본 `_apply_ambiguous_wide`(pytmux-507): 클라 값이 이미 같아도 서버에는 언제나
+    // `set_ambig` 를 보낸다 — 두 전역이 어긋난 상태를 같은 값으로 다시 세우는 것이 유일한 화해 길이다.
+    let (mut view, _tx, sent) = harness();
+    view.apply_ambiguous("wide");
+    view.apply_ambiguous("wide");
+    view.apply_ambiguous("narrow");
+    view.pump_headless();
+    let got: Vec<bool> = sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::SetAmbig { wide } => Some(*wide),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(got, vec![true, true, false]);
+    assert!(!view.ambig_wide);
+    proto::compose::set_ambiguous_wide(false);
+}
+
+#[test]
+fn set_ambiguous_width_auto_uses_the_value_measured_at_startup() {
+    // 정본 `apply_option`: `auto` 는 기동 때 잰 값(`_ambig_auto_wide`) — 다시 재지 않는다.
+    let (mut view, _tx, _sent) = harness();
+    view.ambig_auto_wide = true;
+    view.apply_ambiguous("auto");
+    assert!(view.ambig_wide, "auto 가 기동 때 잰 wide 를 안 따랐다");
+    view.ambig_auto_wide = false;
+    view.apply_ambiguous("auto");
+    assert!(!view.ambig_wide);
+    // 정본과 같은 알림 글(카탈로그 밖 원문).
+    view.apply_ambiguous("double");
+    assert!(view.ambig_wide, "정본 별칭 double 이 wide 가 아니다");
+    proto::compose::set_ambiguous_wide(false);
+}
+
+#[test]
+fn first_hello_carries_the_measured_grid_not_80x24() {
+    // pytmux-639 G6 — 정본은 처음부터 실제 격자로 hello 한다. 미룬 동안 쌓인 것은 hello 뒤로 간다
+    // (서버는 첫 프레임이 hello 가 아니면 연결을 닫는다).
+    base::config::redirect_writes(
+        std::env::temp_dir().join(format!("pytmux-gui-test-config-{}", std::process::id())),
+    );
+    let (link, _tx, sent) = ServerLink::detached_awaiting_hello("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    view.ambig_wide = true;
+    view.pending.push(Outgoing::Focus { on: true });
+    view.pump_headless();
+    assert!(sent.lock().unwrap().is_empty(), "hello 전에 나간 것이 있다: {:?}", sent.lock().unwrap());
+    view.report_grid(132, 41);
+    view.pump_headless();
+    let sent = sent.lock().unwrap();
+    let Some(Outgoing::Hello(hello)) = sent.first() else {
+        panic!("첫 프레임이 hello 가 아니다: {sent:?}")
+    };
+    assert_eq!((hello.cols, hello.rows, hello.ambig), (132, 41, Some("wide")));
+    assert!(
+        !sent.iter().any(|o| matches!(o, Outgoing::Resize(_))),
+        "hello 가 이미 실은 크기를 Resize 로 또 보냈다(또는 80×24 를 보냈다): {sent:?}"
+    );
+    assert!(sent.iter().any(|o| matches!(o, Outgoing::Focus { on: true })), "붙든 것을 hello 뒤에 안 보냈다");
+    proto::compose::set_ambiguous_wide(false);
+}
+
+#[test]
+fn a_hello_that_never_got_a_layout_still_goes_out_before_the_server_gives_up() {
+    // 서버는 hello 를 10초만 기다린다 — 첫 레이아웃이 안 오면 백스톱이 아는 크기로 보낸다.
+    base::config::redirect_writes(
+        std::env::temp_dir().join(format!("pytmux-gui-test-config-{}", std::process::id())),
+    );
+    let (link, _tx, sent) = ServerLink::detached_awaiting_hello("/tmp/test.sock");
+    let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
+    view.hello_since = std::time::Instant::now() - super::HELLO_DEFER_MAX;
+    view.pump_headless();
+    let sent = sent.lock().unwrap();
+    assert!(matches!(sent.first(), Some(Outgoing::Hello(_))), "백스톱이 hello 를 안 보냈다: {sent:?}");
+    assert!(super::HELLO_DEFER_MAX < std::time::Duration::from_secs(10), "서버 상한(10초)보다 길다");
 }
 
 #[test]
@@ -13868,6 +13989,10 @@ fn keys_are_swallowed_while_a_remote_image_is_on_its_way() {
 // ── pytmux-569 · 세션 뷰 마우스 적합성 자(정본 시나리오 픽스처) ─────────────────
 #[path = "session_view_mouse_conformance_tests.rs"]
 mod mouse_conformance;
+
+// ── pytmux-568 · 설정 효과 자(정본 설정 줄마다 관측값이 달라지나) ─────────────────
+#[path = "session_view_setting_effect_tests.rs"]
+mod setting_effect;
 
 // ── pytmux-608 · 수식 키 격자 — 창 이벤트에서 패널 바이트까지(가로채는 ⓒ 포함) ─────────
 #[path = "session_view_key_grid_tests.rs"]

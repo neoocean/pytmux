@@ -152,8 +152,9 @@ pub enum Action {
     /// 선언"이라고 적지만 그 장치는 **없다**: `iv`/`KNOWN_DIVERGENCES` 는 Rust TUI 를
     /// 지우면서 함께 사라졌고(2026-08-01), 지금 `parity.rs` 의 칸은 하나이며 그 표의
     /// 줄은 **정본 픽스처가 정한다** — 정본에 없는 표면은 실을 줄 자체가 없다. 그래서
-    /// GUI 전용 표면의 대장은 적합성 게이트의 허용 목록이다:
-    /// `category_conformance.rs` 의 `PALETTE_OURS`(팔레트 이름)·`SETTINGS_OURS`(설정 줄).
+    /// GUI 전용 표면의 대장은 `proto/tests/common/divergence.rs`(줄과 분류)이고, 그것이
+    /// 전수인지는 `divergence_ledger.rs` 가 센다(종전 자리 `category_conformance.rs` 의
+    /// `PALETTE_OURS`·`SETTINGS_OURS` 는 그리로 옮겼다 · pytmux-626).
     /// 거기 없으면 게이트가 운다 = 조용히 늘지 않는다.
     ///
     /// 규칙(끝값·걸음·반올림)의 주인은 [`crate::config::font_scale_step`] 이다 — 뷰가
@@ -296,6 +297,8 @@ pub enum Action {
     SetAutoRename(bool),
     /// 서버 옵션을 그 값으로 정한다.
     SetServerOption(ServerOpt, bool),
+    /// 패널 제목 줄을 그 값으로 정한다(설정 판이 정본처럼 다음 값을 **명시**해 보낸다 · pytmux-568).
+    SetBorderStatus(bool),
     /// 걸어 둔 훅들을 본다(`show-hooks`) — 읽는 화면을 연다.
     ShowHooks,
     /// 패널에 키를 주입한다(`send-keys` — 입력 화면).
@@ -419,7 +422,7 @@ pub enum Action {
     ///
     /// 정본(Textual TUI)의 풀스크린은 **호스트 단말의 일**이라 우리가 건드릴 자리가
     /// 없다(`pytmuxlib` 전체에 창 전환 코드 0건). GUI 는 자기 창을 가지므로 할 수 있다 —
-    /// 패리티 표에 `iv` 로 선언한다.
+    /// 갈림은 `proto/tests/common/divergence.rs` 대장에 선언한다(`iv` 는 없는 장치다 · pytmux-626).
     ///
     /// # 상태는 **우리가 안 든다**
     ///
@@ -538,6 +541,7 @@ impl Action {
             Action::SetMonitor { .. } => "감시 정하기",
             Action::SetAutoRename(_) => "자동 이름 정하기",
             Action::SetServerOption(..) => "서버 옵션 정하기",
+            Action::SetBorderStatus(_) => "패널 제목 줄 정하기",
             Action::ShowHooks => "훅 보기",
             Action::SendKeys => "키 주입",
             Action::BindKey => "키 바인딩",
@@ -811,11 +815,12 @@ pub static BINDINGS: &[Binding] = &[
     // 명령 모드 안에서 vim·less 에게 ESC 를 주는 길. 그냥 `ESC` 는 모드에서 나가는 키다.
     b("e", Action::SendEscape, false),
     b("`", Action::SendBacktick, false),
-    // tmux 의 copy-mode 관습(prefix `[`)을 그대로 쓴다 — 파이썬 클라도 `esc` `[` 다.
+    // tmux 의 copy-mode 관습(prefix `[`)을 esc 에도 둔다. ⚠ 정본 esc `[` 는 **모드만 푼다** —
+    // 정본의 스크롤 입구는 `prefix [` 하나다(갈림은 대장 `proto/tests/common/divergence.rs` 의
+    // esc 키 `[` 줄 · pytmux-626).
     b("[", Action::EnterScroll, true),
-    // 블록 고르기(pytmux-18). **정본에 없는 글자**라 안전하다 — 정본의 esc 모드 키
-    // 열일곱에 `b` 는 없다(`client_surface.json` 의 `esc_keys`). 정본이 나중에 같은
-    // 글자를 쓰게 되면 그때는 정본을 따른다(손버릇이 갈리는 쪽이 더 나쁘다).
+    // 블록 고르기(pytmux-18). 정본도 **같은 글자**다 — esc `b` = `select-blocks`
+    // (`client_surface.json` 의 `esc_keys.e_b` · `clientio.py`).
     b("b", Action::SelectBlocks, false),
     // 파이썬 클라의 `esc ?`(e_help)와 같은 글자다. 도움말은 **키를 외우지 않아도 되게**
     // 하는 것이라, 그 입구가 클라마다 다르면 목적을 반쯤 잃는다.
@@ -1342,6 +1347,7 @@ const fn pe(name: &'static str, cat: &'static str, action: Action) -> PaletteEnt
 ///
 /// 거르는 자리는 **화면을 만드는 곳 전부**여야 한다 — 하나라도 빠지면 그 입구로 다시
 /// 보인다(팔레트·설정 화면·상태줄 표식). 그래서 목록을 한 곳에 두고 각자 물어본다.
+// DIVERGE(monitor-bell): 정본 설정 판·팔레트에는 그 줄이 선다 — 원칙 2 와 부딪쳐 사람 결정 대기(pytmux-642).
 pub static HIDDEN_SURFACES: &[&str] = &["monitor-bell"];
 
 /// 그 이름이 화면에서 감춰졌나.
@@ -1474,11 +1480,12 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("display-panes", "패널", Action::ShowPaneNumbers),
     pe("menu", "설정/기타", Action::ShowMenu),
     pe("notice-history", "설정/기타", Action::ShowNotices),
-    // GUI 만의 판(§10-21ⓓ) — 화면에서 뺀 요약 구역의 새 입구다.
+    // 화면에서 뺀 요약 구역의 새 입구다(§10-21ⓓ). 정본에도 섰다 — `blocks` 플러그인이 같은
+    // 이름을 팔레트에 싣고 범용 `InfoScreen` 으로 띄운다(pytmux-538 · pytmux-626).
     pe("summary", "설정/기타", Action::ShowSummary),
     // ★ GUI 만의 판(pytmux-375). 정본의 커서는 **호스트 단말의 하드웨어 커서**라
-    //   저쪽에 이 이름이 있을 수 없다(`SETTINGS_OURS` 가 같은 근거를 설정 다섯에
-    //   대해 적는다). 키를 안 주므로 **팔레트가 유일한 입구**다 — 그 사정은
+    //   저쪽에 이 이름이 있을 수 없다(갈림 대장 `proto/tests/common/divergence.rs` 의 설정 축이
+    //   같은 근거를 커서 설정들에 대해 적는다). 키를 안 주므로 **팔레트가 유일한 입구**다 — 그 사정은
     //   `Action::ShowCursor` 가 쥔다.
     pe("cursor", "설정/기타", Action::ShowCursor),
     // ★ 정본에도 **같은 이름**이 있다(pytmux-457). 종전에는 패리티 래칫의
@@ -1486,7 +1493,8 @@ pub static PALETTE: &[PaletteEntry] = &[
     //   GUI 에는 잴 것이 없다"* 였는데, 이제 **제 런타임을 재는 판**이 생겨 그 사유가
     //   사라졌다. 면제와 분류는 다른 일이고, 없앤 것은 뒤엣것(「GUI 에 아직 없다」)이다.
     pe("debug-stats", "설정/기타", Action::ShowDebugStats),
-    // GUI 만의 모드(pytmux-18). 키(`esc b`)가 주 입구이고 팔레트는 그 키를 모르는
+    // 블록 고르기 모드(pytmux-18) — 정본에도 섰다(pytmux-469 · `blocks` 플러그인이 같은 이름을
+    // 팔레트에 싣는다 · pytmux-626). 키(`esc b`)가 주 입구이고 팔레트는 그 키를 모르는
     // 사람의 입구다 — 요약 판(위)이 목록을 **보여 주는** 자리라면 이쪽은 캔버스 위에서
     // 그 블록을 **집는** 자리다.
     pe("select-blocks", "복사/버퍼", Action::SelectBlocks),
@@ -1932,6 +1940,7 @@ fn variant_index(action: Action) -> usize {
         Action::SetMonitor { .. } => 91,
         Action::SetAutoRename(_) => 92,
         Action::SetServerOption(..) => 93,
+        Action::SetBorderStatus(_) => 117,
         Action::ShowHooks => 88,
         Action::SendKeys => 77,
         Action::BindKey => 78,
@@ -1987,7 +1996,7 @@ fn variant_index(action: Action) -> usize {
     }
 }
 
-const ACTION_COUNT: usize = 117;
+const ACTION_COUNT: usize = 118;
 
 /// **전수 목록** — 액션 하나도 빠지지 않는다(위 `variant_index` 의 와일드카드 없는 match 가
 /// 빠짐을 막고, 아래 개수 단언이 중복·누락을 막는다).
@@ -2089,6 +2098,7 @@ pub fn all_actions() -> Vec<Action> {
         Action::SetMonitor { bell: false, on: true },
         Action::SetAutoRename(true),
         Action::SetServerOption(ServerOpt::SingleBorder, true),
+        Action::SetBorderStatus(true),
         Action::SendKeys,
         Action::BindKey,
         Action::UnbindKey,
@@ -2218,8 +2228,19 @@ mod tests {
                     )
                 })
             });
+            // 설정 판도 입구다 — 서버 토글 줄은 **값을 단** 액션을 낸다(`SetBorderStatus` 등 · pytmux-568).
+            // 세는 방법은 같다: 그 줄을 실제로 골라 본다.
+            let values = crate::config::SettingValues::default();
+            let by_settings = (0..crate::config::SETTINGS.len()).any(|row| {
+                [true, false].iter().any(|&forward| {
+                    matches!(
+                        crate::config::setting_pick_dir(row, &values, forward),
+                        Some(crate::config::SettingPick::Act(made)) if same(made)
+                    )
+                })
+            });
             assert!(
-                by_key || by_palette || by_options,
+                by_key || by_palette || by_options || by_settings,
                 "{action:?} 를 부를 길이 없다"
             );
         }

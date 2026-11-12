@@ -73,6 +73,33 @@ fn the_hysteresis_needs_three_in_a_row() {
     assert_eq!(hist.last, Some(0.01));
 }
 
+/// 정본 `_net_sample` 의 자동 회복 문턱(pytmux-639): 원격에서 임계 초과가 20 번 이어지면
+/// 회복을 걸고(카운터를 비운다), 좋은 표본 하나가 그 셈을 처음부터 다시 하게 한다.
+#[test]
+fn a_remote_link_asks_for_recovery_after_twenty_bad_samples() {
+    let mut hist = RttHist::default();
+    let fired: Vec<usize> = (1..=45).filter(|&i| hist.sample(i as f64, 0.9)).collect();
+    assert_eq!(fired, vec![20, 40], "20 표본마다 한 번(걸 때 카운터를 비운다)");
+    let mut hist = RttHist::default();
+    for i in 0..19 {
+        assert!(!hist.sample(i as f64, 0.9));
+    }
+    assert!(!hist.sample(19.0, 0.01), "좋은 표본");
+    let fired: Vec<usize> = (1..=20).filter(|&i| hist.sample(20.0 + i as f64, 0.9)).collect();
+    assert_eq!(fired, vec![20], "좋은 표본 뒤로는 셈이 처음부터다");
+}
+
+/// 정본 `_net_local`: 로컬이면 빨간 외곽선도 자동 회복도 없다(§10-F — 스파이크는 루프 지터다).
+#[test]
+fn a_local_link_never_turns_red_nor_asks_for_recovery() {
+    let mut hist = RttHist { local: true, ..RttHist::default() };
+    for i in 0..50 {
+        assert!(!hist.sample(i as f64, 0.9), "로컬인데 회복을 걸었다({i})");
+    }
+    assert!(!hist.degraded, "로컬인데 외곽선이 빨개졌다");
+    assert_eq!(hist.last, Some(0.9), "표본은 센다(진단 · 그래프)");
+}
+
 #[test]
 fn old_samples_fall_out_of_the_window() {
     let mut hist = RttHist::default();

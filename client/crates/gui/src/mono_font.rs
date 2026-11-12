@@ -203,6 +203,42 @@ pub fn install_preferred(
     (family, missed)
 }
 
+/// `ambiguous-width auto` 의 실측 — **이 글꼴**이 모호폭 글자를 몇 칸으로 그리나(pytmux-578).
+///
+/// 정본은 호스트 단말에 CPR 로 물어 `·` 한 글자의 전진 칸을 잰다(`launcher.detect_ambiguous_width`).
+/// GUI 에는 단말이 없고 **글리프를 그리는 것이 우리**이므로, 같은 글자를 이 캔버스 글꼴(없으면
+/// 실제로 그려질 보조 글꼴 — `glyph_for_char(…, true)`)에서 찾아 전진폭을 `M` 과 견준다.
+/// 판정은 [`proto::compose::ambig_wide_from_advance`] 한 곳이다. 못 재면 narrow(정본과 같다).
+///
+/// Windows 는 재지 않고 narrow 다 — 정본 auto 가 Windows 에서 narrow 고정이다(사람 결정
+/// 2026-11-13: 정본을 따른다).
+pub fn ambiguous_glyph_is_wide(
+    cache: &warpui::fonts::Cache,
+    family: warpui::fonts::FamilyId,
+) -> bool {
+    if cfg!(windows) {
+        return false;
+    }
+    let font = cache.select_font(family, Default::default());
+    let advance = |ch: char| {
+        let (glyph, used) = cache.glyph_for_char(font, ch, true)?;
+        cache.glyph_advance(used, 13.0, glyph).ok().map(|v| v.x())
+    };
+    let (Some(ascii), Some(ambig)) = (advance('M'), advance(proto::compose::AMBIG_PROBE_CH)) else {
+        log::info!("모호폭 실측 실패 — narrow");
+        return false;
+    };
+    let wide = proto::compose::ambig_wide_from_advance(ascii, ambig);
+    // 글꼴이 섞이면(`·` 는 본 글꼴, `→` 는 CJK 보조) 글자마다 갈린다 — 진단으로만 남긴다.
+    let others: Vec<String> = ['→', '…', '—', '×']
+        .iter()
+        .map(|&ch| format!("{ch}={:?}", advance(ch).map(|px| px / ascii)))
+        .collect();
+    log::info!("모호폭 실측: M={ascii:.2}px · {}={ambig:.2}px → wide={wide} ({})",
+        proto::compose::AMBIG_PROBE_CH, others.join(" "));
+    wide
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

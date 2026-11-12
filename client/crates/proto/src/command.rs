@@ -952,6 +952,14 @@ pub enum Outgoing {
     ///
     /// 명령이 아니라 자기 프레임 종류다(`Resize`·`Ping` 과 같다).
     Focus { on: bool },
+    /// **미룬** 첫 프레임(pytmux-639 G6 · [`crate::ServerLink::send_hello`]).
+    ///
+    /// 정본은 앱이 선 뒤(`on_mount`) 실제 격자 크기로 hello 를 보낸다. GUI 는 창과 글꼴이 서야
+    /// 격자를 아므로, 연결만 먼저 하고 첫 레이아웃이 격자를 잰 뒤 이것을 보낸다.
+    Hello(crate::message::Hello),
+    /// 런타임 모호폭 전환(`{"t":"set_ambig","wide":..}` · 정본 `_apply_ambiguous_wide` · pytmux-578).
+    /// 서버는 전역 폭을 바꾸고 앱을 다시 그리게 한 뒤 같은 세션 클라에 full 을 다시 보낸다.
+    SetAmbig { wide: bool },
 }
 
 impl Outgoing {
@@ -976,6 +984,10 @@ impl Outgoing {
             }
             Outgoing::Ping { ts } => serde_json::json!({ "t": "ping", "ts": ts }),
             Outgoing::Focus { on } => serde_json::json!({ "t": "focus", "on": on }),
+            Outgoing::Hello(hello) => {
+                serde_json::to_value(hello).expect("Hello 는 항상 직렬화된다")
+            }
+            Outgoing::SetAmbig { wide } => serde_json::json!({ "t": "set_ambig", "wide": wide }),
         }
     }
 }
@@ -1586,6 +1598,24 @@ mod tests {
         assert_eq!(off["on"].as_bool(), Some(false));
     }
 
+    /// `set_ambig` 의 모양(pytmux-578). 서버는 `bool(msg.get("wide"))` 한 칸만 읽는다.
+    #[test]
+    fn set_ambig_frames_say_which_width() {
+        let wide = Outgoing::SetAmbig { wide: true }.to_frame();
+        assert_eq!((wide["t"].as_str(), wide["wide"].as_bool()), (Some("set_ambig"), Some(true)));
+        let narrow = Outgoing::SetAmbig { wide: false }.to_frame();
+        assert_eq!(narrow["wide"].as_bool(), Some(false));
+    }
+
+    /// 미룬 hello 도 같은 첫 프레임 모양이다(pytmux-639 G6).
+    #[test]
+    fn a_deferred_hello_is_the_same_first_frame() {
+        let hello = crate::message::Hello::new(120, 40).with_ambig_wide(true);
+        let frame = Outgoing::Hello(hello.clone()).to_frame();
+        assert_eq!(frame, serde_json::to_value(&hello).unwrap());
+        assert_eq!((frame["t"].as_str(), frame["cols"].as_u64()), (Some("hello"), Some(120)));
+    }
+
     #[test]
     fn scroll_frames_carry_only_the_field_that_applies() {
         // 서버는 bottom → top → delta 순으로 본다. 셋을 같이 실으면 뜻이 겹친다.
@@ -2175,6 +2205,7 @@ pub fn action_to_command(action: base::Action) -> Option<Command> {
             value: Some(on),
         }),
         Action::SetAutoRename(on) => Some(Command::ToggleAutoRename { value: Some(on) }),
+        Action::SetBorderStatus(on) => Some(Command::SetBorderStatus { value: on }),
         Action::SetServerOption(opt, on) => Some(Command::SetOption(
             match opt {
                 base::ServerOpt::SingleBorder => ServerOption::SingleBorder,

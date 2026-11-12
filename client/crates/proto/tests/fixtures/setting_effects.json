@@ -1,0 +1,365 @@
+{
+  "_comment": "python3 scripts/gen_setting_effects.py 로 생성. 출처 = 정본 pytmuxlib/client.py PytmuxApp.setting_current · apply_setting 을 빈 설정으로 지은 앱에 대고 직접 부른 값(서버 줄은 send_cmd 를 기록).",
+  "defaults": {
+    "alt-scroll": "on",
+    "ambiguous-width": "narrow",
+    "automatic-rename": null,
+    "claude-command": "claude",
+    "coalesce-repaints": null,
+    "copy-unwrap": "on",
+    "default-path": "current",
+    "exit-empty": null,
+    "inactive-dim": "on",
+    "inactive-dim-ratio": "0.18",
+    "language": "en",
+    "list-keys": null,
+    "mode-keys": "vi",
+    "monitor-activity": null,
+    "monitor-bell": null,
+    "mouse": "on",
+    "mouse-drag-copy": "on",
+    "mouse-drag-threshold": "3",
+    "nest-auto-attach": null,
+    "pane-border-status": null,
+    "plugins": null,
+    "prefix": "C-b",
+    "remote-title": "full",
+    "set-clipboard": "on",
+    "set-titles": "off",
+    "single-border": "on",
+    "status-bg": "",
+    "status-fg": "",
+    "status-interval": "15",
+    "status-left": " ",
+    "status-position": "bottom",
+    "status-right": " #{pane_title}#h %H:%M %Y-%m-%d ",
+    "strip-box-drawing": "on",
+    "synchronize-panes": "off",
+    "tab-bar": "always",
+    "vt-parser": null,
+    "win-mouse-motion": null,
+    "window-size": null
+  },
+  "rows": [
+    {
+      "backend": "config",
+      "key": "inactive-dim",
+      "type": "bool"
+    },
+    {
+      "backend": "config",
+      "key": "inactive-dim-ratio",
+      "type": "ratio"
+    },
+    {
+      "backend": "config",
+      "key": "tab-bar",
+      "type": "enum"
+    },
+    {
+      "backend": "config",
+      "key": "status-position",
+      "type": "enum"
+    },
+    {
+      "backend": "server",
+      "key": "single-border",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "pane-border-status",
+      "type": "bool"
+    },
+    {
+      "backend": "config",
+      "key": "remote-title",
+      "type": "enum"
+    },
+    {
+      "backend": "lang",
+      "key": "language",
+      "type": "enum"
+    },
+    {
+      "backend": "config",
+      "key": "mouse",
+      "type": "bool"
+    },
+    {
+      "backend": "config",
+      "key": "mouse-drag-copy",
+      "type": "enum"
+    },
+    {
+      "backend": "config",
+      "key": "mouse-drag-threshold",
+      "type": "int"
+    },
+    {
+      "backend": "config",
+      "key": "copy-unwrap",
+      "type": "bool"
+    },
+    {
+      "backend": "config",
+      "key": "set-clipboard",
+      "type": "bool"
+    },
+    {
+      "backend": "config",
+      "key": "mode-keys",
+      "type": "enum"
+    },
+    {
+      "backend": "config",
+      "key": "alt-scroll",
+      "type": "bool"
+    },
+    {
+      "backend": "config",
+      "key": "ambiguous-width",
+      "type": "enum"
+    },
+    {
+      "backend": "config",
+      "key": "prefix",
+      "type": "str"
+    },
+    {
+      "backend": "config",
+      "key": "strip-box-drawing",
+      "type": "bool"
+    },
+    {
+      "backend": "config",
+      "key": "default-path",
+      "type": "str"
+    },
+    {
+      "backend": "config",
+      "key": "claude-command",
+      "type": "str"
+    },
+    {
+      "backend": "config",
+      "key": "set-titles",
+      "type": "bool"
+    },
+    {
+      "backend": "config",
+      "key": "status-interval",
+      "type": "int"
+    },
+    {
+      "backend": "server",
+      "key": "automatic-rename",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "monitor-activity",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "monitor-bell",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "synchronize-panes",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "coalesce-repaints",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "nest-auto-attach",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "exit-empty",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "win-mouse-motion",
+      "type": "bool"
+    },
+    {
+      "backend": "server",
+      "key": "vt-parser",
+      "type": "enum"
+    },
+    {
+      "backend": "server",
+      "key": "window-size",
+      "type": "enum"
+    },
+    {
+      "backend": "config",
+      "key": "status-left",
+      "type": "str"
+    },
+    {
+      "backend": "config",
+      "key": "status-right",
+      "type": "str"
+    },
+    {
+      "backend": "config",
+      "key": "status-bg",
+      "type": "str"
+    },
+    {
+      "backend": "config",
+      "key": "status-fg",
+      "type": "str"
+    },
+    {
+      "backend": "",
+      "key": "plugins",
+      "type": "link"
+    },
+    {
+      "backend": "",
+      "key": "list-keys",
+      "type": "link"
+    }
+  ],
+  "server_frames": {
+    "automatic-rename": {
+      "off": {
+        "action": "set_auto_rename",
+        "value": false
+      },
+      "on": {
+        "action": "set_auto_rename",
+        "value": true
+      }
+    },
+    "coalesce-repaints": {
+      "off": {
+        "action": "set_coalesce",
+        "value": false
+      },
+      "on": {
+        "action": "set_coalesce",
+        "value": true
+      }
+    },
+    "exit-empty": {
+      "off": {
+        "action": "set_exit_empty",
+        "value": false
+      },
+      "on": {
+        "action": "set_exit_empty",
+        "value": true
+      }
+    },
+    "monitor-activity": {
+      "off": {
+        "action": "set_monitor",
+        "value": false,
+        "which": "activity"
+      },
+      "on": {
+        "action": "set_monitor",
+        "value": true,
+        "which": "activity"
+      }
+    },
+    "monitor-bell": {
+      "off": {
+        "action": "set_monitor",
+        "value": false,
+        "which": "bell"
+      },
+      "on": {
+        "action": "set_monitor",
+        "value": true,
+        "which": "bell"
+      }
+    },
+    "nest-auto-attach": {
+      "off": {
+        "action": "set_nest_auto_attach",
+        "value": false
+      },
+      "on": {
+        "action": "set_nest_auto_attach",
+        "value": true
+      }
+    },
+    "pane-border-status": {
+      "off": {
+        "action": "set_border_status",
+        "value": false
+      },
+      "on": {
+        "action": "set_border_status",
+        "value": true
+      }
+    },
+    "single-border": {
+      "off": {
+        "action": "set_single_border",
+        "value": false
+      },
+      "on": {
+        "action": "set_single_border",
+        "value": true
+      }
+    },
+    "synchronize-panes": {
+      "off": {
+        "action": "set_sync",
+        "value": false
+      },
+      "on": {
+        "action": "set_sync",
+        "value": true
+      }
+    },
+    "vt-parser": {
+      "native": {
+        "action": "set_vt_parser",
+        "value": "native"
+      },
+      "pyte": {
+        "action": "set_vt_parser",
+        "value": "pyte"
+      }
+    },
+    "win-mouse-motion": {
+      "off": {
+        "action": "set_win_mouse_motion",
+        "value": false
+      },
+      "on": {
+        "action": "set_win_mouse_motion",
+        "value": true
+      }
+    },
+    "window-size": {
+      "largest": {
+        "action": "set_window_size",
+        "value": "largest"
+      },
+      "latest": {
+        "action": "set_window_size",
+        "value": "latest"
+      },
+      "smallest": {
+        "action": "set_window_size",
+        "value": "smallest"
+      }
+    }
+  }
+}

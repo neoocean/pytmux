@@ -158,12 +158,26 @@ pub fn relaunch_ok() -> bool {
 /// (`main.rs` 의 「지정된 엔드포인트는 폴백하지 않는다」와 같은 이유).
 ///
 /// 성공하면 새 프로세스의 pid, 실패하면 그 까닭.
+///
+/// ★ 크래시 셈([`crate::crash::ENV`])은 **지운다** — `restart-all` 은 정상 종료 뒤의 재기동이라
+/// 정본도 그 변수를 비운 다음 `_relaunch_self` 한다(pytmux-639 G10).
 pub fn relaunch() -> Result<u32, String> {
+    relaunch_with_crash_count(None)
+}
+
+/// [`relaunch`] 와 같되 크래시 셈을 `Some(n)` 이면 **적고**, `None` 이면 지운다(크래시 자가
+/// 재기동 · 정본 `os.environ["PYTMUX_CLIENT_CRASH_N"] = str(n)` 후 `_relaunch_self`).
+pub fn relaunch_with_crash_count(crash_n: Option<u32>) -> Result<u32, String> {
     let exe = std::env::current_exe()
         .map_err(|e| crate::i18n::tf("이진 경로를 못 찾았다: {err}", &[("err", &e.to_string())]))?;
     let args: Vec<String> = std::env::args().skip(1).collect();
-    std::process::Command::new(exe)
-        .args(args)
+    let mut command = std::process::Command::new(exe);
+    command.args(args);
+    match crash_n {
+        Some(n) => command.env(crate::crash::ENV, n.to_string()),
+        None => command.env_remove(crate::crash::ENV),
+    };
+    command
         .spawn()
         .map(|child| child.id())
         .map_err(|e| crate::i18n::tf("다시 띄우지 못했다: {err}", &[("err", &e.to_string())]))

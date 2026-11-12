@@ -22,6 +22,12 @@ pub fn now_text() -> String {
     chrono::Local::now().format("%H:%M:%S").to_string()
 }
 
+/// 지금 날짜·시각(`%Y-%m-%d %H:%M:%S`, 지역 시간) — 정본 크래시 기록의 머리줄과 같은 모양
+/// (`_log_client_crash` 의 `time.strftime` · pytmux-639 G10).
+pub fn stamp_now() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 
 /// 오버레이 뒤에 남는 셀 하나를 어둡게.
 ///

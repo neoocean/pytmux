@@ -45,9 +45,60 @@ pub struct ServerLink {
     record: Option<Sent>,
     /// 명령을 보내는 쪽. 연결이 없는 테스트에서는 `None`.
     sink: Option<CommandSink>,
+    /// **아직 안 보낸** hello 의 토큰(pytmux-639 G6 · [`ServerLink::connect_to`]). `Some` 이면
+    /// 연결만 됐고 서버는 아직 이 클라를 모른다 — [`ServerLink::send_hello`] 가 비운다.
+    hello: Option<Option<String>>,
 }
 
 impl ServerLink {
+    /// 서버를 찾아 **연결만** 한다 — hello 는 [`ServerLink::send_hello`] 로 나중에 보낸다.
+    ///
+    /// # 왜 미루나 (pytmux-639 G6)
+    ///
+    /// 정본은 앱이 선 뒤(`on_mount`) **실제 격자 크기**와 모호폭으로 hello 를 보낸다. GUI 는
+    /// 창과 글꼴이 서야 격자를 안다. 그렇다고 연결까지 창 뒤로 미루면 기동 실패(서버 없음 ·
+    /// 토큰 · 남의 소켓)가 콘솔이 아니라 창 안에서 나야 한다 — 그래서 **연결은 지금, hello 만
+    /// 나중**이다. 서버는 hello 를 받기 전에는 이 연결에 아무것도 안 보내고 격자도 안 바꾼다.
+    pub fn connect() -> Result<Self, AttachError> {
+        Self::connect_endpoint(&Connection::find()?)
+    }
+
+    /// **지정된** 엔드포인트에 연결만 한다([`ServerLink::connect`] 와 같은 뜻).
+    pub fn connect_to(spec: &str) -> Result<Self, AttachError> {
+        Self::connect_endpoint(&crate::endpoint::parse(spec))
+    }
+
+    fn connect_endpoint(endpoint: &crate::endpoint::Endpoint) -> Result<Self, AttachError> {
+        let (conn, token) = Connection::connect_endpoint(endpoint)?;
+        let mut link = Self::from_connection(conn);
+        link.hello = Some(token);
+        Ok(link)
+    }
+
+    /// 아직 hello 를 안 보냈나.
+    pub fn hello_pending(&self) -> bool {
+        self.hello.is_some()
+    }
+
+    /// 미룬 hello 를 보낸다(한 번만 — 이미 보냈으면 아무 일 없다).
+    pub fn send_hello(&mut self, cols: u16, rows: u16, ambig_wide: bool) -> Result<(), String> {
+        let Some(token) = self.hello.take() else {
+            return Ok(());
+        };
+        let hello = crate::message::Hello::new(cols, rows)
+            .with_token(token)
+            .with_ambig_wide(ambig_wide);
+        self.send(&Outgoing::Hello(hello))
+    }
+
+    /// 소켓 없는 기록판인데 **hello 를 미룬 것처럼** 선다(시험 — 뷰가 언제 무엇으로 hello 를
+    /// 보내나를 기록판으로 본다).
+    pub fn detached_awaiting_hello(socket: &str) -> (Self, std::sync::mpsc::Sender<LinkEvent>, Sent) {
+        let (mut link, tx, sent) = Self::detached(socket);
+        link.hello = Some(None);
+        (link, tx, sent)
+    }
+
     /// 서버를 찾아 붙고 읽기 스레드를 띄운다.
     pub fn attach(cols: u16, rows: u16) -> Result<Self, AttachError> {
         let conn = Connection::attach(cols, rows)?;
@@ -97,6 +148,7 @@ impl ServerLink {
             origin,
             sink,
             record: None,
+            hello: None,
         }
     }
 
@@ -121,6 +173,7 @@ impl ServerLink {
                 origin: socket.to_owned(),
                 sink: None,
                 record: Some(record.clone()),
+                hello: None,
             },
             tx,
             record,
@@ -211,7 +264,21 @@ mod tests {
             origin: "test".into(),
             sink: None,
             record: None,
+            hello: None,
         }
+    }
+
+    #[test]
+    fn a_deferred_hello_goes_out_once_with_the_size_it_was_given() {
+        let (mut link, _tx, sent) = ServerLink::detached_awaiting_hello("test");
+        assert!(link.hello_pending());
+        link.send_hello(132, 41, true).unwrap();
+        link.send_hello(80, 24, false).unwrap(); // 두 번째는 아무 일 없다
+        assert!(!link.hello_pending());
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        let Outgoing::Hello(hello) = &sent[0] else { panic!("{sent:?}") };
+        assert_eq!((hello.cols, hello.rows, hello.ambig), (132, 41, Some("wide")));
     }
 
     #[test]

@@ -136,6 +136,19 @@ impl Endpoint {
         }
     }
 
+    /// 클라 크래시 기록(pytmux-639 G10) — 정본 `_log_client_crash`
+    /// (`state_base(sock_path) + ".client.crash.log"`)와 **같은 자리**다(규칙은 [`Self::lang_file`]).
+    pub fn crash_log_file(&self) -> PathBuf {
+        match self {
+            Endpoint::Unix { path, .. } => {
+                let mut file = path.clone().into_os_string();
+                file.push(".client.crash.log");
+                PathBuf::from(file)
+            }
+            Endpoint::Tcp { portfile, .. } => portfile.with_extension("client.crash.log"),
+        }
+    }
+
     /// 실제로 붙을 포트. TCP 이고 포트가 0 이면 포트파일에서 읽는다.
     pub fn resolve_port(&self) -> Option<u16> {
         match self {
@@ -283,6 +296,8 @@ pub fn candidates() -> Vec<Endpoint> {
 /// 한다(pytmux-586 G3). 종전 [`Endpoint::looks_live`](파일 존재)로는 XDG 쪽 죽은 소켓 파일이
 /// `/tmp` 쪽 산 서버를 가렸고, 정본 `start-server` 는 「이미 실행 중」 으로 rc 0 을 내 GUI 가
 /// 같은 죽은 파일에 다시 붙다 끝났다.
+// DIVERGE(nested-guard): 정본 `launcher.nesting_blocked` 는 패널 안(`$PYTMUX`·`$LC_PYTMUX`)에서 또 띄우면
+// 거절한다. GUI 는 제 창에 그리므로 패널 안 이중 그리기가 생기지 않아 거절하지 않는다(대장 ⓒ).
 pub fn resolve() -> Option<Endpoint> {
     Rules::from_env().resolve()
 }

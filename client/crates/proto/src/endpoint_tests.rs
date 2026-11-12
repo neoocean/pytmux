@@ -403,7 +403,7 @@ fn pytmux_home_tilde_and_relative_paths_are_spread_like_canon() {
     assert_eq!(n("./.pytmux"), Some(PathBuf::from("/work/tree/.pytmux")));
     assert_eq!(n("../h"), Some(PathBuf::from("/work/h")));
     assert_eq!(n("/abs/h/"), Some(PathBuf::from("/abs/h")));
-    // DIVERGE(pytmux-598): `~user` — 정본 expanduser 는 그 사용자가 있으면 그 홈으로 편다.
+    // DIVERGE(tilde-user): `~user` — 정본 expanduser 는 그 사용자가 있으면 그 홈으로 편다.
     // 우리는 펴지 않고 상대경로로 본다(드문 꼴 · 남의 홈을 상태 디렉터리로 쓸 일이 없다).
     assert_eq!(n("~other/x"), Some(PathBuf::from("/work/tree/~other/x")));
 }

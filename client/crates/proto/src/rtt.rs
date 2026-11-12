@@ -224,17 +224,32 @@ pub struct RttHist {
     good: u32,
     /// 응답성 저하(빨간 외곽선) — 임계 초과 3연속이면 ON, 이하 3연속이면 OFF.
     pub degraded: bool,
+    /// 로컬 연결(AF_UNIX · 루프백)인가 — 정본 `_net_local`. 로컬이면 RTT 스파이크는 이벤트
+    /// 루프 지터일 뿐이라 **빨간 외곽선도 자동 회복도 없다**(§10-F · 표본·카운터는 센다).
+    pub local: bool,
 }
 
 impl Default for RttHist {
     fn default() -> Self {
-        Self { samples: Vec::new(), threshold: 0.4, last: None, bad: 0, good: 0, degraded: false }
+        Self {
+            samples: Vec::new(),
+            threshold: 0.4,
+            last: None,
+            bad: 0,
+            good: 0,
+            degraded: false,
+            local: false,
+        }
     }
 }
 
 impl RttHist {
-    /// 표본 하나를 넣고 창 밖을 잘라낸다.
-    pub fn sample(&mut self, now: f64, rtt: f64) {
+    /// 표본 하나를 넣고 창 밖을 잘라낸다. 돌려주는 값 = **자동 회복을 걸 때인가**(pytmux-639).
+    ///
+    /// 정본 `_net_sample` 그대로: 임계 초과가 [`base::lifecycle::RECOVER_N`](20) 번 이어졌고
+    /// 로컬이 아니면 `true` 이고, 그때 연속 카운터를 비운다(다음 회복까지 다시 20 표본을 모은다).
+    /// 중복 방지(이미 재접속 중)와 `net_auto_reconnect` 는 상태기계(`Input::Degraded`)가 거른다.
+    pub fn sample(&mut self, now: f64, rtt: f64) -> bool {
         self.last = Some(rtt);
         self.samples.push((now, rtt));
         let cutoff = now - WINDOW;
@@ -250,11 +265,19 @@ impl RttHist {
             self.good += 1;
             self.bad = 0;
         }
+        if self.local {
+            return false;
+        }
         if self.bad >= 3 {
             self.degraded = true;
         } else if self.good >= 3 {
             self.degraded = false;
         }
+        if self.bad >= base::lifecycle::RECOVER_N {
+            self.bad = 0;
+            return true;
+        }
+        false
     }
 
     /// 새 채널로 갈아 끼웠다 — 히스테리시스 표본과 degraded 를 비운다(정본

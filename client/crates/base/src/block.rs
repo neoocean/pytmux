@@ -271,6 +271,7 @@ impl BlockList {
             | Action::SetMonitor { .. }
             | Action::SetAutoRename(_)
             | Action::SetServerOption(..)
+            | Action::SetBorderStatus(_)
             | Action::SendKeys
             | Action::BindKey
             | Action::UnbindKey

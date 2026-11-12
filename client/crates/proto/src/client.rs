@@ -142,14 +142,18 @@ pub struct Connection {
 impl Connection {
     /// 떠 있는 서버를 찾아 붙는다.
     pub fn attach(cols: u16, rows: u16) -> Result<Self, AttachError> {
-        let endpoint = endpoint::resolve().ok_or_else(|| {
+        Self::attach_to_endpoint(&Self::find()?, cols, rows)
+    }
+
+    /// 떠 있는 서버를 찾는다(붙지는 않는다).
+    pub fn find() -> Result<Endpoint, AttachError> {
+        endpoint::resolve().ok_or_else(|| {
             let names: Vec<String> = endpoint::candidates()
                 .iter()
                 .map(Endpoint::display)
                 .collect();
             AttachError::NoServer(names.join(", "))
-        })?;
-        Self::attach_to_endpoint(&endpoint, cols, rows)
+        })
     }
 
     /// 지정한 위치에 붙는다. 경로면 unix 소켓, `tcp:host:port` 면 루프백 TCP 다.
@@ -157,12 +161,30 @@ impl Connection {
         Self::attach_to_endpoint(&endpoint::parse(&spec.to_string_lossy()), cols, rows)
     }
 
-    /// 엔드포인트 하나에 붙는다.
+    /// 엔드포인트 하나에 붙는다 — 연결하고 **곧바로** hello 를 보낸다.
+    ///
+    /// hello 의 모호폭은 프로세스 전역([`crate::compose::ambiguous_wide`])을 읽는다 — 정본
+    /// `_hello_msg` 가 `cellwidth` 전역을 읽는 것과 같고, 그래서 재접속 hello 도 같은 값을
+    /// 싣는다(pytmux-578).
     pub fn attach_to_endpoint(
         endpoint: &Endpoint,
         cols: u16,
         rows: u16,
     ) -> Result<Self, AttachError> {
+        let (mut conn, token) = Self::connect_endpoint(endpoint)?;
+        let hello = Hello::new(cols, rows)
+            .with_token(token)
+            .with_ambig_wide(crate::compose::ambiguous_wide());
+        write_frame(&mut conn.writer, &hello)?;
+        Ok(conn)
+    }
+
+    /// 엔드포인트 하나에 **연결만** 한다 — hello 는 부르는 쪽이 나중에 보낸다(pytmux-639 G6).
+    ///
+    /// 소켓 검증·토큰·포트 확정은 여기서 끝난다(실패는 지금 그대로 이 자리에서 난다). 돌려주는
+    /// 둘째 값은 hello 에 실을 토큰이다. ⚠ 서버는 hello 를 `HANDSHAKE_TIMEOUT`(10초)까지만
+    /// 기다린다 — 미루는 쪽이 그 안에 보내야 한다.
+    pub fn connect_endpoint(endpoint: &Endpoint) -> Result<(Self, Option<String>), AttachError> {
         let name = endpoint.display();
         // ★ 토큰을 **읽기 전에** 호스트를 본다(검수 pytmux-34 #7) — 읽고 나서 거르면 그
         //   사이 어디로든 흘러갈 길이 생긴다.
@@ -232,16 +254,13 @@ impl Connection {
             source,
         })?;
 
-        let mut conn = Self {
+        let conn = Self {
             reader: BufReader::new(stream),
             writer: BufWriter::new(write_half),
             endpoint: settled,
             origin: name,
         };
-
-        let hello = Hello::new(cols, rows).with_token(token);
-        write_frame(&mut conn.writer, &hello)?;
-        Ok(conn)
+        Ok((conn, token))
     }
 
     /// 붙어 있는 위치(사람에게 보일 이름).

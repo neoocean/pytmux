@@ -19,6 +19,26 @@ use serde::Deserialize;
 struct Fixture {
     sweep: Vec<Vec<u32>>,
     wide: Vec<Vec<u32>>,
+    /// wide 모드(`ambiguous-width wide`)에서 훑은 자리와 정본이 두 칸이라 부르는 구간(pytmux-578).
+    wide_sweep: Vec<Vec<u32>>,
+    wide_ambig: Vec<Vec<u32>>,
+    /// 정본 wide 모드가 한 칸 → 두 칸으로 **올리는** 글자(= 모호폭 갈래만 · 유니코드 전체).
+    widened: Vec<Vec<u32>>,
+}
+
+/// 범위 목록 이분 탐색(구간은 정렬·서로소).
+fn in_ranges(ranges: &[Vec<u32>], o: u32) -> bool {
+    ranges
+        .binary_search_by(|r| {
+            if r[1] < o {
+                std::cmp::Ordering::Less
+            } else if r[0] > o {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
 }
 
 fn fixture() -> Fixture {
@@ -99,4 +119,84 @@ fn the_known_divergences_are_still_divergent() {
         healed.is_empty(),
         "이제 안 갈리는 자리가 목록에 남아 있다 — `KNOWN_DIVERGENCES` 에서 뺄 것: {healed:?}"
     );
+}
+
+/// wide 모드가 **무엇을 넓히나**(pytmux-578) — 유니코드 전체. 종전에는 «설정이 켜면 양쪽 다 같은
+/// 규칙으로 넓힌다»는 가정만 있었고 아무도 안 쟀다 — 재 보니 선·블록(U+2500–259F)을 이쪽만 두
+/// 칸으로, 라틴-1 모호폭 247자를 이쪽만 한 칸으로 셌다(`width_cjk` 를 쓴 탓 · 지금은 정본 표를 싣는다).
+///
+/// 「넓히는 글자」만 맞댄다 — 좁은 모드의 폭 사전 갈림(이모지 새 판 등)은 위 시험과
+/// `KNOWN_DIVERGENCES` 의 몫이고, 훑기 밖 사전 갈림은 이 이슈 밖이다.
+#[test]
+fn wide_mode_widens_exactly_what_the_canon_widens() {
+    let fx = fixture();
+    let mut wrong: Vec<String> = Vec::new();
+    let mut wrong_total = 0usize;
+    for range in &fx.wide_sweep {
+        for o in range[0]..=range[1] {
+            let Some(ch) = char::from_u32(o) else { continue };
+            let ours = proto::compose::char_cells_in(ch, false) == 1
+                && proto::compose::char_cells_in(ch, true) == 2;
+            let canon = in_ranges(&fx.widened, o);
+            if ours != canon {
+                wrong_total += 1;
+                if wrong.len() < 40 {
+                    wrong.push(format!("U+{o:04X} {ch}: 우리 넓힘={ours} · 정본 {canon}"));
+                }
+            }
+        }
+    }
+    assert!(fx.widened.len() > 100, "넓히는 구간이 너무 적다: {}", fx.widened.len());
+    assert!(
+        wrong.is_empty(),
+        "wide 모드가 넓히는 글자가 정본과 갈렸다({wrong_total}개 · 앞 40개까지):\n  {}\n  \
+         `python3 scripts/gen_char_widths.py --rust > crates/proto/src/ambig_table.rs` 로 표를 다시 찍을 것.",
+        wrong.join("\n  ")
+    );
+}
+
+/// wide 모드의 **폭 전체**(pytmux-578) — 좁은 모드 폭이 이미 맞다고 잰 자리(위 훑기)와 모호폭이
+/// 사는 라틴-1·그리스·키릴에서.
+#[test]
+fn every_character_is_as_wide_in_wide_mode_as_the_canon_says() {
+    let fx = fixture();
+    let mut ranges: Vec<Vec<u32>> = fx.sweep.clone();
+    ranges.push(vec![0x00A0, 0x04FF]);
+    let mut wrong: Vec<String> = Vec::new();
+    let mut wrong_total = 0usize;
+    let mut checked = 0usize;
+    for range in &ranges {
+        for o in range[0]..=range[1] {
+            let Some(ch) = char::from_u32(o) else { continue };
+            if KNOWN_DIVERGENCES.contains(&o) {
+                continue;
+            }
+            checked += 1;
+            let got = proto::compose::char_cells_in(ch, true);
+            let want = if in_ranges(&fx.wide_ambig, o) { 2 } else { 1 };
+            if got != want {
+                wrong_total += 1;
+                if wrong.len() < 40 {
+                    wrong.push(format!("U+{o:04X} {ch}: 우리 {got} · 정본 {want}"));
+                }
+            }
+        }
+    }
+    assert!(checked > 8_000, "훑은 글자가 너무 적다: {checked}");
+    assert!(
+        wrong.is_empty(),
+        "wide 모드 폭이 정본과 갈렸다({wrong_total}개 · 앞 40개까지):\n  {}",
+        wrong.join("\n  ")
+    );
+}
+
+/// 픽스처의 wide 구간이 선·블록을 **안** 넓힌다는 것을 이름으로 못 박는다(위 시험이 그 자리를
+/// 전수로 재지만, 무엇을 지키는지 읽는 사람에게 한 줄로 보이게).
+#[test]
+fn box_drawing_stays_one_cell_in_wide_mode() {
+    for ch in ['─', '│', '┌', '┼', '▀', '█', '░'] {
+        assert_eq!(proto::compose::char_cells_in(ch, true), 1, "{ch}");
+    }
+    assert_eq!(proto::compose::char_cells_in('·', true), 2);
+    assert_eq!(proto::compose::char_cells_in('°', true), 2);
 }

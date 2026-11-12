@@ -1892,9 +1892,10 @@ class _ClaudeCodePlugin:
         계산하면 두 클라가 다른 것을 볼 수 있는 자리가 하나 생긴다.
 
         `kind` 는 **정본이 클릭존을 붙이는 데 쓰는 이름**이라 와이어에도 그대로 실린다.
-        네이티브 클라는 아직 그 자리들을 안 여는데(그 화면들이 Tier C 이고 GUI 에 없다),
-        `do` 를 실어 두면 "선언은 있고 배선이 없는" 칸이 생기므로 **누르는 자리는 안
-        만든다**(rec 배지와 같은 판단 · 08-02b)."""
+        누르면 무엇을 여는지는 `do` 가 말한다 — `statusbadges` 가 `model` 에
+        `do="usage-panel"`, `usage` 에 `do="claude-token-log"` 를 싣고, 네이티브 클라도 그
+        칸을 누르면 그 명령을 연다(pytmux-604 · 종전 «네이티브는 안 열어 `do` 를 안 싣는다»는
+        낡은 말이었다 · pytmux-626)."""
         from .statusbadges import badges
         return badges(msg)
 

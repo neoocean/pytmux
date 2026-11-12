@@ -30,6 +30,7 @@ use anyhow::{Result, anyhow};
 use warpui::{AssetProvider, platform};
 
 mod console;
+mod crash_hook;
 mod mono_font;
 mod root_view;
 mod rtt_chart;
@@ -362,10 +363,32 @@ fn main() -> Result<()> {
         }
         std::process::exit(code)
     };
+    // 크래시 자가 재기동(pytmux-639 G10 · 정본 `run_client`) — 붙기 **전에** 건다(붙다가 죽어도
+    // 같은 규칙이다). 규칙은 `base::crash`, 잇는 것은 `crash_hook`.
+    crash_hook::install(has_console);
     let (frame_dump, frame_keys, argv) = take_frame_dump(std::env::args().skip(1));
+    // DIVERGE(pytmux-639): `--crash-probe` 는 하네스 손잡이다(정본에 짝이 없다) — 메인 스레드에서
+    //   곧장 패닉해 크래시 자가 재기동 사슬을 서버 없이 잰다(`tests/crash_relaunch_tests.rs`).
+    //   재기동이 같은 인자를 넘기므로 사슬 끝(한도 초과)까지 그대로 간다.
+    let crash_probe = argv.iter().any(|a| a == "--crash-probe");
+    let argv: Vec<String> = argv.into_iter().filter(|a| a != "--crash-probe").collect();
+    let plan = plan_for(parse_args(argv));
+    match &plan {
+        Plan::AttachTo(spec) => crash_hook::set_endpoint(&proto::endpoint::parse(spec)),
+        _ => {
+            if let Some(endpoint) = proto::endpoint::resolve()
+                .or_else(|| proto::endpoint::candidates().into_iter().next())
+            {
+                crash_hook::set_endpoint(&endpoint);
+            }
+        }
+    }
+    if crash_probe {
+        panic!("--crash-probe: 크래시 자가 재기동 확인용 패닉");
+    }
     // **지정된 엔드포인트는 폴백하지 않는다** — 지목받은 곳에 못 붙었는데 데모가 뜨면
     // 사용자는 "붙었다"고 읽는다.
-    let link = match plan_for(parse_args(argv)) {
+    let link = match plan {
         Plan::Usage => {
             console::say(USAGE, false);
             return Ok(());
@@ -374,13 +397,15 @@ fn main() -> Result<()> {
         Plan::Demo => None,
         // 지목받은 곳에 서버가 없으면 **그 자리에** 띄우고 붙는다(정본 `main` 의 `need_spawn`
         // · pytmux-586 G2). 다른 서버·데모로는 여전히 안 간다.
-        Plan::AttachTo(spec) => match proto::boot::attach_or_start_at(&spec, 80, 24) {
+        // ★ 여기서는 **연결만** 한다 — hello 는 창이 서고 첫 레이아웃이 격자를 잰 뒤 그 크기로
+        //   나간다(pytmux-639 G6 · 종전에는 80×24 를 싣고 첫 Resize 가 바로잡았다).
+        Plan::AttachTo(spec) => match proto::boot::connect_or_start_at(&spec) {
             Ok(link) => Some(link),
             Err(e) => die(format!("pytmux-gui: {spec} 에 붙지 못했다: {e}"), 1),
         },
         // 정본 `attach` 와 같은 모델이다: 없으면 **띄우고** 붙는다. 실패는 실패로
         // 끝난다 — 데모로 떨어지면 사용자는 자기 세션이 사라졌다고 읽는다.
-        Plan::FindOrStart => match proto::boot::attach_or_start(80, 24) {
+        Plan::FindOrStart => match proto::boot::connect_or_start() {
             Ok(link) => Some(link),
             Err(e) => die(format!("pytmux-gui: {e}"), 1),
         },
@@ -392,6 +417,10 @@ fn main() -> Result<()> {
     let lang_path = link
         .as_ref()
         .map(|l| proto::endpoint::parse(l.socket()).lang_file());
+    // 붙은 뒤의 크래시는 **붙은 곳**의 기록 파일로(정본 `state_base(sock_path)`).
+    if let Some(l) = link.as_ref() {
+        crash_hook::set_endpoint(&proto::endpoint::parse(l.socket()));
+    }
     let config_lang = base::Config::load().lang;
     // 머리줄 높이는 글자 배율을 탄다(§10-21ⓐ) — 창에게 알릴 띠 높이도 그렇다.
     // 세션 뷰는 배율이 바뀔 때마다 다시 말한다(`SessionView::pump`); 여기는 첫 값이다.

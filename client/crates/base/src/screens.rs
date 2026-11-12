@@ -493,8 +493,9 @@ impl Screen {
             // `summary` → `InfoScreen(summary_lines(...))`). 종전엔 «정본에 짝이 없다»였다.
             Screen::Summary => "InfoScreen",
             // 정본에 짝이 없다 — 정본의 커서는 **호스트 단말의 하드웨어 커서**라
-            // 모양·색·깜빡임을 저쪽이 가질 수가 없다(`pytmux-161` · `SETTINGS_OURS`
-            // 가 같은 근거를 설정 다섯에 대해 적는다). 판이 있을 리도 없다.
+            // 모양·색·깜빡임을 저쪽이 가질 수가 없다(`pytmux-161` · 갈림 대장
+            // `proto/tests/common/divergence.rs` 의 설정 축이 같은 근거를 커서 설정들에 대해
+            // 적는다). 판이 있을 리도 없다.
             Screen::Cursor => return None,
             Screen::Tabs => "TabSwitcherScreen",
             Screen::Tree => "ChooseTreeScreen",

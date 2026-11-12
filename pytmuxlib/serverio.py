@@ -1682,7 +1682,10 @@ class ServerIOMixin:
         # 모호폭 모드(cellwidth): 클라가 단말 자동감지로 wide 를 통지하면 서버 pyte
         # 격자 폭 계산도 모호폭=2 로 맞춘다(앱 레이아웃이 실 단말과 동일하게 격자에
         # 앉도록). 전역이라 마지막 통지가 이긴다(다중 클라·다중 단말은 한계 — 보통
-        # 로컬 단일 클라). 통지 부재(narrow 단말)면 호출 자체가 안 와 현행 유지.
+        # 로컬 단일 클라). ⚠ hello 에 `ambig` 가 **없으면 narrow 로 되돌린다**(아래 한 줄이
+        # 언제나 부른다 — 「현행 유지」가 아니다). 그래서 wide 인 클라는 hello 마다(재접속
+        # 포함) `ambig:"wide"` 를 실어야 하고, narrow 클라가 붙으면 다른 클라의 wide 가
+        # 풀린다(pytmux-578 — 두 클라 모두 이 규칙을 따른다).
         from . import cellwidth
         cellwidth.set_ambiguous_wide(first.get("ambig") == "wide")
         # 클라 능력 광고(§10-11 P4). 광고한 것만 보낸다 — 이걸 안 보내는 기존 클라는

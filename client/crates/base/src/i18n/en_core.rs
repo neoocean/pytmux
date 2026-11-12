@@ -111,6 +111,9 @@ pub static EN: &[(&str, &str)] = &[
     ("감시 정하기", "Set monitoring"),
     ("자동 이름 정하기", "Set auto rename"),
     ("서버 옵션 정하기", "Set server option"),
+    ("패널 제목 줄 정하기", "Set pane border status"),
+    // 판 제목 — 영어 짝이 없어 en 에서도 한국어로 보였다(pytmux-571 의 판 내용 자가 잡았다 · 정본 `Search all`).
+    ("전역 검색", "Search all"),
     ("훅 보기", "Show hooks"),
     ("키 주입", "Send keys"),
     ("키 바인딩", "Bind key"),
@@ -533,7 +536,6 @@ pub static EN: &[(&str, &str)] = &[
     // ⛔ 「(테마)」와 **다른 낱말**이다(pytmux-408) — 색의 빈 값은 «테마가 정한다»이고
     //    글꼴의 빈 값은 «이 상자에 있는 것에서 고른다»다.
     ("(자동)", "(auto)"),
-    ("bind 줄이 아니다", "not a bind line"),
     // ── options.rs — 인자 폼 라벨(소비는 `row_text`) ──
     ("토글", "Toggle"),
     ("켜기", "On"),

@@ -35,6 +35,151 @@ KEYS = [
 ]
 
 
+def _config_default(root, key):
+    """`client.py` 의 `config.get("<key>", <기본값>)` 기본값 — 앱을 안 세우고 소스에서 읽는다."""
+    import ast
+    src = open(os.path.join(root, "pytmuxlib", "client.py"), encoding="utf-8").read()
+    for node in ast.walk(ast.parse(src)):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get" and len(node.args) == 2
+                and isinstance(node.args[0], ast.Constant) and node.args[0].value == key):
+            return ast.literal_eval(node.args[1])
+    raise SystemExit(f"client.py 에 config.get({key!r}, …) 이 없다 — 정본이 움직였다")
+
+
+def _degraded_scenarios(cc, root):
+    """정본 `_net_sample` 을 **실제로** 돌려 언제 `reconnect_now("auto")` 가 불리나를 뽑는다(pytmux-639).
+
+    표본 `b`(임계 초과)·`g`(이하)의 차례마다 `fired` = 회복을 건 표본 번호(1부터) · `degraded` =
+    표본마다 빨간 외곽선 상태."""
+    class Net(cc._NetReconnectMixin):
+        def __init__(self, local):
+            self.net_rtt_threshold = _config_default(root, "net_rtt_threshold")
+            self.net_bad_n = _config_default(root, "net_bad_n")
+            self.net_good_n = _config_default(root, "net_good_n")
+            self.net_recover_n = _config_default(root, "net_recover_n")
+            self.net_auto_reconnect = _config_default(root, "net_auto_reconnect")
+            self._net_local = local
+            self._net_bad = self._net_good = 0
+            self._net_degraded = False
+            self._force_reconnecting = False
+            self._net_rtt_hist = []
+            self._rtt_save_n = 0
+            self.fired = []
+            self.i = 0
+
+        def _save_rtt_hist(self):
+            pass
+
+        def _log_net_debug(self, _rtt):
+            pass
+
+        def _composite(self):
+            pass
+
+        def reconnect_now(self, reason):
+            self.fired.append({"at": self.i, "reason": reason})
+
+    def run(name, seq, local):
+        n = Net(local)
+        thr = n.net_rtt_threshold
+        degraded = []
+        for ch in seq:
+            n.i += 1
+            n._net_sample(thr * 2 if ch == "b" else thr / 4)
+            degraded.append(n._net_degraded)
+        return {"name": name, "local": local, "seq": seq, "fired": n.fired,
+                "degraded": degraded}
+
+    return {
+        "recover_n": _config_default(root, "net_recover_n"),
+        "threshold": _config_default(root, "net_rtt_threshold"),
+        "scenarios": [
+            run("remote_45_bad", "b" * 45, False),
+            run("remote_good_resets", "b" * 19 + "g" + "b" * 20, False),
+            run("local_45_bad", "b" * 45, True),
+        ],
+    }
+
+
+def _crash_scenarios(root):
+    """정본 `client.run_client` 를 **실제로** 돌려 크래시 뒤 무엇을 하나를 뽑는다(pytmux-639 G10).
+
+    앱 대신 `run()` 이 예외를 내는(또는 그냥 돌아오는) 스텁, `_relaunch_self`·`sys.exit`·
+    `time.monotonic`·표준 오류를 갈아 끼운다. 기록 파일은 임시 자리다."""
+    import contextlib
+    import io
+    import tempfile
+    import types
+    from pytmuxlib import client as cl
+
+    env = "PYTMUX_CLIENT_CRASH_N"
+    out = {"env": env, "max": cl._CLIENT_CRASH_RELAUNCH_MAX, "window": cl._CRASH_LOOP_WINDOW,
+           "cases": []}
+    tmp = tempfile.mkdtemp(prefix="pgc-")
+    sock = os.path.join(tmp, "default.sock")
+    crash_log = cl.ipc.state_base(sock) + ".client.crash.log"
+
+    class Boom:
+        def __init__(self, crash):
+            self.crash = crash
+            self._relaunch = False
+
+        def run(self):
+            if self.crash:
+                raise RuntimeError("boom")
+
+    def case(prev, elapsed, crash=True):
+        clock = iter([1000.0, 1000.0 + elapsed])
+        relaunched = []
+        saved = (cl.build_client_app, cl._relaunch_self, cl.time, cl.load_config,
+                 os.environ.get(env))
+        cl.build_client_app = lambda *_a, **_k: Boom(crash)
+        cl._relaunch_self = lambda: relaunched.append(os.environ.get(env))
+        cl.time = types.SimpleNamespace(monotonic=lambda: next(clock), strftime=time_strftime)
+        cl.load_config = lambda *_a, **_k: {"ambiguous_width": "narrow"}
+        if prev is None:
+            os.environ.pop(env, None)
+        else:
+            os.environ[env] = prev
+        err = io.StringIO()
+        code = None
+        try:
+            with contextlib.redirect_stderr(err):
+                try:
+                    cl.run_client(sock)
+                except SystemExit as e:
+                    code = e.code
+        finally:
+            (cl.build_client_app, cl._relaunch_self, cl.time, cl.load_config, old) = saved
+            after = os.environ.get(env)
+            if old is None:
+                os.environ.pop(env, None)
+            else:
+                os.environ[env] = old
+        return {"prev": prev, "elapsed": elapsed, "crash": crash,
+                "relaunch": relaunched[0] if relaunched else None, "exit": code,
+                "env_after": after,
+                "stderr": err.getvalue().replace(crash_log, "{path}")}
+
+    import time as _time
+    time_strftime = _time.strftime
+    for prev in (None, "0", "4", "5", "x"):
+        for elapsed in (1.0, out["window"] + 1.0):
+            out["cases"].append(case(prev, elapsed))
+    out["cases"].append(case("3", 1.0, crash=False))
+    # 기록 머리줄의 모양(날짜·pid·판 자리를 지운 것) — `base::crash::log_header` 와 맞댄다.
+    import re
+    with open(crash_log, encoding="utf-8") as fp:
+        head = fp.read().split("\n")[1]
+    out["log_header"] = re.sub(
+        r"^==== \d{4}-\d\d-\d\d \d\d:\d\d:\d\d pid=\d+ ver=\S* ====$",
+        "==== {stamp} pid={pid} ver={ver} ====", head)
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pytmux", default="..")
@@ -127,7 +272,10 @@ def main():
     payload = {
         "_comment": "python3 scripts/gen_lifecycle_fixture.py 로 생성. 출처 = "
                     "pytmuxlib/clientconn.py(_reader_task·_reconnect·_drop_reconnect_ok·"
-                    "_reconnect_after_drop·_force_reconnect)를 스텁 위에서 실제로 돌린 결과.",
+                    "_reconnect_after_drop·_force_reconnect·_net_sample)와 client.py(run_client)를 "
+                    "스텁 위에서 실제로 돌린 결과.",
+        "degraded": _degraded_scenarios(cc, root),
+        "crash": _crash_scenarios(root),
         "constants": {
             "delay": cc._RECONNECT_DELAY,
             "restart": cc._RECONNECT_RETRIES_RESTART,
