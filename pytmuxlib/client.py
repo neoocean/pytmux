@@ -37,7 +37,7 @@ from .clientutil import (  # noqa: F401  (클로저에서 이름으로 사용)
     _first_int, _first_signed_int, _is_emoji, _opt_value, _restart_check_eval,
     _signed_int, _with_reverse,
     has_hangul, hangul_to_qwerty, harden_no_color_filters,
-    install_control_char_filter,
+    install_alt_word_keys, install_control_char_filter,
     _normalize_key, _shell_argv, key_to_bytes, make_style, strip_box_drawing,
     theme_color, unwrap_copy_text)
 from .clientscreens import (  # noqa: F401  (클로저에서 push_screen 으로 사용)
@@ -805,9 +805,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
         BINDINGS = [Binding("ctrl+q", "ctrl_q", show=False, priority=True)]
         CSS = """
         Screen { layout: vertical; }
-        #tabbar { width: 100%; height: 1; dock: top; }
+        #tabbar { width: 100%; height: 1; }
         #view { width: 100%; height: 1fr; }
-        #status { width: 100%; height: 1; dock: bottom; }
+        #status { width: 100%; height: 1; }
         """
 
         def __init__(self, sock_path: str):
@@ -828,6 +828,9 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 검수 2026-09-04 S1 — 서버가 지은 글의 ESC·C1 이 단말에 닿기 전 한 자리에서
             # 막는다(모든 위젯의 렌더된 줄이 이 필터를 지난다 · clientutil 머리말).
             install_control_char_filter(self)
+            # pytmux-608: 호스트 단말의 `ESC b`/`ESC f`(Alt+b·f · 맥 Option+←/→ 기본값)를
+            # Textual 이 Ctrl+←/→ 로 접지 않게 하고, 우리 입력칸의 단어 이동은 alt+b/f 로 잇는다.
+            install_alt_word_keys()
             self.sock_path = sock_path
             self.session_name = session_name
             self.reader = None
@@ -1148,8 +1151,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                 except (OSError, RuntimeError):
                     self._code_version = "unknown"
             asyncio.create_task(_load_version())
-            if self.status_position == "top":
-                self.status.styles.dock = "top"
+            self._apply_status_position()
             self._restart_status_timer()
             self.set_interval(1.0, self._clock_tick)  # clock-mode 초 단위 갱신
             self.set_interval(self.net_ping_interval, self._net_ping)  # RTT 측정(§10)
@@ -1205,6 +1207,26 @@ def build_client_app(sock_path: str, config: dict | None = None,
         def _tabbar_visible(self):
             return self.tab_bar_always or len(self.status.windows) >= 2
 
+        def _apply_status_position(self):
+            """상태줄 자리(`status-position`)를 **쌓는 차례**로 반영한다(pytmux-637).
+
+            종전에는 `styles.dock = "top"` 이었다 — 그러면 탭바(`dock: top`)와 상태줄이 같은
+            변에 도킹되고, Textual 은 같은 변의 도킹을 **같은 자리에 겹쳐** 놓는다
+            (`_arrange_dock_widgets` 의 `top = max(...)`). 상태줄이 탭바를 덮고 뷰는
+            `_content_size` 가 서버에 보고한 행보다 한 줄 컸다.
+            이제 셋은 도킹 없이 Screen 의 세로 흐름에 쌓인다 — 차례는 GUI 와 같다
+            (`clientutil.chrome_bands`): top 이면 상태줄 → 탭바 → 뷰, bottom 이면 탭바 →
+            뷰 → 상태줄. 탭바가 뷰 바로 위라야 노트북 연결부(뷰 0행을 탭 색으로 잇는
+            `_composite` 의 `▀`)가 성립한다 — 그래서 상태줄이 탭바 **위**다.
+            ⚠ `self.screen` 이 아니라 부모를 쓴다 — 모달이 떠 있으면 `self.screen` 은 그 모달이다."""
+            parent = self.status.parent
+            if parent is None:
+                return
+            if self.status_position == "top":
+                parent.move_child(self.status, before=self.tabbar)
+            else:
+                parent.move_child(self.status, after=self.view)
+
         def set_tab_bar_always(self, flag):
             """상단 탭바 항상 표시 옵션을 런타임에 바꾼다(표시/뷰 크기 동기화)."""
             flag = bool(flag)
@@ -1231,10 +1253,11 @@ def build_client_app(sock_path: str, config: dict | None = None,
 
         def _content_size(self):
             size = self.size
-            extra = 1 if self._tabbar_visible() else 0   # 상단 탭바 1줄
-            status = self.status.lines                   # 상태표시줄 줄 수(0~5)
-            return (max(MIN_W, size.width),
-                    max(MIN_H, size.height - status - extra))
+            # 띠 배치 한 벌(pytmux-637) — 쌓는 차례(`_apply_status_position`)와 같은 표다.
+            from .clientutil import chrome_bands
+            bands = chrome_bands(size.height, self._tabbar_visible(),
+                                 self.status_position, self.status.lines)
+            return (max(MIN_W, size.width), max(MIN_H, bands["report_rows"]))
 
         def _active_tab_index(self):
             for t in self.status.windows:
@@ -2275,7 +2298,7 @@ def build_client_app(sock_path: str, config: dict | None = None,
                         self.status.refresh()
             elif name == "status-position":
                 self.status_position = "top" if val == "top" else "bottom"
-                self.status.styles.dock = self.status_position
+                self._apply_status_position()
             elif name == "remote-title":
                 from .clientutil import REMOTE_TITLE_CHOICES
                 self.remote_title = (val if val in REMOTE_TITLE_CHOICES

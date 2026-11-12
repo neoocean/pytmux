@@ -494,6 +494,22 @@ void init_warp_nswindow(NSWindow<WarpWindowProtocol> *window, bool testMode, boo
         case NSEventTypeRightMouseDown:
             [self.contentView rightMouseDown:event];
             break;
+
+        // pytmux 추가(PROVENANCE §1): 가운데·오른쪽 버튼의 뗌·끌기도 왼쪽(위 CLD-2581 우회)과 같이
+        // 콘텐츠 뷰로 직접 보낸다 — 누름을 받은 뷰가 뗌을 못 받으면 패널 안 앱이 버튼이
+        // 영원히 눌린 줄 안다.
+        case NSEventTypeOtherMouseUp:
+            [self.contentView otherMouseUp:event];
+            break;
+        case NSEventTypeOtherMouseDragged:
+            [self.contentView otherMouseDragged:event];
+            break;
+        case NSEventTypeRightMouseUp:
+            [self.contentView rightMouseUp:event];
+            break;
+        case NSEventTypeRightMouseDragged:
+            [self.contentView rightMouseDragged:event];
+            break;
         default:
             [super sendEvent:event];
             break;

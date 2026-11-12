@@ -59,6 +59,45 @@ impl Severity {
             Severity::Error => "✕",
         }
     }
+
+    /// 정본 `clientnotices._SPEC` 의 등급 이름(`ok`·`info`·`warn`·`error`) — 픽스처 대조용.
+    pub fn canon_name(self) -> &'static str {
+        match self {
+            Severity::Ok => "ok",
+            Severity::Info => "info",
+            Severity::Warn => "warn",
+            Severity::Error => "error",
+        }
+    }
+
+    /// 하단 한 줄에 머무는 시간(밀리초) — 정본 `_SPEC[sev]["secs"]`(pytmux-641 ②). 답지
+    /// `notice_levels.json` 과 `tests/notice_levels_conformance.rs` 가 맞댄다.
+    pub fn auto_close_ms(self) -> u64 {
+        match self {
+            Severity::Ok | Severity::Info => 2_000,
+            Severity::Warn => 3_000,
+            Severity::Error => 5_000,
+        }
+    }
+
+    /// 손으로 닫는 등급인가 — 정본 `_SPEC[sev]["dismissable"]`(`error` 만). 그 메시지가 떠
+    /// 있으면 esc 하단 동선이 `msg` 로 준다(pytmux-638 ②).
+    pub fn dismissable(self) -> bool {
+        matches!(self, Severity::Error)
+    }
+
+    /// 정본 테마 색 이름(`_SPEC[sev]["theme"]`) — 뷰가 이 뜻을 자기 색으로 칠한다.
+    pub fn theme_name(self) -> &'static str {
+        match self {
+            Severity::Ok => "success",
+            Severity::Info => "primary",
+            Severity::Warn => "warning",
+            Severity::Error => "error",
+        }
+    }
+
+    /// 정본 등급 넷(차례 = `clientnotices.SEVERITIES`).
+    pub const ALL: [Severity; 4] = [Severity::Ok, Severity::Info, Severity::Warn, Severity::Error];
 }
 
 /// 알림 한 줄.
@@ -1555,6 +1594,9 @@ pub struct SessionState {
     ph_remote_view: bool,
     /// 플러그인의 패널 대상 명령(서버 `plugin_surface.pane_scoped`). 안 왔으면 지킨다.
     plugin_pane_scoped: Vec<String>,
+    /// 플러그인 선택지 명령 → 지금 값(`on`/`off` · pytmux-634). 정본 `command_option_current` 처럼
+    /// 그 명령의 status 칸을 참거짓으로 읽는다. 아직 못 받았으면 없다(= 첫 선택지에서 시작).
+    plugin_option_values: std::collections::BTreeMap<String, String>,
     /// 지금 Claude 모델 이름(서버 `status` 의 `claude_model` — 예 `opus-5`).
     claude_model: Option<String>,
     /// 5시간 한도 사용률 %(서버 `tok5h_pct`). 분모를 모르면 서버가 안 보낸다.
@@ -1720,6 +1762,14 @@ impl SessionState {
                     Some(top) if top.id == screen.id && top.kind == screen.kind => {
                         *top = screen;
                     }
+                    // ★ **같은 팝업의 탭끼리는 갈아끼운다**(pytmux-638 ③). 탭 띠(`tabs`)를 든 판들은
+                    //   정본에서 한 화면(`TokenLogScreen`)의 탭이라 탭을 옮겨도 화면이 쌓이지 않는다 —
+                    //   쌓으면 `Esc` 가 팝업을 닫지 않고 **직전 탭으로 물러난다**. 띠가 없는 판(시나리오
+                    //   `claude-settings` = 정본 `push_screen(ClaudeSaverScreen())`)은 그대로 쌓여서
+                    //   `Esc` 가 그 판을 연 탭으로 돌아간다.
+                    Some(top) if !top.tabs.is_empty() && !screen.tabs.is_empty() => {
+                        *top = screen;
+                    }
                     _ => {
                         // 상한(검수 2026-09-05 G-4) — 닫기 없이 id 를 바꿔 미는 플러그인이
                         // 세션 수명 동안 쌓지 못하게. 가장 오래된 것을 버린다.
@@ -1807,6 +1857,16 @@ impl SessionState {
                 {
                     self.plugin_surface = surface;
                     plugins_changed = true;
+                }
+                // 플러그인 선택지 명령의 지금 값(pytmux-634) — 그 칸이 온 프레임에만 고친다.
+                for opt in &self.plugin_surface.command_options {
+                    if opt.state.is_empty() {
+                        continue;
+                    }
+                    if let Some(v) = status.fields.get(&opt.state) {
+                        self.plugin_option_values
+                            .insert(opt.name.clone(), option_value_text(v).to_owned());
+                    }
                 }
                 if let Some(overview) = plugins_from_status(&status)
                     && overview != self.plugins
@@ -1980,6 +2040,14 @@ impl SessionState {
     /// 마지막 전역 검색 회신(없으면 아직 안 물은 것).
     pub fn search_results(&self) -> Option<&SearchResults> {
         self.search_results.as_ref()
+    }
+
+    /// 맨 위 판의 **지금 커서**를 그 판에 적어 둔다(pytmux-638 ③) — 위에 다른 판이 쌓였다가
+    /// 걷히면 그 자리로 돌아온다(정본은 아래 화면 인스턴스가 제 커서를 그대로 든다).
+    pub fn hold_plugin_selection(&mut self, row: usize) {
+        if let Some(top) = self.plugin_screens.last_mut() {
+            top.selected = row;
+        }
     }
 
     /// 한 판 물러난다 — 상세에서 `Esc` 를 누르면 **방금 보던 목록**으로 돌아간다.
@@ -2510,7 +2578,26 @@ impl SessionState {
     /// 이것은 **키가 도는 자리**의 목록이다 — 종전에는 둘이 같아서 서버·시계·달력·Claude
     /// 배지·권한모드 footer 에 키보드로 닿을 길이 없었다.
     pub fn nav_badges(&self, right: &[crate::Badge]) -> Vec<crate::Badge> {
+        self.nav_badges_with(right, false)
+    }
+
+    /// [`nav_badges`](Self::nav_badges) + **수동 닫기 메시지**(pytmux-638 ②). 그 메시지가 떠
+    /// 있으면(`message_dismissable`) 정본 `_status_buttons` 는 줄 전체를 덮은 메시지를 닫는
+    /// `msg` 만 두고, 알림 배지가 그려져 있으면 `notices` 를 함께 준다(이력으로는 가야 한다).
+    /// 메시지는 뷰가 든다(이 클라의 한 줄) — 그래서 그 사실만 받는다.
+    pub fn nav_badges_with(
+        &self,
+        right: &[crate::Badge],
+        message_dismissable: bool,
+    ) -> Vec<crate::Badge> {
         use crate::Badge;
+        if message_dismissable {
+            let mut out = vec![Badge::Message];
+            if self.notices.len() > 0 {
+                out.push(Badge::Notices);
+            }
+            return out;
+        }
         let mut out: Vec<Badge> = self
             .plugin_badges
             .iter()
@@ -2621,6 +2708,11 @@ impl SessionState {
     /// 플러그인이 낸 패널 대상 명령 이름들(`plugin_surface.pane_scoped`).
     pub fn plugin_pane_scoped(&self) -> &[String] {
         &self.plugin_pane_scoped
+    }
+
+    /// 플러그인 선택지 명령의 지금 값(pytmux-634). 모르면 `None`.
+    pub fn plugin_option_value(&self, name: &str) -> Option<&str> {
+        self.plugin_option_values.get(name).map(String::as_str)
     }
 
     /// status 의 `ph_panes`·`ph_max_lines`·`plugin_surface.pane_scoped` 를 흡수한다(pytmux-587).
@@ -3491,6 +3583,20 @@ pub fn claude_limit_facts(status: &crate::message::Status) -> (Option<String>, S
     (state, account)
 }
 
+/// 정본 `command_option_current` 의 `"on" if val else "off"` — 파이썬 참거짓 그대로다
+/// (빈 글자·0·`false`·`null` 이 거짓).
+fn option_value_text(v: &serde_json::Value) -> &'static str {
+    let truthy = match v {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(b) => *b,
+        serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+        serde_json::Value::String(s) => !s.is_empty(),
+        serde_json::Value::Array(a) => !a.is_empty(),
+        serde_json::Value::Object(o) => !o.is_empty(),
+    };
+    if truthy { "on" } else { "off" }
+}
+
 fn plugin_surface_from_status(status: &crate::message::Status) -> Option<PluginSurface> {
     let obj = status.fields.get("plugin_surface")?.as_object()?;
     let text = |v: Option<&serde_json::Value>| {
@@ -3548,6 +3654,33 @@ fn plugin_surface_from_status(status: &crate::message::Status) -> Option<PluginS
             })
             .collect(),
         setting_cats: strings("setting_cats"),
+        // 선택지 명령(pytmux-634) — 선택지 없는 줄은 고를 것이 없어 버린다.
+        command_options: rows("command_options")
+            .into_iter()
+            .filter_map(|r| {
+                let name = text(r.get("name"));
+                let choices: Vec<(String, String)> = r
+                    .get("choices")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|c| {
+                                let pair = c.as_array()?;
+                                Some((
+                                    pair.first()?.as_str()?.to_owned(),
+                                    pair.get(1)?.as_str()?.to_owned(),
+                                ))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (!name.is_empty() && !choices.is_empty()).then(|| base::plugins::PluginCommandOption {
+                    name,
+                    choices,
+                    state: text(r.get("state")),
+                })
+            })
+            .collect(),
     })
 }
 

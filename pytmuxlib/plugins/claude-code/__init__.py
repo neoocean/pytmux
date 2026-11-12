@@ -1180,6 +1180,9 @@ class _ClaudeCodePlugin:
         "auto-retry": "claude_auto_retry",
         "claude-token-debug": "token_debug",
     }
+    # 같은 표의 공개 이름 — 서버가 GUI 표면에 «지금 값이 실리는 status 칸»으로 싣는다
+    # (`Registry.option_state_keys` · pytmux-634). 그 칸들은 status 회신의 키와 같은 이름이다.
+    option_state_keys = _OPTION_STATE_ATTR
 
     def command_option_current(self, app, name):
         """토글 선택지 명령(auto-retry 등)의 현재 설정값을 'on'/'off' 로 돌려준다 —

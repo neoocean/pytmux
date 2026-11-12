@@ -1882,3 +1882,71 @@ fn a_column_with_material_is_said_in_our_locale() {
             .unwrap();
     assert_eq!(plain.say_cols(), vec!["x".to_owned()]);
 }
+
+/// pytmux-634 — 서버 표면의 선택지 명령과 그 지금 값(status 칸 · 정본 `command_option_current`
+/// 의 `"on" if val else "off"`). 낱 문자열 선택지는 서버가 이미 쌍으로 폈다.
+#[test]
+fn plugin_choice_commands_and_their_current_value_come_from_the_surface() {
+    let mut state = SessionState::default();
+    state.apply(status_with(serde_json::json!({
+        "plugin_surface": {
+            "commands": [{"name": "auto-retry", "desc": "d", "cat": "Claude"}],
+            "command_options": [
+                {"name": "auto-retry", "choices": [["토글", ""], ["켜기", "on"], ["끄기", "off"]],
+                 "state": "claude_auto_retry"},
+                {"name": "ph-lines", "choices": [["1", "1"], ["2", "2"]], "state": ""},
+                {"name": "", "choices": [["x", "x"]]},
+                {"name": "empty", "choices": []}
+            ]
+        },
+        "claude_auto_retry": false
+    })));
+    let opts = &state.plugin_surface().command_options;
+    assert_eq!(opts.len(), 2, "이름·선택지 없는 줄은 버린다: {opts:?}");
+    assert_eq!(opts[0].choices[1], ("켜기".to_owned(), "on".to_owned()));
+    assert_eq!(state.plugin_option_value("auto-retry"), Some("off"));
+    assert_eq!(state.plugin_option_value("ph-lines"), None, "칸이 없으면 미상이다");
+    // 델타가 그 칸만 실어 와도 값이 바뀐다.
+    state.apply(status_with(serde_json::json!({"claude_auto_retry": true})));
+    assert_eq!(state.plugin_option_value("auto-retry"), Some("on"));
+}
+
+/// pytmux-638 ② — 수동 닫기 메시지가 떠 있으면 하단 동선은 `msg`(+ 알림)뿐이다.
+#[test]
+fn the_bottom_lane_collapses_to_the_message_while_a_dismissable_one_shows() {
+    let mut state = SessionState::default();
+    let right = [base::Badge::Host, base::Badge::Clock];
+    assert_eq!(state.nav_badges_with(&right, false), vec![base::Badge::Host, base::Badge::Clock]);
+    assert_eq!(state.nav_badges_with(&right, true), vec![base::Badge::Message]);
+    state.note_notice(String::from("알림"));
+    assert_eq!(
+        state.nav_badges_with(&right, true),
+        vec![base::Badge::Message, base::Badge::Notices]
+    );
+}
+
+/// pytmux-638 ③ — 탭 띠를 든 판끼리는 **갈아끼우고**(한 화면의 탭) 띠 없는 판은 **쌓는다**(정본
+/// `push_screen(ClaudeSaverScreen())`). 걷히면 아래 판은 제가 적어 둔 커서를 든다.
+#[test]
+fn tabbed_plugin_screens_replace_each_other_and_a_plain_one_stacks() {
+    let spec = |id: &str, tabs: bool| -> ServerMessage {
+        serde_json::from_value(serde_json::json!({
+            "t": "plugin_screen", "id": id, "kind": "list", "title": id, "hint": "",
+            "rows": [], "text": "", "note": "",
+            "tabs": if tabs { serde_json::json!([{"key": "goto:period", "label": "기간"}]) }
+                    else { serde_json::json!([]) }
+        }))
+        .unwrap()
+    };
+    let mut state = SessionState::default();
+    state.apply(spec("claude-token-period", true));
+    state.apply(spec("claude-token-sessions", true));
+    state.hold_plugin_selection(4);
+    state.apply(spec("claude-settings", false));
+    assert_eq!(state.plugin_screen().map(|s| s.id.as_str()), Some("claude-settings"));
+    assert!(state.pop_plugin_screen(), "시나리오 판 아래에 판이 없다");
+    let under = state.plugin_screen().expect("아래 판");
+    assert_eq!(under.id, "claude-token-sessions");
+    assert_eq!(under.selected, 4, "아래 판의 커서가 안 남았다");
+    assert!(!state.pop_plugin_screen(), "탭이 쌓였다 — Esc 가 직전 탭으로 물러난다");
+}

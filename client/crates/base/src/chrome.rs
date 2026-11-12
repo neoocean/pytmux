@@ -67,6 +67,9 @@ pub enum Badge {
     Plugin(u8),
     /// 활성 패널의 권한모드 footer(정본 `perm` — 서버 자리 `zones` 의 `nav`).
     Perm,
+    /// 수동으로 닫는 메시지(정본 `msg` · pytmux-638 ②). 그 메시지가 떠 있으면 정본 하단 동선은
+    /// 이것(과 알림)만 남고, `Enter` 가 메시지를 닫는다(`_dismiss_message`). 글은 뷰의 것이다.
+    Message,
 }
 
 impl Badge {
@@ -78,7 +81,7 @@ impl Badge {
             Badge::Clock => "시계",
             Badge::Calendar => "달력",
             // 글자는 서버 자료다(표식의 글 · 패널의 footer) — 뷰가 그 자리를 강조한다.
-            Badge::Plugin(_) | Badge::Perm => "",
+            Badge::Plugin(_) | Badge::Perm | Badge::Message => "",
         })
     }
 
@@ -93,7 +96,8 @@ impl Badge {
             Badge::Host => Action::ShowInfoTabs,
             Badge::Clock => Action::ToggleClock,
             Badge::Calendar => Action::ToggleCalendar,
-            Badge::Plugin(_) | Badge::Perm => return None,
+            // 메시지 닫기는 액션이 아니라 이 클라의 한 줄을 걷는 일이다 — 뷰가 한다.
+            Badge::Plugin(_) | Badge::Perm | Badge::Message => return None,
         })
     }
 }
@@ -532,6 +536,51 @@ impl Default for StatusLines {
 
 /// 상태줄 줄 수의 상한(정본 `set_status_lines` 의 `max(0, min(5, n))`).
 pub const STATUS_MAX_LINES: u8 = 5;
+
+/// 창의 띠 하나(pytmux-637 · 정본 `clientutil.chrome_bands` 의 `order` 낱말).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Band {
+    Status,
+    TabBar,
+    View,
+}
+
+impl Band {
+    /// 정본 표의 낱말(`"status"`·`"tabbar"`·`"view"`) — 픽스처 대조용.
+    pub fn canon_name(self) -> &'static str {
+        match self {
+            Band::Status => "status",
+            Band::TabBar => "tabbar",
+            Band::View => "view",
+        }
+    }
+}
+
+/// 위에서 아래로 쌓는 띠의 차례(정본 `chrome_bands` 와 같은 규칙 — 픽스처로 맞댄다).
+///
+/// `status-position top` 이면 상태줄 → 탭바 → 뷰, 아니면 탭바 → 뷰 → 상태줄. **탭바는 늘 뷰
+/// 바로 위**다(정본 노트북 연결부가 그 자리를 전제한다). 줄 수가 0 이면 상태줄 띠는 없다.
+/// ⚠ 종전 정본은 top 에서 상태줄이 탭바를 **덮었다**(같은 변 도킹) — 그 결함은 정본 쪽을 고쳤다.
+pub fn bands(tabbar: bool, status_top: bool, lines: u8) -> Vec<Band> {
+    let status = lines > 0;
+    let mut out = Vec::with_capacity(3);
+    if status_top && status {
+        out.push(Band::Status);
+    }
+    if tabbar {
+        out.push(Band::TabBar);
+    }
+    out.push(Band::View);
+    if !status_top && status {
+        out.push(Band::Status);
+    }
+    out
+}
+
+/// 상태줄 몫 중 **뷰 아래**에 서는 줄 수 — 위에 서면 0 이다(그 줄은 뷰 위 띠가 먹는다).
+pub fn status_rows_below_view(status_top: bool, lines: u8) -> u8 {
+    if status_top { 0 } else { lines.min(STATUS_MAX_LINES) }
+}
 
 impl StatusLines {
     /// 지금 줄 수(0~5).

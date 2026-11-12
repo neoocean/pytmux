@@ -12,7 +12,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "scroll",
+          "end": "scroll",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "ChooseLayoutScreen": {
       "keys": {
@@ -25,7 +35,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "scroll",
+          "end": "scroll",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "ChooseTreeScreen": {
       "keys": {
@@ -44,7 +64,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "scroll",
+          "end": "scroll",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "CommandListScreen": {
       "keys": {
@@ -80,7 +110,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "cursor",
+          "end": "cursor",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "CommandOptionsScreen": {
       "keys": {
@@ -104,7 +144,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "scroll",
+          "end": "scroll",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "ComposePromptScreen": {
       "keys": {},
@@ -194,7 +244,17 @@
       ],
       "on_key": true,
       "head_stops": true,
-      "catch_all": "close"
+      "catch_all": "close",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "cursor",
+          "end": "cursor",
+          "pageup": "cursor",
+          "pagedown": "cursor"
+        }
+      }
     },
     "InfoTabsScreen": {
       "keys": {
@@ -262,7 +322,17 @@
       ],
       "on_key": true,
       "head_stops": true,
-      "catch_all": "close"
+      "catch_all": "close",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "cursor",
+          "end": "cursor",
+          "pageup": "cursor",
+          "pagedown": "cursor"
+        }
+      }
     },
     "MenuScreen": {
       "keys": {
@@ -278,7 +348,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "scroll",
+          "end": "scroll",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "MergeRemoteTabScreen": {
       "keys": {
@@ -297,7 +377,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "scroll",
+          "end": "scroll",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "NoticeHistoryScreen": {
       "keys": {
@@ -318,7 +408,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "_NoticeList",
+        "cycle": false,
+        "keys": {
+          "home": "cursor",
+          "end": "cursor",
+          "pageup": "cursor",
+          "pagedown": "cursor"
+        }
+      }
     },
     "PluginManagerScreen": {
       "keys": {
@@ -340,7 +440,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "scroll",
+          "end": "scroll",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "PromptScreen": {
       "keys": {
@@ -375,7 +485,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "_CycleListView",
+        "cycle": true,
+        "keys": {
+          "home": "cursor",
+          "end": "cursor",
+          "pageup": "cursor",
+          "pagedown": "cursor"
+        }
+      }
     },
     "SettingsScreen": {
       "keys": {
@@ -405,7 +525,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "ListView",
+        "cycle": false,
+        "keys": {
+          "home": "scroll",
+          "end": "scroll",
+          "pageup": "scroll",
+          "pagedown": "scroll"
+        }
+      }
     },
     "TabSwitcherScreen": {
       "keys": {
@@ -425,7 +555,17 @@
       "unreadable": [],
       "on_key": true,
       "head_stops": false,
-      "catch_all": "ignore"
+      "catch_all": "ignore",
+      "list_nav": {
+        "widget": "_CycleListView",
+        "cycle": true,
+        "keys": {
+          "home": "cursor",
+          "end": "cursor",
+          "pageup": "cursor",
+          "pagedown": "cursor"
+        }
+      }
     },
     "_SettingInputScreen": {
       "keys": {

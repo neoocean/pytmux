@@ -79,6 +79,13 @@ pub enum Key {
     ShiftDelete,
     /// F1~F12.
     Function(u8),
+    /// `Shift+PgUp`·`Shift+PgDn`·`Shift+Insert`·`Shift+F1~F12`(pytmux-608). 위 `Shift*` 들과
+    /// 같은 이유로 키 쪽에 접었다 — [`Mods`] 에 shift 가 없다. 패널로는 xterm 수식 형식
+    /// (`CSI 5;2~` · `CSI 15;2~` · `CSI 1;2P`)으로 나간다([`encode`]) — 정본과 같은 바이트다.
+    ShiftPageUp,
+    ShiftPageDown,
+    ShiftInsert,
+    ShiftFunction(u8),
 }
 
 /// 눌린 수정키. `shift` 는 글자에 이미 반영돼 오므로 담지 않는다.
@@ -1030,6 +1037,11 @@ fn binding_name(key: Key) -> Option<String> {
         // 찾아지고, 증상은 "F-키만 안 먹는다"다 — 인코딩(`encode`)과 이름 읽기
         // (`from_name`)는 이미 F-키를 아는데 **되돌아가는 이름**만 없던 자리다.
         Key::Function(n) => format!("f{n}"),
+        // Shift 판(pytmux-608) — 정본 Textual 도 `shift+f5` 를 `f5` 와 다른 이름으로 준다.
+        Key::ShiftFunction(n) => format!("shift-f{n}"),
+        Key::ShiftPageUp => "shift-pageup".to_owned(),
+        Key::ShiftPageDown => "shift-pagedown".to_owned(),
+        Key::ShiftInsert => "shift-insert".to_owned(),
         _ => return None,
     })
 }
@@ -1075,6 +1087,9 @@ pub fn from_name(
         "home" if shift => Key::ShiftHome,
         "end" if shift => Key::ShiftEnd,
         "delete" if shift => Key::ShiftDelete,
+        "pageup" if shift => Key::ShiftPageUp,
+        "pagedown" if shift => Key::ShiftPageDown,
+        "insert" if shift => Key::ShiftInsert,
         "tab" => Key::Tab,
         "backspace" => Key::Backspace,
         "delete" => Key::Delete,
@@ -1092,7 +1107,7 @@ pub fn from_name(
         _ => {
             if let Some(rest) = name.strip_prefix('f') {
                 if let Ok(number) = rest.parse::<u8>() {
-                    return Some(Key::Function(number));
+                    return Some(if shift { Key::ShiftFunction(number) } else { Key::Function(number) });
                 }
             }
             let mut chars = name.chars();
@@ -1111,92 +1126,130 @@ pub fn from_name(
 /// (`ESC O A`)를 쓰는 프로그램도 있지만, 그 모드는 자식이 DECCKM 으로 선언하는 것이고
 /// 우리는 그 상태를 모른다 — 서버가 그리는 화면만 받기 때문이다. CSI 형식은 두 모드
 /// 모두에서 통용되므로 이쪽을 고른다(파이썬 클라도 같다).
+///
+/// # 수식 키는 xterm 식이다(pytmux-608)
+///
+/// 정본 `clientutil.key_to_bytes` 와 **같은 공식**이다 — xterm ctlseqs 「PC-Style Function Keys」:
+/// 수식 매개변수 `N = 1 + shift + 2·alt + 4·ctrl` 을 화살표·Home/End·F1~F4 는 `CSI 1;N X` 로,
+/// Insert/Delete/PgUp/PgDn/F5~F12 는 `CSI n;N ~` 로 싣는다. 그 밖의 키에서 Alt 는 **ESC 접두**다
+/// (Alt+글자 = `ESC 글자` · Alt+Backspace = `ESC DEL` · Alt+Enter = `ESC CR`). Ctrl+Backspace 는
+/// BS(`0x08`), Ctrl+`/`·`_` 는 `0x1f`, Ctrl+`@`·`2`·Space 는 NUL, Ctrl+`^`·`6` 은 `0x1e`, Ctrl+`?` 는 DEL.
+///
+/// 종전에는 수식을 모르는 자리에서 **수식 없는 바이트**로 떨어졌다(Ctrl+↑ 가 그냥 ↑ · Alt+↑ 는 ESC 로
+/// 시작해 접두도 안 붙었다) — 정본은 그 조합을 버리고 있었다. 두 쪽을 같은 표로 올렸다. 대조는
+/// `crates/proto/tests/key_bytes_conformance.rs`(정본에서 뽑은 격자 `key_grid.json`).
+///
+/// ⚠ `Mods.alt` 에는 Cmd/Meta 도 들어온다(`gui` 의 `key_from_keystroke`) — 정본은 호스트 단말이
+/// Cmd 를 안 주므로 그 조합을 못 받는다(DIVERGE(pytmux-598) ⓒ OS 창 통합 · 그 자리에 적혀 있다).
 pub fn encode(key: Key, mods: Mods) -> Option<Vec<u8>> {
-    let base: Vec<u8> = match key {
-        Key::Char(c) => {
-            if mods.ctrl {
-                // Ctrl+A..Z → 0x01..0x1a. 그 밖의 Ctrl 조합은 뜻이 정해져 있지 않다.
-                let upper = c.to_ascii_uppercase();
-                if upper.is_ascii_uppercase() {
-                    vec![(upper as u8) - b'A' + 1]
-                } else {
-                    match c {
-                        ' ' => vec![0],         // Ctrl+Space = NUL(관례)
-                        '[' => vec![0x1b],
-                        '\\' => vec![0x1c],
-                        ']' => vec![0x1d],
-                        _ => return None,
-                    }
-                }
-            } else {
-                let mut buf = [0u8; 4];
-                c.encode_utf8(&mut buf).as_bytes().to_vec()
-            }
+    // (Shift 를 키 쪽에 접은 변형인가, 수식 없는 짝)
+    let (shift, plain) = match key {
+        Key::ShiftUp => (true, Key::Up),
+        Key::ShiftDown => (true, Key::Down),
+        Key::ShiftLeft => (true, Key::Left),
+        Key::ShiftRight => (true, Key::Right),
+        Key::ShiftHome => (true, Key::Home),
+        Key::ShiftEnd => (true, Key::End),
+        Key::ShiftPageUp => (true, Key::PageUp),
+        Key::ShiftPageDown => (true, Key::PageDown),
+        Key::ShiftInsert => (true, Key::Insert),
+        Key::ShiftDelete => (true, Key::Delete),
+        Key::ShiftFunction(n) => (true, Key::Function(n)),
+        Key::ShiftEnter => (true, Key::Enter),
+        Key::BackTab => (true, Key::Tab),
+        Key::ShiftEscape => (true, Key::Escape),
+        other => (false, other),
+    };
+    let n = 1 + u8::from(shift) + 2 * u8::from(mods.alt) + 4 * u8::from(mods.ctrl);
+    let csi_final = |c: u8| -> Vec<u8> {
+        if n == 1 { vec![0x1b, b'[', c] } else { format!("\x1b[1;{n}{}", c as char).into_bytes() }
+    };
+    let tilde = |code: u8| -> Vec<u8> {
+        if n == 1 { format!("\x1b[{code}~").into_bytes() } else { format!("\x1b[{code};{n}~").into_bytes() }
+    };
+    let ss3 = |c: u8| -> Vec<u8> {
+        if n == 1 { vec![0x1b, b'O', c] } else { format!("\x1b[1;{n}{}", c as char).into_bytes() }
+    };
+    let esc = |mut tail: Vec<u8>| -> Vec<u8> {
+        if mods.alt {
+            tail.insert(0, 0x1b);
         }
-        // ★ **수정자 붙은 커서 키**(§10-21ⓩ2) — 정본 `clientutil.SPECIAL` 과 같은 표다.
-        //
-        // 종전에는 이것들이 **수정자 없는 바이트**로 나갔다("이 갈래를 만들기 전과 같은
-        // 바이트라야 지금 도는 앱의 손버릇이 안 바뀐다"는 판단과 함께). 그 대가가 제보다:
-        // `Ctrl`+`End` 로 맨 아래로 못 간다 — 패널 안 앱은 그냥 `End` 를 받는다. 정본은
-        // 그 자리에 표를 갖고 있고(*"예전엔 매핑이 없어 버려졌다"*), 두 클라가 **같은
-        // 바이트**를 보내는 것이 옳다. **이 변화는 의도된 것이다.**
-        //
-        // ⚠ 여기 없는 조합(예 `Ctrl`+화살표)은 **정본에도 없다** — 넓히려면 두 표를
-        //   같이 고친다(적합성 테스트가 그것을 강제한다).
-        Key::ShiftUp => b"\x1b[1;2A".to_vec(),
-        Key::ShiftDown => b"\x1b[1;2B".to_vec(),
-        Key::ShiftRight => b"\x1b[1;2C".to_vec(),
-        Key::ShiftLeft => b"\x1b[1;2D".to_vec(),
-        Key::ShiftHome => b"\x1b[1;2H".to_vec(),
-        Key::ShiftEnd => b"\x1b[1;2F".to_vec(),
-        Key::Home if mods.ctrl => b"\x1b[1;5H".to_vec(),
-        Key::End if mods.ctrl => b"\x1b[1;5F".to_vec(),
-        // 아래는 수정자 없는 바이트. Shift 를 키 쪽에 접은 것들 중 **Enter·Delete·
-        // Escape** 는 정본도 수정자 없는 것과 다른 바이트를 주지 않는다(그 표에 있다).
-        Key::Enter => vec![b'\r'],
-        // ★ `Shift`+`Enter` 는 **LF** 다(정본 표: *"LF — Claude 등 입력 줄바꿈
-        //   (Enter=CR 제출과 구분)"*). 우리는 CR 을 보내고 있었다 — 그러면 줄을 바꾸려던
-        //   손이 **제출**을 한다. 적합성 오라클이 이 갈림을 잡았다(§10-21ⓩ2 슬라이스).
-        Key::ShiftEnter => vec![b'\n'],
-        Key::Tab => vec![b'\t'],
-        Key::BackTab => b"\x1b[Z".to_vec(),
-        Key::Backspace => vec![0x7f],
-        Key::Delete | Key::ShiftDelete => b"\x1b[3~".to_vec(),
-        Key::Escape | Key::ShiftEscape => vec![0x1b],
-        Key::Up => b"\x1b[A".to_vec(),
-        Key::Down => b"\x1b[B".to_vec(),
-        Key::Right => b"\x1b[C".to_vec(),
-        Key::Left => b"\x1b[D".to_vec(),
-        Key::Home => b"\x1b[H".to_vec(),
-        Key::End => b"\x1b[F".to_vec(),
-        Key::PageUp => b"\x1b[5~".to_vec(),
-        Key::PageDown => b"\x1b[6~".to_vec(),
-        Key::Insert => b"\x1b[2~".to_vec(),
-        Key::Function(n) => match n {
-            1 => b"\x1bOP".to_vec(),
-            2 => b"\x1bOQ".to_vec(),
-            3 => b"\x1bOR".to_vec(),
-            4 => b"\x1bOS".to_vec(),
-            5 => b"\x1b[15~".to_vec(),
-            6 => b"\x1b[17~".to_vec(),
-            7 => b"\x1b[18~".to_vec(),
-            8 => b"\x1b[19~".to_vec(),
-            9 => b"\x1b[20~".to_vec(),
-            10 => b"\x1b[21~".to_vec(),
-            11 => b"\x1b[23~".to_vec(),
-            12 => b"\x1b[24~".to_vec(),
+        tail
+    };
+    Some(match plain {
+        Key::Up => csi_final(b'A'),
+        Key::Down => csi_final(b'B'),
+        Key::Right => csi_final(b'C'),
+        Key::Left => csi_final(b'D'),
+        Key::Home => csi_final(b'H'),
+        Key::End => csi_final(b'F'),
+        Key::Insert => tilde(2),
+        Key::Delete => tilde(3),
+        Key::PageUp => tilde(5),
+        Key::PageDown => tilde(6),
+        Key::Function(f) => match f {
+            1 => ss3(b'P'),
+            2 => ss3(b'Q'),
+            3 => ss3(b'R'),
+            4 => ss3(b'S'),
+            5 => tilde(15),
+            6 => tilde(17),
+            7 => tilde(18),
+            8 => tilde(19),
+            9 => tilde(20),
+            10 => tilde(21),
+            11 => tilde(23),
+            12 => tilde(24),
             _ => return None,
         },
-    };
-    // Alt(=Meta)는 ESC 접두다. 이미 ESC 로 시작하는 시퀀스에는 붙이지 않는다 —
-    // 붙이면 `ESC ESC [ A` 가 되어 자식이 다른 키로 읽는다.
-    if mods.alt && !base.starts_with(&[0x1b]) {
-        let mut out = Vec::with_capacity(base.len() + 1);
-        out.push(0x1b);
-        out.extend_from_slice(&base);
-        return Some(out);
-    }
-    Some(base)
+        // ★ `Shift`+`Enter` 는 **LF** 다(정본 표: *"LF — Claude 등 입력 줄바꿈(Enter=CR 제출과
+        //   구분)"*). Ctrl 이 같이 오면 CR(정본 `_modified_key_bytes` 와 같다).
+        Key::Enter => esc(vec![if shift && !mods.ctrl { b'\n' } else { b'\r' }]),
+        Key::Tab => esc(if shift { b"\x1b[Z".to_vec() } else { vec![b'\t'] }),
+        Key::Backspace => esc(vec![if mods.ctrl { 0x08 } else { 0x7f }]),
+        // Shift+ESC 는 모드에 안 들어가고 앱에 ESC 를 준다(파이썬 `e_sesc`).
+        Key::Escape => esc(vec![0x1b]),
+        Key::Char(c) => {
+            if mods.ctrl {
+                // Ctrl+A..Z → 0x01..0x1a · 정해진 구두점 몇 개(xterm/VT220 관례 — 정본
+                // `_XT_CTRL_PUNCT` 와 같은 표). 그 밖의 Ctrl 조합은 단말마다 달라 뜻이 없다.
+                let upper = c.to_ascii_uppercase();
+                let code = if upper.is_ascii_uppercase() {
+                    (upper as u8) - b'A' + 1
+                } else {
+                    match c {
+                        '/' | '_' | '-' => 0x1f,
+                        '@' | '2' | ' ' => 0x00,
+                        '^' | '6' => 0x1e,
+                        '?' => 0x7f,
+                        '[' => 0x1b,
+                        '\\' => 0x1c,
+                        ']' => 0x1d,
+                        _ => return None,
+                    }
+                };
+                esc(vec![code])
+            } else {
+                let mut buf = [0u8; 4];
+                esc(c.encode_utf8(&mut buf).as_bytes().to_vec())
+            }
+        }
+        // 위에서 짝으로 접었다.
+        Key::ShiftUp
+        | Key::ShiftDown
+        | Key::ShiftLeft
+        | Key::ShiftRight
+        | Key::ShiftHome
+        | Key::ShiftEnd
+        | Key::ShiftPageUp
+        | Key::ShiftPageDown
+        | Key::ShiftInsert
+        | Key::ShiftDelete
+        | Key::ShiftFunction(_)
+        | Key::ShiftEnter
+        | Key::BackTab
+        | Key::ShiftEscape => unreachable!("짝으로 접었다"),
+    })
 }
 
 #[cfg(test)]

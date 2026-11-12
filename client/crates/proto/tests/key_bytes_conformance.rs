@@ -114,3 +114,99 @@ fn a_modified_cursor_key_is_not_the_bare_one() {
     let shift_home = encode(Key::ShiftHome, Mods::NONE).unwrap();
     assert_ne!(bare_home, shift_home, "Shift+Home 이 Home 과 같은 바이트다");
 }
+
+// ── 수식 키 격자(pytmux-608) ─────────────────────────────────────────────────────────
+//
+// `scripts/gen_key_grid.py` 가 수식 × 키 격자의 칸마다 «호스트 단말 바이트 → Textual XTermParser →
+// 정본 `key_to_bytes`» 로 정본이 패널에 보내는 바이트를 뽑았다. 같은 조합의 `encode` 가 그것과 같아야 한다.
+
+/// 정본이 그 조합을 **받을 수 없어** GUI 만 xterm 바이트를 보내는 칸(허용 갈림 ⓐ — 단말이 못 준다).
+/// (칸 이름 술어, 왜). 걸린 칸이 더는 안 갈리면 그것도 실패다(낡은 예외).
+const CANON_CANNOT: &[(&str, &str)] = &[(
+    "f3+mods",
+    "Textual 이 `CSI 1;N R`(수식 F3)를 **커서 위치 보고(CPR)**로 읽어 삼킨다 — 정본은 수식 F3 를 못 받는다. \
+     GUI 는 정본이 받을 수 있었다면 보냈을 xterm 바이트를 보낸다",
+)];
+
+fn grid() -> Vec<serde_json::Value> {
+    let v: serde_json::Value = serde_json::from_str(include_str!("fixtures/key_grid.json"))
+        .expect("key_grid.json 을 못 읽는다 — python3 scripts/gen_key_grid.py");
+    v["rows"].as_array().expect("rows").clone()
+}
+
+fn canon_cannot(row: &serde_json::Value) -> Option<&'static str> {
+    let modded = ["shift", "ctrl", "alt"].iter().any(|m| row[*m].as_bool() == Some(true));
+    (row["key"] == "f3" && modded).then_some(CANON_CANNOT[0].0)
+}
+
+/// 칸 → GUI 가 그 키에서 받는 (Key, Mods) — `gui::key_from_keystroke` 와 같은 길(`from_name`).
+fn grid_key(row: &serde_json::Value) -> (Key, Mods) {
+    let key = row["key"].as_str().unwrap();
+    let shift = row["shift"].as_bool().unwrap();
+    // 상류는 Shift 를 글자에 접어 준다(대문자) — 글자 아닌 키만 shift 칸을 본다.
+    let name = if shift && key.chars().all(|c| c.is_ascii_alphabetic()) && key.len() == 1 {
+        key.to_ascii_uppercase()
+    } else {
+        key.to_owned()
+    };
+    let k = base::keys::from_name(&name, shift, name.chars().next()).expect("이름을 모른다");
+    (k, Mods { ctrl: row["ctrl"].as_bool().unwrap(), alt: row["alt"].as_bool().unwrap() })
+}
+
+#[test]
+fn every_grid_chord_sends_the_canonical_bytes() {
+    let rows = grid();
+    let mut wrong = Vec::new();
+    let mut stale: Vec<&str> = CANON_CANNOT.iter().map(|c| c.0).collect();
+    for row in &rows {
+        if row["chrome"].as_bool() == Some(true) {
+            continue; // 정본이 패널로 보내기 전에 먹는 키 — 바이트를 안 잰다
+        }
+        let chord = row["chord"].as_str().unwrap();
+        let want: Vec<u8> = serde_json::from_value(row["bytes"].clone()).unwrap();
+        let (key, mods) = grid_key(row);
+        let got = encode(key, mods).unwrap_or_default();
+        match (got == want, canon_cannot(row)) {
+            (true, _) => {}
+            (false, Some(tag)) => stale.retain(|s| *s != tag),
+            (false, None) => wrong.push(format!("{chord}: 정본 {want:?} · 우리 {got:?}")),
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "수식 키가 정본과 다른 바이트를 보낸다({}칸 중 {}):\n  {}",
+        rows.len(),
+        wrong.len(),
+        wrong.join("\n  ")
+    );
+    assert!(stale.is_empty(), "CANON_CANNOT 줄이 더는 안 갈린다 — 지울 것: {stale:?}");
+}
+
+/// 공허 방지 — 격자가 수식 부류마다 실제로 무언가를 보내는 칸을 갖는다.
+#[test]
+fn the_key_grid_covers_every_modifier_class() {
+    let rows = grid();
+    assert!(rows.len() >= 200, "격자가 {}칸뿐이다", rows.len());
+    for chord in [
+        "ctrl+up", "alt+up", "ctrl+shift+up", "alt+ctrl+left", "shift+f5", "ctrl+f12", "alt+f1",
+        "shift+pageup", "ctrl+delete", "shift+insert", "alt+backspace", "ctrl+backspace", "alt+enter",
+        "ctrl+enter", "alt+a", "alt+shift+a", "alt+한", "ctrl+/", "alt+.", "alt+ctrl+a", "alt+b",
+    ] {
+        let row = rows.iter().find(|r| r["chord"] == chord).unwrap_or_else(|| panic!("{chord} 칸이 없다"));
+        assert!(
+            !row["bytes"].as_array().unwrap().is_empty(),
+            "{chord}: 정본이 아무것도 안 보낸다 — 공식이 빠졌다"
+        );
+    }
+    let lost = rows.iter().filter(|r| r["legacy_lost"].as_bool() == Some(true)).count();
+    assert!(lost >= 20, "레거시 단말이 못 주는 칸(ⓐ)이 {lost}개뿐이다 — csiu 길이 빠졌다");
+}
+
+/// 제보의 칸 — Ctrl+/ 는 두 쪽 다 0x1f(종전 GUI 는 버렸다).
+#[test]
+fn ctrl_slash_sends_0x1f_on_both_sides() {
+    let rows = grid();
+    let row = rows.iter().find(|r| r["chord"] == "ctrl+/").unwrap();
+    assert_eq!(row["bytes"], serde_json::json!([0x1f]));
+    assert_eq!(encode(Key::Char('/'), Mods::CTRL), Some(vec![0x1f]));
+}

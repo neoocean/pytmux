@@ -34,7 +34,21 @@ OUT = os.path.join("crates", "proto", "tests", "fixtures", "mouse_scenarios.json
 COLS, ROWS = 41, 10
 
 
-def layout(track, active=1):
+def layout(track, active=1, popup=None):
+    out = _layout(track, active)
+    if popup is not None:
+        out["popup"] = popup
+    return out
+
+
+def popup_layout(track):
+    """`display-popup` 하나(pytmux-633) — 왼쪽 패널 본문·분할 경계·두 머리줄을 **덮는다**
+    (서버 `servertree._popup_layout` 과 같은 칸 · 내용 = 테두리 안쪽)."""
+    return {"id": 9, "x": 2, "y": 0, "w": 30, "h": 8, "cx": 3, "cy": 1,
+            "cw": 28, "ch": 6, "mouse": track, "mouse_sgr": True}
+
+
+def _layout(track, active=1):
     return {
         "t": "layout", "cols": COLS, "rows": ROWS, "active": active,
         "border_status": True,
@@ -77,8 +91,8 @@ def scenarios():
     out = []
 
     def add(name, steps, track=2, mouse=True, drag_copy="on", mode="normal",
-            active=1):
-        out.append({"name": name, "layout": layout(track, active),
+            active=1, popup=None):
+        out.append({"name": name, "layout": layout(track, active, popup),
                     "config": {"mouse": mouse, "drag_copy": drag_copy,
                                "threshold": 3, "mode": mode},
                     "steps": steps})
@@ -149,6 +163,65 @@ def scenarios():
         add(f"E_{mode}_drag", [_ev("down", 5, 4, 1), _ev("move", 9, 5, 1),
                                _ev("up", 9, 5, 1)], track=2, mode=mode)
         add(f"E_{mode}_wheel", [_ev("wheel_up", 5, 4)], track=2, mode=mode)
+    # E' 스크롤 모드 더(pytmux-632) — 임계 미만 · drag-copy off(그래도 복사) · 다른 버튼 · 비활성 패널.
+    add("E_scroll_nudge", [_ev("down", 5, 4, 1), _ev("move", 6, 4, 1),
+                           _ev("up", 6, 4, 1)], track=2, mode="scroll")
+    add("E_scroll_drag_dcoff", [_ev("down", 5, 4, 1), _ev("move", 9, 5, 1),
+                                _ev("up", 9, 5, 1)], track=2, mode="scroll",
+        drag_copy="off")
+    add("E_scroll_click_other_pane", [_ev("down", 25, 4, 1), _ev("up", 25, 4, 1)],
+        track=2, mode="scroll")
+    for button in (2, 3):
+        add(f"E_scroll_b{button}_click", [_ev("down", 5, 4, button),
+                                          _ev("up", 5, 4, button)],
+            track=2, mode="scroll")
+    # E'' 평소 모드 밖의 오른쪽 끌기·뗌(pytmux-631) — 경계 리사이즈 · 본문 · 머리줄. 평소 모드의
+    # 오른쪽은 누름에서 메뉴(판)가 떠 캔버스가 뒤 단계를 안 받으므로 여기 넣지 않는다.
+    for mode in ("esc", "prefix", "scroll"):
+        add(f"E_{mode}_b3_divider_drag",
+            [_ev("down", *DIVIDER, 3), _ev("move", 30, 4, 3), _ev("up", 30, 4, 3)],
+            track=2, mode=mode)
+        add(f"E_{mode}_b3_body_drag",
+            [_ev("down", 5, 4, 3), _ev("move", 9, 5, 3), _ev("up", 9, 5, 3)],
+            track=2, mode=mode)
+        add(f"E_{mode}_b3_header_drag",
+            [_ev("down", *HEADER, 3), _ev("move", 25, 4, 3), _ev("up", 25, 4, 3)],
+            track=2, mode=mode)
+
+    # P 팝업이 떠 있을 때(pytmux-633) — 팝업 앱 추적 × 자리 × 손짓.
+    INSIDE = (10, 3)        # 팝업 내용 안(왼쪽 패널 본문 위)
+    OUTSIDE = (25, 8)       # 팝업 밖 · 오른쪽 패널 본문
+    for ptrack in (0, 2, 3):
+        pu = popup_layout(ptrack)
+        for g, steps in gestures(INSIDE, 1, False, False):
+            add(f"P_t{ptrack}_inside_{g}", steps, popup=pu)
+        for g, steps in gestures(INSIDE, 2, False, False):
+            add(f"P_t{ptrack}_inside_b2_{g}", steps, popup=pu)
+        add(f"P_t{ptrack}_inside_shift_click",
+            [_ev("down", *INSIDE, 1, shift=True), _ev("up", *INSIDE, 1, shift=True)],
+            popup=pu)
+        add(f"P_t{ptrack}_inside_ctrl_click",
+            [_ev("down", *INSIDE, 1, ctrl=True), _ev("up", *INSIDE, 1, ctrl=True)],
+            popup=pu)
+        add(f"P_t{ptrack}_inside_wheel", [_ev("wheel_up", *INSIDE),
+                                         _ev("wheel_down", *INSIDE)], popup=pu)
+        add(f"P_t{ptrack}_inside_move", [_ev("move", *INSIDE), _ev("move", 11, 3)],
+            popup=pu)
+        add(f"P_t{ptrack}_outside_click", [_ev("down", *OUTSIDE, 1),
+                                          _ev("up", *OUTSIDE, 1)], popup=pu)
+        add(f"P_t{ptrack}_outside_wheel", [_ev("wheel_down", *OUTSIDE)], popup=pu)
+        add(f"P_t{ptrack}_border_click", [_ev("down", 2, 3, 1), _ev("up", 2, 3, 1)],
+            popup=pu)
+        add(f"P_t{ptrack}_divider_under_drag",
+            [_ev("down", *DIVIDER, 1), _ev("move", 26, 4, 1), _ev("up", 26, 4, 1)],
+            popup=pu)
+        add(f"P_t{ptrack}_header_under_click", [_ev("down", *HEADER, 1),
+                                               _ev("up", *HEADER, 1)], popup=pu)
+        add(f"P_t{ptrack}_right_click", [_ev("down", *INSIDE, 3),
+                                        _ev("up", *INSIDE, 3)], popup=pu)
+        add(f"P_t{ptrack}_scroll_mode_click", [_ev("down", *INSIDE, 1),
+                                              _ev("up", *INSIDE, 1)],
+            popup=pu, mode="scroll")
     return out
 
 

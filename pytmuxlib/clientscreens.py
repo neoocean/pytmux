@@ -2600,7 +2600,11 @@ class PromptScreen(ModalScreen):
         if opts and not rest:
             # 선택지/토글: 방향키 강조 + Enter 즉시 실행(단일 spec 지원). 초기 커서는
             # **현재 설정값과 같은 선택지**에 올린다(요청 — 모르면 첫 항목).
-            self._choices = list(opts[0]["choices"])
+            # 낱 문자열 선택지(`ph-lines` 의 `"1"`)는 보임 = 값이다 — 쌍으로 펴지 않으면
+            # 아래 `(disp, val)` 풀기가 ValueError 로 죽는다(pytmux-634 에서 찾은 정본 결함 —
+            # `:prompt-history-lines` 만 쳐도 프롬프트가 터졌다). 서버 표면도 같은 규칙으로 편다.
+            self._choices = [tuple(c) if isinstance(c, (list, tuple)) else (str(c), str(c))
+                             for c in opts[0]["choices"]]
             self._choice_sel = self._current_choice_idx(name, self._choices)
             self._render_hint()
             return

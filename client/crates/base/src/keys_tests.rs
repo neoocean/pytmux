@@ -67,12 +67,45 @@ fn arrows_use_csi_form_which_works_in_both_cursor_modes() {
 #[test]
 fn alt_prefixes_esc_but_never_doubles_an_existing_escape() {
     assert_eq!(to_pane(InputMode::Normal, Key::Char('b'), Mods::ALT), b"\x1bb");
-    // 이미 ESC 로 시작하는 시퀀스에 ESC 를 또 붙이면 자식이 다른 키로 읽는다.
+    // 이미 ESC 로 시작하는 시퀀스에 ESC 를 또 붙이면 자식이 다른 키로 읽는다 — 그 키들은
+    // Alt 를 **수식 매개변수**로 싣는다(xterm `CSI 1;3A` · pytmux-608 · 정본과 같다).
     let alt_up = Mods {
         ctrl: false,
         alt: true,
     };
-    assert_eq!(to_pane(InputMode::Normal, Key::Up, alt_up), b"\x1b[A");
+    assert_eq!(to_pane(InputMode::Normal, Key::Up, alt_up), b"\x1b[1;3A");
+}
+
+/// pytmux-608 — 수식 키는 xterm 식이다(정본 `clientutil.key_to_bytes` 와 같은 공식).
+#[test]
+fn modified_keys_use_the_xterm_modifier_parameter() {
+    let ctrl_alt = Mods { ctrl: true, alt: true };
+    for (key, mods, want) in [
+        (Key::Up, Mods::CTRL, &b"\x1b[1;5A"[..]),
+        (Key::ShiftUp, Mods::CTRL, b"\x1b[1;6A"),
+        (Key::ShiftUp, ctrl_alt, b"\x1b[1;8A"),
+        (Key::Function(1), Mods::ALT, b"\x1b[1;3P"),
+        (Key::ShiftFunction(5), Mods::NONE, b"\x1b[15;2~"),
+        (Key::Function(12), Mods::CTRL, b"\x1b[24;5~"),
+        (Key::ShiftPageUp, Mods::NONE, b"\x1b[5;2~"),
+        (Key::PageDown, Mods::CTRL, b"\x1b[6;5~"),
+        (Key::ShiftInsert, Mods::NONE, b"\x1b[2;2~"),
+        (Key::Delete, Mods::CTRL, b"\x1b[3;5~"),
+        (Key::ShiftDelete, Mods::NONE, b"\x1b[3;2~"),
+        (Key::Backspace, Mods::ALT, b"\x1b\x7f"),
+        (Key::Backspace, Mods::CTRL, b"\x08"),
+        (Key::Enter, Mods::ALT, b"\x1b\r"),
+        (Key::Enter, Mods::CTRL, b"\r"),
+        (Key::Char('/'), Mods::CTRL, b"\x1f"),
+        (Key::Char('2'), Mods::CTRL, b"\x00"),
+        (Key::Char('6'), Mods::CTRL, b"\x1e"),
+        (Key::Char('a'), ctrl_alt, b"\x1b\x01"),
+        (Key::Char('한'), Mods::ALT, "\x1b한".as_bytes()),
+    ] {
+        assert_eq!(encode(key, mods).as_deref(), Some(want), "{key:?} {mods:?}");
+    }
+    // 단말마다 다른 Ctrl 숫자는 뜻이 없다(정본도 그 키는 호스트 단말이 정한다 — ⓐ).
+    assert_eq!(encode(Key::Char('3'), Mods::CTRL), None);
 }
 
 #[test]
@@ -983,7 +1016,7 @@ fn normal_mode_ctrl_arrows_still_go_to_the_pane() {
     // 단어 이동 등)이 Ctrl+화살표를 영영 못 받는다 — 파이썬도 esc 모드에만 둔다.
     assert_eq!(
         interpret(InputMode::Normal, Key::Up, Mods::CTRL),
-        KeyOutcome::ToPane(b"\x1b[A".to_vec())
+        KeyOutcome::ToPane(b"\x1b[1;5A".to_vec())
     );
 }
 

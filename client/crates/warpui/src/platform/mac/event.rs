@@ -197,6 +197,7 @@ pub unsafe fn from_native(
                 let modifier_flags = native_event.modifierFlags();
                 let cmd = modifier_flags.contains(NSEventModifierFlags::Command);
                 let shift = modifier_flags.contains(NSEventModifierFlags::Shift);
+                let ctrl = modifier_flags.contains(NSEventModifierFlags::Control);
                 let click_count = native_event.clickCount() as u32;
 
                 match native_event.buttonNumber() {
@@ -204,6 +205,7 @@ pub unsafe fn from_native(
                         position,
                         cmd,
                         shift,
+                        ctrl,
                         click_count,
                     }),
                     3 => Some(Event::BackMouseDown {
@@ -220,6 +222,24 @@ pub unsafe fn from_native(
                     }),
                     _ => None,
                 }
+            }
+            // pytmux 추가(PROVENANCE §1) — 가운데·오른쪽 버튼의 뗌·끌기. 상류는 누름만 옮겼다.
+            NSEventType::OtherMouseUp
+            | NSEventType::OtherMouseDragged
+            | NSEventType::RightMouseUp
+            | NSEventType::RightMouseDragged => {
+                let window_height = window_height?;
+                let window_location = native_event.locationInWindow();
+                let position = vec2f(
+                    window_location.x as f32,
+                    window_height - (window_location.y as f32),
+                );
+                let phase = if matches!(event_type, NSEventType::OtherMouseUp | NSEventType::RightMouseUp) {
+                    ButtonPhase::Up
+                } else {
+                    ButtonPhase::Dragged
+                };
+                button_up_or_drag(phase, native_event.buttonNumber() as i64, position, modifiers)
             }
             // For trackpads, this event will get triggered by the user's secondary click setting.
             NSEventType::RightMouseDown => {
@@ -253,3 +273,32 @@ pub unsafe fn from_native(
         }
     }
 }
+
+/// 뗌인가 끌기인가(pytmux 추가 · PROVENANCE §1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ButtonPhase {
+    Up,
+    Dragged,
+}
+
+/// AppKit 버튼 번호(`buttonNumber` — 0 왼쪽 · 1 오른쪽 · 2 가운데)의 뗌·끌기 → 우리 `Event`
+/// (pytmux 추가 · PROVENANCE §1 · pytmux-631). 왼쪽은 `LeftMouseUp/Dragged` 이벤트 종류가 따로라
+/// 여기 안 온다. 뒤·앞(3·4)은 소비자가 없어 버린다. `NSEvent` 를 안 받는 순수 함수라 창 없이 잰다.
+pub(crate) fn button_up_or_drag(
+    phase: ButtonPhase,
+    button_number: i64,
+    position: pathfinder_geometry::vector::Vector2F,
+    modifiers: ModifiersState,
+) -> Option<Event> {
+    Some(match (button_number, phase) {
+        (1, ButtonPhase::Up) => Event::RightMouseUp { position, modifiers },
+        (1, ButtonPhase::Dragged) => Event::RightMouseDragged { position, modifiers },
+        (2, ButtonPhase::Up) => Event::MiddleMouseUp { position, modifiers },
+        (2, ButtonPhase::Dragged) => Event::MiddleMouseDragged { position, modifiers },
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;

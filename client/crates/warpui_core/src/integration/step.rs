@@ -1044,11 +1044,15 @@ fn record_overlay_event_for_event(event: &Event, step_data_map: &mut StepDataMap
             x: position.x(),
             y: position.y(),
         }),
-        Event::LeftMouseDragged { position, .. } => Some(overlay::OverlayKind::MouseMove {
+        Event::LeftMouseDragged { position, .. }
+        | Event::MiddleMouseDragged { position, .. }
+        | Event::RightMouseDragged { position, .. } => Some(overlay::OverlayKind::MouseMove {
             x: position.x(),
             y: position.y(),
         }),
-        Event::LeftMouseUp { position, .. } => Some(overlay::OverlayKind::MouseUp {
+        Event::LeftMouseUp { position, .. }
+        | Event::MiddleMouseUp { position, .. }
+        | Event::RightMouseUp { position, .. } => Some(overlay::OverlayKind::MouseUp {
             x: position.x(),
             y: position.y(),
         }),

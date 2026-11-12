@@ -473,3 +473,103 @@ async def test_autoscroll_timer_actually_fires_in_a_live_app():
         await pilot.pause(0.25)                     # 릴리스 후 정지 확인(시간이 오라클)
         assert len(scrolls) == n, f"릴리스 후에도 스크롤됨: {n}→{len(scrolls)}"
     await _with_app(body)
+
+
+# ── pytmux-632 · 스크롤(copy) 모드도 평소 모드와 같은 끌기 임계 ─────────────────────
+def _scroll_mode(app, threshold=3, drag_copy="on"):
+    pid = _one_pane_app(app)
+    app.mode = "scroll"
+    app.mouse_drag_threshold = threshold
+    app.mouse_drag_copy = drag_copy
+    return pid
+
+
+def _record(app):
+    cmds = []
+    app.send_mouse = lambda p, d: cmds.append(("mouse", p))
+    app.send_scroll = lambda p, **kw: cmds.append(("scroll", p))
+    app.send_cmd = lambda action, **kw: cmds.append((action, kw.get("pane", kw.get("id"))))
+    app.copy_text = lambda t: cmds.append(("copy_text", t))
+    return cmds
+
+
+async def test_scroll_mode_click_copies_nothing():
+    """제보(pytmux-632): 스크롤 모드의 **클릭 한 번**이 한 칸을 복사해 클립보드를 덮었다 —
+    종전에는 누르는 즉시 선택을 세우고 접힌 선택도 `copy_range` 로 보냈다. 이제 임계 미만이면
+    선택이 안 선다(평소 모드 `_sel_pending` 과 같은 규칙). 우클릭·가운데 클릭도 복사가 아니다."""
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        _scroll_mode(app)
+        cmds = _record(app)
+        for button in (1, 2, 3):
+            v.on_mouse_down(_FakeMouse(3, 2, button))
+            assert v._sel is None, f"버튼 {button}: 누름에서 선택이 섰다"
+            v.on_mouse_move(_FakeMouse(4, 2, button))       # 임계(3) 미만
+            v.on_mouse_up(_FakeMouse(4, 2, button))
+        assert not any(c[0] == "copy_range" for c in cmds), cmds
+        assert v._sel_abs is None and v._sel_start is None, "선택 상태가 남았다"
+    await _with_app(body)
+
+
+async def test_scroll_mode_drag_past_threshold_copies_even_with_drag_copy_off():
+    """스크롤 모드는 사람이 고른 복사 모드라 `mouse-drag-copy off` 여도 끌면 복사한다 —
+    임계를 넘긴 끌기의 뗌이 `copy_range` 를 보낸다(호출부 = 실제로 나간 명령)."""
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        pid = _scroll_mode(app, drag_copy="off")
+        cmds = _record(app)
+        v.on_mouse_down(_FakeMouse(3, 2, 1))
+        v.on_mouse_move(_FakeMouse(7, 3, 1))                # 임계 이상
+        assert v._sel is not None, "임계를 넘겼는데 선택이 안 섰다"
+        v.on_mouse_up(_FakeMouse(7, 3, 1))
+        assert ("copy_range", pid) in cmds, cmds
+    await _with_app(body)
+
+
+# ── pytmux-633 · display-popup 이 떠 있으면 캔버스 마우스는 팝업 것 ────────────────
+def _with_popup(app, mouse=2):
+    """패널 하나(x=2..11, y=1..5) 위에 팝업(내용 x=4..9, y=2..4 · id 9)."""
+    _one_pane_app(app, mouse=2)
+    app.layout["popup"] = {"id": 9, "x": 3, "y": 1, "w": 8, "h": 5,
+                           "cx": 4, "cy": 2, "cw": 6, "ch": 3,
+                           "mouse": mouse, "mouse_sgr": True}
+
+
+async def test_popup_mouse_goes_to_the_popup_app():
+    """팝업 안 앱이 추적하면 누름·끌기·뗌·휠이 **팝업 id** 로 간다(종전: 밑의 트리 패널)."""
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        _with_popup(app, mouse=2)
+        cmds = _record(app)
+        v.on_mouse_down(_FakeMouse(5, 3, 1))
+        v.on_mouse_move(_FakeMouse(6, 3, 1))
+        v.on_mouse_up(_FakeMouse(6, 3, 1))
+        v.on_mouse_scroll_up(_FakeMouse(5, 3, 0))
+        assert cmds == [("mouse", 9)] * 4, cmds
+    await _with_app(body)
+
+
+async def test_popup_outside_click_reaches_no_pane_and_wheel_is_swallowed():
+    """팝업 밖 · 추적 안 하는 팝업 안의 누름은 **삼킨다** — 뒤 패널로 select_pane_id·마우스
+    바이트·선택이 안 간다. 휠도 삼킨다(서버 `_handle_scroll` 은 팝업 id 를 모르고 활성
+    트리 패널을 굴린다)."""
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        _with_popup(app, mouse=0)
+        cmds = _record(app)
+        for x, y in ((10, 5), (5, 3)):                      # 팝업 밖(패널 본문) · 팝업 안
+            v.on_mouse_down(_FakeMouse(x, y, 1))
+            v.on_mouse_move(_FakeMouse(x - 1, y, 1))
+            v.on_mouse_up(_FakeMouse(x - 1, y, 1))
+            v.on_mouse_scroll_down(_FakeMouse(x, y, 0))
+        assert cmds == [], cmds
+        assert v._sel is None and v._sel_pending is None, "팝업 밑에 선택이 섰다"
+    await _with_app(body)

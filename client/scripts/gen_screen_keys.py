@@ -287,6 +287,55 @@ def _helper_widgets(tree):
                     for b in cls.bases)}
 
 
+NAV4 = ("home", "end", "pageup", "pagedown")
+
+
+def _listview_nav():
+    """맨 `ListView` 에서 항해 키 넷이 **어느 액션**으로 가나 — 정본이 쓰는 Textual 을 import 해
+    그 바인딩 MRO 를 그대로 읽는다(pytmux-636 · 8.2.5 실측: `ListView.BINDINGS` 는
+    enter/up/down 뿐이고 넷은 `ScrollableContainer` 의 `scroll_home`/`scroll_end`/`page_up`/
+    `page_down`). 판본이 바뀌어 그 넷이 커서로 가면 답지가 같이 바뀐다 — 손으로 적지 않는다."""
+    from textual.widgets import ListView
+    out = {}
+    for key in NAV4:
+        for klass in ListView.__mro__:
+            for b in klass.__dict__.get("BINDINGS", ()) or ():
+                bkey = b.key if hasattr(b, "key") else b[0]
+                action = b.action if hasattr(b, "action") else b[1]
+                if key in [k.strip() for k in bkey.split(",")]:
+                    out[key] = action
+                    break
+            if key in out:
+                break
+    if len(out) != len(NAV4):
+        sys.exit(f"ListView 의 항해 키를 다 못 읽었다: {out}")
+    return out
+
+
+def _list_nav(cls, helpers, helper_classes, plain, on_key_keys):
+    """판이 쓰는 목록 위젯의 손 — `{"widget", "cycle", "keys": {키: cursor|scroll}}`.
+
+    목록 위젯이 없는 판이면 `None`. 키별 판정 차례는 Textual 의 것이다: 화면 `on_key` 가
+    먹는 키 · 도우미(`ListView` 서브클래스)의 `BINDINGS` 는 **커서**(이 저장소의 도우미는
+    전부 커서 액션으로 덮는다 — `_CycleListView`·`_NoticeList` 머리말), 나머지는 맨
+    `ListView` 의 MRO 바인딩(`scroll_*`/`page_*` = **스크롤**)."""
+    used = _uses(cls, set(helpers) | {"ListView"})
+    if not used:
+        return None
+    widget = next((u for u in used if u in helpers), "ListView")
+    keys = {}
+    for key in NAV4:
+        if key in on_key_keys or (widget != "ListView" and key in helpers[widget]):
+            keys[key] = "cursor"
+        else:
+            action = plain[key]
+            keys[key] = "scroll" if action.startswith(("scroll_", "page_")) else "cursor"
+    hc = helper_classes.get(widget)
+    cycle = bool(hc) and any(isinstance(m, ast.FunctionDef) and m.name == "action_cursor_down"
+                             for m in hc.body)
+    return {"widget": widget, "cycle": cycle, "keys": keys}
+
+
 def _uses(cls, names):
     used = []
     for node in ast.walk(cls):
@@ -300,6 +349,9 @@ def extract(path):
     with open(path, encoding="utf-8") as fp:
         tree = ast.parse(fp.read(), filename=path)
     helpers = _helper_widgets(tree)
+    helper_classes = {cls.name: cls for cls in tree.body
+                      if isinstance(cls, ast.ClassDef) and cls.name in helpers}
+    plain = _listview_nav()
     out = {}
     for cls in tree.body:
         if not (isinstance(cls, ast.ClassDef) and cls.name.endswith("Screen")):
@@ -359,6 +411,9 @@ def extract(path):
                 row["unreadable"].append("else: " + ast.unparse(orelse[0]).splitlines()[0])
         row["nav"] = sorted(set(row["nav"]))
         row["catch_all"] = _tail_outcome(fn.body, head_stops)
+        nav = _list_nav(cls, helpers, helper_classes, plain, set(row["keys"]))
+        if nav is not None:
+            row["list_nav"] = nav
         out[cls.name] = row
     if not out:
         sys.exit(f"{path} 에서 화면 클래스를 하나도 못 찾았다 — 뽑는 방법이 틀렸다")

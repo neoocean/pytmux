@@ -116,6 +116,10 @@ impl Element for Dismiss {
                     | Event::LeftMouseUp { .. }
                     | Event::LeftMouseDragged { .. }
                     | Event::MiddleMouseDown { .. }
+                    | Event::MiddleMouseUp { .. }
+                    | Event::MiddleMouseDragged { .. }
+                    | Event::RightMouseUp { .. }
+                    | Event::RightMouseDragged { .. }
                     | Event::RightMouseDown { .. }
                     | Event::BackMouseDown { .. }
                     | Event::ForwardMouseDown { .. }

@@ -101,6 +101,8 @@ fn surface(fx: &Fixture) -> base::PluginSurface {
             })
             .collect(),
         setting_cats: fx.plugin_setting_cats.clone(),
+        // 분류 대조와 무관한 칸(pytmux-634 의 선택지 명령) — 비워 둔다.
+        command_options: Vec::new(),
     }
 }
 

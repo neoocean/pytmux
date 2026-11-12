@@ -83,7 +83,13 @@ pub struct EventHandler {
     always_handle: bool,
     left_mouse_down: Option<RefCell<MouseHandler>>,
     left_mouse_up: Option<RefCell<MouseHandler>>,
-    middle_mouse_down: Option<RefCell<Handler>>,
+    middle_mouse_down: Option<RefCell<MouseHandler>>,
+    // pytmux 추가(PROVENANCE §1) — 가운데 버튼의 뗌·끌기.
+    middle_mouse_up: Option<RefCell<MouseHandler>>,
+    middle_mouse_dragged: Option<RefCell<MouseHandler>>,
+    // pytmux 추가(PROVENANCE §1) — 오른쪽 버튼의 뗌·끌기.
+    right_mouse_up: Option<RefCell<MouseHandler>>,
+    right_mouse_dragged: Option<RefCell<MouseHandler>>,
     right_mouse_down: Option<RefCell<Handler>>,
     forward_mouse_down: Option<RefCell<Handler>>,
     back_mouse_down: Option<RefCell<Handler>>,
@@ -114,6 +120,10 @@ impl EventHandler {
             left_mouse_down: None,
             left_mouse_up: None,
             middle_mouse_down: None,
+            middle_mouse_up: None,
+            middle_mouse_dragged: None,
+            right_mouse_up: None,
+            right_mouse_dragged: None,
             right_mouse_down: None,
             forward_mouse_down: None,
             back_mouse_down: None,
@@ -245,11 +255,85 @@ impl EventHandler {
         self
     }
 
-    pub fn on_middle_mouse_down<F>(mut self, callback: F) -> Self
+    pub fn on_middle_mouse_down<F>(self, mut callback: F) -> Self
     where
         F: 'static + FnMut(&mut EventContext, &AppContext, Vector2F) -> DispatchEventResult,
     {
+        self.on_middle_mouse_down_with_modifiers(move |ctx, app, position, _| callback(ctx, app, position))
+    }
+
+    /// 수정키까지 받는 가운데 누름(pytmux 추가 · PROVENANCE §1) — 정본은 Ctrl+가운데를 삼킨다.
+    pub fn on_middle_mouse_down_with_modifiers<F>(mut self, callback: F) -> Self
+    where
+        F: 'static
+            + FnMut(
+                &mut EventContext,
+                &AppContext,
+                Vector2F,
+                &ModifiersState,
+            ) -> DispatchEventResult,
+    {
         self.middle_mouse_down = Some(RefCell::new(Box::new(callback)));
+        self
+    }
+
+    /// 가운데 버튼 뗌(pytmux 추가 · PROVENANCE §1).
+    pub fn on_middle_mouse_up<F>(mut self, callback: F) -> Self
+    where
+        F: 'static
+            + FnMut(
+                &mut EventContext,
+                &AppContext,
+                Vector2F,
+                &ModifiersState,
+            ) -> DispatchEventResult,
+    {
+        self.middle_mouse_up = Some(RefCell::new(Box::new(callback)));
+        self
+    }
+
+    /// 오른쪽 버튼 뗌(pytmux 추가 · PROVENANCE §1).
+    pub fn on_right_mouse_up<F>(mut self, callback: F) -> Self
+    where
+        F: 'static
+            + FnMut(
+                &mut EventContext,
+                &AppContext,
+                Vector2F,
+                &ModifiersState,
+            ) -> DispatchEventResult,
+    {
+        self.right_mouse_up = Some(RefCell::new(Box::new(callback)));
+        self
+    }
+
+    /// 오른쪽 버튼을 쥔 채 움직임(pytmux 추가 · PROVENANCE §1).
+    pub fn on_right_mouse_dragged<F>(mut self, callback: F) -> Self
+    where
+        F: 'static
+            + FnMut(
+                &mut EventContext,
+                &AppContext,
+                Vector2F,
+                &ModifiersState,
+            ) -> DispatchEventResult,
+    {
+        self.right_mouse_dragged = Some(RefCell::new(Box::new(callback)));
+        self
+    }
+
+    /// 가운데 버튼을 쥔 채 움직임(pytmux 추가 · PROVENANCE §1).
+    pub fn on_middle_mouse_dragged<F>(mut self, callback: F) -> Self
+    where
+        F: 'static
+            + FnMut(
+                &mut EventContext,
+                &AppContext,
+                Vector2F,
+                &ModifiersState,
+            ) -> DispatchEventResult,
+    {
+        self.middle_mouse_dragged = Some(RefCell::new(Box::new(callback)));
         self
     }
 
@@ -474,8 +558,70 @@ impl Element for EventHandler {
                     return true;
                 }
             }
-            Some(Event::MiddleMouseDown { position, .. }) => {
-                if self.dispatch_callback(self.middle_mouse_down.as_ref(), ctx, *position, app) {
+            Some(Event::MiddleMouseDown {
+                position,
+                cmd,
+                shift,
+                ctrl,
+                ..
+            }) => {
+                let modifiers = ModifiersState {
+                    cmd: *cmd,
+                    shift: *shift,
+                    ctrl: *ctrl,
+                    ..ModifiersState::default()
+                };
+                if self.dispatch_mouse_callback(
+                    self.middle_mouse_down.as_ref(),
+                    ctx,
+                    *position,
+                    &modifiers,
+                    app,
+                ) {
+                    return true;
+                }
+            }
+            Some(Event::MiddleMouseUp { position, modifiers }) => {
+                if self.dispatch_mouse_callback(
+                    self.middle_mouse_up.as_ref(),
+                    ctx,
+                    *position,
+                    modifiers,
+                    app,
+                ) {
+                    return true;
+                }
+            }
+            Some(Event::RightMouseUp { position, modifiers }) => {
+                if self.dispatch_mouse_callback(
+                    self.right_mouse_up.as_ref(),
+                    ctx,
+                    *position,
+                    modifiers,
+                    app,
+                ) {
+                    return true;
+                }
+            }
+            Some(Event::RightMouseDragged { position, modifiers }) => {
+                if self.dispatch_mouse_callback(
+                    self.right_mouse_dragged.as_ref(),
+                    ctx,
+                    *position,
+                    modifiers,
+                    app,
+                ) {
+                    return true;
+                }
+            }
+            Some(Event::MiddleMouseDragged { position, modifiers }) => {
+                if self.dispatch_mouse_callback(
+                    self.middle_mouse_dragged.as_ref(),
+                    ctx,
+                    *position,
+                    modifiers,
+                    app,
+                ) {
                     return true;
                 }
             }

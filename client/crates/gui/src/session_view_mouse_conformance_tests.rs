@@ -20,25 +20,10 @@ use super::*;
 use serde_json::Value;
 
 /// (사례 이름 접두, 왜 갈리나, 그 일을 든 이슈).
-const KNOWN: &[(&str, &str, &str)] = &[
-    (
-        "A_b2_",
-        "가운데 버튼 — 상류(warpui)가 뗌·끌기를 안 주고 누름에 ctrl 칸도 없다. GUI 는 누름에서 \
-         클릭(press+release)으로 끝낸다 — 정본은 뗌 자리에서 release · 1002 앱엔 drag · Ctrl 은 삼킨다",
-        "pytmux-631",
-    ),
-    (
-        "D_b2_",
-        "가운데 버튼 끌기(경계 리사이즈 · 머리줄 옮기기) — 같은 상류 사정",
-        "pytmux-631",
-    ),
-    (
-        "E_scroll_",
-        "스크롤(copy) 모드 — 정본은 누르는 즉시(임계 없이) 선택을 세우고 접힌 선택도 copy_range 로 \
-         복사한다(클릭이 클립보드를 덮는다 · 정본 결함 의심 · 사람 결정)",
-        "pytmux-632",
-    ),
-];
+///
+/// 비어 있다(2026-11-13): 가운데 버튼(`A_b2_`·`D_b2_` · pytmux-631 — 상류에 뗌·끌기·Ctrl 을 더했다)과
+/// 스크롤 모드 클릭(`E_scroll_` · pytmux-632 — 정본을 임계 규칙으로 고쳤다)이 닫혔다.
+const KNOWN: &[(&str, &str, &str)] = &[];
 
 fn fixture() -> Vec<Value> {
     let v: Value = serde_json::from_str(include_str!("../../proto/tests/fixtures/mouse_scenarios.json"))
@@ -106,7 +91,7 @@ fn run_case(case: &Value) -> Vec<(Vec<Value>, Vec<String>, bool, i64)> {
                 }
             }
             ("down", 2) => {
-                view.handle_middle_click(at);
+                view.handle_middle_mouse_down(at, mods);
             }
             // 맥 밖의 판정을 잰다 — 맥은 Ctrl+왼쪽이 곧 우클릭인 OS 관례라 Ctrl 을 안 본다(ⓒ ·
             // `handle_right_mouse_down_with` 문서). 그 갈래는 아래 `macs_ctrl_click_*` 가 잰다.
@@ -116,16 +101,14 @@ fn run_case(case: &Value) -> Vec<(Vec<Value>, Vec<String>, bool, i64)> {
             ("move", 0) => {
                 view.handle_mouse_move(at);
             }
-            ("move", 1) => {
+            ("move", 1) | ("move", 2) | ("move", 3) => {
                 view.pointer_signed = Some((x, y));
                 view.handle_mouse_drag(at);
             }
-            ("up", 1) => {
+            ("up", 1) | ("up", 2) | ("up", 3) => {
                 view.pointer_signed = Some((x, y));
                 view.handle_mouse_up(at);
             }
-            // 가운데·오른쪽의 끌기·뗌은 상류가 안 준다(KNOWN).
-            ("move", _) | ("up", _) => {}
             ("wheel_up", _) => {
                 view.handle_wheel(true, at);
             }
@@ -207,7 +190,8 @@ fn the_mouse_scenarios_cover_every_axis() {
     let names: Vec<&str> = cases.iter().map(|c| c["name"].as_str().unwrap()).collect();
     for axis in ["_b1_", "_b2_", "_b3_", "_plain_", "_shift_", "_ctrl_", "_t0_", "_t1_", "_t2_", "_t3_",
                  "_dcon_", "_dcoff_", "_dcshift_", "header", "divider", "drag_out_left", "drag_out_top",
-                 "B_", "C_", "E_esc", "E_prefix", "E_scroll", "A3_alt"] {
+                 "B_", "C_", "E_esc", "E_prefix", "E_scroll", "A3_alt",
+                 "E_scroll_drag_dcoff", "E_scroll_b3", "_b3_divider_drag", "_b3_header_drag", "P_t0_", "P_t2_", "P_t3_", "_outside_", "_inside_b2_"] {
         assert!(names.iter().any(|n| n.contains(axis)), "축 {axis} 가 픽스처에 없다");
     }
     let sending = cases
@@ -224,8 +208,12 @@ fn the_mouse_wiring_carries_ctrl_middle_and_the_signed_pointer() {
     let src = include_str!("session_view.rs");
     for needle in [
         "MouseMods { shift: mods.shift, ctrl: mods.ctrl, alt: mods.alt }",
-        ".on_middle_mouse_down(",
-        "ViewAction::MiddleMouseDown(at) => self.handle_middle_click(*at)",
+        ".on_middle_mouse_down_with_modifiers(",
+        "ViewAction::MiddleMouseDown(at, mods) => self.handle_middle_mouse_down(*at, *mods)",
+        ".on_middle_mouse_dragged(",
+        ".on_middle_mouse_up(",
+        ".on_right_mouse_dragged(",
+        ".on_right_mouse_up(",
         "ViewAction::MouseDrag(at, Self::signed_cell_from_event(evt, position))",
         "ViewAction::MouseUp(at, Self::signed_cell_from_event(evt, position))",
     ] {

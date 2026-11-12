@@ -59,8 +59,18 @@ struct KeyRow {
     guard: Option<String>,
 }
 
+/// 판이 쓰는 목록 위젯의 손(pytmux-636 · `gen_screen_keys._list_nav`).
+#[derive(Deserialize)]
+struct ListNavRow {
+    widget: String,
+    cycle: bool,
+    keys: BTreeMap<String, String>,
+}
+
 #[derive(Deserialize)]
 struct CanonScreen {
+    #[serde(default)]
+    list_nav: Option<ListNavRow>,
     on_key: bool,
     catch_all: Option<String>,
     keys: BTreeMap<String, KeyRow>,
@@ -216,6 +226,139 @@ fn a_key_the_canon_screen_never_names_lands_the_same_way_here() {
         wrong.len(),
         wrong.join("\n  ")
     );
+}
+
+/// pytmux-636 — 목록 판의 `Home`·`End`·`PgUp`·`PgDn`·`↑↓`·`Tab` 이 정본 목록 위젯의 손과 같다.
+///
+/// 맨 `ListView` 판(답지의 넷이 전부 `scroll`)은 **글만 굴리고 커서는 제자리**, `_CycleListView`
+/// 판(`cycle`)은 커서가 움직이고 `↑↓` 가 끝에서 돈다. 우리 쪽 분류(`ListNav::of`)가 답지와 같은지와
+/// 그 손이 실제로 그렇게 구는지를 **둘 다** 잰다(분류만 재면 손이 비어도 초록이다).
+#[test]
+fn list_panels_navigate_like_the_canon_list_widget() {
+    use base::screens::ListNav;
+    let fx = fixture();
+    let mut measured = 0usize;
+    for (class, canon) in &fx.screens {
+        let Some(nav) = &canon.list_nav else { continue };
+        for screen in ours(class) {
+            let kind = ListNav::of(screen);
+            if kind == ListNav::Legacy {
+                continue;
+            }
+            let all_scroll = nav.keys.values().all(|v| v == "scroll");
+            let all_cursor = nav.keys.values().all(|v| v == "cursor");
+            match kind {
+                ListNav::Scroll => assert!(
+                    all_scroll && nav.widget == "ListView" && !nav.cycle,
+                    "{screen:?}({class}) 를 Scroll 로 분류했는데 정본은 {:?}/{}",
+                    nav.keys,
+                    nav.widget
+                ),
+                ListNav::Cycle => assert!(
+                    all_cursor && nav.cycle,
+                    "{screen:?}({class}) 를 Cycle 로 분류했는데 정본은 {:?}/cycle={}",
+                    nav.keys,
+                    nav.cycle
+                ),
+                ListNav::Legacy => unreachable!(),
+            }
+            let mut s = opened(screen);
+            s.set_list_view(5, 20);
+            // 탭 스위처는 «다음 탭» 에서 연다 — 맨 위에서 시작하게 한다(Scroll 판은 창만 0).
+            s.press(Key::Home, Mods::NONE);
+            for _ in 0..3 {
+                s.press(Key::Down, Mods::NONE);
+            }
+            assert_eq!(s.selected(), 3, "{screen:?}: ↓ 세 번이 커서를 안 옮겼다");
+            let press = |s: &mut base::screens::Screens, k: Key| {
+                assert!(s.press(k, Mods::NONE).is_some(), "{screen:?}: {k:?} 가 새어 나갔다");
+                assert!(s.is_open(), "{screen:?}: {k:?} 가 판을 닫았다");
+                (s.selected(), s.list_top())
+            };
+            match kind {
+                ListNav::Scroll => {
+                    assert_eq!(press(&mut s, Key::End), (3, 15), "{screen:?}: End");
+                    assert_eq!(press(&mut s, Key::Home), (3, 0), "{screen:?}: Home");
+                    assert_eq!(press(&mut s, Key::PageDown), (3, 5), "{screen:?}: PgDn");
+                    assert_eq!(press(&mut s, Key::PageUp), (3, 0), "{screen:?}: PgUp");
+                    // 정본 `Tab` = 포커스 이동(포커스 하나 → 무동작).
+                    assert_eq!(press(&mut s, Key::Tab).0, 3, "{screen:?}: Tab 이 커서를 옮겼다");
+                    // `↑` 는 끝에서 멈춘다(정본 `ListView.action_cursor_up`).
+                    for _ in 0..5 {
+                        s.press(Key::Up, Mods::NONE);
+                    }
+                    assert_eq!(s.selected(), 0, "{screen:?}: ↑ 가 끝에서 돌았다");
+                }
+                ListNav::Cycle => {
+                    assert_eq!(press(&mut s, Key::End).0, 19, "{screen:?}: End");
+                    assert_eq!(press(&mut s, Key::Down).0, 0, "{screen:?}: ↓ 가 끝에서 안 돌았다");
+                    assert_eq!(press(&mut s, Key::Up).0, 19, "{screen:?}: ↑ 가 끝에서 안 돌았다");
+                    assert_eq!(press(&mut s, Key::Home).0, 0, "{screen:?}: Home");
+                    assert_eq!(press(&mut s, Key::PageDown).0, 5, "{screen:?}: PgDn = 보이는 줄 수");
+                    assert_eq!(press(&mut s, Key::PageUp).0, 0, "{screen:?}: PgUp");
+                }
+                ListNav::Legacy => unreachable!(),
+            }
+            measured += 1;
+        }
+    }
+    // Tree · Buffers · SavedLayouts · MergeRemote · Tabs · SearchResults.
+    assert_eq!(measured, 6, "잰 판이 {measured} 개다 — 분류나 답지가 샜다");
+}
+
+/// pytmux-641 ① — 명령 목록 판(팔레트 = 정본 `CommandListScreen`)과 메뉴 판(`MenuScreen`)의 항해
+/// 키 넷. 답지의 `list_nav` 가 키마다 cursor/scroll 을 말하고, 우리 판에 실제로 눌러 같은지 잰다:
+/// scroll 이면 **커서 제자리 · 보기가 움직인다**, cursor 면 커서가 움직이고 보기는 커서를 따른다.
+#[test]
+fn palette_and_menu_navigation_keys_follow_the_canon_list_widget() {
+    let fx = fixture();
+    let mut measured = 0usize;
+    for (class, screen) in [("CommandListScreen", Screen::Commands), ("MenuScreen", Screen::Menu)] {
+        let nav = fx.screens[class].list_nav.as_ref().expect("답지에 list_nav 가 없다");
+        for (name, kind) in &nav.keys {
+            let (key, mods) = key_of(name).expect("키 이름");
+            let mut s = opened(screen);
+            s.set_list_view(2, 6);
+            s.press(Key::Down, Mods::NONE);
+            s.press(Key::Down, Mods::NONE);
+            // 가운데에서 잰다 — 보기는 커서를 따라 1 에, 커서는 2 에.
+            let before = (s.selected(), s.list_top());
+            assert!(s.press(key, mods).is_some(), "{class} {name}: 새어 나갔다");
+            assert!(s.is_open(), "{class} {name}: 판을 닫았다");
+            let after = (s.selected(), s.list_top());
+            match kind.as_str() {
+                "scroll" => {
+                    assert_eq!(after.0, before.0, "{class} {name}: 정본은 보기만 굴리는데 커서가 움직였다");
+                    assert_ne!(after.1, before.1, "{class} {name}: 보기가 안 움직였다");
+                }
+                "cursor" => {
+                    assert_ne!(after.0, before.0, "{class} {name}: 정본은 커서를 옮기는데 안 옮겼다");
+                }
+                other => panic!("답지가 모르는 손을 말한다: {other}"),
+            }
+            measured += 1;
+        }
+    }
+    assert_eq!(measured, 8, "두 판의 넷을 다 못 쟀다");
+}
+
+/// pytmux-636 — 탭 스위처의 `Tab`/`Shift+Tab` 은 **탭 줄만** 돈다(정본 `action_cycle`).
+#[test]
+fn the_tab_switcher_tab_key_skips_pane_rows() {
+    let mut s = opened(Screen::Tabs);
+    s.set_list_view(10, 5);
+    // 줄 0·2·4 가 탭, 1·3 이 그 패널 줄.
+    s.set_list_heads(vec![0, 2, 4]);
+    s.press(Key::Home, Mods::NONE);
+    s.press(Key::Tab, Mods::NONE);
+    assert_eq!(s.selected(), 2);
+    s.press(Key::Down, Mods::NONE);
+    s.press(Key::Tab, Mods::NONE);
+    assert_eq!(s.selected(), 4, "패널 줄(3)에서 다음 탭 줄로 안 갔다");
+    s.press(Key::Tab, Mods::NONE);
+    assert_eq!(s.selected(), 0, "마지막 탭 줄에서 첫 탭 줄로 안 돌았다");
+    s.press(Key::BackTab, Mods::NONE);
+    assert_eq!(s.selected(), 4, "Shift+Tab 이 뒤로 안 돌았다");
 }
 
 #[test]

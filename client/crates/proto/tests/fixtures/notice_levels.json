@@ -1,0 +1,34 @@
+{
+ "_comment": "python3 scripts/gen_notice_levels.py 로 생성. 출처 = pytmuxlib/clientnotices.py _SPEC (pytmux-641 ②).",
+ "default": "info",
+ "levels": [
+  {
+   "name": "ok",
+   "symbol": "✓",
+   "theme": "success",
+   "auto_close_ms": 2000,
+   "dismissable": false
+  },
+  {
+   "name": "info",
+   "symbol": "·",
+   "theme": "primary",
+   "auto_close_ms": 2000,
+   "dismissable": false
+  },
+  {
+   "name": "warn",
+   "symbol": "!",
+   "theme": "warning",
+   "auto_close_ms": 3000,
+   "dismissable": false
+  },
+  {
+   "name": "error",
+   "symbol": "✕",
+   "theme": "error",
+   "auto_close_ms": 5000,
+   "dismissable": true
+  }
+ ]
+}

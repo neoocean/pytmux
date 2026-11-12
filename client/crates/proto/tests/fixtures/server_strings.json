@@ -406,6 +406,7 @@
     "pytmuxlib/serverio.py:_native_key",
     "pytmuxlib/serverio.py:_on_flush_done",
     "pytmuxlib/serverio.py:_plugin_cells_frame",
+    "pytmuxlib/serverio.py:_plugin_command_options",
     "pytmuxlib/serverio.py:_plugin_surface",
     "pytmuxlib/serverio.py:_remove_signal_handlers",
     "pytmuxlib/serverio.py:_scr_field",

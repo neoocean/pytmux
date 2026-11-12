@@ -1,0 +1,733 @@
+{
+ "_comment": "python3 scripts/gen_prompt_choices.py 로 생성. 출처 = clientutil.COMMAND_OPTIONS·COMMANDS + plugins command_options·commands (정본 PromptScreen._refresh_hint 의 선택지 모드 · pytmux-634).",
+ "rows": [
+  {
+   "name": "auto-retry",
+   "plugin": true,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "auto-retry",
+    "auto-retry on",
+    "auto-retry off"
+   ]
+  },
+  {
+   "name": "automatic-rename",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "automatic-rename",
+    "automatic-rename on",
+    "automatic-rename off"
+   ]
+  },
+  {
+   "name": "capture-output",
+   "plugin": true,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "capture-output",
+    "capture-output on",
+    "capture-output off"
+   ]
+  },
+  {
+   "name": "capture-pane",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "보이는 영역",
+     ""
+    ],
+    [
+     "스크롤백 전체 -S",
+     "-S"
+    ]
+   ],
+   "lines": [
+    "capture-pane",
+    "capture-pane -S"
+   ]
+  },
+  {
+   "name": "claude-auto-redraw",
+   "plugin": true,
+   "choice_mode": true,
+   "choices": [
+    [
+     "순환",
+     ""
+    ],
+    [
+     "끔",
+     "off"
+    ],
+    [
+     "완료마다",
+     "idle"
+    ],
+    [
+     "깨짐감지",
+     "corruption"
+    ]
+   ],
+   "lines": [
+    "claude-auto-redraw",
+    "claude-auto-redraw off",
+    "claude-auto-redraw idle",
+    "claude-auto-redraw corruption"
+   ]
+  },
+  {
+   "name": "claude-auto-yes",
+   "plugin": true,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "claude-auto-yes",
+    "claude-auto-yes on",
+    "claude-auto-yes off"
+   ]
+  },
+  {
+   "name": "claude-token-debug",
+   "plugin": true,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "claude-token-debug",
+    "claude-token-debug on",
+    "claude-token-debug off"
+   ]
+  },
+  {
+   "name": "coalesce-repaints",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "coalesce-repaints",
+    "coalesce-repaints on",
+    "coalesce-repaints off"
+   ]
+  },
+  {
+   "name": "exit-empty",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "exit-empty",
+    "exit-empty on",
+    "exit-empty off"
+   ]
+  },
+  {
+   "name": "inactive-dim",
+   "plugin": false,
+   "choice_mode": false,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "inactive-dim",
+    "inactive-dim on",
+    "inactive-dim off"
+   ]
+  },
+  {
+   "name": "inactive-dim-ratio",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "아주 옅게 0.10",
+     "0.10"
+    ],
+    [
+     "옅게 0.18",
+     "0.18"
+    ],
+    [
+     "보통 0.30",
+     "0.30"
+    ],
+    [
+     "진하게 0.45",
+     "0.45"
+    ]
+   ],
+   "lines": [
+    "inactive-dim-ratio 0.10",
+    "inactive-dim-ratio 0.18",
+    "inactive-dim-ratio 0.30",
+    "inactive-dim-ratio 0.45"
+   ]
+  },
+  {
+   "name": "lang",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "한국어",
+     "ko"
+    ],
+    [
+     "English",
+     "en"
+    ]
+   ],
+   "lines": [
+    "lang ko",
+    "lang en"
+   ]
+  },
+  {
+   "name": "monitor-activity",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "monitor-activity",
+    "monitor-activity on",
+    "monitor-activity off"
+   ]
+  },
+  {
+   "name": "monitor-bell",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "monitor-bell",
+    "monitor-bell on",
+    "monitor-bell off"
+   ]
+  },
+  {
+   "name": "nest-auto-attach",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "nest-auto-attach",
+    "nest-auto-attach on",
+    "nest-auto-attach off"
+   ]
+  },
+  {
+   "name": "ph-lines",
+   "plugin": true,
+   "choice_mode": false,
+   "choices": [
+    [
+     "1",
+     "1"
+    ],
+    [
+     "2",
+     "2"
+    ],
+    [
+     "3",
+     "3"
+    ]
+   ],
+   "lines": [
+    "ph-lines 1",
+    "ph-lines 2",
+    "ph-lines 3"
+   ]
+  },
+  {
+   "name": "prompt-clear",
+   "plugin": true,
+   "choice_mode": false,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "prompt-clear",
+    "prompt-clear on",
+    "prompt-clear off"
+   ]
+  },
+  {
+   "name": "prompt-history-lines",
+   "plugin": true,
+   "choice_mode": true,
+   "choices": [
+    [
+     "1",
+     "1"
+    ],
+    [
+     "2",
+     "2"
+    ],
+    [
+     "3",
+     "3"
+    ]
+   ],
+   "lines": [
+    "prompt-history-lines 1",
+    "prompt-history-lines 2",
+    "prompt-history-lines 3"
+   ]
+  },
+  {
+   "name": "resize-pane",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "줌 토글 ⛶",
+     "-Z"
+    ],
+    [
+     "◀ 왼쪽",
+     "-L"
+    ],
+    [
+     "▶ 오른쪽",
+     "-R"
+    ],
+    [
+     "▲ 위",
+     "-U"
+    ],
+    [
+     "▼ 아래",
+     "-D"
+    ]
+   ],
+   "lines": [
+    "resize-pane -Z",
+    "resize-pane -L",
+    "resize-pane -R",
+    "resize-pane -U",
+    "resize-pane -D"
+   ]
+  },
+  {
+   "name": "select-layout",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "바둑판 tiled",
+     "tiled"
+    ],
+    [
+     "가로 균등 even-horizontal",
+     "even-horizontal"
+    ],
+    [
+     "세로 균등 even-vertical",
+     "even-vertical"
+    ],
+    [
+     "메인 세로 main-vertical",
+     "main-vertical"
+    ],
+    [
+     "메인 가로 main-horizontal",
+     "main-horizontal"
+    ]
+   ],
+   "lines": [
+    "select-layout tiled",
+    "select-layout even-horizontal",
+    "select-layout even-vertical",
+    "select-layout main-vertical",
+    "select-layout main-horizontal"
+   ]
+  },
+  {
+   "name": "select-pane",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "◀ 왼쪽",
+     "-L"
+    ],
+    [
+     "▶ 오른쪽",
+     "-R"
+    ],
+    [
+     "▲ 위",
+     "-U"
+    ],
+    [
+     "▼ 아래",
+     "-D"
+    ]
+   ],
+   "lines": [
+    "select-pane -L",
+    "select-pane -R",
+    "select-pane -U",
+    "select-pane -D"
+   ]
+  },
+  {
+   "name": "single-border",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "single-border",
+    "single-border on",
+    "single-border off"
+   ]
+  },
+  {
+   "name": "split-window",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "좌우 분할 │ (-h)",
+     "-h"
+    ],
+    [
+     "상하 분할 ─ (-v)",
+     "-v"
+    ]
+   ],
+   "lines": [
+    "split-window -h",
+    "split-window -v"
+   ]
+  },
+  {
+   "name": "strip-box-drawing",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "strip-box-drawing",
+    "strip-box-drawing on",
+    "strip-box-drawing off"
+   ]
+  },
+  {
+   "name": "synchronize-panes",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "synchronize-panes",
+    "synchronize-panes on",
+    "synchronize-panes off"
+   ]
+  },
+  {
+   "name": "vt-parser",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "pyte",
+     "pyte"
+    ],
+    [
+     "native",
+     "native"
+    ]
+   ],
+   "lines": [
+    "vt-parser pyte",
+    "vt-parser native"
+   ]
+  },
+  {
+   "name": "win-mouse-motion",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "토글",
+     ""
+    ],
+    [
+     "켜기",
+     "on"
+    ],
+    [
+     "끄기",
+     "off"
+    ]
+   ],
+   "lines": [
+    "win-mouse-motion",
+    "win-mouse-motion on",
+    "win-mouse-motion off"
+   ]
+  },
+  {
+   "name": "window-size",
+   "plugin": false,
+   "choice_mode": true,
+   "choices": [
+    [
+     "smallest",
+     "smallest"
+    ],
+    [
+     "latest",
+     "latest"
+    ],
+    [
+     "largest",
+     "largest"
+    ]
+   ],
+   "lines": [
+    "window-size smallest",
+    "window-size latest",
+    "window-size largest"
+   ]
+  }
+ ],
+ "plugin_commands": [
+  "auto-retry",
+  "auto-token-on-exit",
+  "calendar-mode",
+  "capture-output",
+  "capture-toggle",
+  "claude-auto-redraw",
+  "claude-auto-yes",
+  "claude-detail",
+  "claude-resume",
+  "claude-settings",
+  "claude-token-account",
+  "claude-token-debug",
+  "claude-token-log",
+  "claude-token-machines",
+  "claude-token-period",
+  "claude-token-sessions",
+  "claude-token-sync",
+  "claude-usage",
+  "claude-warn-history",
+  "clock-mode",
+  "close-calendar",
+  "close-clock",
+  "ime-indicator",
+  "mdir",
+  "model",
+  "namesync",
+  "ncd",
+  "open-calendar",
+  "open-clock",
+  "p4changes",
+  "prompt-clear",
+  "prompt-clear-message",
+  "prompt-clear-queue",
+  "prompt-history",
+  "prompt-history-lines",
+  "select-blocks",
+  "summary",
+  "usage-panel",
+  "usage-view"
+ ]
+}

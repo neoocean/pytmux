@@ -3711,8 +3711,9 @@ fn picking_a_language_runs_the_whole_wiring_in_the_gui_too() {
     view.state.apply(layout_one_pane());
     let mut keys: Vec<(Key, Mods)> = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
     keys.extend("lang".chars().map(|c| (Key::Char(c), Mods::NONE)));
-    keys.push((Key::Enter, Mods::NONE)); // 폼이 뜬다
-    keys.push((Key::Enter, Mods::NONE)); // 한국어(ko)를 고른다
+    // 이름만 친 선택지 명령 = 선택지 모드(pytmux-634 · 정본 `_run_choice`) — 첫 강조가 한국어(ko)라
+    // `Enter` 한 번이 곧 고르기다(종전에는 폼이 떴고 `Enter` 를 한 번 더 쳤다).
+    keys.push((Key::Enter, Mods::NONE));
     for (key, mods) in keys {
         view.handle_key(key, mods);
         view.pump_headless();
@@ -3865,24 +3866,22 @@ fn the_popup_wants_and_the_modal_wheel_work_in_the_gui_too() {
     assert_eq!(frame["action"], "popup_open");
     assert_eq!(frame["w"], 40);
     assert_eq!(frame["h"], 10);
-    // ② 팝업이 떠 있으면 휠은 커서 위치와 무관하게 팝업을 굴린다(모달).
+    // ② 팝업이 떠 있으면 휠은 팝업 것이다(모달) — 팝업 앱이 추적 안 하면 **삼킨다**(pytmux-633 ·
+    //   정본 `_popup_wheel`). 종전에는 팝업 id 로 스크롤을 보냈는데 서버 `_handle_scroll` 은
+    //   팝업을 모르고 활성 트리 패널을 굴렸다(안 보이는 뒤 패널이 흘렀다).
     tx.send(LinkEvent::Message(Box::new(popup_layout))).unwrap();
     view.pump_headless();
-    view.handle_wheel(true, Some((75, 20)));
+    sent.lock().unwrap().clear();
+    assert!(view.handle_wheel(true, Some((75, 20))), "팝업 위 휠을 안 먹었다");
     view.pump_headless();
-    let scrolled: Vec<_> = sent
+    let leaked: Vec<_> = sent
         .lock()
         .unwrap()
         .iter()
-        .filter_map(|o| match o {
-            Outgoing::Scroll(scroll) => Some(scroll.pane),
-            _ => None,
-        })
+        .filter(|o| matches!(o, Outgoing::Scroll(_) | Outgoing::Mouse { .. }))
+        .cloned()
         .collect();
-    assert!(
-        !scrolled.is_empty() && scrolled.iter().all(|pane| *pane == Some(99)),
-        "팝업이 아니라 다른 것이 굴렀다"
-    );
+    assert!(leaked.is_empty(), "추적 안 하는 팝업 위 휠이 무언가를 굴렸다: {leaked:?}");
 }
 
 #[test]
@@ -4781,12 +4780,47 @@ fn a_real_claude_state_string_marks_the_pane_as_claude() {
 // ── 인자 폼(G8v) — TUI 와 **같은 것**을 GUI 에서도 본다 ──────────────────────
 
 /// 팔레트에서 이름을 골라 폼을 연 뒤 그 안에서 키를 더 먹인다.
-fn sent_from_option_form(name: &str, inside: &[(Key, Mods)]) -> Vec<Outgoing> {
-    let mut keys: Vec<(Key, Mods)> = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
-    keys.extend(name.chars().map(|c| (Key::Char(c), Mods::NONE)));
-    keys.push((Key::Enter, Mods::NONE));
-    keys.extend(inside.iter().copied());
-    sent_after(vec![layout_one_pane()], &keys)
+/// 인자 폼(`Screen::Options`)을 **액션으로** 연다(메뉴·키맵의 `ShowCommandOptions` 길).
+///
+/// ⚠ 종전에는 팔레트에 이름을 치고 `Enter` 로 열었다. pytmux-634 부터 그 길은 정본과 같은
+/// **선택지 모드**다(이름만 친 줄에서 `Enter` = 바로 실행) — 폼을 재려면 폼을 여는 다른 길을 쓴다.
+fn sent_from_option_form(name: &'static str, inside: &[(Key, Mods)]) -> Vec<Outgoing> {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.apply_action_for_test(Action::ShowCommandOptions(name));
+    assert_eq!(view.screens.top(), Some(Screen::Options), "{name}: 인자 폼이 안 열렸다");
+    for (key, mods) in inside {
+        view.handle_key(*key, *mods);
+        view.pump_headless();
+    }
+    let out = sent.lock().unwrap().clone();
+    out
+}
+
+/// pytmux-634 — 팔레트에 선택지 명령 이름만 치고 `→` `Enter` 면 정본 `_run_choice` 처럼 **고른 값으로
+/// 바로** 나간다(폼을 거치지 않는다) — 그리고 그 길은 폼과 같은 명령을 낸다.
+#[test]
+fn the_palette_choice_mode_runs_the_picked_value_like_the_form() {
+    let keys = |extra: &[(Key, Mods)]| {
+        let mut k: Vec<(Key, Mods)> = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+        k.extend("split-window".chars().map(|c| (Key::Char(c), Mods::NONE)));
+        k.extend(extra.iter().copied());
+        k
+    };
+    let first = sent_after(vec![layout_one_pane()], &keys(&[(Key::Enter, Mods::NONE)]));
+    assert!(
+        first.iter().any(|o| matches!(o, Outgoing::Command(Command::Split { horizontal: true, .. }))),
+        "첫 선택지(-h)로 안 나갔다: {first:?}"
+    );
+    let next = sent_after(
+        vec![layout_one_pane()],
+        &keys(&[(Key::Right, Mods::NONE), (Key::Enter, Mods::NONE)]),
+    );
+    assert!(
+        next.iter().any(|o| matches!(o, Outgoing::Command(Command::Split { horizontal: false, .. }))),
+        "→ 로 고른 선택지(-v)로 안 나갔다: {next:?}"
+    );
 }
 
 #[test]
@@ -4886,8 +4920,9 @@ fn esc_ctrl_arrows_jump_and_keep_jumping_from_this_view() {
 
 #[test]
 fn a_plain_ctrl_up_still_reaches_the_pane_from_this_view() {
+    // 수식은 xterm 식으로 실린다(pytmux-608 · 정본도 이제 `CSI 1;5A` — 종전에는 수식 없는 ↑).
     let out = sent_after(vec![layout_one_pane()], &[(Key::Up, Mods::CTRL)]);
-    assert_eq!(out, vec![Outgoing::Input(b"\x1b[A".to_vec())], "{out:?}");
+    assert_eq!(out, vec![Outgoing::Input(b"\x1b[1;5A".to_vec())], "{out:?}");
 }
 
 // ── 여러 줄 작성창(패리티 `e_ins`) — TUI 와 **같은 것**을 GUI 에서도 본다 ─────
@@ -6505,6 +6540,62 @@ fn a_local_tab_leaves_the_canvas_colours_alone() {
         segs.iter().all(|s| s.color != REMOTE_PINK && s.color != theme::ERROR),
         "평소인데 상태색을 칠했다"
     );
+}
+
+/// pytmux-635 — 명령 대상 패널은 `WARN`(정본 `flash_box` = theme warning)이고, 그 색은
+/// 원격 분홍보다 **앞선다**(정본 `_draw_box` 의 갈래 차례). 대상 아닌 패널은 그대로다.
+#[test]
+fn the_command_target_frame_wins_over_the_remote_tint() {
+    use base::tint::BorderTint;
+    let (canvas, layout) = split_canvas();
+    let segs = SessionView::frame_segments_lit(&canvas, Some(&layout), BorderTint::Remote, Some(1));
+    let at = |x: u16, y: u16| segs.iter().find(|s| s.x == x && s.y == y).map(|s| s.color);
+    assert_eq!(at(0, 2), Some(theme::WARN), "대상 패널 왼 변이 WARN 이 아니다");
+    assert_eq!(at(9, 2), Some(REMOTE_PINK_DIM), "대상 아닌 패널까지 칠했다");
+    // 대조군 — 대상이 없으면 종전 그림 그대로다.
+    let plain = SessionView::frame_segments_lit(&canvas, Some(&layout), BorderTint::Remote, None);
+    assert!(plain.iter().all(|s| s.color != theme::WARN), "대상 없이 WARN 이 섰다");
+}
+
+/// pytmux-635 — `:` 에 패널 대상 명령을 치는 동안만 활성 패널 테두리가 밝다(정본
+/// `PromptScreen.on_input_changed` → `_set_cmd_target` · 닫히면 `on_unmount` 가 끈다).
+/// 그리는 자리가 쓰는 함수(`live_frame_segments`)를 그대로 잰다.
+#[test]
+fn the_active_frame_lights_while_typing_a_pane_command() {
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 20, "rows": 6, "active": 2,
+        "panes": [
+            {"id": 1, "x": 1, "y": 1, "w": 8, "h": 4, "box": [0, 0, 10, 6], "active": false},
+            {"id": 2, "x": 11, "y": 1, "w": 8, "h": 4, "box": [10, 0, 10, 6], "active": true}
+        ]
+    }))
+    .unwrap();
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout))).unwrap();
+    view.pump_headless();
+    let lit = |view: &SessionView| {
+        let canvas = view.composite_for_paint().expect("캔버스가 없다");
+        let segs = view.live_frame_segments(&canvas, base::tint::BorderTint::Local);
+        assert!(!segs.is_empty(), "테두리 선이 하나도 없다 — 시험 판이 틀렸다");
+        segs.iter().filter(|s| s.color == theme::WARN).map(|s| s.x).collect::<Vec<u16>>()
+    };
+    assert!(lit(&view).is_empty(), "팔레트도 안 열었는데 밝다");
+    for (key, mods) in colon_typed("rename-pane") {
+        view.handle_key(key, mods);
+    }
+    let on = lit(&view);
+    assert!(!on.is_empty(), "rename-pane 을 치는데 대상 테두리가 안 밝다");
+    assert!(on.iter().all(|x| *x >= 10), "활성(오른쪽) 패널 밖을 칠했다: {on:?}");
+    // 대상 아닌 명령으로 바뀌면 꺼진다.
+    for _ in 0.."rename-pane".len() {
+        view.handle_key(Key::Backspace, Mods::NONE);
+    }
+    for c in "rename-tab".chars() {
+        view.handle_key(Key::Char(c), Mods::NONE);
+    }
+    assert!(lit(&view).is_empty(), "rename-tab 인데 밝다");
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert!(lit(&view).is_empty(), "팔레트를 닫았는데 밝다");
 }
 
 #[test]
@@ -8240,6 +8331,57 @@ fn clicking_a_tab_chooses_its_link_row() {
     );
     // 활성 탭(자기 자신)은 잇는 줄이 없다 — 아무 일도 안 난다(정본도 그렇다).
     assert!(!view.plugin_tab_clicked(0));
+}
+
+/// pytmux-638 ③ — 정본 토큰 팝업에서 `s` 는 시나리오 판을 **위에 쌓고**(`push_screen`), 그 판을
+/// `Esc` 로 닫으면 **연 탭·그 커서**로 돌아오고, 한 번 더 `Esc` 면 팝업이 닫힌다. 탭 이동은 쌓지
+/// 않는다(한 화면의 탭이다). 종전에는 탭을 옮길 때마다 판이 쌓여 `Esc` 가 직전 탭으로 물러났다.
+#[test]
+fn the_scenario_panel_closes_back_onto_the_tab_it_was_opened_from() {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(tabbed_spec()))).unwrap();
+    view.pump_headless();
+    // 세션 탭으로(서버 회신 = 띠를 든 다른 판).
+    let mut sessions = tabbed_spec();
+    if let ServerMessage::PluginScreen(ref mut s) = sessions {
+        s.id = "claude-token-sessions".into();
+        s.title = "세션별".into();
+    }
+    tx.send(LinkEvent::Message(Box::new(sessions))).unwrap();
+    view.pump_headless();
+    view.handle_key(Key::Down, Mods::NONE);
+    assert_eq!(view.screens.selected(), 1);
+    // `s` 가 부른 시나리오 판(띠 없음) — 위에 쌓인다. 그 안에서 커서를 옮겨 둔다.
+    view.handle_key(Key::Char('s'), Mods::NONE);
+    let settings: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "claude-settings", "kind": "form", "title": "시나리오",
+        "hint": "Esc 닫기", "keys": {"enter": "toggle"},
+        "rows": [
+            {"key": "a", "label": "하나", "cols": ["●"]},
+            {"key": "b", "label": "둘", "cols": ["●"]},
+            {"key": "c", "label": "셋", "cols": ["●"]}
+        ],
+        "text": "", "note": ""
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(settings))).unwrap();
+    view.pump_headless();
+    assert_eq!(view.state.plugin_screen().map(|s| s.id.as_str()), Some("claude-settings"));
+    view.handle_key(Key::Down, Mods::NONE);
+    view.handle_key(Key::Down, Mods::NONE);
+    // 첫 Esc — 시나리오 판만 걷히고 **세션 탭**(연 자리)이 그 커서로 돌아온다.
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(
+        view.state.plugin_screen().map(|s| s.id.as_str()),
+        Some("claude-token-sessions"),
+        "시나리오 판을 닫았는데 연 탭으로 안 돌아왔다"
+    );
+    assert_eq!(view.screens.top(), Some(Screen::PluginView), "팝업이 통째로 닫혔다");
+    assert_eq!(view.screens.selected(), 1, "아래 판의 커서가 걷힌 판의 것으로 덮였다");
+    // 둘째 Esc — 팝업이 닫힌다(기간 탭으로 물러나지 않는다).
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_ne!(view.screens.top(), Some(Screen::PluginView), "탭이 쌓여 Esc 가 직전 탭으로 물러났다");
 }
 
 #[test]
@@ -13727,6 +13869,10 @@ fn keys_are_swallowed_while_a_remote_image_is_on_its_way() {
 #[path = "session_view_mouse_conformance_tests.rs"]
 mod mouse_conformance;
 
+// ── pytmux-608 · 수식 키 격자 — 창 이벤트에서 패널 바이트까지(가로채는 ⓒ 포함) ─────────
+#[path = "session_view_key_grid_tests.rs"]
+mod key_grid;
+
 /// pytmux-609 — **IME 확정 글자는 `Input`(마커 없음)으로 간다.** 정본은 Textual 이 확정분을
 /// Paste 이벤트로 주는 사정 때문에 `paste` 명령(앱이 2004 를 켰으면 bracketed 마커)으로 간다.
 /// 그 갈래는 정본에서도 «진짜 붙여넣기와 IME 를 가를 수 없어서» 생긴 것이라(ⓐ 단말이 못 주는
@@ -14186,6 +14332,44 @@ fn enter_on_the_permission_footer_opens_the_permission_panel_for_that_pane() {
     assert_eq!(open["args"], serde_json::json!(["1"]));
     assert_eq!(view.mode.mode(), InputMode::Normal, "Enter 뒤 esc 모드가 남았다");
     assert!(!view.perm_focus_marked_for_test(), "포커스가 풀렸는데 강조가 남았다");
+}
+
+/// pytmux-638 ② — 수동으로 닫는 메시지(정본 `error` 등급)가 떠 있으면 하단 동선은 `msg`
+/// (+ 알림 배지가 있으면 `notices`)뿐이고, `msg` 에서 `Enter` 가 그 메시지를 닫는다(정본
+/// `_status_buttons` 의 첫 갈래 · `_dismiss_message`). 자동으로 사라지는 등급은 그 갈래가 아니다.
+#[test]
+fn a_dismissable_message_collapses_the_bottom_lane_and_enter_closes_it() {
+    let (mut view, tx, _sent) = harness();
+    nav_fixture(&tx);
+    view.pump_headless();
+    view.config.status_right = "plain".to_owned();
+    // 등급마다 — 정본 등급표(답지 `notice_levels.json` · pytmux-641 ②)의 «닫는 등급» 일 때만 선다.
+    let fx: serde_json::Value =
+        serde_json::from_str(include_str!("../../proto/tests/fixtures/notice_levels.json")).unwrap();
+    let levels = fx["levels"].as_array().expect("등급표");
+    assert_eq!(levels.len(), 4);
+    for level in levels {
+        let name = level["name"].as_str().unwrap();
+        view.note_flash_for_test(format!("{name} 등급"), Severity::parse(Some(name)));
+        assert_eq!(
+            view.nav_badges().first() == Some(&base::Badge::Message),
+            level["dismissable"].as_bool().unwrap(),
+            "{name}: msg 갈래가 정본 등급표와 다르다"
+        );
+    }
+    view.note_flash_for_test("원격 붙기 실패".into(), Severity::Error);
+    assert_eq!(view.nav_badges(), vec![base::Badge::Message], "동선이 msg 하나로 안 줄었다");
+    view.state.note_notice(String::from("무언가 알림"));
+    assert_eq!(view.nav_badges(), vec![base::Badge::Message, base::Badge::Notices]);
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Down, Mods::NONE);
+    assert_eq!(view.chrome_picked_for_test(), Some(base::Badge::Message));
+    assert!(view.message_has_chrome_focus(), "msg 포커스인데 메시지 칩 강조 판정이 없다");
+    view.handle_key(Key::Enter, Mods::NONE);
+    assert!(view.live_flash_for_test().is_none(), "msg 에서 Enter 가 메시지를 안 닫았다");
+    assert_eq!(view.mode.mode(), InputMode::Normal, "Enter 뒤 esc 모드가 남았다");
+    // 닫히면 동선은 정본 목록으로 돌아온다.
+    assert_eq!(view.nav_badges()[0], base::Badge::Plugin(0));
 }
 
 #[test]

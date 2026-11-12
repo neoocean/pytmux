@@ -288,6 +288,38 @@ def _deemoji_text(s: str) -> str:
     return "".join("·" * _char_cells(c) if _is_emoji(c) else c for c in s)
 
 
+def chrome_bands(height: int, tabbar: bool, position: str, lines: int) -> dict:
+    """앱 화면의 **띠 배치** — 탭바·상태줄·뷰의 `(y, 높이)` 와 서버에 보고할 행 수(pytmux-637).
+
+    정본 `PytmuxApp._apply_status_position`(쌓는 차례)과 `_content_size`(보고 크기)가
+    이 표를 따르고, GUI 는 같은 표를 픽스처(`client/scripts/gen_chrome_bands.py`)로 받아
+    자기 차례와 맞댄다. 규칙은 둘뿐이다:
+
+    - **겹치지 않는다** — 띠는 위에서 아래로 쌓인다. top 이면 상태줄 → 탭바 → 뷰,
+      bottom 이면 탭바 → 뷰 → 상태줄. 탭바는 언제나 뷰 바로 위다(노트북 연결부).
+    - **뷰 높이 == 보고 행 수** — 종전에는 top+탭바에서 둘이 한 줄 어긋났다.
+
+    `lines` 는 상태줄 줄 수(0~5 로 접는다 · 0 이면 상태줄 띠가 없다). 띠가 없으면 `None`.
+    """
+    lines = max(0, min(5, int(lines)))
+    top = position == "top"
+    order = (["status"] if top else []) + (["tabbar"] if tabbar else []) + ["view"] \
+        + ([] if top else ["status"])
+    sizes = {"status": lines, "tabbar": 1}
+    sizes["view"] = max(0, height - lines - (1 if tabbar else 0))
+    out = {"tabbar": None, "status": None, "view": None, "order": []}
+    y = 0
+    for name in order:
+        h = sizes[name]
+        if h <= 0 and name != "view":
+            continue
+        out[name] = (y, h)
+        out["order"].append(name)
+        y += h
+    out["report_rows"] = sizes["view"]
+    return out
+
+
 def _fmt_tokens(total: int) -> str:
     """누적 토큰 수를 짧게 표기. 1234567→"1.2M", 45200→"45.2k", 800→"800".
     (서버측 tokens.fmt 과 동일 규칙 — 클라이언트 단독 표시용 경량 복제.)"""
@@ -874,10 +906,90 @@ SPECIAL = {
     "ctrl+home": b"\x1b[1;5H", "ctrl+end": b"\x1b[1;5F",
 }
 
+# ── 수식 키 → 패널 바이트(pytmux-608) ─────────────────────────────────────────────
+# xterm ctlseqs 「PC-Style Function Keys」 그대로다: 수식 매개변수 N = 1 + shift + 2·alt + 4·ctrl.
+# 위 SPECIAL 의 수식 줄(shift+화살표 · ctrl+home/end)이 이미 이 공식이었다 — 표가 덜 찼을 뿐이라
+# 종전에는 나머지 수식 조합(Ctrl+↑ · Alt+F5 · Shift+PgUp …)이 **버려졌고**(`b""`) Alt+글자는
+# ESC 접두를 잃었다. GUI(`base::keys::encode`)는 같은 공식이다 — 대조는
+# `client/scripts/gen_key_grid.py` → `crates/proto/tests/key_bytes_conformance.rs`.
+_XT_MOD_BITS = {"shift": 1, "alt": 2, "ctrl": 4}
+_XT_CSI_FINAL = {"up": "A", "down": "B", "right": "C", "left": "D", "home": "H", "end": "F"}
+_XT_SS3_FN = {"f1": "P", "f2": "Q", "f3": "R", "f4": "S"}
+_XT_TILDE = {"insert": 2, "delete": 3, "pageup": 5, "pagedown": 6, "f5": 15, "f6": 17,
+             "f7": 18, "f8": 19, "f9": 20, "f10": 21, "f11": 23, "f12": 24}
+# Ctrl+구두점(제어 문자가 정해진 것만 · xterm/VT220 관례). 단말이 제어 문자를 직접 주면
+# character 가 그것이라 이 표를 안 본다 — kitty 처럼 이름만 오는 단말을 위한 표다.
+_XT_CTRL_PUNCT = {"/": 0x1f, "_": 0x1f, "-": 0x1f, "@": 0x00, "2": 0x00, "^": 0x1e, "6": 0x1e,
+                  "?": 0x7f, "[": 0x1b, "\\": 0x1c, "]": 0x1d, " ": 0x00}
+
+
+def _key_base_char(base: str, character):
+    """Textual 키 이름의 마지막 토큰 → 그 글자(모르면 None). 단말이 글자를 실어 줬으면 그것."""
+    if character and len(character) == 1 and character.isprintable():
+        return character
+    if len(base) == 1:
+        return base
+    from textual.keys import REPLACED_KEYS, key_to_character
+    return key_to_character(base) or key_to_character(REPLACED_KEYS.get(base, ""))
+
+
+def _modified_key_bytes(mods: set, base: str, character) -> bytes | None:
+    """수식(shift·alt·ctrl 중 하나 이상)이 붙은 키 → xterm 바이트. 뜻이 없으면 None."""
+    n = 1 + sum(_XT_MOD_BITS[m] for m in mods)
+    alt = "alt" in mods
+    ctrl = "ctrl" in mods
+    shift = "shift" in mods
+    if base in _XT_CSI_FINAL:
+        return f"\x1b[1;{n}{_XT_CSI_FINAL[base]}".encode()
+    if base in _XT_SS3_FN:
+        return f"\x1b[1;{n}{_XT_SS3_FN[base]}".encode()
+    if base in _XT_TILDE:
+        return f"\x1b[{_XT_TILDE[base]};{n}~".encode()
+    esc = b"\x1b" if alt else b""
+    if base == "enter":
+        return esc + (b"\n" if shift and not ctrl else b"\r")
+    if base == "tab":
+        return esc + (b"\x1b[Z" if shift else b"\t")
+    if base == "backspace":
+        return esc + (b"\x08" if ctrl else b"\x7f")
+    if base == "escape":
+        return esc + b"\x1b"
+    ch = _key_base_char(base, character)
+    # kitty 식 단말은 Shift 를 글자에 안 접고 수식으로 준다(`ESC[97;4u` = alt+shift+a · 글자 없음).
+    if shift and not character and ch and ch.isalpha():
+        ch = ch.upper()
+    if ctrl:
+        if character and len(character) == 1 and (ord(character) < 0x20 or ord(character) == 0x7f):
+            return esc + character.encode()
+        if ch and len(ch) == 1 and "a" <= ch.lower() <= "z":
+            return esc + bytes([ord(ch.lower()) - 96])
+        if ch in _XT_CTRL_PUNCT:
+            return esc + bytes([_XT_CTRL_PUNCT[ch]])
+        return None
+    if ch:
+        # Alt 면 ESC 접두 · Shift 만이면 그 글자(kitty 의 `ESC[32;2u` = Shift+Space).
+        return esc + ch.encode("utf-8", "replace")
+    return None
+
+
 def key_to_bytes(event: events.Key) -> bytes:
     k = event.key
+    ch = event.character
+    # Textual 이 **두 키를 한 이름으로 접는** 자리 둘 — 글자 칸으로 되가른다(pytmux-608).
+    #  · `0x08`(Ctrl+H · 대부분 단말의 Ctrl+Backspace)은 `backspace` 로 오지만 글자가 '\x08'.
+    #  · `ESC DEL`(Alt+Backspace)은 `ctrl+w` 로 오지만 글자가 None(진짜 ^W 는 '\x17').
+    if k == "backspace" and ch == "\x08":
+        return b"\x08"
+    if k == "ctrl+w" and ch is None:
+        return b"\x1b\x7f"
     if k in SPECIAL:
         return SPECIAL[k]
+    parts = k.split("+")
+    mods = set(parts[:-1])
+    if mods and mods <= _XT_MOD_BITS.keys() and parts[-1]:
+        data = _modified_key_bytes(mods, parts[-1], ch)
+        if data is not None:
+            return data
     if k.startswith("ctrl+"):
         c = k[5:]
         # ASCII 영문 ctrl 조합만 제어코드로(한글 등 비ASCII는 무시)
@@ -889,6 +1001,55 @@ def key_to_bytes(event: events.Key) -> bytes:
     if event.character is not None and event.character != "":
         return event.character.encode("utf-8", "replace")
     return b""
+
+
+# Textual 이 `ESC b`·`ESC f` 를 Ctrl+←/→ 로 접는 표 줄(iTerm 「natural text editing」 프리셋).
+_TEXTUAL_ALT_WORD_SEQS = ("\x1bb", "\x1bf")
+# 그 대신 우리 입력칸이 alt+b/f 로 받을 단어 이동(Textual 이 ctrl+←/→ 에 건 동작 그대로).
+_ALT_WORD_BINDINGS = {
+    "Input": (("alt+b", "cursor_left_word"), ("alt+f", "cursor_right_word")),
+    "TextArea": (("alt+b", "cursor_word_left"), ("alt+f", "cursor_word_right")),
+}
+
+
+def install_alt_word_keys() -> bool:
+    """`ESC b`/`ESC f` 를 **Alt+b/f 로** 받게 한다(pytmux-608). 무엇을 했으면 True.
+
+    Textual 은 이 둘을 `ctrl+left`/`ctrl+right` 로 접는다(`_ansi_sequences`) — 그러면 정본이
+    패널에 보낼 바이트를 못 가른다(진짜 Ctrl+← 는 `CSI 1;5D`). 맥 Terminal.app·iTerm2 의
+    Option+← 기본값과 readline/zsh 의 단어 이동이 바로 `ESC b` 라, 접힌 채면 패널 안 셸에서
+    그 키가 죽는다(종전에는 `b""` 로 버려졌다). 그래서 두 줄을 표에서 빼 `alt+b`·`alt+f`
+    (글자 b·f)로 오게 하고 `key_to_bytes` 가 ESC 접두를 되붙인다.
+
+    대가로 우리 자신의 입력칸(명령 프롬프트·작성창 · Textual `Input`/`TextArea`)이 그 키의
+    단어 이동을 잃는다 — 그래서 같은 동작을 alt+b/alt+f 에 **더 건다**(Textual 의 바인딩
+    병합은 클래스가 만들어질 때 굳으므로, 이미 있는 하위 클래스까지 다시 병합한다).
+    두 번 불러도 같다. Textual 내부 모듈이 바뀌어 표가 없으면 아무것도 안 한다."""
+    try:
+        from textual import _ansi_sequences
+        from textual.binding import Binding
+        from textual.widgets import Input, TextArea
+    except Exception:
+        return False
+    changed = False
+    for seq in _TEXTUAL_ALT_WORD_SEQS:
+        if _ansi_sequences.ANSI_SEQUENCES_KEYS.pop(seq, None) is not None:
+            changed = True
+    for cls in (Input, TextArea):
+        own = cls.__dict__.get("BINDINGS")
+        if not isinstance(own, list):
+            continue
+        have = {b.key for b in own if isinstance(b, Binding)}
+        for key, action in _ALT_WORD_BINDINGS[cls.__name__]:
+            if key not in have:
+                own.append(Binding(key, action, show=False))
+                changed = True
+        stack = [cls]
+        while stack:
+            c = stack.pop()
+            c._merged_bindings = c._merge_bindings()
+            stack.extend(c.__subclasses__())
+    return changed
 
 # ── 명령 인자 파싱 / 재시작 드라이런 평가 (§5.4: build_client_app 클로저에서 분리한
 #    app-상태 비의존 순수 함수). client.py 가 이름 그대로 import 해 쓴다 — 동작 불변.

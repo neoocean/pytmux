@@ -112,6 +112,17 @@ class Registry:
             out.update(getattr(p, "command_options", None) or {})
         return out
 
+    @property
+    def option_state_keys(self):
+        """선택지 명령 이름 → 그 명령의 지금 값이 실리는 **status 칸 이름**(pytmux-634).
+
+        정본 클라의 `command_option_current` 는 그 칸을 앱 상태에서 읽는다 — GUI 는 앱 상태가
+        없으니 서버가 표면(`plugin_surface.command_options[].state`)에 칸 이름을 실어 준다."""
+        out = {}
+        for p in self.plugins:
+            out.update(getattr(p, "option_state_keys", None) or {})
+        return out
+
     def command_option_current(self, app, name):
         """토글/선택지 명령의 현재 설정값(예: 'on'/'off')을 플러그인에서 조회한다 —
         선택지 팝업이 첫 항목 대신 현재 상태에 커서를 올리는 데 쓴다. 각 플러그인의

@@ -408,7 +408,31 @@ class ServerIOMixin:
             # 코어 `PANE_SCOPED_CMDS` ∪ 이것이면 대상 패널을 세우고, 프롬프트 이력 미리보기가
             # 그 패널 위에 선다 — GUI 가 같은 판정을 하려면 같은 표가 필요하다.
             "pane_scoped": sorted(self.plugins.pane_scoped),
+            # 선택지 인자 명령(플러그인 몫 · pytmux-634) — 정본 PromptScreen 은 `:` 에 그 이름만
+            # 치면 인자 자리에 `‹ a  b ›` 를 띄우고 ←→ 로 고른다(첫 인자 스펙만 쓴다 · 정본과
+            # 같다). `state` 는 지금 값이 실리는 status 칸 이름(정본 `command_option_current`
+            # 가 읽는 그 속성 — 없으면 빈 글자 = 첫 선택지에서 시작).
+            "command_options": self._plugin_command_options(),
         }
+
+    def _plugin_command_options(self) -> list:
+        """`plugins.command_options` 를 소켓 모양으로(pytmux-634). 선택지는 `[보임, 값]` 쌍으로
+        편다 — 플러그인이 낱 문자열로 적은 선택지(`ph-lines` 의 `"1"`)는 보임 = 값이다."""
+        keys = self.plugins.option_state_keys
+        out = []
+        for name, specs in sorted((self.plugins.command_options or {}).items()):
+            if not specs:
+                continue
+            choices = []
+            for c in specs[0].get("choices") or ():
+                if isinstance(c, (list, tuple)) and len(c) >= 2:
+                    choices.append([str(c[0]), str(c[1])])
+                else:
+                    choices.append([str(c), str(c)])
+            if choices:
+                out.append({"name": name, "choices": choices,
+                            "state": str(keys.get(name) or "")})
+        return out
 
     def _status_msg(self, sess: Session, full=True, client=None):
         # §1.7 Stage 3: 원격 탭을 보는 클라는 업스트림 status 기반 머지본(원격 탭

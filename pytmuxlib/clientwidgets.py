@@ -419,7 +419,60 @@ class MultiplexerView(Widget):
         for p in self.app.layout.get("panes", []):
             if p["id"] == pid:
                 return p
+        # 팝업 패널(트리 밖)도 id 로 찾는다 — 팝업 안 앱에 넘긴 누름의 drag·release 가
+        # 이 길로 같은 패널을 다시 찾는다(pytmux-633).
+        pu = self._popup_pane()
+        if pu is not None and pu["id"] == pid:
+            return pu
         return None
+
+    def _popup_pane(self):
+        """`display-popup` 이 떠 있으면 그 **내용 사각형**을 패널 모양 dict 로(없으면 None).
+
+        `_encode_mouse` 가 패널 dict 의 x/y/w/h·mouse_sgr 를 읽으므로 같은 모양으로 접는다."""
+        pu = self.app.layout.get("popup")
+        if not pu or pu.get("id") is None:
+            return None
+        return {"id": pu["id"], "x": pu.get("cx", 0), "y": pu.get("cy", 0),
+                "w": pu.get("cw", 0), "h": pu.get("ch", 0),
+                "mouse": pu.get("mouse", 0), "mouse_sgr": pu.get("mouse_sgr"),
+                "popup": True}
+
+    def _popup_target(self, x, y):
+        """팝업이 떠 있을 때 이 좌표의 마우스를 **받을** 팝업(없으면 None) — 내용 사각형
+        안 · 평소 모드 · 팝업 안 앱이 추적을 켰을 때만(일반 패널의 `_mouse_target` 과 같은
+        세 조건). GUI `SessionState::mouse_pane_at` 의 팝업 갈래와 같은 판정이다."""
+        pu = self._popup_pane()
+        if pu is None or self.app.mode != "normal" or not pu.get("mouse"):
+            return None
+        if not (pu["x"] <= x < pu["x"] + pu["w"] and pu["y"] <= y < pu["y"] + pu["h"]):
+            return None
+        return pu
+
+    def _popup_mouse_down(self, event):
+        """팝업이 떠 있을 때의 누름(pytmux-633). **팝업은 항상 포커스**다(`_composite` ⑤ ·
+        키도 이미 팝업으로 간다 — `send_input`). 그래서 캔버스 마우스도 팝업 것이다:
+
+        - 팝업 안 + 평소 모드 + 팝업 앱 추적 → 그 앱에 press(이후 drag·release 는
+          `_mouse_fwd` 길). 선택·복사는 없다 — 서버 `copy_range` 가 팝업을 못 찾는다.
+        - 우클릭(평소 모드) → 메뉴(종전과 같다 · 대상 패널 없음).
+        - 그 밖(팝업 밖 · 추적 안 함 · 다른 모드 · Ctrl) → **삼킨다**. 종전에는 팝업 밑의
+          트리 패널이 포커스(select_pane_id)·마우스 바이트·경계 끌기를 받았다 — 안 보이는
+          곳에서 상태가 바뀌었다."""
+        if event.button == 3 and self.app.mode == "normal":
+            self.app.open_menu(None)
+            return
+        if event.ctrl:
+            return
+        tp = self._popup_target(event.x, event.y)
+        if tp is None:
+            return
+        data = self._encode_mouse(tp, event.x, event.y, "press", event.button)
+        if data:
+            self.app.send_mouse(tp["id"], data)
+            self._mouse_fwd = tp["id"]
+            self._mouse_fwd_btn = event.button
+            self.capture_mouse()
 
     def _header_pane_at(self, x, y):
         """패널 pick-up(헤더 드래그, #1) 히트테스트: (x,y)가 어떤 패널의 **위쪽 가장자리
@@ -485,6 +538,12 @@ class MultiplexerView(Widget):
         self.app._log_mouse("down", event.x, event.y, event.button)
         if not self.app.mouse_enabled:
             return
+        # 팝업이 떠 있으면 캔버스 마우스는 팝업 것이다(pytmux-633) — 플러그인 클릭·밑줄·
+        # 경계·머리줄 어느 것보다 먼저다(그것들은 전부 팝업 **밑**의 것이다).
+        if self._popup_pane() is not None:
+            self._popup_mouse_down(event)
+            event.stop()
+            return
         # `mouse-drag-copy` 는 값이 **셋**이다(on·off·shift — 뜻은
         # keymap.drag_copy_policy 한 곳). 이 함수의 두 갈래(Shift+드래그·평드래그)가
         # 그 값을 함께 보므로 여기서 한 번만 읽어 둔다.
@@ -509,17 +568,18 @@ class MultiplexerView(Widget):
                     i18n.t("span.copied", path=span[3]))
                 event.stop()
                 return
-        if self.app.mode == "scroll":  # copy-mode: 드래그로 선택
-            # 선택 시작 패널을 기억해(§2.4) 이후 드래그/추출을 그 패널 안으로 묶는다.
-            p = self._pane_at(event.x, event.y)
-            self._sel_rect = (p["x"], p["y"], p["w"], p["h"]) if p else None
-            self._sel_pane_id = p["id"] if p else None
-            sx, sy = self._clamp_sel(event.x, event.y)
-            self._sel_start = (sx, sy)
-            self._sel = (sx, sy, sx, sy)
-            self._sel_begin_abs(sx, sy)
+        # copy-mode(스크롤 모드): 왼쪽 끌기로 선택 — **평소 모드와 같은 미결 + 임계**다
+        # (pytmux-632). 종전에는 누르는 즉시 선택을 세우고 접힌 선택도 `copy_range` 로
+        # 보내, 클릭 한 번이 한 칸을 복사해 OS 클립보드를 덮었다 — `mouse-drag-threshold`
+        # (2026-07-28)가 평소 모드에서 막으려던 바로 그 증상이다. 그 갈래는 drag-copy 미결
+        # (07-11)·임계(07-28) 이전 코드였고 두 고침이 평소 모드에만 들어갔다(의도 근거 없음).
+        # 버튼도 안 가려 우클릭·가운데 클릭까지 복사였다 — 이제 왼쪽만이고 나머지는 아래
+        # 차례로 흐른다. `mouse-drag-copy` 값은 **안 본다**: 이 모드는 사람이 고른 복사
+        # 모드라 off 여도 끌면 복사한다.
+        if (self.app.mode == "scroll" and event.button == 1
+                and self._pane_at(event.x, event.y) is not None):
+            self._sel_pending = (event.x, event.y)
             self.capture_mouse()
-            self.app._composite()
             event.stop()
             return
         # Shift+좌드래그 = 내부 앱으로 마우스 이벤트 **전달**(passthrough) — 마우스 모드를
@@ -751,6 +811,18 @@ class MultiplexerView(Widget):
                     self.app.send_mouse(pd["id"], data)
             event.stop()
             return
+        # 팝업이 떠 있으면 버튼 없는 모션도 팝업 것이다(pytmux-633) — 경계 호버·밑줄 hover
+        # 는 팝업 밑의 것이라 안 그리고, any-motion(1003) 팝업 앱에만 넘긴다.
+        if not self._dragging and self._popup_pane() is not None:
+            if not self.app.mouse_enabled:
+                return
+            pd = self._popup_target(event.x, event.y)
+            if pd is not None and pd.get("mouse", 0) >= 3:
+                data = self._encode_mouse(pd, event.x, event.y, "move", 0)
+                if data:
+                    self.app.send_mouse(pd["id"], data)
+            event.stop()
+            return
         if not self._dragging:
             # 경계선(divider) 위 호버 → 배경 강조(리사이즈 가능 암시)(#27).
             # divider 는 테두리라 패스스루 content 영역과 분리됨 → 호버 우선.
@@ -820,7 +892,7 @@ class MultiplexerView(Widget):
                 self.release_mouse()
             except Exception:
                 pass
-            if event.y < 0:                      # 탭바 위에 드롭
+            if event.y == -1:                    # 탭바 위에 드롭(뷰 바로 윗줄 — 위 상태줄은 아니다 · pytmux-637)
                 kind, payload = self.app.tabbar._hit(event.x)
                 cur = next((t["index"] for t in self.app.tabbar.tabs
                             if t.get("active")), None)
@@ -1005,6 +1077,8 @@ class MultiplexerView(Widget):
             self._scroll_during_drag(3)
             event.stop()
             return
+        if self._popup_wheel(event, "wheelup"):
+            return
         # 마우스 모드 앱(less/htop/Claude 등)은 휠을 직접 처리하도록 전달.
         tp = self._mouse_target(event.x, event.y)
         if tp is not None:
@@ -1026,6 +1100,8 @@ class MultiplexerView(Widget):
             self._scroll_during_drag(-3)
             event.stop()
             return
+        if self._popup_wheel(event, "wheeldown"):
+            return
         tp = self._mouse_target(event.x, event.y)
         if tp is not None:
             data = self._encode_mouse(tp, event.x, event.y, "wheeldown", 0)
@@ -1037,6 +1113,21 @@ class MultiplexerView(Widget):
         if p:
             self.app.send_scroll(p["id"], delta=-3)
         event.stop()
+
+    def _popup_wheel(self, event, kind):
+        """팝업이 떠 있으면 휠은 팝업 것이다(pytmux-633) — 팝업 앱이 추적하면 그 앱에,
+        아니면 **삼킨다**. 우리 스크롤로 보내지 않는 이유: 서버 `_handle_scroll` 은 팝업
+        id 를 모르고 **활성 트리 패널**을 굴린다(안 보이는 뒤 패널이 흘러간다). 처리했으면
+        True."""
+        if self._popup_pane() is None:
+            return False
+        tp = self._popup_target(event.x, event.y)
+        if tp is not None:
+            data = self._encode_mouse(tp, event.x, event.y, kind, 0)
+            if data:
+                self.app.send_mouse(tp["id"], data)
+        event.stop()
+        return True
 
     def _active_pane(self):
         aid = self.app.layout.get("active")

@@ -1,4 +1,6 @@
 mod key_events;
+// pytmux 추가(PROVENANCE §1) — 마우스 버튼 변환을 순수 함수로 뗐다(가운데·오른쪽의 뗌·끌기).
+mod mouse_events;
 
 #[cfg(test)]
 mod drag_drop_tests;
@@ -1166,75 +1168,34 @@ impl EventLoop {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 window_state.last_cursor_position = position.to_logical(scale_factor as f64);
-                match window_state.current_mouse_button_pressed {
-                    Some(MouseButton::Left) => Some(ConvertedEvent::Event(
-                        crate::event::Event::LeftMouseDragged {
-                            position: window_state.last_cursor_position.to_vec2f(),
-                            modifiers: from_winit_modifiers_state(window_state.modifiers),
-                        },
-                    )),
-                    _ => Some(ConvertedEvent::Event(crate::event::Event::MouseMoved {
-                        position: window_state.last_cursor_position.to_vec2f(),
-                        cmd: window_state.modifiers.super_key(),
-                        shift: window_state.modifiers.shift_key(),
-                        is_synthetic: false,
-                    })),
-                }
+                Some(ConvertedEvent::Event(mouse_events::moved(
+                    window_state.current_mouse_button_pressed,
+                    window_state.last_cursor_position.to_vec2f(),
+                    from_winit_modifiers_state(window_state.modifiers),
+                )))
             }
             WindowEvent::MouseInput { state, button, .. } => match state {
                 ElementState::Pressed => {
                     let click_count =
                         window_state.determine_click_count_and_update_button_state(button);
-                    match button {
-                        MouseButton::Left => {
-                            // ctrl-click should actually be registered as a right-click on mac
-                            let ctrl_click = window_state.modifiers.control_key();
-                            if ctrl_click && OperatingSystem::get().is_mac() {
-                                Some(ConvertedEvent::Event(crate::event::Event::RightMouseDown {
-                                    position: window_state.last_cursor_position.to_vec2f(),
-                                    cmd: window_state.modifiers.super_key(),
-                                    shift: window_state.modifiers.shift_key(),
-                                    click_count,
-                                }))
-                            } else {
-                                Some(ConvertedEvent::Event(crate::event::Event::LeftMouseDown {
-                                    position: window_state.last_cursor_position.to_vec2f(),
-                                    click_count,
-                                    is_first_mouse: false,
-                                    modifiers: from_winit_modifiers_state(window_state.modifiers),
-                                }))
-                            }
-                        }
-                        MouseButton::Right => {
-                            Some(ConvertedEvent::Event(crate::event::Event::RightMouseDown {
-                                position: window_state.last_cursor_position.to_vec2f(),
-                                cmd: window_state.modifiers.super_key(),
-                                shift: window_state.modifiers.shift_key(),
-                                click_count,
-                            }))
-                        }
-                        MouseButton::Middle => Some(ConvertedEvent::Event(
-                            crate::event::Event::MiddleMouseDown {
-                                position: window_state.last_cursor_position.to_vec2f(),
-                                cmd: window_state.modifiers.super_key(),
-                                shift: window_state.modifiers.shift_key(),
-                                click_count,
-                            },
-                        )),
-                        _ => None,
-                    }
+                    // ctrl-click should actually be registered as a right-click on mac
+                    mouse_events::pressed(
+                        button,
+                        window_state.last_cursor_position.to_vec2f(),
+                        from_winit_modifiers_state(window_state.modifiers),
+                        click_count,
+                        OperatingSystem::get().is_mac(),
+                    )
+                    .map(ConvertedEvent::Event)
                 }
                 ElementState::Released => {
                     window_state.current_mouse_button_pressed = None;
-                    match button {
-                        MouseButton::Left => {
-                            Some(ConvertedEvent::Event(crate::event::Event::LeftMouseUp {
-                                position: window_state.last_cursor_position.to_vec2f(),
-                                modifiers: from_winit_modifiers_state(window_state.modifiers),
-                            }))
-                        }
-                        _ => None,
-                    }
+                    mouse_events::released(
+                        button,
+                        window_state.last_cursor_position.to_vec2f(),
+                        from_winit_modifiers_state(window_state.modifiers),
+                    )
+                    .map(ConvertedEvent::Event)
                 }
             },
             // Handle and convert touch events into mouse events.

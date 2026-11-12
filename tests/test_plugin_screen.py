@@ -890,6 +890,16 @@ async def test_the_period_tree_carries_the_5h_and_1w_columns_on_hour_rows_only()
     for r in others:
         assert len(r["cols"]) == 1, (
             f"시각이 아닌 행에 5h%/1w% 가 붙었다({r['label']}): {r['cols']}")
+    # pytmux-638 ① — 토큰 칸은 정본 TUI 와 같은 짧은 표기(`usagelog._fmt_tokens` — 정본
+    # `_tok_aligned` 의 글). 시각 행 하나 = 기록 하나라 그 값을 그대로 견줄 수 있다.
+    import re
+    ul = importlib.import_module("pytmuxlib.plugins.claude-code.usagelog")
+    for r in rows:
+        if r["cols"]:
+            assert re.fullmatch(r"\d+(\.\d)?[kM]?", r["cols"][0]), r["cols"]
+    # (펼쳐진 날의 시각만 보이므로 기록 전부가 행이 되지는 않는다 — 보이는 행이 그 글이면 된다.)
+    by_hour = [r["cols"][0] for r in hours]
+    assert set(by_hour) <= {ul._fmt_tokens(x["tokens"]) for x in recs}, (by_hour, recs)
 
 
 async def test_a_half_missing_limit_pair_keeps_its_place_instead_of_shifting_left():
@@ -1240,6 +1250,10 @@ async def test_the_machines_spec_carries_a_ratio_not_a_drawn_bar():
         spec = ss.open_spec(_Srv(), None, "token-machines")
     bars = [r["bar"] for r in spec["rows"] if "bar" in r]
     assert bars == [1000, 250], spec["rows"]
+    # 토큰 칸은 정본 TUI 머신 뷰와 같은 짧은 표기다(pytmux-638 ①).
+    assert [r["cols"][0] for r in spec["rows"] if "bar" in r] == ["1.2k", "300"], spec["rows"]
+    # 제목의 Σ 도 정본 Σ 와 같은 짧은 표기(pytmux-641 ③ · 종전 `1,500`).
+    assert "Σ1.5k" in spec["title"] and "1,500" not in spec["title"], spec["title"]
     assert all(isinstance(b, int) for b in bars), spec["rows"]
     joined = "".join(str(r) for r in spec["rows"])
     for glyph in ("█", "▇", "▆"):
@@ -2432,7 +2446,10 @@ async def test_the_sessions_tab_has_the_canon_order_time_column_and_active_mark(
     groups, _vmax, _win, _hdr, _bk, _models = canon._view_rows()
     assert [r["label"] for r in rows] == [g[0] for g in groups], (rows, groups)
     assert [r["cols"][0] for r in rows] == canon._sess_times, (rows, canon._sess_times)
-    assert [r["cols"][1] for r in rows] == [f"{int(g[1]):,}" for g in groups], rows
+    # 토큰 칸 = 정본 TUI 칸 글(`_tok_aligned` — 짧은 표기 · 앞 공백 정렬은 고정폭 표의 그림이라
+    # 빼고 견준다) — pytmux-638 ①. 종전 GUI 는 `9,000` 처럼 자릿수 쉼표로 썼다.
+    assert [r["cols"][1] for r in rows] == [
+        scr.TokenLogScreen._tok_aligned(g[1], 0).strip() for g in groups], rows
     assert rows[0]["label"].split()[1] == "2", "최신 세션이 위가 아니다"
     assert [r.get("tag") for r in rows] == ["active", None], rows
     assert all(len(r["cols"]) == 2 for r in rows), "정본에 없는 칸이 붙었다"

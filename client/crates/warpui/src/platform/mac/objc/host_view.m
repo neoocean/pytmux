@@ -245,7 +245,25 @@ void warp_marked_text_cleared(WarpHostView *);
     if (self.readyForWarp) warp_handle_view_event(self, event, NO);
 }
 
+// pytmux 추가(PROVENANCE §1) — 가운데 버튼의 뗌·끌기를 Rust 쪽으로 넘긴다.
+- (void)otherMouseUp:(NSEvent *)event {
+    if (self.readyForWarp) warp_handle_view_event(self, event, NO);
+}
+
+- (void)otherMouseDragged:(NSEvent *)event {
+    if (self.readyForWarp) warp_handle_view_event(self, event, NO);
+}
+
 - (void)rightMouseDown:(NSEvent *)event {
+    if (self.readyForWarp) warp_handle_view_event(self, event, NO);
+}
+
+// pytmux 추가(PROVENANCE §1) — 오른쪽 버튼의 뗌·끌기를 Rust 쪽으로 넘긴다.
+- (void)rightMouseUp:(NSEvent *)event {
+    if (self.readyForWarp) warp_handle_view_event(self, event, NO);
+}
+
+- (void)rightMouseDragged:(NSEvent *)event {
     if (self.readyForWarp) warp_handle_view_event(self, event, NO);
 }
 

@@ -1131,6 +1131,9 @@ pub struct Screens {
     /// 먹기 **직전에** 넣는다([`Screens::set_list_view`]).
     list_rows: usize,
     list_total: usize,
+    /// 탭 스위처의 **탭 줄** 자리들(pytmux-636) — 정본 `TabSwitcherScreen.action_cycle` 은
+    /// `Tab`/`Shift+Tab` 으로 패널 줄을 건너뛰고 탭 줄만 돈다. 어느 줄이 탭인지는 뷰가 안다.
+    list_heads: Vec<usize>,
     /// 설정 판 «키» 탭의 줄들 — `(키, 하는 일)`(pytmux-592). 모델은
     /// [`crate::keymap::key_help_lines`] 한 벌이고(`Screen::Keys` 와 같은 줄) 뷰가 판을
     /// 열 때 사용자 바인딩과 함께 넣는다(core 에 IO 가 없다는 계약).
@@ -1145,6 +1148,11 @@ pub struct Screens {
     palette_arghist: Vec<(String, Vec<String>)>,
     /// 인자 자리 후보에서 고른 줄(정본 `_sel` — 글이 바뀌면 0).
     palette_arg_pick: usize,
+    /// 선택지 모드에서 고른 자리(pytmux-634 · 정본 `_choice_sel`). `None` = 아직 안 옮겼다 →
+    /// 지금 설정값의 자리(정본 `_current_choice_idx` — 글이 바뀌면 그 자리로 돌아간다).
+    palette_choice_pick: Option<usize>,
+    /// 선택지 명령의 지금 값 `(명령, 값)` — 뷰가 키 직전에 넣는다(core 에 상태가 없다).
+    palette_option_values: Vec<(String, String)>,
     /// 물음의 **흐린 제안**(정본 `SuggestFromList([지금 이름])` — 이름 바꾸기 · pytmux-621).
     ///
     /// 입력값이 아니다: 빈 칸이면 자리표시로 흐리게 보이고, 친 글이 그 접두면 나머지가 흐리게
@@ -1255,6 +1263,7 @@ impl Screens {
         self.open(Screen::Commands);
         self.palette_tab = 0;
         self.palette_arg_pick = 0;
+        self.palette_choice_pick = None;
     }
 
     /// 팔레트에서 펴 있는 카테고리 탭(0 = `전체`).
@@ -1638,6 +1647,7 @@ impl Screens {
         self.detail.clear();
         // 플러그인 검색도 판을 열 때마다 비어서 시작한다(정본 `compose` 의 `_query = ""`).
         self.plugin_query.clear();
+        self.palette_choice_pick = None;
         if self.top() == Some(screen) {
             self.stack.pop();
             return;
@@ -1766,7 +1776,7 @@ impl Screens {
                     self.merge_horizontal = false;
                     return Some(ScreenKey::Consumed);
                 }
-                _ => return Some(self.press_list(key)),
+                _ => return Some(self.press_list_canon(key)),
             }
         }
         // 트리는 목록형이지만 `d`/`x` 를 **자기 키로** 먹는다(그 줄 닫기).
@@ -1921,7 +1931,7 @@ impl Screens {
         }
         // 목록형 화면은 **고르는** 화면이라 같은 키가 다른 일을 한다.
         if self.top().is_some_and(Self::is_list) {
-            return Some(self.press_list(key));
+            return Some(self.press_list_canon(key));
         }
         // 알림 이력은 **커서가 있는 읽기 판**이다(pytmux-539) — 굴리는 판도 고르는 판도
         // 아닌 셋째 손이라 따로 둔다.
@@ -2168,7 +2178,154 @@ impl Screens {
     }
 }
 
+/// 팔레트 **선택지 모드**의 지금 모습(pytmux-634 · 정본 `PromptScreen._choices`/`_choice_sel`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteChoices {
+    /// 명령 이름(소문자 — 정본 `_hint_cmd`).
+    pub cmd: String,
+    /// `(보임, 값)` — 보임은 이미 번역했다.
+    pub choices: Vec<(String, String)>,
+    /// 강조된 자리.
+    pub pick: usize,
+}
+
+impl PaletteChoices {
+    /// `Enter` 가 실행할 줄 — 정본 `_run_choice`: 값이 비면(토글·보이는 영역) 이름만.
+    pub fn line(&self) -> String {
+        match self.choices.get(self.pick) {
+            Some((_, v)) if !v.is_empty() => format!("{} {v}", self.cmd),
+            _ => self.cmd.clone(),
+        }
+    }
+}
+
+/// 목록 판의 항해 키가 정본에서 **무엇을 하나**(pytmux-636) — 정본 화면이 쓰는 목록 위젯이 정한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListNav {
+    /// 맨 `ListView`(Textual 8.2.5 — 그 `BINDINGS` 는 enter/up/down 뿐): `Home`·`End`·`PgUp`·
+    /// `PgDn` 은 `ScrollableContainer` 의 `scroll_*`/`page_*` — **글만 굴리고 커서는 제자리**,
+    /// `↑↓` 는 끝에서 멈춘다, `Tab` 은 포커스 이동(판에 포커스가 하나라 무동작).
+    Scroll,
+    /// `_CycleListView`: `↑↓` 는 끝에서 **돈다**, `Home`/`End` = 커서 처음/끝, `PgUp`/`PgDn` =
+    /// 커서 ± 보이는 줄 수(끝에서 멈춘다).
+    Cycle,
+    /// 그 밖(정본 짝이 맨 목록 위젯이 아닌 판 — 팔레트·메뉴·프리셋·플러그인 판) — 종전 손.
+    Legacy,
+}
+
+impl ListNav {
+    /// 판 → 정본 목록 위젯의 손. 답지는 `gen_screen_keys.py` 의 `list_nav` 칸이고
+    /// `screen_key_conformance` 가 이 표와 맞댄다.
+    pub fn of(screen: Screen) -> ListNav {
+        match screen {
+            // ChooseTreeScreen · ChooseBufferScreen · ChooseLayoutScreen · MergeRemoteTabScreen
+            Screen::Tree | Screen::Buffers | Screen::SavedLayouts | Screen::MergeRemote => {
+                ListNav::Scroll
+            }
+            // TabSwitcherScreen · SearchResultsScreen 은 `_CycleListView` 다.
+            Screen::Tabs | Screen::SearchResults => ListNav::Cycle,
+            _ => ListNav::Legacy,
+        }
+    }
+}
+
 impl Screens {
+    /// 탭 스위처의 탭 줄 자리를 넣는다(뷰가 키를 먹기 직전 · `set_list_view` 와 같은 때).
+    pub fn set_list_heads(&mut self, heads: Vec<usize>) {
+        self.list_heads = heads;
+    }
+
+    /// 목록 판의 키 — 정본 목록 위젯의 손([`ListNav`])으로 가른다(pytmux-636).
+    fn press_list_canon(&mut self, key: Key) -> ScreenKey {
+        let Some(screen) = self.top() else {
+            return self.press_list(key);
+        };
+        match ListNav::of(screen) {
+            ListNav::Legacy => self.press_list(key),
+            ListNav::Scroll => match key {
+                Key::Down => {
+                    self.selected = self.selected.saturating_add(1);
+                    if self.list_total > 0 {
+                        self.selected = self.selected.min(self.list_total - 1);
+                    }
+                    self.follow_cursor();
+                    ScreenKey::Consumed
+                }
+                Key::Up => {
+                    self.selected = self.selected.saturating_sub(1);
+                    self.follow_cursor();
+                    ScreenKey::Consumed
+                }
+                // 정본: 포커스 이동 — 판의 포커스가 하나뿐이라 아무 일도 없다.
+                Key::Tab | Key::BackTab => ScreenKey::Consumed,
+                Key::Home => {
+                    self.scroll = 0;
+                    ScreenKey::Consumed
+                }
+                Key::End => {
+                    self.scroll = self.max_list_top();
+                    ScreenKey::Consumed
+                }
+                Key::PageUp => {
+                    self.scroll = self.scroll.saturating_sub(self.list_rows.max(1));
+                    ScreenKey::Consumed
+                }
+                Key::PageDown => {
+                    self.scroll =
+                        self.scroll.saturating_add(self.list_rows.max(1)).min(self.max_list_top());
+                    ScreenKey::Consumed
+                }
+                _ => self.press_list(key),
+            },
+            ListNav::Cycle => {
+                let n = self.list_total;
+                let last = n.saturating_sub(1);
+                let cur = self.selected.min(last);
+                match key {
+                    Key::Down if n > 0 => {
+                        self.selected = if cur >= last { 0 } else { cur + 1 };
+                    }
+                    Key::Up if n > 0 => {
+                        self.selected = if cur == 0 { last } else { cur - 1 };
+                    }
+                    Key::Home => self.selected = 0,
+                    Key::End if n > 0 => self.selected = last,
+                    Key::PageUp => self.selected = cur.saturating_sub(self.list_rows.max(1)),
+                    Key::PageDown if n > 0 => {
+                        self.selected = cur.saturating_add(self.list_rows.max(1)).min(last);
+                    }
+                    // 탭 스위처: 탭 줄만 돈다(정본 `action_cycle` — 다음 탭 줄, 없으면 첫 탭 줄).
+                    // 탭 줄을 아직 못 받았으면(뷰가 안 넣었다) 줄마다 탭이라고 본다 — 종전 손.
+                    Key::Tab | Key::BackTab if screen == Screen::Tabs && self.list_heads.is_empty() => {
+                        return self.press_list(key);
+                    }
+                    Key::Tab | Key::BackTab if screen == Screen::Tabs => {
+                        let heads = &self.list_heads;
+                        self.selected = if key == Key::Tab {
+                            heads.iter().copied().find(|&i| i > cur).unwrap_or(heads[0])
+                        } else {
+                            heads
+                                .iter()
+                                .rev()
+                                .copied()
+                                .find(|&i| i < cur)
+                                .unwrap_or(heads[heads.len() - 1])
+                        };
+                    }
+                    // 검색 결과: 포커스 이동 — 판의 포커스가 하나뿐이라 아무 일도 없다.
+                    Key::Tab | Key::BackTab => {}
+                    // 줄 수를 아직 못 받았으면(뷰가 `set_list_view` 를 안 불렀다) 종전 손.
+                    Key::Down | Key::Up | Key::End | Key::PageDown => {
+                        return self.press_list(key);
+                    }
+                    _ => return self.press_list(key),
+                }
+                self.follow_cursor();
+                ScreenKey::Consumed
+            }
+        }
+    }
+
     /// 목록형 화면의 키. 파이썬 클라의 탭 스위처와 같은 동선이다.
     ///
     /// `Tab`/`↓` 다음 · `Shift+Tab`/`↑` 이전 · `Enter` 확정 · 그 외 취소.
@@ -2699,6 +2856,87 @@ impl Screens {
         self.palette_arg_pick
     }
 
+    // ── 팔레트 선택지 모드(pytmux-634 · 정본 `PromptScreen._refresh_hint`) ───────────────
+
+    /// 선택지 명령의 지금 값을 넣는다 — `(명령, 값)`. 뷰가 키 직전에 부른다.
+    pub fn set_palette_option_values(&mut self, values: Vec<(String, String)>) {
+        self.palette_option_values = values;
+    }
+
+    /// 친 줄이 **선택지 모드**면 그 선택지 — 정본 게이트 다섯 그대로다:
+    /// ① 첫 낱말이 명령 이름 그대로(대소문자 무시) ② 뒤에 인자가 없음(공백만 허용)
+    /// ③ 인자 자리 후보가 떠 있지 않음 ④ 그 이름 말고 **부분일치하는 명령이 없음**(정본
+    /// `_refresh_cands` 가 후보를 숨기는 조건 — 그래서 `inactive-dim` 은 `inactive-dim-ratio`
+    /// 와 겹쳐 선택지 모드에 못 든다) ⑤ 선택지 표(코어 + `select-layout` + 플러그인 표면)에 있음.
+    pub fn palette_choices(&self) -> Option<PaletteChoices> {
+        if self.top() != Some(Screen::Commands) {
+            return None;
+        }
+        let stripped = self.typed.trim_start();
+        let first = stripped.split_whitespace().next()?;
+        if !stripped[first.len()..].trim().is_empty() {
+            return None;
+        }
+        if self.palette_args().is_some_and(|a| !a.items.is_empty()) {
+            return None;
+        }
+        let name = first.to_lowercase();
+        let norm = |s: &str| s.to_lowercase().replace([' ', '_'], "-");
+        let qs = norm(&name);
+        // 이름 풀 = 정본 `COMMANDS` 의 이름들 — 우리 팔레트 줄은 인자까지 단 줄(`split-window -h`)
+        //   이 있으니 첫 낱말만 세고, 같은 이름이 둘(코어 표 + 플러그인 표면)이어도 한 명령이다.
+        //   코어 선택지 명령 자신도 넣는다(팔레트에서 숨긴 이름 — `monitor-bell` — 도 정본
+        //   `COMMANDS` 에 있다). ⚠ 플러그인 선택지 이름은 **안 넣는다** — 명령으로 등록 안 된
+        //   별칭(`ph-lines`)은 정본에서 완성 명령이 아니라(`_cmd_desc` 가 `None`) 모드에 못 든다.
+        let pool: std::collections::BTreeSet<&str> = crate::keymap::PALETTE
+            .iter()
+            .map(|e| split_first_space(e.name).0)
+            .chain(self.plugins.commands.iter().map(|c| c.name.as_str()))
+            .chain(crate::options::COMMAND_OPTIONS.iter().map(|o| o.command))
+            .chain(std::iter::once("select-layout"))
+            .collect();
+        let mut hits = pool.into_iter().filter(|n| norm(n).contains(&qs));
+        let only = hits.next()?;
+        if hits.next().is_some() || norm(only) != qs {
+            return None;
+        }
+        let choices: Vec<(String, String)> = if let Some(opts) = crate::options::options_for(&name)
+        {
+            opts.specs
+                .first()?
+                .choices
+                .iter()
+                .map(|c| (crate::i18n::t(c.label).to_owned(), c.value.to_owned()))
+                .collect()
+        } else if name == "select-layout" {
+            crate::keymap::LAYOUT_PRESETS
+                .iter()
+                .map(|(label, value)| (crate::i18n::t(label).to_owned(), (*value).to_owned()))
+                .collect()
+        } else {
+            let opt = self.plugins.command_options.iter().find(|o| o.name == name)?;
+            opt.choices
+                .iter()
+                .map(|(label, value)| (crate::i18n::t(label).to_owned(), value.clone()))
+                .collect()
+        };
+        if choices.is_empty() {
+            return None;
+        }
+        // 정본 `_current_choice_idx` — 지금 값과 같은(대소문자 무시) 선택지, 모르면 첫째.
+        let current = self
+            .palette_option_values
+            .iter()
+            .find(|(n, _)| *n == name)
+            .and_then(|(_, v)| {
+                let v = v.to_lowercase();
+                choices.iter().position(|(_, c)| !c.is_empty() && c.to_lowercase() == v)
+            })
+            .unwrap_or(0);
+        let pick = self.palette_choice_pick.unwrap_or(current).min(choices.len() - 1);
+        Some(PaletteChoices { cmd: name, choices, pick })
+    }
+
     // ── 플러그인 관리 판의 이름 검색(pytmux-591) ────────────────────────────────
 
     /// 지금까지 친 검색 글자(정본 `#plgsearch` 의 값).
@@ -2748,10 +2986,12 @@ impl Screens {
         match key {
             Key::Down | Key::Tab => {
                 self.selected = Self::menu_step(&rows, self.selected, true);
+                self.follow_cursor();
                 ScreenKey::Consumed
             }
             Key::Up | Key::BackTab => {
                 self.selected = Self::menu_step(&rows, self.selected, false);
+                self.follow_cursor();
                 ScreenKey::Consumed
             }
             Key::Left => {
@@ -2767,6 +3007,7 @@ impl Screens {
                 Some(crate::MenuRow::Group(group)) => {
                     self.menu_group = Some(group);
                     self.selected = 0;
+                    self.scroll = 0;
                     ScreenKey::Consumed
                 }
                 Some(crate::MenuRow::Item(entry)) => {
@@ -2788,6 +3029,25 @@ impl Screens {
                 self.close_top();
                 ScreenKey::Closed
             }
+            // ★ 항해 키 넷은 **보기만 굴린다**(pytmux-641 ① · 정본 `#menu` 는 맨 `ListView` —
+            //   `scroll_home`/`scroll_end`/`page_up`/`page_down`, 커서 제자리).
+            Key::Home => {
+                self.scroll = 0;
+                ScreenKey::Consumed
+            }
+            Key::End => {
+                self.scroll = self.max_list_top();
+                ScreenKey::Consumed
+            }
+            Key::PageUp => {
+                self.scroll = self.scroll.saturating_sub(self.list_rows.max(1));
+                ScreenKey::Consumed
+            }
+            Key::PageDown => {
+                self.scroll =
+                    self.scroll.saturating_add(self.list_rows.max(1)).min(self.max_list_top());
+                ScreenKey::Consumed
+            }
             // ★ **모르는 키는 삼킨다**(pytmux-454). 정본 `MenuScreen.on_key` 는
             //   `escape`·`f10` 둘만 먹고 그 밖은 흘려보낸다 — 메뉴는 층을 오르내리는
             //   판이라, 잘못 누른 글자 하나에 사라지면 들어온 자리를 다시 찾아야 한다.
@@ -2805,6 +3065,8 @@ impl Screens {
             .iter()
             .position(|row| matches!(row, crate::MenuRow::Group(g) if *g == group))
             .unwrap_or(0);
+        self.scroll = 0;
+        self.follow_cursor();
     }
 
     /// 설정 화면의 키. 목록과 같지만 **`Enter` 가 닫지 않는다**.
@@ -2954,6 +3216,16 @@ impl Screens {
         } else if self.selected >= self.scroll + rows {
             self.scroll = self.selected + 1 - rows;
         }
+    }
+
+    /// 팔레트 커서가 움직였다 — 줄 수를 알면 끝(`usize::MAX`)을 접고 커서가 보이게 굴린다
+    /// (정본 `ListView` 의 `index` 변경 = `scroll_to_widget`). 줄 수를 모르면 종전대로 둔다.
+    fn follow_palette_cursor(&mut self) {
+        if self.list_total == 0 {
+            return;
+        }
+        self.selected = self.selected.min(self.list_total - 1);
+        self.follow_cursor();
     }
 
     /// 설정·플러그인 판의 창 첫 줄(`scroll` 을 그 판의 보기 자리로 쓴다).
@@ -3211,6 +3483,7 @@ impl Screens {
                 Key::Tab => {
                     self.typed = format!("{} {}", args.cmd, args.items[pick].0);
                     self.palette_arg_pick = 0;
+                    self.palette_choice_pick = None;
                     return ScreenKey::Consumed;
                 }
                 Key::Enter => {
@@ -3225,6 +3498,31 @@ impl Screens {
                 _ => {}
             }
         }
+        // ★ **선택지 모드**(pytmux-634 · 정본 `PromptScreen.on_key` 의 `_choices` 갈래). 이름만
+        //   친 선택지 명령이면 ←↑ 이전 · →↓ 다음(끝에서 돈다 · 정본 `% len`)이고 `Enter` 가
+        //   고른 값으로 **바로 실행**한다(정본 `_run_choice`). 그동안 ←→ 는 분류 탭이 아니다
+        //   (사람 결정 2026-11-13). `Tab`·`Home`·`End` 는 정본 입력칸 몫이라 보이는 일이 없다 —
+        //   삼킨다. 글자·`Backspace`·`Esc` 는 아래 종전 갈래(글이 바뀌면 지금 값 자리로).
+        if let Some(ch) = self.palette_choices() {
+            let n = ch.choices.len();
+            match key {
+                Key::Left | Key::Up => {
+                    self.palette_choice_pick = Some((ch.pick + n - 1) % n);
+                    return ScreenKey::Consumed;
+                }
+                Key::Right | Key::Down => {
+                    self.palette_choice_pick = Some((ch.pick + 1) % n);
+                    return ScreenKey::Consumed;
+                }
+                Key::Tab | Key::BackTab | Key::Home | Key::End => return ScreenKey::Consumed,
+                Key::Enter => {
+                    let line = ch.line();
+                    self.close_top();
+                    return ScreenKey::RunLine(line);
+                }
+                _ => {}
+            }
+        }
         match key {
             // 끝에 친 `?` 는 **명령 목록을 연다**(정본 `on_input_changed` — `?` 를 떼고
             // `CommandListScreen` 을 띄운다). 우리 팔레트는 그 목록을 **이미** 보이고 있으므로
@@ -3232,6 +3530,7 @@ impl Screens {
             Key::Char('?') => ScreenKey::Consumed,
             Key::Char(c) => {
                 self.palette_arg_pick = 0;
+                self.palette_choice_pick = None;
                 self.typed.push(c);
                 // 팔레트는 이미 고정 ':' 프리픽스를 화면에 그리고 있다(정본
                 // `on_input_changed`, pytmux-175) — 맨 앞에서부터 이어지는 ':' 는
@@ -3252,6 +3551,7 @@ impl Screens {
             Key::Backspace => {
                 self.typed.pop();
                 self.palette_arg_pick = 0;
+                self.palette_choice_pick = None;
                 self.selected = 0;
                 self.rehome_palette_tab();
                 ScreenKey::Consumed
@@ -3261,19 +3561,23 @@ impl Screens {
             Key::Right => {
                 self.palette_tab = (self.palette_tab + 1) % tabs;
                 self.selected = 0;
+                self.scroll = 0;
                 ScreenKey::Consumed
             }
             Key::Left => {
                 self.palette_tab = (self.palette_tab + tabs - 1) % tabs;
                 self.selected = 0;
+                self.scroll = 0;
                 ScreenKey::Consumed
             }
             Key::Down | Key::Tab => {
                 self.selected = self.selected.saturating_add(1);
+                self.follow_palette_cursor();
                 ScreenKey::Consumed
             }
             Key::Up | Key::BackTab => {
                 self.selected = self.selected.saturating_sub(1);
+                self.follow_palette_cursor();
                 ScreenKey::Consumed
             }
             // 항해 키 둘 — 정본 `CommandListScreen.on_key` 의 `home`·`end` 팔이다
@@ -3282,10 +3586,24 @@ impl Screens {
             // 끝이 몇 번째인지는 뷰가 안다 — `press_list` 와 같은 규약으로 `usize::MAX`.
             Key::Home => {
                 self.selected = 0;
+                self.follow_palette_cursor();
                 ScreenKey::Consumed
             }
             Key::End => {
                 self.selected = usize::MAX;
+                self.follow_palette_cursor();
+                ScreenKey::Consumed
+            }
+            // ★ `PgUp`/`PgDn` 은 **보기만 굴린다**(pytmux-641 ① · 정본 `CommandListScreen` 의 목록은
+            //   맨 `ListView` 라 이 둘이 `ScrollableContainer.page_up/page_down` — 커서 제자리).
+            //   종전에는 아래 `_` 로 떨어져 아무 일도 안 했다.
+            Key::PageUp => {
+                self.scroll = self.scroll.saturating_sub(self.list_rows.max(1));
+                ScreenKey::Consumed
+            }
+            Key::PageDown => {
+                self.scroll =
+                    self.scroll.saturating_add(self.list_rows.max(1)).min(self.max_list_top());
                 ScreenKey::Consumed
             }
             Key::Enter => {
@@ -3309,6 +3627,8 @@ impl Screens {
     /// 이게 없으면 `패널` 탭에서 `kill-tab` 을 치는 순간 화면이 "맞는 명령이 없다"가 되고,
     /// 사용자는 이름을 잘못 안 줄 안다 — 실제로는 옆 탭에 있다.
     fn rehome_palette_tab(&mut self) {
+        // 걸러진 목록이 바뀌었다 — 보기도 맨 위부터(커서가 0 으로 돌아가는 것과 짝 · pytmux-641).
+        self.scroll = 0;
         // 플러그인 줄도 함께 센다 — `mdir` 을 치면 `탐색` 탭으로 옮겨 가야 한다.
         self.palette_tab =
             self.plugins.palette_tab_with_results(self.palette_tab, &self.typed, |_| None);

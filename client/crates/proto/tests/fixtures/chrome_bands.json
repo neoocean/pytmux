@@ -1,0 +1,526 @@
+{
+ "_comment": "python3 scripts/gen_chrome_bands.py 로 생성. 출처 = pytmuxlib/clientutil.py chrome_bands (pytmux-637).",
+ "height": 24,
+ "rows": [
+  {
+   "tabbar": false,
+   "position": "bottom",
+   "lines": 0,
+   "order": [
+    "view"
+   ],
+   "bands": {
+    "view": [
+     0,
+     24
+    ]
+   },
+   "report_rows": 24
+  },
+  {
+   "tabbar": false,
+   "position": "bottom",
+   "lines": 1,
+   "order": [
+    "view",
+    "status"
+   ],
+   "bands": {
+    "status": [
+     23,
+     1
+    ],
+    "view": [
+     0,
+     23
+    ]
+   },
+   "report_rows": 23
+  },
+  {
+   "tabbar": false,
+   "position": "bottom",
+   "lines": 2,
+   "order": [
+    "view",
+    "status"
+   ],
+   "bands": {
+    "status": [
+     22,
+     2
+    ],
+    "view": [
+     0,
+     22
+    ]
+   },
+   "report_rows": 22
+  },
+  {
+   "tabbar": false,
+   "position": "bottom",
+   "lines": 3,
+   "order": [
+    "view",
+    "status"
+   ],
+   "bands": {
+    "status": [
+     21,
+     3
+    ],
+    "view": [
+     0,
+     21
+    ]
+   },
+   "report_rows": 21
+  },
+  {
+   "tabbar": false,
+   "position": "bottom",
+   "lines": 4,
+   "order": [
+    "view",
+    "status"
+   ],
+   "bands": {
+    "status": [
+     20,
+     4
+    ],
+    "view": [
+     0,
+     20
+    ]
+   },
+   "report_rows": 20
+  },
+  {
+   "tabbar": false,
+   "position": "bottom",
+   "lines": 5,
+   "order": [
+    "view",
+    "status"
+   ],
+   "bands": {
+    "status": [
+     19,
+     5
+    ],
+    "view": [
+     0,
+     19
+    ]
+   },
+   "report_rows": 19
+  },
+  {
+   "tabbar": false,
+   "position": "top",
+   "lines": 0,
+   "order": [
+    "view"
+   ],
+   "bands": {
+    "view": [
+     0,
+     24
+    ]
+   },
+   "report_rows": 24
+  },
+  {
+   "tabbar": false,
+   "position": "top",
+   "lines": 1,
+   "order": [
+    "status",
+    "view"
+   ],
+   "bands": {
+    "status": [
+     0,
+     1
+    ],
+    "view": [
+     1,
+     23
+    ]
+   },
+   "report_rows": 23
+  },
+  {
+   "tabbar": false,
+   "position": "top",
+   "lines": 2,
+   "order": [
+    "status",
+    "view"
+   ],
+   "bands": {
+    "status": [
+     0,
+     2
+    ],
+    "view": [
+     2,
+     22
+    ]
+   },
+   "report_rows": 22
+  },
+  {
+   "tabbar": false,
+   "position": "top",
+   "lines": 3,
+   "order": [
+    "status",
+    "view"
+   ],
+   "bands": {
+    "status": [
+     0,
+     3
+    ],
+    "view": [
+     3,
+     21
+    ]
+   },
+   "report_rows": 21
+  },
+  {
+   "tabbar": false,
+   "position": "top",
+   "lines": 4,
+   "order": [
+    "status",
+    "view"
+   ],
+   "bands": {
+    "status": [
+     0,
+     4
+    ],
+    "view": [
+     4,
+     20
+    ]
+   },
+   "report_rows": 20
+  },
+  {
+   "tabbar": false,
+   "position": "top",
+   "lines": 5,
+   "order": [
+    "status",
+    "view"
+   ],
+   "bands": {
+    "status": [
+     0,
+     5
+    ],
+    "view": [
+     5,
+     19
+    ]
+   },
+   "report_rows": 19
+  },
+  {
+   "tabbar": true,
+   "position": "bottom",
+   "lines": 0,
+   "order": [
+    "tabbar",
+    "view"
+   ],
+   "bands": {
+    "tabbar": [
+     0,
+     1
+    ],
+    "view": [
+     1,
+     23
+    ]
+   },
+   "report_rows": 23
+  },
+  {
+   "tabbar": true,
+   "position": "bottom",
+   "lines": 1,
+   "order": [
+    "tabbar",
+    "view",
+    "status"
+   ],
+   "bands": {
+    "tabbar": [
+     0,
+     1
+    ],
+    "status": [
+     23,
+     1
+    ],
+    "view": [
+     1,
+     22
+    ]
+   },
+   "report_rows": 22
+  },
+  {
+   "tabbar": true,
+   "position": "bottom",
+   "lines": 2,
+   "order": [
+    "tabbar",
+    "view",
+    "status"
+   ],
+   "bands": {
+    "tabbar": [
+     0,
+     1
+    ],
+    "status": [
+     22,
+     2
+    ],
+    "view": [
+     1,
+     21
+    ]
+   },
+   "report_rows": 21
+  },
+  {
+   "tabbar": true,
+   "position": "bottom",
+   "lines": 3,
+   "order": [
+    "tabbar",
+    "view",
+    "status"
+   ],
+   "bands": {
+    "tabbar": [
+     0,
+     1
+    ],
+    "status": [
+     21,
+     3
+    ],
+    "view": [
+     1,
+     20
+    ]
+   },
+   "report_rows": 20
+  },
+  {
+   "tabbar": true,
+   "position": "bottom",
+   "lines": 4,
+   "order": [
+    "tabbar",
+    "view",
+    "status"
+   ],
+   "bands": {
+    "tabbar": [
+     0,
+     1
+    ],
+    "status": [
+     20,
+     4
+    ],
+    "view": [
+     1,
+     19
+    ]
+   },
+   "report_rows": 19
+  },
+  {
+   "tabbar": true,
+   "position": "bottom",
+   "lines": 5,
+   "order": [
+    "tabbar",
+    "view",
+    "status"
+   ],
+   "bands": {
+    "tabbar": [
+     0,
+     1
+    ],
+    "status": [
+     19,
+     5
+    ],
+    "view": [
+     1,
+     18
+    ]
+   },
+   "report_rows": 18
+  },
+  {
+   "tabbar": true,
+   "position": "top",
+   "lines": 0,
+   "order": [
+    "tabbar",
+    "view"
+   ],
+   "bands": {
+    "tabbar": [
+     0,
+     1
+    ],
+    "view": [
+     1,
+     23
+    ]
+   },
+   "report_rows": 23
+  },
+  {
+   "tabbar": true,
+   "position": "top",
+   "lines": 1,
+   "order": [
+    "status",
+    "tabbar",
+    "view"
+   ],
+   "bands": {
+    "tabbar": [
+     1,
+     1
+    ],
+    "status": [
+     0,
+     1
+    ],
+    "view": [
+     2,
+     22
+    ]
+   },
+   "report_rows": 22
+  },
+  {
+   "tabbar": true,
+   "position": "top",
+   "lines": 2,
+   "order": [
+    "status",
+    "tabbar",
+    "view"
+   ],
+   "bands": {
+    "tabbar": [
+     2,
+     1
+    ],
+    "status": [
+     0,
+     2
+    ],
+    "view": [
+     3,
+     21
+    ]
+   },
+   "report_rows": 21
+  },
+  {
+   "tabbar": true,
+   "position": "top",
+   "lines": 3,
+   "order": [
+    "status",
+    "tabbar",
+    "view"
+   ],
+   "bands": {
+    "tabbar": [
+     3,
+     1
+    ],
+    "status": [
+     0,
+     3
+    ],
+    "view": [
+     4,
+     20
+    ]
+   },
+   "report_rows": 20
+  },
+  {
+   "tabbar": true,
+   "position": "top",
+   "lines": 4,
+   "order": [
+    "status",
+    "tabbar",
+    "view"
+   ],
+   "bands": {
+    "tabbar": [
+     4,
+     1
+    ],
+    "status": [
+     0,
+     4
+    ],
+    "view": [
+     5,
+     19
+    ]
+   },
+   "report_rows": 19
+  },
+  {
+   "tabbar": true,
+   "position": "top",
+   "lines": 5,
+   "order": [
+    "status",
+    "tabbar",
+    "view"
+   ],
+   "bands": {
+    "tabbar": [
+     5,
+     1
+    ],
+    "status": [
+     0,
+     5
+    ],
+    "view": [
+     6,
+     18
+    ]
+   },
+   "report_rows": 18
+  }
+ ]
+}

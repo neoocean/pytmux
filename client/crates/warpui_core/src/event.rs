@@ -25,7 +25,11 @@ impl DispatchedEvent {
             | Event::LeftMouseUp { position, .. }
             | Event::LeftMouseDragged { position, .. }
             | Event::MiddleMouseDown { position, .. }
+            | Event::MiddleMouseUp { position, .. }
+            | Event::MiddleMouseDragged { position, .. }
             | Event::RightMouseDown { position, .. }
+            | Event::RightMouseUp { position, .. }
+            | Event::RightMouseDragged { position, .. }
             | Event::BackMouseDown { position, .. }
             | Event::ForwardMouseDown { position, .. } => {
                 if !ctx.is_covered(Point::from_vec2f(position, z_index)) {
@@ -125,13 +129,35 @@ pub enum Event {
         position: Vector2F,
         cmd: bool,
         shift: bool,
+        /// pytmux 추가(PROVENANCE §1) — 정본은 Ctrl+가운데 누름을 삼킨다.
+        ctrl: bool,
         click_count: u32,
+    },
+    /// pytmux 추가(PROVENANCE §1) — 가운데 버튼 뗌. 상류는 누름만 줬다.
+    MiddleMouseUp {
+        position: Vector2F,
+        modifiers: ModifiersState,
+    },
+    /// pytmux 추가(PROVENANCE §1) — 가운데 버튼을 쥔 채 움직임.
+    MiddleMouseDragged {
+        position: Vector2F,
+        modifiers: ModifiersState,
     },
     RightMouseDown {
         position: Vector2F,
         cmd: bool,
         shift: bool,
         click_count: u32,
+    },
+    /// pytmux 추가(PROVENANCE §1) — 오른쪽 버튼 뗌. 상류는 누름만 줬다.
+    RightMouseUp {
+        position: Vector2F,
+        modifiers: ModifiersState,
+    },
+    /// pytmux 추가(PROVENANCE §1) — 오른쪽 버튼을 쥔 채 움직임.
+    RightMouseDragged {
+        position: Vector2F,
+        modifiers: ModifiersState,
     },
     /// One of the side buttons often found on external mice.
     /// It cycles forward between tabs by default.
@@ -264,7 +290,11 @@ impl InBoundsExt for Event {
             | Event::LeftMouseUp { position, .. }
             | Event::LeftMouseDragged { position, .. }
             | Event::MiddleMouseDown { position, .. }
+            | Event::MiddleMouseUp { position, .. }
+            | Event::MiddleMouseDragged { position, .. }
             | Event::RightMouseDown { position, .. }
+            | Event::RightMouseUp { position, .. }
+            | Event::RightMouseDragged { position, .. }
             | Event::ForwardMouseDown { position, .. }
             | Event::BackMouseDown { position, .. }
             | Event::MouseMoved { position, .. } => bounds.contains_point(*position),
@@ -327,12 +357,42 @@ impl Scale for Event {
                 position,
                 cmd,
                 shift,
+                ctrl,
                 click_count,
             } => Event::MiddleMouseDown {
                 position: position.scale_up(zoom_factor),
                 cmd,
                 shift,
+                ctrl,
                 click_count,
+            },
+            Event::MiddleMouseUp {
+                position,
+                modifiers,
+            } => Event::MiddleMouseUp {
+                position: position.scale_up(zoom_factor),
+                modifiers,
+            },
+            Event::MiddleMouseDragged {
+                position,
+                modifiers,
+            } => Event::MiddleMouseDragged {
+                position: position.scale_up(zoom_factor),
+                modifiers,
+            },
+            Event::RightMouseUp {
+                position,
+                modifiers,
+            } => Event::RightMouseUp {
+                position: position.scale_up(zoom_factor),
+                modifiers,
+            },
+            Event::RightMouseDragged {
+                position,
+                modifiers,
+            } => Event::RightMouseDragged {
+                position: position.scale_up(zoom_factor),
+                modifiers,
             },
             Event::RightMouseDown {
                 position,

@@ -568,7 +568,11 @@ def _token_log_spec(server, selected=0):
             for day, tok, p in data]
     total = sum(tok for _d, tok, _p in data)
     # 자리가 있는 글은 **재료까지** 싣는다(로케일 ⓑ) — 원문이 매번 달라 키가 못 된다.
-    title, title_spec = i18n.phrase("pscreen.spec_tklog_title_sum", tok=f"{total:,}")
+    # Σ 는 정본 토큰 팝업의 Σ 와 같은 짧은 표기다(pytmux-641 ③ · `usagelog._fmt_tokens` —
+    # 정본 `_sigma_text`/`usagehead` 가 쓰는 그 함수).
+    from . import usagelog
+    title, title_spec = i18n.phrase("pscreen.spec_tklog_title_sum",
+                                    tok=usagelog._fmt_tokens(int(total)))
     rows.extend(_hub_rows("claude-token-log", server))
     return _spec("claude-token-log", "table", title,
                  i18n.t("pscreen.spec_tklog_hint"),
@@ -613,14 +617,19 @@ def _machine_rows(server):
 
 
 def _machines_spec(server, selected=0):
+    from . import usagelog
     data, note = _machine_rows(server)
     # 막대는 **천분율 정수**로 싣는다 — 클라 쪽 구조체가 `Eq` 라(프레임 변화 판정) 부동
     # 소수를 넣으면 그 파생을 잃는다. 막대 한 줄에 1‰ 보다 고운 눈금은 뜻이 없다.
-    rows = [{"key": label, "label": label, "cols": [f"{tok:,}"],
+    # 토큰 칸은 정본 TUI 와 같은 **짧은 표기**다(pytmux-638 ① · `usagelog._fmt_tokens` — 정본
+    # `TokenLogScreen._tok_aligned` 가 쓰는 그 함수). 앞 공백 정렬은 고정폭 표의 그림이라 안 싣는다.
+    rows = [{"key": label, "label": label, "cols": [usagelog._fmt_tokens(int(tok))],
              "bar": max(0, min(1000, int(round(ratio * 1000))))}
             for label, tok, ratio in data]
     total = sum(tok for _l, tok, _r in data)
-    title, title_spec = i18n.phrase("pscreen.spec_machines_title", tok=f"{total:,}")
+    # Σ = 정본 Σ 와 같은 짧은 표기(pytmux-641 ③).
+    title, title_spec = i18n.phrase("pscreen.spec_machines_title",
+                                    tok=usagelog._fmt_tokens(int(total)))
     rows.extend(_hub_rows("claude-token-machines", server))
     return _spec("claude-token-machines", "table", title,
                  i18n.t("pscreen.spec_machines_hint"),
@@ -1518,6 +1527,7 @@ def _tree_rows(server, opened=(), sess=None):
     nodes, note, pl = _tree_nodes(server, opened, sess)
     if not nodes:
         return nodes, note
+    from . import usagelog
     pct5h = (pl or {}).get("hourly_pct") or {}
     pct1w = (pl or {}).get("hourly_week_pct") or {}
     leaf = [n["tokens"] for n in nodes if n["kind"] in ("day", "hour")]
@@ -1535,7 +1545,8 @@ def _tree_rows(server, opened=(), sess=None):
         rows.append({
             "key": n["key"] or "",
             "label": n["label"],
-            "cols": [f"{tok:,}"] + lim_cols,
+            # 정본 기간 트리의 토큰 칸 = 짧은 표기(pytmux-638 ① · `usagelog._fmt_tokens`).
+            "cols": [usagelog._fmt_tokens(tok)] + lim_cols,
             # 칸마다의 **뜻** — `cols` 와 같은 차례다(pytmux-419 ⑥). 토큰 칸은 뜻이
             # 없어 빈 이름이고(정본도 그 칸은 한 색이다), 뒤 둘만 비율 의미색을 진다.
             # ⚠ 길이를 맞춰 실는다: 어긋나면 5h% 의 뜻이 1w% 칸에 붙어 **색이 조용히
@@ -1591,8 +1602,9 @@ def _sessions_spec(server, sess=None, selected=0):
         act = pl.get("active_session")
         for i, (label, tok, _share) in enumerate(st["groups"]):
             row = {"key": str(label), "label": str(label),
+                   # 정본 세션 탭의 토큰 칸 = 짧은 표기(pytmux-638 ① · `usagelog._fmt_tokens`).
                    "cols": [st["times"][i] if i < len(st["times"]) else "",
-                            f"{int(tok):,}"],
+                            usagelog._fmt_tokens(int(tok))],
                    "depth": 0, "expand": "",
                    "bar": (max(0, min(1000, int(round(tok / top * 1000))))
                            if top else 0)}

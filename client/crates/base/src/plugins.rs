@@ -65,6 +65,17 @@ pub struct PluginSurface {
     pub settings: Vec<PluginSetting>,
     /// 코어에 없던 설정 분류(좌측 세로탭에 이어 붙일 것). 순서가 뜻이라 리스트다.
     pub setting_cats: Vec<String>,
+    /// 선택지 인자 명령(플러그인 몫 · pytmux-634 · 서버 `plugin_surface.command_options`).
+    pub command_options: Vec<PluginCommandOption>,
+}
+
+/// 플러그인 선택지 명령 하나 — 정본 `command_options[name][0]` 의 선택지를 `(보임, 값)` 으로.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PluginCommandOption {
+    pub name: String,
+    pub choices: Vec<(String, String)>,
+    /// 지금 값이 실리는 status 칸 이름(정본 `command_option_current` 가 읽는 속성). 비면 미상.
+    pub state: String,
 }
 
 /// 설정 화면의 한 줄이 어디서 왔나. 자리(index)는 **코어 뒤에 플러그인**이 이어지는
