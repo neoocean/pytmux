@@ -222,7 +222,7 @@ fn a_message_survives_the_tcp_round_trip() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         assert!(std::time::Instant::now() < deadline, "메시지가 안 왔다");
-        if let Some(ServerMessage::Error { msg }) = conn.next_message().unwrap() {
+        if let Some(ServerMessage::Error { msg, .. }) = conn.next_message().unwrap() {
             assert_eq!(msg, "그런 탭 없음");
             break;
         }

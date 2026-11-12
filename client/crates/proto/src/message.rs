@@ -173,10 +173,25 @@ pub enum ServerMessage {
     /// 서버가 연결을 정상 종료한다.
     #[serde(rename = "bye")]
     Bye,
+    /// 작업 보존 재시작 통지(정본 `serverpersist.restart_server`) — 곧 끊기는 연결을 종료가
+    /// 아니라 **다시 붙을 일**로 다루라는 뜻이다. `relaunch` 면 클라도 다시 띄운다
+    /// (`cmd restart-all`). 이 변형이 없던 동안 `Unknown` 으로 버려졌다(pytmux-585).
+    #[serde(rename = "restarting")]
+    Restarting {
+        #[serde(default)]
+        relaunch: bool,
+    },
+    /// 서버가 지은 오류. 핸드셰이크 거절은 `msg` 가 아니라 `error` 낱말(`proto_mismatch` ·
+    /// `auth_failed`)과 `server_proto` 로 온다 — 그 둘을 안 받던 동안 빈 알림이 떴다
+    /// (pytmux-586 G5).
     #[serde(rename = "error")]
     Error {
         #[serde(default)]
         msg: String,
+        #[serde(default)]
+        error: Option<String>,
+        #[serde(default)]
+        server_proto: Option<u32>,
     },
     /// `request_restart_check` 회신 — 작업 보존 재시작이 안전한가.
     ///
@@ -290,6 +305,7 @@ impl ServerMessage {
             Self::Cwd { .. } => "cwd",
             Self::Clipboard { .. } => "clipboard",
             Self::Bye => "bye",
+            Self::Restarting { .. } => "restarting",
             Self::Error { .. } => "error",
             Self::Notice { .. } => "notice",
             Self::Version { .. } => "version",

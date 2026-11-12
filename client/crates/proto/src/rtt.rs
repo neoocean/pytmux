@@ -257,6 +257,15 @@ impl RttHist {
         }
     }
 
+    /// 새 채널로 갈아 끼웠다 — 히스테리시스 표본과 degraded 를 비운다(정본
+    /// `_reconnect_after_drop` · `_force_reconnect` 의 `_net_bad = _net_good = 0`). 그래프
+    /// 이력은 남긴다(정본도 `_net_rtt_hist` 는 안 지운다).
+    pub fn reset_after_reconnect(&mut self) {
+        self.bad = 0;
+        self.good = 0;
+        self.degraded = false;
+    }
+
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }

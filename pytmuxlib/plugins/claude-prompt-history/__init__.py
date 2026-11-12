@@ -164,7 +164,8 @@ class _PromptHistoryPlugin:
             return "broadcast"          # 모든 클라에 새 행수 status 반영
         if action == "ph_scroll_to":
             from .server import scroll_to_prompt
-            ok = scroll_to_prompt(server, sess, int(msg.get("index", 0)))
+            ok = scroll_to_prompt(server, sess, int(msg.get("index", 0)),
+                                  pane_id=msg.get("pane"))
             # 점프 성공 시 스크롤 변경을 모든 클라에 반영(pane.scroll 은 공유 서버 상태).
             # 실패는 **요청한 클라에게 말한다**(pytmux-544 — 종전에는 무동작이었고
             # `ph.jump_fail` 문구는 등록만 되고 쓰이지 않았다).
@@ -183,16 +184,15 @@ class _PromptHistoryPlugin:
         if req.get("do") == "open":
             if req.get("name") not in _OPEN_ALIASES:
                 return None                 # 내 이름이 아니다
-            return self._open_spec(server, sess)
+            # 고정 바 클릭(GUI)은 `pane=<id>` 를 싣는다 — 정본 `client_click` 이 **눌린 패널**의
+            # 이력을 여는 것과 같다(pytmux-587). 친 명령의 다른 인자는 정본처럼 무시한다.
+            return self._open_spec(server, sess, pane_id=_pane_arg(req.get("args")))
         if req.get("id") != "prompt-history":
             return None
         if req.get("do") == "jump":
             from .server import scroll_to_prompt
-            try:
-                index = int(req.get("input"))
-            except (TypeError, ValueError):
-                index = -1
-            if index >= 0 and scroll_to_prompt(server, sess, index):
+            pane_id, index = _split_key(req.get("input"))
+            if index >= 0 and scroll_to_prompt(server, sess, index, pane_id=pane_id):
                 # 스크롤은 **공유 서버 상태**라 모든 클라가 같이 따라와야 한다
                 # (정본의 `ph_scroll_to` 가 broadcast 를 돌려주는 것과 같은 이유).
                 server._broadcast_session(sess)
@@ -218,12 +218,13 @@ class _PromptHistoryPlugin:
                 row = int(req.get("row") or 0)
             except (TypeError, ValueError):
                 row = 0
-            return self._open_spec(server, sess, selected=row)
+            return self._open_spec(server, sess, selected=row,
+                                   pane_id=_split_key(req.get("input"))[0])
         if req.get("do") == "close":
             return {"t": "plugin_screen_close", "id": "prompt-history"}
         return None
 
-    def _open_spec(self, server, sess, selected=None):
+    def _open_spec(self, server, sess, selected=None, pane_id=None):
         """활성 패널의 프롬프트 목록 — **오래된 것이 위, 최신이 아래**이고 처음 커서는
         최신이다(정본 `_HistView`: `_sel = len - 1` · pytmux-616). 종전 판은 최신을 위로
         뒤집었고 이 자리 주석이 「정본 팝업과 같은 차례」라고 잘못 적고 있었다.
@@ -231,9 +232,8 @@ class _PromptHistoryPlugin:
         ⚠ 목록은 **tail 슬라이스**여야 한다 — 점프(`scroll_to_prompt`)의 index 가 그
         슬라이스 기준이고, 정본 클라도 status 로 받는 것이 tail 이다. 전체를 실으면
         오래된 세션에서 index 가 통째로 어긋나 **엉뚱한 자리로 점프**한다."""
-        from .server import _TAIL
-        win = sess.active_window if sess else None
-        pane = win.active_pane if win else None
+        from .server import _TAIL, _target_pane
+        pane = _target_pane(sess, pane_id)
         hist = list(getattr(pane, "_ph_history", []) or [])[-_TAIL:]
         max_lines = _clamp_lines(getattr(server, "_ph_max_lines", _DEFAULT_LINES))
         mark = i18n.t("ph.truncated_mark")
@@ -247,7 +247,9 @@ class _PromptHistoryPlugin:
                 show[-1] = show[-1] + mark
             rows.append({
                 # `key` 는 그 줄의 **뜻**(히스토리 자리)이다 — 점프가 이 번호를 쓴다.
-                "key": str(i),
+                # 패널을 함께 싣는다(`<패널>:<자리>`) — 점프·줄 수 다시 열기가 **이 판의 패널**로
+                # 간다(pytmux-587 · 비활성 패널의 바로 연 판에서 활성 패널이 굴러가던 결함).
+                "key": f"{pane.id}:{i}" if pane is not None else str(i),
                 "label": show[0],
                 "more": show[1:],
                 "cols": [str(i + 1)],
@@ -297,6 +299,19 @@ class _PromptHistoryPlugin:
     def client_status(self, app, msg):
         if "ph_max_lines" in msg:
             app.ph_max_lines = _clamp_lines(msg["ph_max_lines"])
+        # ★ 보는 쪽이 로컬 ↔ 원격(remote-attach 병합 탭)으로 바뀌면 표를 **버린다**
+        #   (pytmux-587). 두 서버는 패널 id 를 같은 번호로 준다 — 안 버리면 ⓐ 상류 status 에
+        #   `ph_panes` 가 없을 때 로컬 표가 그대로 남아 원격 패널 위에 로컬 프롬프트를 그리고,
+        #   ⓑ 상류 델타의 `h` 없는 항목이 같은 id 의 **로컬** `h` 를 물려받는다.
+        #   판정은 이 메시지의 `windows`(활성 탭이 remote 인가)로 한다 — 정본 `_viewing_remote`
+        #   와 같은 술어이고, 키가 없는 메시지면 직전 판정을 지킨다.
+        wins = msg.get("windows")
+        if isinstance(wins, list):
+            remote = any(isinstance(t, dict) and t.get("active") and t.get("remote")
+                         for t in wins)
+            if remote != getattr(app, "_ph_remote_view", False):
+                app._ph_remote_view = remote
+                app.ph_panes = {}
         if "ph_panes" not in msg:
             return
         prev = getattr(app, "ph_panes", {})
@@ -338,6 +353,32 @@ class _PromptHistoryPlugin:
 
 
 PLUGIN = _PromptHistoryPlugin()
+
+
+def _pane_arg(args):
+    """`plugin_open` 인자에서 `pane=<id>` 를 찾는다(없으면 None → 활성 패널)."""
+    for a in args or ():
+        if isinstance(a, str) and a.startswith("pane="):
+            try:
+                return int(a[5:])
+            except ValueError:
+                return None
+    return None
+
+
+def _split_key(key):
+    """줄 key → `(패널 id | None, 자리)`. `"<패널>:<자리>"` 또는 옛 모양 `"<자리>"`.
+    못 읽으면 자리 -1."""
+    text = str(key) if key is not None else ""
+    pane, _, idx = text.rpartition(":")
+    try:
+        index = int(idx)
+    except ValueError:
+        return None, -1
+    try:
+        return (int(pane) if pane else None), index
+    except ValueError:
+        return None, index
 
 
 def _jump_failed_notice(server, sess):

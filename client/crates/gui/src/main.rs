@@ -27,7 +27,6 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use proto::ServerLink;
 use warpui::{AssetProvider, platform};
 
 mod console;
@@ -75,7 +74,9 @@ const USAGE: &str = "\
 pytmux 네이티브 클라이언트(GUI)
 
   pytmux-gui                  떠 있는 서버에 붙는다(없으면 서버를 띄우고 붙는다)
-  pytmux-gui --socket <경로>  그 엔드포인트로만 붙는다(`tcp:host:port` 도 된다)
+  pytmux-gui attach           위와 같다(정본 `pytmux attach` 와 같은 낱말)
+  pytmux-gui --socket <경로>  그 엔드포인트로만 붙는다(`tcp:[NAME@]HOST:PORT` 도 된다)
+                              서버가 없으면 **그 자리에** 띄우고 붙는다(정본과 같다)
   pytmux-gui demo             서버 없이 블록 데모
   pytmux-gui --frame-dump=<png>  몇 초 뒤 첫 화면을 PNG 로 덤프하고 끝낸다(확인용)
   pytmux-gui --frame-keys=<키들>  덤프 전에 키를 넣는다(예: esc,:,s,p,l — 확인용)
@@ -302,10 +303,14 @@ fn save_frame(mut frame: warpui_core::platform::CapturedFrame, path: &str) {
 fn parse_args(argv: impl IntoIterator<Item = String>) -> Args {
     let mut socket = None;
     let mut demo = false;
+    let mut attach = false;
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "demo" => demo = true,
+            // 정본 `pytmux attach` — 인자 없음과 같은 뜻이다(정본 서브파서에도 인자가 없다 ·
+            // pytmux-586 G1). 서브커맨드는 `pytmux` 의 것이고 GUI 는 붙는 낱말만 받는다.
+            "attach" => attach = true,
             "-h" | "--help" => return Args::Usage,
             "--socket" => match it.next() {
                 Some(value) => socket = Some(value),
@@ -318,6 +323,9 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Args {
         }
     }
     if demo {
+        if attach || socket.is_some() {
+            return Args::Bad("demo 는 서버에 붙지 않는다 — attach·--socket 과 함께 못 쓴다".into());
+        }
         return Args::Demo;
     }
     Args::Attach(socket)
@@ -335,6 +343,16 @@ fn main() -> Result<()> {
     // 아무것도 안 남긴 상태가 된다. 기본은 조용하고(`RUST_LOG` 미설정 시 warn
     // 이상), 필요할 때 `RUST_LOG=info` 로 켠다.
     env_logger::init();
+    // DIVERGE(pytmux-598): `--ime-probe` 는 하네스 손잡이다(정본에 짝이 없다) — 창을 안 띄우고
+    //   **메인 스레드에서** 입력 소스를 한 번 읽어 `<소스 ID>\t<한|EN>` 한 줄을 찍고 끝난다
+    //   (못 읽으면 `-\t-`). 정본 `oskbd.current_source_id()` 와 같은 말이라 둘을 맞대 배지
+    //   판정이 같은지를 사람 손 없이 잰다(pytmux-590). 서버에 붙지 않는다.
+    if std::env::args().skip(1).any(|a| a == "--ime-probe") {
+        let id = ime::source_id();
+        let word = base::ime_source::badge_word(id.as_deref()).unwrap_or("-");
+        console::say(&format!("{}\t{word}\n", id.as_deref().unwrap_or("-")), false);
+        return Ok(());
+    }
     // 시동 실패를 사용자에게 남긴다. 콘솔이 있으면 글로, 없으면(탐색기로 띄웠다)
     // 대화상자로 — **어느 쪽이든 사라지지는 않게**(`console::show_fatal` 문서).
     let die = |message: String, code: i32| -> ! {
@@ -354,7 +372,9 @@ fn main() -> Result<()> {
         }
         Plan::Bad(reason) => die(format!("pytmux-gui: {reason}\n\n{USAGE}"), 2),
         Plan::Demo => None,
-        Plan::AttachTo(spec) => match ServerLink::attach_to(&spec, 80, 24) {
+        // 지목받은 곳에 서버가 없으면 **그 자리에** 띄우고 붙는다(정본 `main` 의 `need_spawn`
+        // · pytmux-586 G2). 다른 서버·데모로는 여전히 안 간다.
+        Plan::AttachTo(spec) => match proto::boot::attach_or_start_at(&spec, 80, 24) {
             Ok(link) => Some(link),
             Err(e) => die(format!("pytmux-gui: {spec} 에 붙지 못했다: {e}"), 1),
         },
@@ -404,10 +424,11 @@ fn main() -> Result<()> {
                                         if view.pump(ctx) {
                                             ctx.notify();
                                         }
-                                        // 끊긴 화면을 한 번은 보여 주고 멈춘다 — 아무
-                                        // 설명 없이 얼어붙으면 사용자는 무슨 일이 났는지
-                                        // 모른다.
-                                        !view.is_ended()
+                                        // 끊겨도 **멈추지 않는다**(pytmux-585). 종전에는
+                                        // 끊긴 화면을 한 번 보이고 이 루프를 끝냈는데, 그러면
+                                        // 감독자의 자동 재접속도 수동 `reconnect` 도 결과를
+                                        // 영영 못 줍는다. 비용은 33ms 타이머 하나다.
+                                        true
                                     })
                                     .await;
                                 if !matches!(go, Ok(true)) {
@@ -514,6 +535,25 @@ mod tests {
         assert_eq!(args(&["--socket", "/tmp/p.sock"]), want);
         assert_eq!(args(&["--socket=/tmp/p.sock"]), want);
         assert_eq!(args(&["--help"]), Args::Usage);
+    }
+
+    #[test]
+    fn attach_is_the_canonical_word_for_no_arguments() {
+        // 정본 `pytmux attach` 는 인자 없음과 같다(pytmux-586 G1).
+        assert_eq!(args(&["attach"]), Args::Attach(None));
+        assert_eq!(plan_for(args(&["attach"])), Plan::FindOrStart);
+        assert_eq!(
+            args(&["attach", "--socket", "/tmp/p.sock"]),
+            Args::Attach(Some("/tmp/p.sock".into()))
+        );
+        assert_eq!(
+            args(&["--socket=/tmp/p.sock", "attach"]),
+            Args::Attach(Some("/tmp/p.sock".into()))
+        );
+        // demo 는 붙지 않는다 — 붙는 낱말과 함께면 모순이다.
+        assert!(matches!(args(&["attach", "demo"]), Args::Bad(_)));
+        assert!(matches!(args(&["demo", "--socket", "/x"]), Args::Bad(_)));
+        assert!(USAGE.contains("pytmux-gui attach"), "{USAGE}");
     }
 
     #[test]

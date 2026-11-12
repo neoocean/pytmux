@@ -7095,6 +7095,55 @@ async def test_server_gone_without_bye_exits_with_message():
     await _with_app(body)
 
 
+async def test_handshake_refusal_exits_with_its_reason_not_server_lost():
+    """핸드셰이크 거절(`{"t":"error","error":"proto_mismatch"|"auth_failed"}`)은 그 까닭으로
+    끝난다(pytmux-586 G5). 종전엔 이 프레임이 플러그인으로 넘어가 버려지고, 이어지는 EOF 가
+    드롭 재접속을 6번 부른 뒤 `msg.server_lost`(«외부에서 강제 종료됐는지 확인») 로 끝나
+    엉뚱한 곳을 의심하게 했다. GUI 도 같은 글로 끝난다(`base::lifecycle`).
+
+    호출부까지 단언한다: ① 실제 `_dispatch` 가 `exit(message=…)` 를 그 글로 부른다 ② 뒤따르는
+    EOF 는 **다시 붙지 않는다**(`_ending` 가드 — 다시 붙으면 같은 거절을 또 받는다)."""
+    from pytmuxlib import clientconn, i18n
+    from pytmuxlib.protocol import PROTO_VERSION
+
+    async def body(app, pilot, srv):
+        calls, tried = [], []
+        app.exit = lambda *a, **k: calls.append(k.get("message"))
+        try:
+            app._dispatch({"t": "error", "error": "proto_mismatch", "server_proto": 2})
+            want = i18n.t("msg.proto_mismatch", server=2, client=PROTO_VERSION)
+            assert calls == [want], calls
+            assert "2" in want and str(PROTO_VERSION) in want, want
+            assert want != i18n.t("msg.server_lost")
+            app._ending = False
+            app._dispatch({"t": "error", "error": "auth_failed"})
+            assert calls[-1] == i18n.t("msg.auth_failed"), calls
+            assert app._ending
+            # 모르는 error 는 종전대로(끝내지 않는다).
+            app._ending = False
+            app._dispatch({"t": "error", "error": "something_else"})
+            assert len(calls) == 2, calls
+            # 뒤따르는 EOF — 다시 붙지도, 문구를 하나 더 붙이지도 않는다.
+            app._ending = True
+
+            async def _eof(_reader):
+                return None
+
+            async def _record(*_a, **_k):
+                tried.append(1)
+                return True
+            app._reconnect_after_drop = _record
+            with harness.patched(clientconn, read_msg=_eof):
+                await app._reader_task(None, app._conn_gen)
+            assert not tried, "거절 뒤 EOF 가 드롭 재접속을 불렀다"
+            assert len(calls) == 2, f"거절 뒤 EOF 가 문구를 하나 더 붙였다: {calls}"
+        finally:
+            del app.exit
+            app.__dict__.pop("_reconnect_after_drop", None)
+            app._ending = False
+    await _with_app(body)
+
+
 async def test_force_reconnect_recovers_without_exit():
     """§10 degraded 회복: 강제 재접속(_force_reconnect)이 ① IPC 소켓을 교체(연결
     세대 _conn_gen 증가)하고 ② degraded 를 해제하며 ③ 앱을 종료하지 않고 ④ 서버

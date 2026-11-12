@@ -224,7 +224,10 @@ class PromptHistoryScreen(ModalScreen):
 
     def jump_to(self, index: int):
         """선택 프롬프트가 입력된 위치로 점프(서버)하고 팝업을 닫는다."""
-        self.app.send_cmd("ph_scroll_to", index=index)
+        # ★ 이 판이 보여 준 **그 패널**로 뛴다(pytmux-587). 고정 바는 비활성 패널에도 서고
+        #   누르면 그 패널의 이력이 뜨는데, 종전에는 index 만 보내 서버가 **활성 패널**을
+        #   굴렸다(다른 패널의 index 로 — 엉뚱한 자리이거나 「못 찾음」).
+        self.app.send_cmd("ph_scroll_to", index=index, pane=self._pane_id)
         self.dismiss(None)
 
     def bump_lines(self, delta: int):

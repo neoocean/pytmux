@@ -37,6 +37,10 @@ pub enum HookEvent {
     AfterNewWindow,
     /// 어느 탭에서 벨이 울렸다.
     AlertBell,
+    /// 활성 패널의 Claude 가 사용량 한도에 걸렸다(pytmux-588 · **플러그인발** 사건 —
+    /// 정본 `claude-code` 의 `claude.py:saver_hook_events`). 재료는 이미 받는 status 의
+    /// `active_pane`·`panes_claude[].claude`(문자열 상태)·`claude_account` 다 — 서버 변경 없음.
+    ClaudeLimit,
 }
 
 impl HookEvent {
@@ -45,15 +49,35 @@ impl HookEvent {
             HookEvent::ClientAttached => "client-attached",
             HookEvent::AfterNewWindow => "after-new-window",
             HookEvent::AlertBell => "alert-bell",
+            HookEvent::ClaudeLimit => "claude-limit",
         }
     }
 
-    /// 우리가 **실제로 발화하는** 것들. 설정 화면·도움말이 이 목록을 보인다.
+    /// 우리가 **실제로 발화하는** 것들. 정본 전수와의 대조는
+    /// `proto/tests/hook_events_conformance.rs`(답지 = 정본 AST + `saver_hook_events`).
     pub const ALL: &'static [HookEvent] = &[
         HookEvent::ClientAttached,
         HookEvent::AfterNewWindow,
         HookEvent::AlertBell,
+        HookEvent::ClaudeLimit,
     ];
+}
+
+/// 발화 한 번 — 사건과 그 훅 명령에 실을 환경(pytmux-588).
+///
+/// 정본 `_fire_hook(event, env)` 은 env 를 `_run_command` 동안만 `os.environ` 에 심고
+/// 되돌린다. 그래서 그 값이 닿는 곳은 훅 줄이 **그 순간** 띄우는 클라측 셸(`run-shell`·
+/// `if-shell` 조건)뿐이다. 코어 세 사건은 정본도 env 를 **안 싣는다**(빈 목록이 정본과 같다).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookFire {
+    pub event: HookEvent,
+    pub env: Vec<(String, String)>,
+}
+
+impl From<HookEvent> for HookFire {
+    fn from(event: HookEvent) -> Self {
+        HookFire { event, env: Vec::new() }
+    }
 }
 
 /// 걸어 둔 훅들 — `이벤트 → 명령 한 줄`.
@@ -173,9 +197,32 @@ pub struct HookWatcher {
     attached: bool,
     prev_windows: usize,
     prev_bell: bool,
+    prev_limit: bool,
 }
 
 impl HookWatcher {
+    /// status 하나의 Claude 재료로 `claude-limit` 상승 에지를 잰다(정본 `saver_hook_events`).
+    ///
+    /// - `active_state` — **이번 메시지의** `panes_claude` 중 id == `active_pane` 항목의
+    ///   `claude`(문자열 `"limit"`/`"busy"`/`"idle"` 또는 없음). 들고 있던 값을 넣지 않는다 —
+    ///   정본은 메시지 하나만 본다.
+    /// - `account` — 같은 메시지의 `claude_account`(별칭 · 없으면 빈 문자열).
+    ///
+    /// 직전 값의 시작은 「한도 아님」이다 — 그래서 **붙자마자 이미 한도면 발화한다**
+    /// (탭 개수와 다르다: 정본 `prev.get("limit")` 이 처음엔 없다).
+    pub fn saw_claude(&mut self, active_state: Option<&str>, account: &str) -> Option<HookFire> {
+        let is_limit = active_state == Some("limit");
+        let rising = is_limit && !self.prev_limit;
+        self.prev_limit = is_limit;
+        rising.then(|| HookFire {
+            event: HookEvent::ClaudeLimit,
+            env: vec![
+                ("PYTMUX_HOOK_EVENT".to_owned(), "claude-limit".to_owned()),
+                ("PYTMUX_ACCOUNT".to_owned(), account.to_owned()),
+            ],
+        })
+    }
+
     /// 배치를 받았다. **처음일 때만** `client-attached` 다.
     pub fn saw_layout(&mut self) -> Option<HookEvent> {
         if self.attached {

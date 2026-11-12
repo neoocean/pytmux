@@ -136,6 +136,32 @@
           ]
         }
       ]
+    },
+    {
+      "name": "unix_pytmux_home_tilde",
+      "os": "unix",
+      "env": {
+        "PYTMUX_HOME": "~/ph"
+      },
+      "uid": 501,
+      "candidates": [
+        {
+          "kind": "unix",
+          "path": [
+            "tilde-home",
+            "ph",
+            "state",
+            "default.sock"
+          ],
+          "token": [
+            "tilde-home",
+            "ph",
+            "state",
+            "default.sock.token"
+          ]
+        }
+      ],
+      "home": "/tilde-home"
     }
   ]
 }

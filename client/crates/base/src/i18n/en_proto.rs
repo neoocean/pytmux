@@ -278,4 +278,9 @@ pub static EN: &[(&str, &str)] = &[
     ("빠진 곳 — {names}", "missing — {names}"),
     ("숨긴 탭 {n}건", "{n} hidden tab(s)"),
     ("상한에 걸려 {n}건 못 실었다", "{n} dropped at the cap"),
+    // ── endpoint.rs — validate_local_socket(정본 `ipc.validate_local_socket` · pytmux-586 G3) ──
+    ("소켓 경로가 심볼릭 링크임(보안상 거부): {path}", "socket path is a symlink (refused for safety): {path}"),
+    ("소켓이 아닌 파일임(보안상 거부): {path}", "not a socket file (refused for safety): {path}"),
+    ("소켓 소유자가 현재 사용자가 아님(보안상 거부): {path}", "socket is not owned by the current user (refused for safety): {path}"),
+    ("소켓이 다른 사용자에게 열려 있음(보안상 거부): {path}", "socket is open to other users (refused for safety): {path}"),
 ];

@@ -124,18 +124,34 @@ def _plain_line(line, cols) -> str:
     return "".join(out).rstrip()
 
 
-def scroll_to_prompt(server, sess, index: int) -> bool:
+def _target_pane(sess, pane_id=None):
+    """점프할 패널 — `pane_id` 가 활성 탭 안에 있으면 그 패널, 없으면(구버전 클라 · 없는 id)
+    활성 패널(pytmux-587: 고정 바는 비활성 패널에도 서고 그 바로 연 판은 **그 패널**의 이력이다)."""
+    win = sess.active_window if sess else None
+    if not win:
+        return None
+    if pane_id is not None:
+        try:
+            want = int(pane_id)
+        except (TypeError, ValueError):
+            want = None
+        for p in win.panes():
+            if p.id == want:
+                return p
+    return win.active_pane
+
+
+def scroll_to_prompt(server, sess, index: int, pane_id=None) -> bool:
     """활성 패널을 팝업의 `index`(0 기반 = tail 슬라이스 인덱스) 프롬프트가 입력된 스크롤백
     위치로 점프한다. 앵커 없이 **스크롤백 텍스트 검색**으로: 프롬프트 첫 줄을 포함하는 줄을
     아래(최근)에서부터 찾아, 그 줄이 뷰포트 맨 위에 오도록 pane.scroll 을 맞춘다.
 
     뷰포트 수학(model.render): full = hist+buffer, top 줄 = full[total - scroll - lines].
     따라서 full[idx] 를 맨 위로 → scroll = total - lines - idx, [0, len(hist)] 로 클램프.
-    못 찾으면(회전/재시작) False."""
-    win = sess.active_window
-    if not win or not win.active_pane:
+    못 찾으면(회전/재시작) False. `pane_id` 를 주면 그 패널(`_target_pane`)."""
+    p = _target_pane(sess, pane_id)
+    if p is None:
         return False
-    p = win.active_pane
     tail = list(getattr(p, "_ph_history", []))[-_TAIL:]
     if not (0 <= index < len(tail)):
         return False

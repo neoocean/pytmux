@@ -869,7 +869,8 @@ def _confirm_kill_server() -> bool:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="pytmux", description="tmux 유사 터미널 멀티플렉서")
-    parser.add_argument("--socket", default=None, help="유닉스 도메인 소켓 경로")
+    parser.add_argument("--socket", default=None,
+                        help="엔드포인트 — 유닉스 소켓 경로 또는 tcp:[NAME@]HOST:PORT")
     sub = parser.add_subparsers(dest="command")
     p_attach = sub.add_parser("attach", help="실행 중인 서버에 attach (없으면 기동)")
     sub.add_parser("ls", help="탭/패널 요약")

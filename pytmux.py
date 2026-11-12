@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """pytmux — Python/Textual 기반 tmux 유사 터미널 멀티플렉서.
 
-설계 문서: docs/internal/DESIGN.md
+설계 문서: 이슈 트래커 `pytmux/design`(저장소에는 산문이 없다 — CLAUDE.md §문서)
 
 아키텍처: 셸 PTY 를 소유하는 백그라운드 데몬(서버) 과 화면을 그리는 Textual
 클라이언트를 유닉스 도메인 소켓으로 연결한다. 클라이언트나 상위 터미널을 닫아도
@@ -9,11 +9,11 @@
 
 사용법:
     python3 pytmux.py                 # 서버가 없으면 데몬 기동 후 attach, 있으면 attach
-    python3 pytmux.py attach -t NAME  # 이름 있는 세션에 attach(없으면 생성)
-    python3 pytmux.py new -s NAME     # 이름 있는 세션 생성 후 attach
-    python3 pytmux.py ls              # 세션 목록
-    python3 pytmux.py kill-server     # 서버와 모든 세션 종료
-    python3 pytmux.py --socket PATH   # 사용할 소켓 경로 지정
+    python3 pytmux.py attach          # 위와 같다(단일 세션 모델 — 세션 이름 인자는 없다)
+    python3 pytmux.py ls              # 탭/패널 요약(`N tabs, M panes`)
+    python3 pytmux.py kill-server     # 서버와 모든 탭/셸 종료
+    python3 pytmux.py --socket EP     # 엔드포인트 지정 — 소켓 경로 또는 tcp:[NAME@]HOST:PORT
+                                      #   (서브커맨드 **앞**에 둔다 · 없으면 그 자리에 띄운다)
 
 기본 키 (prefix = Ctrl-b, 설정으로 변경 가능):
     prefix %      좌우 분할        prefix "      상하 분할

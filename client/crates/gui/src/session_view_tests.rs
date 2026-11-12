@@ -1525,7 +1525,8 @@ fn the_compose_panel_does_not_dim_what_you_are_writing_about() {
         assert!(screen.dims_behind(), "{screen:?} 의 딤이 사라졌다(범위 밖 변경)");
     }
     // 그리고 뷰가 그 자료를 **실제로 본다** — 안 보면 위 단언은 공허하다.
-    let body = source_after("let mut body = Stack::new()", 1400);
+    // 층이 늘면 그 사이가 길어진다(pytmux-587 이 프롬프트 바 층을 더했다) — 넉넉히 뜬다.
+    let body = source_after("let mut body = Stack::new()", 2400);
     assert!(
         body.contains("screen.dims_behind()"),
         "뷰가 화면별 딤 판정을 안 본다 — 다시 전부 덮는다: {body}"
@@ -3539,12 +3540,129 @@ fn a_delta_without_a_baseline_asks_for_a_full_frame() {
     );
 }
 
+/// 감독자가 시도를 끝낼 때까지(또는 조건이 설 때까지) 퍼올린다 — 상한 10초.
+fn pump_until(view: &mut SessionView, mut done: impl FnMut(&SessionView) -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !done(view) {
+        assert!(std::time::Instant::now() < deadline, "시한 안에 안 섰다");
+        view.pump_headless();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn the_link_ending_is_noticed() {
+    // pytmux-585: 예고 없는 끝은 **곧장 끝이 아니다** — 정본처럼 드롭 예산(25회)만큼 다시
+    // 붙어 보고, 못 붙으면 정본과 같은 `msg.server_lost` 글로 끝난다(기록판 링크는 갈 곳이 없다).
     let (mut view, tx, _sent) = harness();
     tx.send(LinkEvent::Ended("서버가 닫았다".into())).unwrap();
     view.pump_headless();
+    assert!(!view.is_ended(), "첫 EOF 에서 끝났다 — 다시 붙어 보지 않았다");
+    assert!(view.supervisor.attempting());
+    pump_until(&mut view, |v| v.is_ended());
+    // 바닥 줄은 `연결 종료: <정본 글>` 꼴이다(`status::message_line` — 끊김 줄의 GUI 머리말).
+    let flash = view.live_flash_for_test().expect("끝난 문구가 바닥 줄에 없다");
+    assert!(flash.text.ends_with(&base::lifecycle::Ending::Lost.message()), "{}", flash.text);
+}
+
+/// 부를 때마다 새 기록판 링크를 돌려주는 접속자 — 그 링크에 밀어 넣을 쪽을 남긴다.
+fn reattaching_connector() -> (
+    proto::supervise::Connector,
+    std::sync::Arc<std::sync::Mutex<Vec<std::sync::mpsc::Sender<LinkEvent>>>>,
+) {
+    let pushers: std::sync::Arc<std::sync::Mutex<Vec<std::sync::mpsc::Sender<LinkEvent>>>> =
+        Default::default();
+    let keep = pushers.clone();
+    let connect: proto::supervise::Connector = std::sync::Arc::new(move |spec, _, _| {
+        let (link, tx, _sent) = ServerLink::detached(spec);
+        keep.lock().unwrap().push(tx);
+        Ok(link)
+    });
+    (connect, pushers)
+}
+
+#[test]
+fn a_dropped_link_is_replaced_and_the_new_one_is_pumped() {
+    // ★ 양성 오라클: 다시 붙은 **새 링크의 메시지가 실제로 화면 상태에 닿는다**. 종전에는
+    //   끊기면 펌프 루프가 멈췄다(main.rs) — 링크를 바꿔도 아무것도 안 읽혔다.
+    let (mut view, tx, _sent) = harness();
+    let (connect, pushers) = reattaching_connector();
+    view.supervisor = proto::supervise::Supervisor::with_connector(true, connect);
+    tx.send(LinkEvent::Ended("드롭".into())).unwrap();
+    pump_until(&mut view, |_| !pushers.lock().unwrap().is_empty());
+    pump_until(&mut view, |v| !v.supervisor.attempting());
+    assert!(!view.is_ended());
+    let fresh = pushers.lock().unwrap()[0].clone();
+    fresh
+        .send(LinkEvent::Message(Box::new(layout_one_pane())))
+        .unwrap();
+    view.pump_headless();
+    assert_eq!(view.state.active_pane(), Some(1), "새 링크의 layout 이 안 먹었다");
+    let notices: Vec<String> = view.state.notices().map(|n| n.line()).collect();
+    assert!(
+        notices.iter().any(|n| n.contains(base::lifecycle::reconnected_resync())),
+        "{notices:?}"
+    );
+}
+
+#[test]
+fn bye_says_the_canonical_terminated_line_and_does_not_reconnect() {
+    let (mut view, tx, _sent) = harness();
+    let (connect, pushers) = reattaching_connector();
+    view.supervisor = proto::supervise::Supervisor::with_connector(true, connect);
+    tx.send(LinkEvent::Message(Box::new(ServerMessage::Bye))).unwrap();
+    tx.send(LinkEvent::Ended("닫힘".into())).unwrap();
+    view.pump_headless();
     assert!(view.is_ended());
+    let text = view.live_flash_for_test().map(|f| f.text).unwrap_or_default();
+    assert!(text.ends_with(&base::lifecycle::Ending::Terminated.message()), "{text}");
+    assert!(!view.supervisor.attempting());
+    assert!(pushers.lock().unwrap().is_empty());
+}
+
+#[test]
+fn restarting_then_eof_reconnects_and_says_restart_done() {
+    let (mut view, tx, _sent) = harness();
+    let (connect, pushers) = reattaching_connector();
+    view.supervisor = proto::supervise::Supervisor::with_connector(true, connect);
+    tx.send(LinkEvent::Message(Box::new(ServerMessage::Restarting { relaunch: false })))
+        .unwrap();
+    tx.send(LinkEvent::Ended("execv".into())).unwrap();
+    pump_until(&mut view, |v| !v.supervisor.attempting() && !pushers.lock().unwrap().is_empty());
+    let notices: Vec<String> = view.state.notices().map(|n| n.line()).collect();
+    assert!(notices.iter().any(|n| n.contains(base::lifecycle::server_restarting())), "{notices:?}");
+    assert!(notices.iter().any(|n| n.contains(base::lifecycle::restart_done())), "{notices:?}");
+    assert!(!view.is_ended());
+}
+
+#[test]
+fn a_handshake_refusal_ends_with_the_reason_not_an_empty_line() {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(ServerMessage::Error {
+        msg: String::new(),
+        error: Some("auth_failed".into()),
+        server_proto: None,
+    })))
+    .unwrap();
+    view.pump_headless();
+    assert!(view.is_ended());
+    let text = view.live_flash_for_test().map(|f| f.text).unwrap_or_default();
+    let want = base::lifecycle::Ending::Refused(base::lifecycle::Refusal::AuthFailed).message();
+    assert!(text.ends_with(&want), "{text}");
+}
+
+#[test]
+fn manual_reconnect_revives_an_ended_window() {
+    let (mut view, tx, _sent) = harness();
+    let (connect, pushers) = reattaching_connector();
+    view.supervisor = proto::supervise::Supervisor::with_connector(true, connect);
+    tx.send(LinkEvent::Message(Box::new(ServerMessage::Bye))).unwrap();
+    view.pump_headless();
+    assert!(view.is_ended());
+    view.apply_action_for_test(base::keymap::Action::Reconnect);
+    pump_until(&mut view, |v| !v.supervisor.attempting());
+    assert!(!view.is_ended(), "수동 reconnect 가 끝난 창을 못 살렸다");
+    assert_eq!(pushers.lock().unwrap().len(), 1);
 }
 
 #[test]
@@ -4488,7 +4606,13 @@ fn source_file_with_a_path_reads_that_file_and_pushes_the_globals() {
     assert!(view.run_command_line(&format!("source-file {}", path.display())));
     assert!(!view.config.mouse, "그 파일을 안 읽었다");
     assert_eq!(view.config.aliases.get("sp"), Some("split-window -h"), "별칭을 다시 안 읽었다");
-    assert!(proto::compose::ambiguous_wide(), "다시 읽은 뒤 폭 판정이 안 바뀌었다");
+    // 전역(`proto::compose::ambiguous_wide()`)이 아니라 **이 스레드가 민 값**을 본다 — 전역은
+    // 나란히 도는 시험이 뷰를 세울 때마다 덮는다(가짜 적색 · `LAST_AMBIG_PUSH` 문서).
+    assert_eq!(
+        super::LAST_AMBIG_PUSH.with(|c| c.get()),
+        Some(true),
+        "다시 읽은 뒤 폭 판정을 전역에 안 밀었다"
+    );
     proto::compose::set_ambiguous_wide(false);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4543,6 +4667,115 @@ fn unsetting_a_hook_stops_it() {
             .any(|o| matches!(o, Outgoing::Command(Command::NextWindow))),
         "푼 훅이 계속 돈다: {out:?}"
     );
+}
+
+/// 서버가 **실제로 보내는 모양**의 Claude 상태(pytmux-588 — `claude` 는 문자열 상태다).
+fn claude_state_status(state: Option<&str>, account: &str) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "claude", "active": true}],
+        "active_pane": 1,
+        "panes_claude": [{"id": 1, "claude": state, "prompt": null,
+                          "perm_mode": null, "bypass_ok": false}],
+        "claude_account": account,
+    }))
+    .unwrap()
+}
+
+#[test]
+fn claude_limit_fires_its_hook_once_per_rising_edge() {
+    // pytmux-588 — 종전에는 이름만 들고 발화하지 않았다. 상승 에지마다 **한 번**:
+    // limit·limit(유지)·idle·limit → 두 번.
+    let out = sent_after_hook(
+        "claude-limit next-tab",
+        vec![
+            layout_one_pane(),
+            claude_state_status(Some("limit"), "work"),
+            claude_state_status(Some("limit"), "work"),
+            claude_state_status(Some("idle"), "work"),
+            claude_state_status(Some("limit"), "work"),
+        ],
+    );
+    let fired = out
+        .iter()
+        .filter(|o| matches!(o, Outgoing::Command(Command::NextWindow)))
+        .count();
+    assert_eq!(fired, 2, "한도 상승 에지 둘에 훅이 {fired}번 돌았다: {out:?}");
+}
+
+#[test]
+fn a_limit_on_another_pane_does_not_fire_claude_limit() {
+    // 정본은 **활성 패널**의 상태만 본다.
+    let msg: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "claude", "active": true}],
+        "active_pane": 1,
+        "panes_claude": [{"id": 1, "claude": "idle"}, {"id": 2, "claude": "limit"}],
+    }))
+    .unwrap();
+    let out = sent_after_hook("claude-limit next-tab", vec![layout_one_pane(), msg]);
+    assert!(
+        !out.iter().any(|o| matches!(o, Outgoing::Command(Command::NextWindow))),
+        "비활성 패널의 한도로 발화했다: {out:?}"
+    );
+}
+
+#[test]
+fn the_claude_limit_hook_shell_sees_the_pytmux_env() {
+    // 훅 줄이 띄우는 셸이 `PYTMUX_HOOK_EVENT`·`PYTMUX_ACCOUNT` 를 본다(정본 `_fire_hook` env →
+    // `_run_shell` 이 부를 때 떠 가는 환경). 출력은 서버 버퍼로 간다(run-shell 의 정본 길).
+    let line = if cfg!(windows) {
+        "claude-limit run-shell \"echo %PYTMUX_HOOK_EVENT%/%PYTMUX_ACCOUNT%\""
+    } else {
+        // 셸 명령은 **한 인자**다(tmux·정본 문법 — 따옴표 없이 쓰면 첫 낱말만 간다).
+        "claude-limit run-shell \"echo $PYTMUX_HOOK_EVENT/$PYTMUX_ACCOUNT\""
+    };
+    let (mut view, tx, sent) = harness();
+    let mut keys: Vec<(Key, Mods)> = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+    keys.extend("set-hook".chars().map(|c| (Key::Char(c), Mods::NONE)));
+    keys.push((Key::Enter, Mods::NONE));
+    keys.extend(line.chars().map(|c| (Key::Char(c), Mods::NONE)));
+    keys.push((Key::Enter, Mods::NONE));
+    for (key, mods) in keys {
+        view.handle_key(key, mods);
+        view.pump_headless();
+    }
+    for msg in [layout_one_pane(), claude_state_status(Some("limit"), "work")] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    assert_eq!(view.shell_spawns, 1, "한도 상승 한 번에 셸이 한 번 떠야 한다");
+    let mut got = false;
+    for _ in 0..200 {
+        view.pump_headless();
+        if sent.lock().unwrap().iter().any(|o| matches!(
+            o,
+            Outgoing::Command(Command::SetBuffer { text }) if text.contains("claude-limit/work")
+        )) {
+            got = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        got,
+        "훅 셸이 PYTMUX_* 를 못 봤다: 셸 출력 {:?} · 알림 {:?}",
+        view.state.shell_output(),
+        view.state.notices().map(|n| format!("{n:?}")).collect::<Vec<_>>()
+    );
+    // 훅이 끝나면 환경은 걷힌다 — 사람이 친 run-shell 에는 안 실린다.
+    assert!(view.hook_env.is_empty(), "훅 환경이 훅 밖까지 남았다");
+}
+
+#[test]
+fn a_real_claude_state_string_marks_the_pane_as_claude() {
+    // 덤 결함(pytmux-588): 서버는 `"claude": "idle"` 을 보낸다. 종전에는 bool `true` 만 셌다.
+    let (mut view, _tx, _sent) = harness();
+    view.state.apply(layout_one_pane());
+    view.state.apply(claude_state_status(Some("idle"), ""));
+    assert!(view.state.is_claude_pane(1), "문자열 상태를 Claude 로 안 셌다");
+    view.state.apply(claude_state_status(None, ""));
+    assert!(!view.state.is_claude_pane(1), "null 을 Claude 로 셌다");
 }
 
 // ── 인자 폼(G8v) — TUI 와 **같은 것**을 GUI 에서도 본다 ──────────────────────
@@ -4789,7 +5022,8 @@ fn claude_pane_messages() -> Vec<ServerMessage> {
             "windows": [{"index": 0, "name": "claude", "active": true}],
             // 활성 패널 id 는 status 가 든다 — 없으면 긁을 대상을 못 찾는다.
             "active_pane": 1,
-            "panes_claude": [{"id": 1, "claude": true}],
+            // 서버가 실제로 싣는 모양 — 문자열 상태(pytmux-588 · 종전 가짜 `true`).
+            "panes_claude": [{"id": 1, "claude": "idle"}],
         }))
         .unwrap(),
         serde_json::from_value(serde_json::json!({
@@ -7015,6 +7249,200 @@ fn without_a_pinned_tab_there_is_no_separator() {
     );
     // 그리고 `+` 는 그때도 그려진다(정본 탭바도 늘 달고 있다).
     assert!(painted.iter().any(|t| t.contains('+')), "새 탭 단추가 사라졌다: {painted:?}");
+}
+
+// ── 탭 닫기 `[x]` · 입력 상태 `[EN]` — 포인터 없이 (pytmux-594) ─────────────────────
+
+#[test]
+fn the_tab_close_button_is_painted_without_a_pointer() {
+    // 정본 `_draw_tab_close` 는 늘 그린다. 우리는 활성 탭 칩 안의 `×` 다(자리 갈림 —
+    // `close_button` 의 DIVERGE 선언). hover 가 없어도 프레임에 있어야 한다 — 덤프에
+    // 포인터가 없어 「hover 전용인가」를 못 가르던 것이 이 이슈의 출발점이다.
+    let painted = painted_after(three_tabs(), &[]);
+    assert!(
+        painted.iter().any(|t| t.contains('×')),
+        "포인터 없는 프레임에 탭 닫기 단추가 없다: {painted:?}"
+    );
+}
+
+#[test]
+fn the_tab_close_click_takes_the_canon_confirm_branch() {
+    // 정본 `confirm_kill_tab` 의 로컬 세 갈래 — 보통 · 마지막 탭(pytmux 종료) · 고정 탭.
+    // (원격 갈래는 `closing_a_remote_tab_detaches_that_one_tab_on_every_road` 가 잰다.)
+    use base::chrome::ClickTarget;
+    use base::TabSpot;
+    let one_tab: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status", "windows": [{"index": 0, "name": "하나", "active": true}]
+    }))
+    .unwrap();
+    let pinned_active: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status", "windows": [
+            {"index": 0, "name": "고정", "pinned": true, "active": true},
+            {"index": 1, "name": "하나"},
+        ]
+    }))
+    .unwrap();
+    let cases: [(&str, Vec<ServerMessage>, base::Prompt); 3] = [
+        ("보통", three_tabs(), base::Prompt::KillTab),
+        ("마지막", vec![layout_one_pane(), one_tab], base::Prompt::KillTabLast),
+        ("고정", vec![layout_one_pane(), pinned_active], base::Prompt::KillTabPinned),
+    ];
+    for (name, messages, want) in cases {
+        let (mut view, tx, sent) = harness();
+        for msg in messages {
+            tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+        }
+        view.pump_headless();
+        view.chrome_click(ClickTarget::Spot(TabSpot::Close));
+        view.pump_headless();
+        assert_eq!(view.screens.asking(), Some(want), "{name}: 다른 확인 갈래");
+        assert!(
+            !sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Command(Command::KillWindow))),
+            "{name}: 확인 없이 나갔다"
+        );
+        view.handle_key(Key::Char('y'), Mods::NONE);
+        view.pump_headless();
+        assert!(
+            sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Command(Command::KillWindow))),
+            "{name}: 확인했는데 kill_window 가 안 나갔다"
+        );
+    }
+}
+
+#[test]
+fn the_input_state_badge_needs_no_pointer() {
+    // `[EN]` 은 **정보**다 — 포인터 없이도 서야 한다. 한/영이라는 사실만 있으면(맥·리눅스는
+    // pytmux-590 이 그 사실을 OS 에서 읽는다) 판이 없는 평상시 캔버스에 알약이 선다.
+    let view = view_with_ime(Some("EN"));
+    let canvas = view.composite_for_paint().expect("캔버스가 없다");
+    let pill = view.ime_overlay(&canvas).expect("포인터 없는 평상시에 입력 상태 배지가 없다");
+    assert!(!pill.left, "EN 인데 한글 쪽 손잡이다");
+    // 대조군 — 사실이 없으면(모르는 OS) 안 그린다(모르는 것을 영문이라고 단정하지 않는다).
+    let none = view_with_ime(None);
+    let canvas = none.composite_for_paint().expect("캔버스가 없다");
+    assert!(none.ime_overlay(&canvas).is_none(), "모르는데 그렸다");
+}
+
+// ── 프롬프트 바(고정 · `:` 미리보기 · 클릭) (pytmux-587) ───────────────────────────
+
+fn ph_screen(scroll: usize) -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["claude output", {}]], [["more", {}]], [["", {}]], [["", {}]]],
+        "cursor": null, "wrap": [], "top": 10, "scr": scroll
+    }))
+    .unwrap()
+}
+
+/// 서버 `status_fields` 가 싣는 모양 그대로(`ph_panes` · `ph_max_lines` · 플러그인 표면의 `pane_scoped`).
+fn ph_status(hist: Option<&[&str]>, remote: bool) -> ServerMessage {
+    let mut windows = vec![serde_json::json!({"index": 0, "name": "claude", "active": !remote})];
+    if remote {
+        windows.push(serde_json::json!({"index": 1, "name": "⇄box:c", "active": true, "remote": true}));
+    }
+    let mut msg = serde_json::json!({
+        "t": "status", "windows": windows, "active_pane": 1, "ph_max_lines": 3,
+        "plugin_surface": {"commands": [], "noarg": [], "menu_items": [], "settings": [],
+                           "setting_cats": [], "pane_scoped": ["ph", "prompt-history", "prompts"]},
+    });
+    if let Some(h) = hist {
+        msg["ph_panes"] = serde_json::json!([{"id": 1, "h": h}]);
+    }
+    serde_json::from_value(msg).unwrap()
+}
+
+fn colon_typed(line: &str) -> Vec<(Key, Mods)> {
+    let mut keys = vec![(Key::Escape, Mods::NONE), (Key::Char(':'), Mods::NONE)];
+    keys.extend(line.chars().map(|c| (Key::Char(c), Mods::NONE)));
+    keys
+}
+
+#[test]
+fn the_pinned_prompt_bar_stands_on_a_pane_from_ph_panes() {
+    // ★ 양성 오라클 — 프레임에 **실제로 그려진** 글을 본다(배선이 빠지면 운다).
+    let painted = painted_after_setup(
+        vec![layout_one_pane(), ph_screen(0), ph_status(Some(&["fix the bug"]), false)],
+        &[],
+        measured,
+    );
+    assert!(
+        painted.iter().any(|t| t.contains("❯ fix the bug")),
+        "ph_panes 가 온 패널에 고정 바가 없다: {painted:?}"
+    );
+    // 대조군 — 이력이 안 온 패널에는 없다.
+    let painted =
+        painted_after_setup(vec![layout_one_pane(), ph_screen(0), ph_status(None, false)], &[], measured);
+    assert!(!painted.iter().any(|t| t.contains('❯')), "이력 없이 바가 섰다: {painted:?}");
+}
+
+#[test]
+fn the_pinned_bar_yields_while_scrolled() {
+    // 굴린 동안은 블록 스티키 바의 자리다(정본 ②) — 둘이 같은 첫 줄을 다투지 않는다.
+    let painted = painted_after_setup(
+        vec![layout_one_pane(), ph_screen(3), ph_status(Some(&["fix the bug"]), false)],
+        &[],
+        measured,
+    );
+    // 대조군(같은 판 · 스크롤 0)은 바로 위 시험이 선다는 것을 잰다.
+    assert!(!painted.iter().any(|t| t.contains("❯ fix the bug")), "굴렸는데 고정 바가 남았다");
+}
+
+#[test]
+fn the_preview_shows_while_typing_a_pane_scoped_command() {
+    let msgs = || vec![layout_one_pane(), ph_screen(0), ph_status(Some(&["fix the bug"]), false)];
+    // 플러그인 표(`ph`)도 코어 표(`rename-pane`)도 같은 판정이다.
+    for line in ["ph", "rename-pane x"] {
+        let painted = painted_after_setup(msgs(), &colon_typed(line), measured);
+        assert!(
+            painted.iter().any(|t| t.contains("▷ fix the bug")),
+            "`:{line}` 를 치는데 미리보기가 없다: {painted:?}"
+        );
+        // 미리보기가 서면 그 패널의 고정 바는 비킨다(정본 ①).
+        assert!(!painted.iter().any(|t| t.contains("❯ fix the bug")), "두 바가 겹쳤다");
+    }
+    // 대조군 — 패널 대상이 아닌 명령에서는 없다.
+    let painted = painted_after_setup(msgs(), &colon_typed("new-tab"), measured);
+    assert!(!painted.iter().any(|t| t.contains('▷')), "대상 아닌 명령에 미리보기가 섰다");
+    // 닫으면 사라진다.
+    let mut keys = colon_typed("ph");
+    keys.push((Key::Escape, Mods::NONE));
+    let painted = painted_after_setup(msgs(), &keys, measured);
+    assert!(!painted.iter().any(|t| t.contains('▷')), "판을 닫았는데 미리보기가 남았다");
+}
+
+#[test]
+fn clicking_the_pinned_bar_opens_prompt_history_for_that_pane() {
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), ph_screen(0), ph_status(Some(&["fix the bug"]), false)] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    let canvas = view.composite_for_paint().expect("캔버스가 없다");
+    let spots = view.prompt_bar_spots(&canvas);
+    assert_eq!(spots.len(), 1, "{spots:?}");
+    assert!(view.handle_mouse_down((5, 0), false), "바 위 누름을 안 받았다");
+    view.pump_headless();
+    assert!(
+        sent.lock().unwrap().iter().any(|o| matches!(
+            o,
+            Outgoing::Command(Command::PluginOpen { name, args })
+                if name == "prompt-history" && args == &vec!["pane=1".to_owned()]
+        )),
+        "바를 눌렀는데 그 패널의 이력 판을 안 청했다: {:?}",
+        sent.lock().unwrap()
+    );
+}
+
+#[test]
+fn the_remote_view_does_not_inherit_local_prompt_history() {
+    // pytmux-587 ② — 두 서버의 패널 id 가 겹친다. 원격 탭으로 넘어가며 상류가 `ph_panes` 를
+    // 안 실어도(플러그인 없는 상류) 로컬 프롬프트가 원격 패널 위에 서면 안 된다.
+    let (mut view, _tx, _sent) = harness();
+    view.state.apply(layout_one_pane());
+    view.state.apply(ph_status(Some(&["local secret"]), false));
+    assert_eq!(view.state.prompt_history(1), ["local secret".to_owned()]);
+    view.state.apply(ph_status(None, true));
+    assert!(view.state.prompt_history(1).is_empty(), "원격 보기에 로컬 이력이 남았다");
 }
 
 // ── esc 모드 표식 (pytmux-380) ────────────────────────────────────────────────────
@@ -11416,7 +11844,8 @@ fn claude_status() -> ServerMessage {
         "t": "status",
         "windows": [{"index": 0, "name": "claude", "active": true}],
         "active_pane": 1,
-        "panes_claude": [{"id": 1, "claude": true}],
+        // 서버가 실제로 싣는 모양 — 문자열 상태(pytmux-588 · 종전 가짜 `true`).
+        "panes_claude": [{"id": 1, "claude": "idle"}],
     }))
     .unwrap()
 }

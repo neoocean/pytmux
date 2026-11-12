@@ -39,7 +39,17 @@ pub struct Launcher(pub Vec<String>);
 impl Launcher {
     /// `start-server` 까지 붙인 완성 argv.
     pub fn start_server_argv(&self) -> Vec<String> {
+        self.start_server_argv_at(None)
+    }
+
+    /// 지목한 엔드포인트에 띄우는 argv(pytmux-586 G2). ⚠ `--socket` 은 서브커맨드 **앞**이다 —
+    /// 정본 argparse 는 그것을 최상위 옵션으로만 받는다(`pytmux start-server --socket X` 는 거절).
+    pub fn start_server_argv_at(&self, socket: Option<&str>) -> Vec<String> {
         let mut argv = self.0.clone();
+        if let Some(socket) = socket {
+            argv.push("--socket".to_owned());
+            argv.push(socket.to_owned());
+        }
         argv.push("start-server".to_owned());
         argv
     }
@@ -294,6 +304,8 @@ pub fn means_no_server(err: &AttachError) -> bool {
         // ⛔ 원격 호스트를 지목했는데 토큰 때문에 거절한 것은 «서버가 없다» 가 아니다 —
         //    여기서 로컬 서버를 띄우면 사용자가 지목하지 않은 곳에 붙는다(검수 pytmux-34 #7).
         AttachError::NonLoopback(_) => false,
+        // 남의 소켓(심링크·다른 소유자·열린 권한) — 그 자리에 새 서버를 띄울 일이 아니다.
+        AttachError::Unsafe(_) => false,
     }
 }
 
@@ -310,10 +322,20 @@ pub fn start_server() -> Result<(), BootError> {
     start_server_with(&Search::discover())
 }
 
+/// [`start_server`] 를 그 엔드포인트에(`None` 이면 정본이 자리를 정한다).
+pub fn start_server_at(socket: Option<&str>) -> Result<(), BootError> {
+    start_server_with_at(&Search::discover(), socket)
+}
+
 /// [`start_server`] 의 탐색 결과 주입판.
 pub fn start_server_with(search: &Search) -> Result<(), BootError> {
+    start_server_with_at(search, None)
+}
+
+/// [`start_server_with`] 를 그 엔드포인트에.
+pub fn start_server_with_at(search: &Search, socket: Option<&str>) -> Result<(), BootError> {
     let launcher = search.launcher().map_err(BootError::NoLauncher)?;
-    let argv = launcher.start_server_argv();
+    let argv = launcher.start_server_argv_at(socket);
     let shown = argv.join(" ");
     let mut command = Command::new(&argv[0]);
     command
@@ -351,6 +373,13 @@ pub fn start_server_with(search: &Search) -> Result<(), BootError> {
         source,
     })?;
     if out.status.success() {
+        // 정본이 성공하면서도 stderr 에 남기는 말이 있다 — 좀비 서버를 교체했다는 경고
+        // (`run_start_server` · pytmux-586 G4). 그대로 보인다(삼키면 «탭이 사라졌다» 의
+        // 까닭이 사라진다).
+        let warn = String::from_utf8_lossy(&out.stderr);
+        if !warn.trim().is_empty() {
+            eprint!("{warn}");
+        }
         return Ok(());
     }
     // 정본은 실패 사유를 stderr 한 줄로 낸다(boot.log 에서 뽑은 것 — `server_boot_error`).
@@ -390,6 +419,12 @@ fn no_window(_command: &mut Command) {}
 /// (`launcher.main` 의 `need_spawn`). GUI 만 데모로 떨어지면 사용자는 자기 세션이
 /// 사라졌다고 읽는다.
 pub fn attach_or_start(cols: u16, rows: u16) -> Result<ServerLink, BootError> {
+    // 좀비 서버(pytmux-586 G4) — 정본 `existing_server_usable` 와 같은 물음을 붙기 **전에**.
+    if let Some(endpoint) = crate::endpoint::resolve()
+        && refuses_auth(&endpoint)
+    {
+        start_server_at(None)?;
+    }
     match ServerLink::attach(cols, rows) {
         Ok(link) => Ok(link),
         Err(e) if means_no_server(&e) => {
@@ -398,6 +433,41 @@ pub fn attach_or_start(cols: u16, rows: u16) -> Result<ServerLink, BootError> {
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// 지목한 곳에 붙는다. 서버가 없으면 **그 자리에** 정본으로 띄우고 다시 붙는다(pytmux-586 G2).
+///
+/// 정본 `main` 은 `--socket` 을 받아도 `need_spawn` 이면 `spawn_server(sock_path)` 로 그 자리에
+/// 띄운다. 「지목받은 곳은 폴백하지 않는다」는 **다른 서버·데모로 가지 않는다**는 뜻이지
+/// 그 자리에 띄우지 않는다는 뜻이 아니다.
+pub fn attach_or_start_at(spec: &str, cols: u16, rows: u16) -> Result<ServerLink, BootError> {
+    let endpoint = crate::endpoint::parse(spec);
+    if endpoint.probe() && refuses_auth(&endpoint) {
+        start_server_at(Some(spec))?;
+    }
+    match ServerLink::attach_to(spec, cols, rows) {
+        Ok(link) => Ok(link),
+        Err(e) if means_no_server(&e) => {
+            start_server_at(Some(spec))?;
+            Ok(ServerLink::attach_to(spec, cols, rows)?)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// 이 서버가 우리 토큰을 거절하나 — 정본 `existing_server_usable` 의 물음(가벼운 `list` 왕복).
+///
+/// `auth_failed` 는 ⑴ 토큰 파일만 지워진 **살아 있는** 서버(정본이 곧 다시 게시한다)와 ⑵ 좀비
+/// 둘 다다. 가르는 일은 정본 `start-server` 가 한다(재게시를 기다리고, 안 되면 교체) — 여기서는
+/// 묻기만 한다. 이 상자 밖(비루프백) 서버에는 묻지 않는다(토큰을 실어 보내는 물음이다).
+pub fn refuses_auth(endpoint: &crate::endpoint::Endpoint) -> bool {
+    if let crate::endpoint::Endpoint::Tcp { host, .. } = endpoint
+        && !crate::client::is_loopback_host(host)
+    {
+        return false;
+    }
+    crate::client::control_request(endpoint, serde_json::json!({"t": "list"}))
+        .is_some_and(|reply| reply.get("error").and_then(|e| e.as_str()) == Some("auth_failed"))
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@
 //! 픽스처는 서버 구현에서 뽑았다: `python3 scripts/gen_endpoint_fixture.py`
 //! 경로는 **구성요소 배열**이다(구분자는 OS 마다 다르므로 문자열로 비교하면 안 된다).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use proto::endpoint::{Endpoint, Rules};
 use serde::Deserialize;
@@ -26,6 +26,9 @@ struct Scenario {
     env: std::collections::BTreeMap<String, String>,
     uid: u32,
     candidates: Vec<Candidate>,
+    /// `PYTMUX_HOME=~/…` 를 펼 때 쓰는 홈(그 시나리오에만 있다 · pytmux-586 G9).
+    #[serde(default)]
+    home: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -55,15 +58,15 @@ fn components(path: &Path) -> Vec<String> {
 }
 
 fn rules_for(scenario: &Scenario) -> Rules {
-    let var = |name: &str| scenario.env.get(name).map(PathBuf::from);
-    Rules {
-        windows: scenario.os == "windows",
-        xdg_runtime_dir: var("XDG_RUNTIME_DIR"),
-        localappdata: var("LOCALAPPDATA"),
-        pytmux_home: var("PYTMUX_HOME"),
-        uid: scenario.uid,
-        home: Some(PathBuf::from("/home-fallback")),
-    }
+    // `Rules::from_env` 가 지나는 **같은 함수**로 짓는다 — 칸을 손으로 채우면 `~` 를 펴는
+    // 자리(pytmux-586 G9)가 이 자 밖으로 빠진다.
+    let home = scenario.home.clone().unwrap_or_else(|| "/home-fallback".to_owned());
+    Rules::from_lookup(scenario.os == "windows", scenario.uid, Some(Path::new("/cwd")), |name| {
+        match name {
+            "HOME" => Some(home.clone().into()),
+            other => scenario.env.get(other).map(Into::into),
+        }
+    })
 }
 
 #[test]

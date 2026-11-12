@@ -404,6 +404,10 @@ class ServerIOMixin:
             "settings": list(descs),
             # 코어에 없던 카테고리(좌측 세로탭에 이어 붙일 것). 순서가 뜻이라 리스트다.
             "setting_cats": list(cats),
+            # 패널 대상 명령(플러그인 몫 · pytmux-587). 정본 PromptScreen 은 `:` 첫 낱말이
+            # 코어 `PANE_SCOPED_CMDS` ∪ 이것이면 대상 패널을 세우고, 프롬프트 이력 미리보기가
+            # 그 패널 위에 선다 — GUI 가 같은 판정을 하려면 같은 표가 필요하다.
+            "pane_scoped": sorted(self.plugins.pane_scoped),
         }
 
     def _status_msg(self, sess: Session, full=True, client=None):

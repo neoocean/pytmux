@@ -1545,6 +1545,16 @@ pub struct SessionState {
     /// `client_prompt_text` 도 같은 이유로 `pane_claude` 로 먼저 거른다. **활성 윈도우의
     /// 패널만** 실려 오므로, 탭을 바꾸면 이 표도 그 탭의 것으로 갈린다.
     claude_panes: std::collections::HashSet<i64>,
+    /// 패널별 **제출한 프롬프트 이력**(tail · 서버 `status` 의 `ph_panes` · pytmux-587).
+    /// 흡수 규칙은 정본 `claude-prompt-history:client_status` 그대로다 — 키가 없으면 지키고,
+    /// 항목에 `h` 가 없으면(디바운스) 같은 id 의 직전 이력을 물린다.
+    prompt_history: std::collections::HashMap<i64, Vec<String>>,
+    /// `:` 미리보기 최대 줄 수(서버 `ph_max_lines` · 1~3 · 기본 3). 고정 바와는 무관하다.
+    ph_max_lines: Option<usize>,
+    /// 직전 status 가 원격 탭 보기였나 — 바뀌면 프롬프트 이력 표를 버린다(pytmux-587 ②).
+    ph_remote_view: bool,
+    /// 플러그인의 패널 대상 명령(서버 `plugin_surface.pane_scoped`). 안 왔으면 지킨다.
+    plugin_pane_scoped: Vec<String>,
     /// 지금 Claude 모델 이름(서버 `status` 의 `claude_model` — 예 `opus-5`).
     claude_model: Option<String>,
     /// 5시간 한도 사용률 %(서버 `tok5h_pct`). 분모를 모르면 서버가 안 보낸다.
@@ -1765,14 +1775,17 @@ impl SessionState {
                 // 비우면 작성창 인계가 status 사이에서 깜빡인다(플러그인 개요와 같은 규칙).
                 if let Some(panes) = status.fields.get("panes_claude").and_then(|v| v.as_array())
                 {
+                    // ★ `claude` 칸은 **문자열 상태**다(`"idle"`·`"busy"`·`"limit"` · 아니면
+                    //   null — 서버 `_pane_claude_entry` 가 `p._claude` 를 그대로 싣는다).
+                    //   종전에는 bool `true` 만 셌고 시험도 가짜 `true` 를 주입해 공허 통과했다 —
+                    //   실서버에서는 이 집합이 늘 비어 있었다(pytmux-588). 정본처럼 참값이면 Claude.
                     self.claude_panes = panes
                         .iter()
-                        .filter(|entry| {
-                            entry.get("claude").and_then(serde_json::Value::as_bool) == Some(true)
-                        })
+                        .filter(|entry| claude_state_on(entry.get("claude")))
                         .filter_map(|entry| entry.get("id").and_then(serde_json::Value::as_i64))
                         .collect();
                 }
+                let ph_changed = self.absorb_prompt_history(&status);
                 // 상태줄 표식(Tier B ③) — ★ **안 오면 「없음」이다.** 위 이웃들과
                 // 반대 규칙이라 적어 둔다: 저것들은 델타에 안 실릴 수 있어 "안 왔으면
                 // 지킨다"가 맞지만, 배지는 서버가 **매 status 마다 다시 만들고 비면
@@ -1810,7 +1823,8 @@ impl SessionState {
                         }
                     }
                 }
-                let changed = tabs != self.tabs || flags != self.flags || plugins_changed;
+                let changed =
+                    tabs != self.tabs || flags != self.flags || plugins_changed || ph_changed;
                 self.tabs = tabs;
                 self.flags = flags;
                 changed
@@ -1845,7 +1859,8 @@ impl SessionState {
                 self.closed = true;
                 true
             }
-            ServerMessage::Error { msg } => {
+            // 핸드셰이크 거절(`error` 낱말)은 뷰가 `proto::supervise` 로 먼저 가로챈다(pytmux-586 G5).
+            ServerMessage::Error { msg, .. } => {
                 self.push_notice(Notice::from(Severity::Error, msg.clone(), Source::Server));
                 self.last_error = Some(msg);
                 true
@@ -2591,6 +2606,80 @@ impl SessionState {
     /// 이 패널이 Claude 패널인가(서버 `status` 의 `panes_claude`).
     pub fn is_claude_pane(&self, pane: i64) -> bool {
         self.claude_panes.contains(&pane)
+    }
+
+    /// 그 패널의 프롬프트 이력(오래된 것이 앞 · pytmux-587). 없으면 빈 조각.
+    pub fn prompt_history(&self, pane: i64) -> &[String] {
+        self.prompt_history.get(&pane).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// `:` 미리보기 최대 줄 수(서버 `ph_max_lines` · 아직 못 받았으면 정본 기본 3).
+    pub fn ph_max_lines(&self) -> usize {
+        self.ph_max_lines.unwrap_or(3)
+    }
+
+    /// 플러그인이 낸 패널 대상 명령 이름들(`plugin_surface.pane_scoped`).
+    pub fn plugin_pane_scoped(&self) -> &[String] {
+        &self.plugin_pane_scoped
+    }
+
+    /// status 의 `ph_panes`·`ph_max_lines`·`plugin_surface.pane_scoped` 를 흡수한다(pytmux-587).
+    /// 바뀌었으면 `true`. 규칙은 정본 `claude-prompt-history:client_status` 와 같다.
+    fn absorb_prompt_history(&mut self, status: &crate::message::Status) -> bool {
+        let mut changed = false;
+        if let Some(n) = status.fields.get("ph_max_lines").and_then(serde_json::Value::as_i64) {
+            let n = Some(n.clamp(1, 3) as usize);
+            changed |= n != self.ph_max_lines;
+            self.ph_max_lines = n;
+        }
+        if let Some(scoped) = status
+            .fields
+            .get("plugin_surface")
+            .and_then(|s| s.get("pane_scoped"))
+            .and_then(serde_json::Value::as_array)
+        {
+            self.plugin_pane_scoped =
+                scoped.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+        }
+        // ★ 로컬 ↔ 원격 보기 전이면 표를 버린다(②) — 두 서버의 패널 id 가 겹친다. 판정은 이
+        //   메시지의 `windows`(활성 탭이 remote 인가) · 없으면 직전 판정을 지킨다.
+        if let Some(wins) = status.fields.get("windows").and_then(serde_json::Value::as_array) {
+            let remote = wins.iter().any(|t| {
+                t.get("active").and_then(serde_json::Value::as_bool) == Some(true)
+                    && t.get("remote").and_then(serde_json::Value::as_bool) == Some(true)
+            });
+            if remote != self.ph_remote_view {
+                self.ph_remote_view = remote;
+                changed |= !self.prompt_history.is_empty();
+                self.prompt_history.clear();
+            }
+        }
+        let Some(entries) = status.fields.get("ph_panes").and_then(serde_json::Value::as_array)
+        else {
+            return changed; // 안 왔으면 지킨다
+        };
+        let mut next = std::collections::HashMap::new();
+        for e in entries {
+            let Some(id) = e.get("id").and_then(serde_json::Value::as_i64) else {
+                continue;
+            };
+            match e.get("h").and_then(serde_json::Value::as_array) {
+                Some(h) => {
+                    let h: Vec<String> =
+                        h.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+                    next.insert(id, h);
+                }
+                // 디바운스로 빠진 항목은 직전 것을 물린다.
+                None => {
+                    if let Some(prev) = self.prompt_history.get(&id) {
+                        next.insert(id, prev.clone());
+                    }
+                }
+            }
+        }
+        changed |= next != self.prompt_history;
+        self.prompt_history = next;
+        changed
     }
 
     /// 플러그인이 낸 상태줄 표식들 — 뷰가 순서대로 칩으로 그린다(Tier B ③ · P6).
@@ -3364,6 +3453,44 @@ mod tests;
 
 /// full `status` 의 **플러그인 표면**(Tier A). 이 프레임에 없으면 `None` —
 /// 델타라는 뜻이지 "기여가 없다"가 아니다(개요와 같은 규칙).
+/// `panes_claude[].claude` 가 「Claude 패널이다」인가 — 파이썬 참값과 같은 뜻(빈 문자열·
+/// null·false 는 아님). 서버는 문자열 상태를 싣는다(옛 판·시험의 bool 도 받는다).
+fn claude_state_on(v: Option<&serde_json::Value>) -> bool {
+    match v {
+        Some(serde_json::Value::String(s)) => !s.is_empty(),
+        Some(serde_json::Value::Bool(b)) => *b,
+        _ => false,
+    }
+}
+
+/// `claude-limit` 훅의 재료(pytmux-588 · 정본 `claude.py:saver_hook_events`) —
+/// **이 메시지 하나만** 본다: `(활성 패널의 claude 상태, claude_account)`.
+///
+/// 들고 있던 값을 쓰지 않는 이유: 정본이 `msg.get(...)` 만 읽는다. 키가 빠진 메시지에서는
+/// 상태가 「없음」이 되고(에지 리셋), 계정은 빈 문자열이 된다 — 같은 답을 내려면 같은 재료를 봐야 한다.
+pub fn claude_limit_facts(status: &crate::message::Status) -> (Option<String>, String) {
+    let account = status
+        .fields
+        .get("claude_account")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let active = status.fields.get("active_pane").and_then(|v| v.as_i64());
+    let state = status
+        .fields
+        .get("panes_claude")
+        .and_then(|v| v.as_array())
+        .and_then(|panes| {
+            panes.iter().find(|e| {
+                active.is_some() && e.get("id").and_then(serde_json::Value::as_i64) == active
+            })
+        })
+        .and_then(|e| e.get("claude"))
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    (state, account)
+}
+
 fn plugin_surface_from_status(status: &crate::message::Status) -> Option<PluginSurface> {
     let obj = status.fields.get("plugin_surface")?.as_object()?;
     let text = |v: Option<&serde_json::Value>| {

@@ -91,6 +91,8 @@ def _setup():
             _libs = _setup_darwin()
         elif sys.platform == "win32":
             _libs = _setup_win32()
+        elif sys.platform.startswith("linux"):
+            _libs = _setup_linux()
         else:
             _libs = False
     except Exception:        # 어떤 실패든 '불가'로 확정(베스트에포트 — 폴백 휴리스틱)
@@ -145,14 +147,91 @@ def _current_win32(libs) -> str | None:
         return None
 
 
+# ---- Linux(pytmux-590) — 입력기에 **물어서** 읽는다 ─────────────────────────────
+#
+# 사람 결정(2026-11-12): GUI 가 리눅스 배지를 내면 정본에도 같은 CL 로 낸다. 길은 입력기 CLI
+# 둘 — Fcitx5 `fcitx5-remote -n`(현재 입력기 이름 · 예 `hangul`/`keyboard-us`) 다음 IBus
+# `ibus engine`(현재 엔진 · 예 `hangul`/`xkb:us::eng`). 둘 다 못 찾거나 실패하면 None 이다 —
+# 모르는 것을 영문이라고 단정하지 않는다(호출부가 확정 입력 휴리스틱으로 폴백).
+# D-Bus 를 직접 두드리지 않는 이유: IBus 는 세션 버스가 아니라 **자기 버스**(주소 파일)라
+# 손이 많고, CLI 가 그 주소 찾기를 이미 한다. GUI(`client/crates/gui/src/ime.rs`)도 같은 두
+# 명령을 같은 차례로 부르고, 출력 해석은 아래 두 파서와 같은 답을 낸다(답지 = gen_ime_source.py).
+#
+# ⚠ 한계: ibus-hangul 은 한/영을 **엔진 안에서** 바꾼다(엔진 이름은 `hangul` 그대로) — 그래서
+#   IBus 에서는 「한글 엔진이 걸려 있다」까지만 안다(엔진 안의 영문 모드는 못 가른다).
+#   Fcitx5 는 보통 한/영 키가 입력기 자체를 바꾸므로(`keyboard-us` ↔ `hangul`) 정확하다.
+_LINUX_TIMEOUT = 0.3          # 명령 하나의 상한(초) — 폴링 경로가 멈추면 안 된다
+_LINUX_MIN_GAP = 0.3          # 인프로세스 질의의 최소 간격(50ms 폴링이 프로세스를 퍼붓지 않게)
+_linux_cache = (None, -1.0)   # (마지막 답, 그때 monotonic)
+
+
+def _first_line(out) -> str:
+    for ln in (out or "").splitlines():
+        ln = ln.strip()
+        if ln:
+            return ln
+    return ""
+
+
+def parse_fcitx5(out) -> str | None:
+    """`fcitx5-remote -n` 출력 → 합성 소스 ID `fcitx5:<입력기>`(빈 출력이면 None)."""
+    name = _first_line(out)
+    return f"fcitx5:{name}" if name else None
+
+
+def parse_ibus(out) -> str | None:
+    """`ibus engine` 출력 → 합성 소스 ID `ibus:<엔진>`(빈 출력이면 None)."""
+    name = _first_line(out)
+    return f"ibus:{name}" if name else None
+
+
+def _setup_linux():
+    import shutil
+    tools = tuple(t for t in ("fcitx5-remote", "ibus") if shutil.which(t))
+    if not tools:
+        raise RuntimeError("입력기 CLI 없음")
+    return ("linux", tools)
+
+
+def _run_linux(argv):
+    import subprocess
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True,
+                           timeout=_LINUX_TIMEOUT, stdin=subprocess.DEVNULL)
+    except Exception:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _current_linux(libs) -> str | None:
+    """Fcitx5 → IBus 차례로 묻는다. 둘 다 못 답하면 None."""
+    global _linux_cache
+    import time
+    now = time.monotonic()
+    last, at = _linux_cache
+    if at >= 0 and now - at < _LINUX_MIN_GAP:
+        return last
+    tools = libs[1]
+    sid = None
+    if "fcitx5-remote" in tools:
+        sid = parse_fcitx5(_run_linux(["fcitx5-remote", "-n"]))
+    if sid is None and "ibus" in tools:
+        sid = parse_ibus(_run_linux(["ibus", "engine"]))
+    _linux_cache = (sid, now)
+    return sid
+
+
 def current_source_id() -> str | None:
     """현재 키보드 입력소스 ID(macOS: 'com.apple.keylayout.ABC' 등 실 ID, Windows:
-    합성 'windows.ime.hangul'/'windows.ime.latin') 또는 불가 시 None."""
+    합성 'windows.ime.hangul'/'windows.ime.latin', Linux: 합성 'fcitx5:<입력기>'/
+    'ibus:<엔진>') 또는 불가 시 None."""
     libs = _setup()
     if not libs:
         return None
     if libs[0] == "win32":
         return _current_win32(libs)
+    if libs[0] == "linux":
+        return _current_linux(libs)
     return _current_darwin(libs)
 
 
@@ -165,7 +244,7 @@ def spawn_watcher():
 
     비 macOS·바인딩 실패·spawn 실패는 None → 호출부가 폴백(확정 입력 휴리스틱 또는
     Windows 인프로세스 질의)으로 동작한다."""
-    if sys.platform != "darwin" or not _setup():
+    if not _setup() or _setup()[0] not in ("darwin", "linux"):
         return None
     try:
         import subprocess
@@ -329,6 +408,41 @@ def _watch_darwin():
     _ = (_on_change, name)
 
 
+def _watch_linux():
+    """리눅스 감시 헬퍼 본체(`--watch`) — 입력기 CLI 를 `_LINUX_MIN_GAP` 마다 물어 **바뀔 때만**
+    한 줄을 흘린다(macOS 헬퍼와 같은 줄 규약 · `read_latest` 가 그대로 읽는다). 폴링을 자식으로
+    빼는 이유는 그 명령들이 프로세스라서다 — 클라의 50ms 루프 위에서 돌리면 화면이 그 시간만큼
+    선다. 부모가 죽으면 stdin EOF 로 끝난다(macOS 헬퍼와 같다)."""
+    libs = _setup()
+    if not libs or libs[0] != "linux":
+        return
+    import os
+    import threading
+    import time
+
+    def _wait_parent():
+        try:
+            sys.stdin.buffer.read()
+        except Exception:
+            pass
+        os._exit(0)
+    threading.Thread(target=_wait_parent, daemon=True).start()
+    last = None
+    while True:
+        sid = _current_linux(libs)
+        if sid and sid != last:
+            last = sid
+            try:
+                sys.stdout.write(sid + "\n")
+                sys.stdout.flush()
+            except Exception:
+                os._exit(0)
+        time.sleep(_LINUX_MIN_GAP)
+
+
 if __name__ == "__main__":
     if "--watch" in sys.argv:
-        _watch_darwin()
+        if sys.platform.startswith("linux"):
+            _watch_linux()
+        else:
+            _watch_darwin()

@@ -45,6 +45,10 @@ pub enum AttachError {
     NonLoopback(String),
     #[error("{}", err_handshake(.0))]
     Handshake(#[from] FrameError),
+    /// 소켓 파일이 우리 것이 아니다(심링크 · 다른 소유자 · 열린 권한) — 정본
+    /// `ipc.validate_local_socket` 과 같은 규칙. 붙으면 키 입력과 토큰이 그쪽으로 간다.
+    #[error("{0}")]
+    Unsafe(String),
 }
 
 fn err_no_server(names: &str) -> String {
@@ -98,12 +102,41 @@ fn err_handshake(err: &FrameError) -> String {
     base::i18n::tf("핸드셰이크 실패: {err}", &[("err", err.to_string().as_str())])
 }
 
+/// 제어 요청 한 번 — 붙고, 보내고, 한 프레임 받고, 닫는다. 답이 없으면 `None`.
+///
+/// 정본 `launcher.control_request` 와 같은 꼴이다(`proto` · 토큰을 실은 한 프레임). 다른 점 하나:
+/// 받기에 상한(2초)이 있다 — 정본은 사람이 친 CLI 라 영원히 기다리지만 GUI 는 창을 띄우기
+/// 전에 묻는다(답 없는 좀비 앞에서 창이 영영 안 뜨면 안 된다).
+pub fn control_request(endpoint: &Endpoint, request: serde_json::Value) -> Option<serde_json::Value> {
+    let stream = match endpoint {
+        Endpoint::Unix { path, .. } => {
+            endpoint::validate_local_socket(path).ok()?;
+            Stream::connect_unix(path).ok()?
+        }
+        Endpoint::Tcp { host, .. } => Stream::connect_tcp(host, endpoint.resolve_port()?).ok()?,
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let mut frame = request;
+    frame["proto"] = serde_json::json!(crate::message::PROTO_VERSION);
+    if let Some(token) = endpoint::read_token(endpoint) {
+        frame["token"] = serde_json::json!(token);
+    }
+    let mut writer = BufWriter::new(stream.try_clone().ok()?);
+    write_frame(&mut writer, &frame).ok()?;
+    read_frame(&mut BufReader::new(stream), MAX_FRAME).ok()
+}
+
 /// 서버와의 연결 하나.
 #[derive(Debug)]
 pub struct Connection {
     reader: BufReader<Stream>,
     writer: BufWriter<Stream>,
     endpoint: Endpoint,
+    /// 붙기 **전** 엔드포인트의 이름(포트 미확정 — `tcp:127.0.0.1:0`). 다시 붙을 때는 이것을
+    /// 쓴다: 확정 포트(`endpoint`)로 다시 붙으면 Windows host 재시작이 포트파일에 새로 게시한
+    /// 포트를 못 따라간다(pytmux-585).
+    origin: String,
 }
 
 impl Connection {
@@ -143,6 +176,8 @@ impl Connection {
         let mut resolved: Option<u16> = None;
         let stream = match endpoint {
             Endpoint::Unix { path, .. } => {
+                // 남의 소켓에는 안 붙는다 — 정본 `_guard_local_socket` 과 같은 자리(연결 전).
+                endpoint::validate_local_socket(path).map_err(AttachError::Unsafe)?;
                 Stream::connect_unix(path).map_err(|source| AttachError::Connect {
                     endpoint: name.clone(),
                     source,
@@ -201,6 +236,7 @@ impl Connection {
             reader: BufReader::new(stream),
             writer: BufWriter::new(write_half),
             endpoint: settled,
+            origin: name,
         };
 
         let hello = Hello::new(cols, rows).with_token(token);
@@ -215,6 +251,11 @@ impl Connection {
 
     pub fn socket(&self) -> String {
         self.endpoint.display()
+    }
+
+    /// 다시 붙을 때 쓸 이름 — 붙기 전 그대로(포트 미확정). [`Connection::origin`] 칸 문서.
+    pub fn origin(&self) -> &str {
+        &self.origin
     }
 
     /// 쓰기 절반을 떼어 낸다. 읽기는 스레드가, 쓰기는 뷰가 담당하기 위해서다.
@@ -364,6 +405,12 @@ impl CommandSink {
             let _ = self.writer.get_ref().shutdown();
         }
         result
+    }
+
+    /// 연결을 닫는다 — 같은 소켓을 쥔 읽기 스레드가 깨어나 `Ended` 를 보낸다(정본
+    /// `_force_reconnect` 의 «옛 writer 를 닫아 블록된 read_msg 를 깨운다»).
+    pub fn shutdown(&mut self) {
+        let _ = self.writer.get_ref().shutdown();
     }
 }
 

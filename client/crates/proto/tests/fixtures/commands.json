@@ -178,7 +178,8 @@
     ],
     "pc_queue_clear": [],
     "ph_scroll_to": [
-      "index"
+      "index",
+      "pane"
     ],
     "pipe_pane": [
       "cmd"

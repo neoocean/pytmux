@@ -1,0 +1,308 @@
+{
+ "cases": {
+  "active_switches_to_a_limited_pane": [
+   {
+    "fires": [],
+    "status": {
+     "active_pane": 1,
+     "panes_claude": [
+      {
+       "claude": "idle",
+       "id": 1
+      },
+      {
+       "claude": "limit",
+       "id": 2
+      }
+     ]
+    }
+   },
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 2,
+     "panes_claude": [
+      {
+       "claude": "idle",
+       "id": 1
+      },
+      {
+       "claude": "limit",
+       "id": 2
+      }
+     ]
+    }
+   }
+  ],
+  "busy_then_limit": [
+   {
+    "fires": [],
+    "status": {
+     "active_pane": 1,
+     "panes_claude": [
+      {
+       "claude": "busy",
+       "id": 1
+      }
+     ]
+    }
+   },
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 1,
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   }
+  ],
+  "fall_and_rise_fires_again": [
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "a",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 1,
+     "claude_account": "a",
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   },
+   {
+    "fires": [],
+    "status": {
+     "active_pane": 1,
+     "claude_account": "a",
+     "panes_claude": [
+      {
+       "claude": "idle",
+       "id": 1
+      }
+     ]
+    }
+   },
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "b",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 1,
+     "claude_account": "b",
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   }
+  ],
+  "first_status_already_limit_fires": [
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "work",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 1,
+     "claude_account": "work",
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   }
+  ],
+  "holding_limit_does_not_refire": [
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "a",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 1,
+     "claude_account": "a",
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   },
+   {
+    "fires": [],
+    "status": {
+     "active_pane": 1,
+     "claude_account": "a",
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   }
+  ],
+  "missing_panes_resets_the_edge": [
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "a",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 1,
+     "claude_account": "a",
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   },
+   {
+    "fires": [],
+    "status": {
+     "active_pane": 1
+    }
+   },
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "a",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 1,
+     "claude_account": "a",
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   }
+  ],
+  "no_account_is_empty_string": [
+   {
+    "fires": [
+     {
+      "env": {
+       "PYTMUX_ACCOUNT": "",
+       "PYTMUX_HOOK_EVENT": "claude-limit"
+      },
+      "event": "claude-limit"
+     }
+    ],
+    "status": {
+     "active_pane": 1,
+     "panes_claude": [
+      {
+       "claude": "limit",
+       "id": 1
+      }
+     ]
+    }
+   }
+  ],
+  "not_claude_pane": [
+   {
+    "fires": [],
+    "status": {
+     "active_pane": 1,
+     "panes_claude": [
+      {
+       "claude": null,
+       "id": 1
+      }
+     ]
+    }
+   }
+  ],
+  "other_pane_limit_is_ignored": [
+   {
+    "fires": [],
+    "status": {
+     "active_pane": 1,
+     "panes_claude": [
+      {
+       "claude": "idle",
+       "id": 1
+      },
+      {
+       "claude": "limit",
+       "id": 2
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "core": [
+  "after-new-window",
+  "alert-bell",
+  "client-attached"
+ ],
+ "plugin": [
+  "claude-limit"
+ ]
+}

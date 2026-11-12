@@ -1,0 +1,325 @@
+{
+  "_comment": "python3 scripts/gen_lifecycle_fixture.py 로 생성. 출처 = pytmuxlib/clientconn.py(_reader_task·_reconnect·_drop_reconnect_ok·_reconnect_after_drop·_force_reconnect)를 스텁 위에서 실제로 돌린 결과.",
+  "constants": {
+    "delay": 0.02,
+    "restart": 300,
+    "force": 150,
+    "drop": 25,
+    "drop_window": 20.0,
+    "drop_max": 6
+  },
+  "texts": {
+    "msg.server_restarting": {
+      "ko": "pytmux: 서버 재시작 중…",
+      "en": "pytmux: server restarting…"
+    },
+    "msg.restart_done": {
+      "ko": "pytmux: 서버 재시작 완료 — 재접속됨",
+      "en": "pytmux: server restarted — reconnected"
+    },
+    "msg.restart_done_win_noclient": {
+      "ko": "pytmux: 전체 재시작 완료 — 세션 보존 (Windows: 클라 코드는 미갱신, 반영하려면 pytmux 재실행)",
+      "en": "pytmux: full restart done — session preserved (Windows: client code not updated; relaunch pytmux to apply)"
+    },
+    "msg.reconnected_resync": {
+      "ko": "pytmux: 재접속됨 — 화면 재동기",
+      "en": "pytmux: reconnected — resyncing screen"
+    },
+    "msg.reconnecting": {
+      "ko": "pytmux: 재접속 중…",
+      "en": "pytmux: reconnecting…"
+    },
+    "msg.reconnecting_auto": {
+      "ko": "pytmux: 재접속 중… (자동 회복)",
+      "en": "pytmux: reconnecting… (auto recovery)"
+    },
+    "msg.reconnect_failed_net": {
+      "ko": "pytmux: 재접속 실패 — 네트워크 확인",
+      "en": "pytmux: reconnect failed — check network"
+    },
+    "msg.server_terminated": {
+      "ko": "pytmux: 서버가 종료되었습니다",
+      "en": "pytmux: server has terminated"
+    },
+    "msg.server_lost": {
+      "ko": "pytmux: 서버 연결이 끊겼고 재접속에 실패했습니다 — 서버 프로세스가 외부에서 강제 종료됐는지 확인하세요(pythonw 일괄 kill 등)",
+      "en": "pytmux: lost the server connection and could not reconnect — check whether the server process was killed externally (e.g. a blanket pythonw kill)"
+    },
+    "msg.reconnect_failed": {
+      "ko": "pytmux: 서버 재접속 실패",
+      "en": "pytmux: server reconnect failed"
+    },
+    "msg.proto_mismatch": {
+      "ko": "pytmux: 서버와 프로토콜 버전이 다릅니다(서버 {server} · 클라 {client}) — 서버와 클라를 같은 판으로 맞추세요",
+      "en": "pytmux: protocol version differs from the server (server {server} · client {client}) — run the same version of server and client"
+    },
+    "msg.auth_failed": {
+      "ko": "pytmux: 서버가 인증을 거부했습니다 — 토큰이 맞지 않습니다(다른 사용자의 서버이거나 토큰 파일이 지워졌습니다)",
+      "en": "pytmux: the server refused authentication — the token does not match (another user's server, or the token file was removed)"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "drop_ok",
+      "connect_ok": true,
+      "windows": false,
+      "flags": {},
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 재접속됨 — 화면 재동기"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "drop_fail",
+      "connect_ok": false,
+      "windows": false,
+      "flags": {},
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 25,
+          "log": [
+            {
+              "exit": "pytmux: 서버 연결이 끊겼고 재접속에 실패했습니다 — 서버 프로세스가 외부에서 강제 종료됐는지 확인하세요(pythonw 일괄 kill 등)",
+              "relaunch": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "auto_off",
+      "connect_ok": true,
+      "windows": false,
+      "flags": {
+        "net_auto_reconnect": false
+      },
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 0,
+          "log": [
+            {
+              "exit": "pytmux: 서버 연결이 끊겼고 재접속에 실패했습니다 — 서버 프로세스가 외부에서 강제 종료됐는지 확인하세요(pythonw 일괄 kill 등)",
+              "relaunch": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "drop_window",
+      "connect_ok": true,
+      "windows": false,
+      "flags": {},
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 재접속됨 — 화면 재동기"
+            }
+          ]
+        },
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 재접속됨 — 화면 재동기"
+            }
+          ]
+        },
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 재접속됨 — 화면 재동기"
+            }
+          ]
+        },
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 재접속됨 — 화면 재동기"
+            }
+          ]
+        },
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 재접속됨 — 화면 재동기"
+            }
+          ]
+        },
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 재접속됨 — 화면 재동기"
+            }
+          ]
+        },
+        {
+          "step": "eof",
+          "attempts": 0,
+          "log": [
+            {
+              "exit": "pytmux: 서버 연결이 끊겼고 재접속에 실패했습니다 — 서버 프로세스가 외부에서 강제 종료됐는지 확인하세요(pythonw 일괄 kill 등)",
+              "relaunch": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "restart_ok",
+      "connect_ok": true,
+      "windows": false,
+      "flags": {
+        "_reconnecting": true
+      },
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 서버 재시작 완료 — 재접속됨"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "restart_fail",
+      "connect_ok": false,
+      "windows": false,
+      "flags": {
+        "_reconnecting": true
+      },
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 300,
+          "log": [
+            {
+              "exit": "pytmux: 서버 재접속 실패",
+              "relaunch": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "restart_relaunch_posix",
+      "connect_ok": true,
+      "windows": false,
+      "flags": {
+        "_reconnecting": true,
+        "_relaunch_on_restart": true
+      },
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 0,
+          "log": [
+            {
+              "exit": null,
+              "relaunch": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "restart_relaunch_windows",
+      "connect_ok": true,
+      "windows": true,
+      "flags": {
+        "_reconnecting": true,
+        "_relaunch_on_restart": true
+      },
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 전체 재시작 완료 — 세션 보존 (Windows: 클라 코드는 미갱신, 반영하려면 pytmux 재실행)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "force_ok",
+      "connect_ok": true,
+      "windows": false,
+      "flags": {},
+      "steps": [
+        {
+          "step": "force",
+          "attempts": 1,
+          "log": [
+            {
+              "msg": "pytmux: 재접속 중…"
+            },
+            {
+              "msg": "pytmux: 재접속됨 — 화면 재동기"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "force_fail",
+      "connect_ok": false,
+      "windows": false,
+      "flags": {},
+      "steps": [
+        {
+          "step": "force",
+          "attempts": 150,
+          "log": [
+            {
+              "msg": "pytmux: 재접속 중…"
+            },
+            {
+              "msg": "pytmux: 재접속 실패 — 네트워크 확인"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ending_guard",
+      "connect_ok": true,
+      "windows": false,
+      "flags": {
+        "_ending": true
+      },
+      "steps": [
+        {
+          "step": "eof",
+          "attempts": 0,
+          "log": []
+        }
+      ]
+    }
+  ]
+}

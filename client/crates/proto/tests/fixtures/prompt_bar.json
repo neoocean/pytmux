@@ -1,0 +1,1061 @@
+{
+ "cases": {
+  "bare_mark_row_does_not_hide": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       1,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ fix"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "grid": [
+     "",
+     ">"
+    ],
+    "hist": {
+     "1": [
+      "fix"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "blank_lines_skipped": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       2,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ first",
+       "  second"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "\n\n  first  \n\n second"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "clear_hides_the_bar": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "old prompt",
+      "/clear"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "control_chars_fold_to_space": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       1,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ a b c d"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "a\tb\u001bcd"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "empty_last_prompt": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      ""
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "exact_fit_two_rows": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       2,
+       0,
+       14
+      ],
+      "rows": [
+       "❯ abcdefghij",
+       "  klmnopqrst"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 14,
+    "hist": {
+     "1": [
+      "abcdefghijklmnopqrst"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 14,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "first_row_already_a_prompt": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "grid": [
+     "  ❯ something else"
+    ],
+    "hist": {
+     "1": [
+      "fix the bug"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "first_row_old_sticky_mark": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "grid": [
+     "› x"
+    ],
+    "hist": {
+     "1": [
+      "fix the bug"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "folds_into_two_rows_with_ellipsis": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       2,
+       0,
+       20
+      ],
+      "rows": [
+       "❯ please refactor",
+       "  the session vie…"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 20,
+    "hist": {
+     "1": [
+      "please refactor the session view so that the sticky bar folds"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 20,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "four_rows_pane": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       2,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ a",
+       "  b…"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 4,
+    "W": 30,
+    "hist": {
+     "1": [
+      "a\nb\nc"
+     ]
+    },
+    "panes": [
+     {
+      "h": 4,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "multiline_capped_with_ellipsis": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       2,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ line one",
+       "  line two…"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "line one\nline two\nline three"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "narrow_pane_has_none": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 7,
+    "hist": {
+     "1": [
+      "fix"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 7,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "offset_pane": {
+   "expect": {
+    "pinned": {
+     "3": {
+      "rect": [
+       2,
+       3,
+       5,
+       35
+      ],
+      "rows": [
+       "❯ fix"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 10,
+    "W": 40,
+    "grid": [
+     "",
+     "",
+     "     hello"
+    ],
+    "hist": {
+     "3": [
+      "fix"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 3,
+      "w": 30,
+      "x": 5,
+      "y": 2
+     }
+    ]
+   }
+  },
+  "older_history_uses_the_last": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       1,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ second"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "first",
+      "second"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "one_row": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       1,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ fix the bug"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "fix the bug"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "other_prompt_visible_does_not_hide": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       1,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ fix the bug"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "grid": [
+     "",
+     "",
+     "> something else"
+    ],
+    "hist": {
+     "1": [
+      "fix the bug"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "pane_without_history": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {},
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "preview_cuts_width_not_folds": {
+   "expect": {
+    "pinned": {},
+    "preview": {
+     "pane": 1,
+     "rows": [
+      "▷ please r"
+     ]
+    }
+   },
+   "input": {
+    "H": 6,
+    "W": 12,
+    "hist": {
+     "1": [
+      "please refactor the session view so that the sticky bar folds"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 12,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "target": 1
+   }
+  },
+  "preview_max_one_line": {
+   "expect": {
+    "pinned": {},
+    "preview": {
+     "pane": 1,
+     "rows": [
+      "▷ one                      ▾"
+     ]
+    }
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "one\ntwo"
+     ]
+    },
+    "max_lines": 1,
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "target": 1
+   }
+  },
+  "preview_scrolled_still_shows": {
+   "expect": {
+    "pinned": {},
+    "preview": {
+     "pane": 1,
+     "rows": [
+      "▷ fix"
+     ]
+    }
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "fix"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "scroll": {
+     "1": 4
+    },
+    "target": 1
+   }
+  },
+  "preview_short_pane": {
+   "expect": {
+    "pinned": {},
+    "preview": {
+     "pane": 1,
+     "rows": [
+      "▷ one",
+      "  two                      ▾"
+     ]
+    }
+   },
+   "input": {
+    "H": 2,
+    "W": 30,
+    "hist": {
+     "1": [
+      "one\ntwo\nthree"
+     ]
+    },
+    "panes": [
+     {
+      "h": 2,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "target": 1
+   }
+  },
+  "preview_too_narrow": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 5,
+    "hist": {
+     "1": [
+      "fix"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 5,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "target": 1
+   }
+  },
+  "preview_truncates_lines_with_arrow": {
+   "expect": {
+    "pinned": {},
+    "preview": {
+     "pane": 1,
+     "rows": [
+      "▷ one",
+      "  two",
+      "  three                    ▾"
+     ]
+    }
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "one\ntwo\nthree\nfour\nfive"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "target": 1
+   }
+  },
+  "preview_wide_chars": {
+   "expect": {
+    "pinned": {},
+    "preview": {
+     "pane": 1,
+     "rows": [
+      "▷ 한글한▾"
+     ]
+    }
+   },
+   "input": {
+    "H": 6,
+    "W": 11,
+    "hist": {
+     "1": [
+      "한글한글한글\n둘째"
+     ]
+    },
+    "max_lines": 1,
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 11,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "target": 1
+   }
+  },
+  "prompt_visible_in_pane": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "grid": [
+     "",
+     "",
+     "",
+     "> fix the bug"
+    ],
+    "hist": {
+     "1": [
+      "fix the bug please"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "reset_with_args_hides": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "old",
+      "  /Reset now"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "scrolled_pane_yields": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "fix the bug"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "scroll": {
+     "1": 3
+    }
+   }
+  },
+  "short_pane_has_none": {
+   "expect": {
+    "pinned": {},
+    "preview": null
+   },
+   "input": {
+    "H": 3,
+    "W": 30,
+    "hist": {
+     "1": [
+      "fix"
+     ]
+    },
+    "panes": [
+     {
+      "h": 3,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "target_gets_preview_not_pinned": {
+   "expect": {
+    "pinned": {},
+    "preview": {
+     "pane": 1,
+     "rows": [
+      "▷ fix the bug"
+     ]
+    }
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "fix the bug"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "target": 1
+   }
+  },
+  "two_lines_exact": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       2,
+       0,
+       30
+      ],
+      "rows": [
+       "❯ line one",
+       "  line two"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 30,
+    "hist": {
+     "1": [
+      "line one\nline two"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  },
+  "two_panes_target_and_pinned": {
+   "expect": {
+    "pinned": {
+     "2": {
+      "rect": [
+       0,
+       1,
+       31,
+       61
+      ],
+      "rows": [
+       "❯ right prompt"
+      ]
+     }
+    },
+    "preview": {
+     "pane": 1,
+     "rows": [
+      "▷ left prompt"
+     ]
+    }
+   },
+   "input": {
+    "H": 6,
+    "W": 61,
+    "hist": {
+     "1": [
+      "left prompt"
+     ],
+     "2": [
+      "right prompt"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 30,
+      "x": 0,
+      "y": 0
+     },
+     {
+      "h": 6,
+      "id": 2,
+      "w": 30,
+      "x": 31,
+      "y": 0
+     }
+    ],
+    "target": 1
+   }
+  },
+  "wide_chars_fold": {
+   "expect": {
+    "pinned": {
+     "1": {
+      "rect": [
+       0,
+       2,
+       0,
+       16
+      ],
+      "rows": [
+       "❯ 한글 프롬프",
+       "  트를 길게…"
+      ]
+     }
+    },
+    "preview": null
+   },
+   "input": {
+    "H": 6,
+    "W": 16,
+    "hist": {
+     "1": [
+      "한글 프롬프트를 길게 적어 봅니다 끝"
+     ]
+    },
+    "panes": [
+     {
+      "h": 6,
+      "id": 1,
+      "w": 16,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   }
+  }
+ },
+ "core_pane_scoped": [
+  "break-pane",
+  "capture-pane",
+  "clear-history",
+  "join-pane",
+  "kill-pane",
+  "paste-buffer",
+  "paste-clipboard",
+  "pipe-pane",
+  "rename-pane",
+  "resize-pane",
+  "respawn-pane",
+  "select-pane",
+  "send-escape",
+  "send-keys",
+  "split-window",
+  "swap-pane"
+ ],
+ "pinned_max_rows": 2
+}

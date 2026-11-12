@@ -1039,3 +1039,44 @@ async def test_the_screen_badge_and_the_canvas_badge_say_the_same_thing():
     runs, _ = _cells.ime_cells("한", 0, 40)
     assert runs[0]["text"] == text, (runs[0]["text"], text)
     assert runs[0]["theme"]["b"] == theme, (runs[0]["theme"], theme)
+
+
+# ── Linux 갈래(pytmux-590) — 입력기 CLI 출력 해석 · 질의 차례 · 실패는 None ──────────────
+async def test_oskbd_linux_parsers_make_synthetic_ids():
+    assert _oskbd.parse_fcitx5("hangul\n") == "fcitx5:hangul"
+    assert _oskbd.parse_fcitx5("\n \n") is None          # 빈 출력 = 모름(영문 아님)
+    assert _oskbd.parse_ibus("xkb:us::eng\n") == "ibus:xkb:us::eng"
+    assert _oskbd.is_korean(_oskbd.parse_fcitx5("hangul")) is True
+    assert _oskbd.is_korean(_oskbd.parse_fcitx5("keyboard-us")) is False
+    assert _oskbd.is_korean(_oskbd.parse_ibus("hangul")) is True
+
+
+async def test_oskbd_linux_asks_fcitx5_then_ibus_and_gives_none_when_both_fail():
+    calls = []
+    answers = {}
+
+    def fake_run(argv):
+        calls.append(argv[0])
+        return answers.get(argv[0])
+
+    orig_run, orig_cache = _oskbd._run_linux, _oskbd._linux_cache
+    _oskbd._run_linux = fake_run
+    try:
+        libs = ("linux", ("fcitx5-remote", "ibus"))
+        answers.update({"fcitx5-remote": "hangul\n", "ibus": "xkb:us::eng\n"})
+        _oskbd._linux_cache = (None, -1.0)
+        assert _oskbd._current_linux(libs) == "fcitx5:hangul"
+        assert calls == ["fcitx5-remote"], calls           # Fcitx5 가 답하면 IBus 는 안 묻는다
+        calls.clear()
+        answers["fcitx5-remote"] = None                     # Fcitx5 가 안 떠 있다
+        _oskbd._linux_cache = (None, -1.0)
+        assert _oskbd._current_linux(libs) == "ibus:xkb:us::eng"
+        assert calls == ["fcitx5-remote", "ibus"], calls
+        answers["ibus"] = None
+        _oskbd._linux_cache = (None, -1.0)
+        assert _oskbd._current_linux(libs) is None          # 모르면 None — 영문으로 접지 않는다
+        # 간격 안의 재질의는 프로세스를 안 띄운다(50ms 폴링이 퍼붓지 않게).
+        calls.clear()
+        assert _oskbd._current_linux(libs) is None and calls == [], calls
+    finally:
+        _oskbd._run_linux, _oskbd._linux_cache = orig_run, orig_cache

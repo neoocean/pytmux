@@ -161,6 +161,116 @@ async def test_scroll_to_prompt_finds_and_guards():
     assert server.scroll_to_prompt(None, Sess(), 0) is False
 
 
+def _two_pane_sess():
+    """활성 패널 a(이력 없음) + 비활성 패널 b(점프 대상이 스크롤백에 있음)."""
+    a = _claude_pane()
+    b = _claude_pane()
+    a.id, b.id = 101, 102
+    for i in range(10):
+        b.feed(f"before{i:02d}\r\n".encode())
+    b.feed(b"> only in b\r\n")
+    for i in range(30):
+        b.feed(f"after{i:02d}\r\n".encode())
+    b._ph_history = ["only in b"]
+
+    class Win:
+        active_pane = a
+
+        def panes(self):
+            return [a, b]
+
+    class Sess:
+        active_window = Win()
+
+    return a, b, Sess()
+
+
+async def test_jump_goes_to_the_pane_the_popup_showed():
+    """pytmux-587 ①: 비활성 패널의 고정 바로 연 판에서 점프하면 **그 패널**이 굴러간다.
+    종전에는 index 만 가 서버가 활성 패널을 굴렸다(여기서는 a — 이력이 없어 실패)."""
+    a, b, sess = _two_pane_sess()
+    assert server.scroll_to_prompt(None, sess, 0) is False          # 옛 길 = 활성 패널
+    assert server.scroll_to_prompt(None, sess, 0, pane_id=102) is True
+    assert b.scroll > 0 and a.scroll == 0
+    # 없는 id 는 활성 패널로 물러난다(구버전 클라와 같은 답).
+    assert server.scroll_to_prompt(None, sess, 0, pane_id=999) is False
+
+
+async def test_canon_popup_sends_its_own_pane_with_the_jump():
+    """정본 팝업 `jump_to` 가 자기 패널을 싣는다 — 빼면 위 서버 고침이 정본에서 안 쓰인다."""
+    screen = importlib.import_module(_PKG + ".screen")
+    sent = []
+
+    class App:
+        def send_cmd(self, action, **kw):
+            sent.append((action, kw))
+
+    s = screen.PromptHistoryScreen.__new__(screen.PromptHistoryScreen)
+    s._pane_id = 102
+    s.dismiss = lambda _v: None
+    type(s).app = property(lambda self: App())
+    try:
+        s.jump_to(0)
+    finally:
+        del type(s).app
+    assert sent == [("ph_scroll_to", {"index": 0, "pane": 102})], sent
+
+
+async def test_plugin_screen_opens_and_jumps_for_the_named_pane():
+    """GUI 길(pytmux-587): `plugin_open prompt-history pane=<id>` 는 그 패널의 이력을, 줄 key 는
+    `<패널>:<자리>` 라 jump 도 그 패널로 간다."""
+    plugin = importlib.import_module(_PKG).PLUGIN
+    a, b, sess = _two_pane_sess()
+
+    class Srv:
+        _ph_max_lines = 3
+
+        def _broadcast_session(self, _s):
+            pass
+
+    spec = plugin.plugin_screen(Srv(), sess, {"do": "open", "name": "prompt-history",
+                                              "args": ["pane=102"]})
+    assert [r["label"] for r in spec["rows"]] == ["only in b"], spec
+    key = spec["rows"][0]["key"]
+    assert key == "102:0", key
+    out = plugin.plugin_screen(Srv(), sess, {"id": "prompt-history", "do": "jump",
+                                             "row": 0, "input": key})
+    assert out == {"t": "plugin_screen_close", "id": "prompt-history"}, out
+    assert b.scroll > 0 and a.scroll == 0
+    # 인자 없이 열면 종전대로 활성 패널(a — 비었다).
+    spec = plugin.plugin_screen(Srv(), sess, {"do": "open", "name": "prompt-history",
+                                              "args": []})
+    assert spec["rows"] == [], spec
+
+
+async def test_remote_view_switch_drops_the_local_history_table():
+    """pytmux-587 ②: 로컬 ↔ 원격 보기 전이에서 표를 버린다 — 두 서버는 패널 id 가 겹쳐,
+    안 버리면 원격 패널 위에 로컬 프롬프트가 고정 바로 선다."""
+    plugin = importlib.import_module(_PKG).PLUGIN
+
+    class App:
+        ph_panes = {}
+        ph_max_lines = 3
+
+    app = App()
+    local = [{"index": 0, "name": "a", "active": True}]
+    remote = [{"index": 0, "name": "a"}, {"index": 1, "name": "⇄box:b", "active": True,
+                                         "remote": True}]
+    plugin.client_status(app, {"windows": local, "ph_panes": [{"id": 1, "h": ["local secret"]}]})
+    assert app.ph_panes[1]["h"] == ["local secret"]
+    # ⓐ 상류에 플러그인이 없어 `ph_panes` 가 안 와도 로컬 표가 남으면 안 된다.
+    plugin.client_status(app, {"windows": remote})
+    assert app.ph_panes == {}, app.ph_panes
+    # ⓑ 상류 델타의 `h` 없는 같은 id 가 로컬 `h` 를 물려받으면 안 된다.
+    plugin.client_status(app, {"windows": local, "ph_panes": [{"id": 1, "h": ["local secret"]}]})
+    plugin.client_status(app, {"windows": remote, "ph_panes": [{"id": 1}]})
+    assert "h" not in app.ph_panes[1], app.ph_panes
+    # 같은 보기 안의 델타는 종전대로 직전 `h` 를 지킨다(대조군).
+    plugin.client_status(app, {"windows": remote, "ph_panes": [{"id": 1, "h": ["remote"]}]})
+    plugin.client_status(app, {"windows": remote, "ph_panes": [{"id": 1}]})
+    assert app.ph_panes[1]["h"] == ["remote"]
+
+
 # --------------------------------------------------------------------------- #
 # render.py — 미리보기 패널(셀 그리드 직접 검증)
 # --------------------------------------------------------------------------- #
@@ -477,10 +587,11 @@ async def test_live_popup_and_preview():
             await pilot.press("plus")
             await wait_until(pilot, lambda: ("set_ph_max_lines", {"n": 3}) in sent)
             assert ("set_ph_max_lines", {"n": 3}) in sent, sent
-            # ⑥ Enter → ph_scroll_to(현재 인덱스) 전송 + 팝업 닫힘.
+            # ⑥ Enter → ph_scroll_to(현재 인덱스 · **이 판의 패널** — pytmux-587) 전송 + 팝업 닫힘.
             await pilot.press("enter")
-            await wait_until(pilot, lambda: ("ph_scroll_to", {"index": 1}) in sent)
-            assert ("ph_scroll_to", {"index": 1}) in sent, sent
+            want = ("ph_scroll_to", {"index": 1, "pane": pid})
+            await wait_until(pilot, lambda: want in sent)
+            assert want in sent, sent
             assert app.screen_stack[-1].__class__.__name__ != "PromptHistoryScreen"
 
             # ⑦ 다시 열어 Esc 로 닫기.

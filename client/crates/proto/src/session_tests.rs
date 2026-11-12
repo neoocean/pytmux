@@ -208,7 +208,9 @@ fn bye_marks_the_session_closed() {
 fn error_is_remembered_so_the_view_can_show_it() {
     let mut state = SessionState::new();
     assert!(state.apply(ServerMessage::Error {
-        msg: "그런 탭 없음".into()
+        msg: "그런 탭 없음".into(),
+        error: None,
+        server_proto: None,
     }));
     assert_eq!(state.last_error(), Some("그런 탭 없음"));
 }
@@ -1264,7 +1266,7 @@ fn a_notice_line_says_when_and_who_not_just_what() {
     //   존재 이유다.
     let mut state = SessionState::new();
     state.note_notice("설정을 다시 읽었다");
-    state.apply(ServerMessage::Error { msg: "그런 탭 없음".into() });
+    state.apply(ServerMessage::Error { msg: "그런 탭 없음".into(), error: None, server_proto: None });
 
     let lines: Vec<String> = state.notices().map(|n| n.line()).collect();
     let server = lines.iter().find(|l| l.contains("그런 탭 없음")).expect("서버 알림이 없다");

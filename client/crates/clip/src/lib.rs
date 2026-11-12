@@ -542,6 +542,15 @@ const SCP_TIMEOUT: Duration = Duration::from_secs(30);
 /// 클립보드와 같다 — 호출부가 **별도 스레드**에서 부르는 것을 전제한다. 상한(15초)은
 /// 파이썬 `_run_shell` 과 같은 값이다.
 pub fn run_shell(cmd: &str) -> (i32, String) {
+    run_shell_env(cmd, &[])
+}
+
+/// [`run_shell`] 에 환경 몇 개를 **더 얹어** 돌린다(pytmux-588 · 훅의 `PYTMUX_*`).
+///
+/// 정본 `_fire_hook(event, env)` 은 env 를 잠깐 `os.environ` 에 심고, `run-shell`/`if-shell`
+/// 은 부를 때 `dict(os.environ)` 을 떠서 자식에게 준다 — 즉 «상속 환경 + 그 몇 개»다.
+/// `Command::envs` 가 같은 모양이다(상속은 그대로, 같은 이름은 덮는다).
+pub fn run_shell_env(cmd: &str, env: &[(String, String)]) -> (i32, String) {
     let Some(argv) = shell_argv(cmd) else {
         // 셸의 자리를 못 찾았다 — **이름으로 되돌아가지 않는다**(검수 2026-09-05 G-5).
         // 이진 옆 폴더의 `cmd.exe` 가 먼저 잡히는 그 구멍을 여기서 다시 열지 않는다.
@@ -550,6 +559,7 @@ pub fn run_shell(cmd: &str) -> (i32, String) {
     let mut command = Command::new(&argv[0]);
     command
         .args(&argv[1..])
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -690,6 +700,23 @@ mod shell_tests {
         let (rc, text) = run_shell("echo hello");
         assert_eq!(rc, 0);
         assert!(text.contains("hello"), "{text:?}");
+    }
+
+    #[test]
+    fn hook_env_reaches_the_shell_child() {
+        // pytmux-588 — 훅의 `PYTMUX_*` 가 그 줄이 띄우는 셸에 **실제로 보인다**.
+        let env = vec![
+            ("PYTMUX_HOOK_EVENT".to_owned(), "claude-limit".to_owned()),
+            ("PYTMUX_ACCOUNT".to_owned(), "work".to_owned()),
+        ];
+        let cmd = if cfg!(windows) {
+            "echo %PYTMUX_HOOK_EVENT%/%PYTMUX_ACCOUNT%"
+        } else {
+            "echo \"$PYTMUX_HOOK_EVENT/$PYTMUX_ACCOUNT\""
+        };
+        let (rc, text) = run_shell_env(cmd, &env);
+        assert_eq!(rc, 0);
+        assert!(text.contains("claude-limit/work"), "{text:?}");
     }
 
     #[test]

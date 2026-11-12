@@ -650,4 +650,25 @@ pub static EN: &[(&str, &str)] = &[
     // ── session_view.rs — 붙여넣은 그림의 썸네일(pytmux-472) ──
     ("그림 읽는 중…", "Loading image…"),
     ("그림을 못 읽었다", "Could not read the image"),
+    // ── lifecycle.rs — 접속 수명(pytmux-585 · 정본 `msg.*` 와 같은 글) ──
+    ("pytmux: 서버 재시작 중…", "pytmux: server restarting…"),
+    ("pytmux: 서버 재시작 완료 — 재접속됨", "pytmux: server restarted — reconnected"),
+    ("pytmux: 재접속됨 — 화면 재동기", "pytmux: reconnected — resyncing screen"),
+    ("pytmux: 재접속 중…", "pytmux: reconnecting…"),
+    ("pytmux: 재접속 중… (자동 회복)", "pytmux: reconnecting… (auto recovery)"),
+    ("pytmux: 재접속 실패 — 네트워크 확인", "pytmux: reconnect failed — check network"),
+    ("pytmux: 서버가 종료되었습니다", "pytmux: server has terminated"),
+    ("pytmux: 서버 재접속 실패", "pytmux: server reconnect failed"),
+    (
+        "pytmux: 서버 연결이 끊겼고 재접속에 실패했습니다 — 서버 프로세스가 외부에서 강제 종료됐는지 확인하세요(pythonw 일괄 kill 등)",
+        "pytmux: lost the server connection and could not reconnect — check whether the server process was killed externally (e.g. a blanket pythonw kill)",
+    ),
+    (
+        "pytmux: 서버가 인증을 거부했습니다 — 토큰이 맞지 않습니다(다른 사용자의 서버이거나 토큰 파일이 지워졌습니다)",
+        "pytmux: the server refused authentication — the token does not match (another user's server, or the token file was removed)",
+    ),
+    (
+        "pytmux: 서버와 프로토콜 버전이 다릅니다(서버 {server} · 클라 {client}) — 서버와 클라를 같은 판으로 맞추세요",
+        "pytmux: protocol version differs from the server (server {server} · client {client}) — run the same version of server and client",
+    ),
 ];

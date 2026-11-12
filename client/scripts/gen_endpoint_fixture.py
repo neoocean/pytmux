@@ -36,6 +36,8 @@ XDG = "/xdg-run"
 LOCALAPPDATA = "/localappdata"
 HOME = "/pytmux-home"
 UID = 501
+#: `PYTMUX_HOME=~/…` 시나리오의 홈 자리표시자.
+TILDE_HOME = "/tilde-home"
 
 
 def _components(path, subs):
@@ -112,26 +114,35 @@ def main():
         with tempfile.TemporaryDirectory() as tmp:
             home_real = os.path.join(tmp, "home")
 
-            def run(name, *, windows, env):
+            def run(name, *, windows, env, home=None):
+                # `home` = (실제 경로, 자리표시자) — `PYTMUX_HOME=~/…` 처럼 홈을 펴야 하는
+                # 시나리오만 준다(pytmux-586 G9 · 정본 `abspath(expanduser(h))`).
                 keep = {k: os.environ.get(k)
-                        for k in ("XDG_RUNTIME_DIR", "LOCALAPPDATA", "PYTMUX_HOME")}
+                        for k in ("XDG_RUNTIME_DIR", "LOCALAPPDATA", "PYTMUX_HOME", "HOME")}
                 for k in keep:
                     os.environ.pop(k, None)
                 os.environ.update({k: v for k, v in env.items() if v is not None})
+                if home is not None:
+                    os.environ["HOME"] = home[0]
                 ipc.IS_WINDOWS = windows
                 subs = [(os.path.abspath(home_real), HOME)]
+                if home is not None:
+                    subs.insert(0, (os.path.abspath(home[0]), home[1]))
                 try:
                     # env 값도 자리표시자로 — 임시 경로가 그대로 들어가면 다시 만들
                     # 때마다 픽스처가 달라져 diff 가 잡음이 된다.
-                    shown = {k: (HOME if k == "PYTMUX_HOME" else v)
+                    shown = {k: (HOME if k == "PYTMUX_HOME" and v == home_real else v)
                              for k, v in env.items() if v is not None}
-                    scenarios.append({
+                    entry = {
                         "name": name,
                         "os": "windows" if windows else "unix",
                         "env": shown,
                         "uid": UID,
                         "candidates": _snapshot(ipc, subs),
-                    })
+                    }
+                    if home is not None:
+                        entry["home"] = home[1]
+                    scenarios.append(entry)
                 finally:
                     for k, v in keep.items():
                         if v is None:
@@ -146,6 +157,10 @@ def main():
                 env={"LOCALAPPDATA": LOCALAPPDATA})
             run("windows_pytmux_home", windows=True,
                 env={"LOCALAPPDATA": LOCALAPPDATA, "PYTMUX_HOME": home_real})
+            # `~` 를 편다(pytmux-586 G9) — 클라가 값 그대로 쓰면 `./~/ph/state` 를 본다.
+            run("unix_pytmux_home_tilde", windows=False,
+                env={"PYTMUX_HOME": "~/ph"},
+                home=(os.path.join(tmp, "user"), TILDE_HOME))
     finally:
         ipc.IS_WINDOWS = os.name == "nt"
         os.makedirs, os.chmod = real_makedirs, real_chmod

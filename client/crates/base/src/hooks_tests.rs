@@ -117,7 +117,37 @@ fn both_events_can_fire_from_one_status_in_the_canon_order() {
 fn the_event_names_are_the_canon_spelling() {
     // 설정 파일을 두 클라가 공유한다 — 철자가 갈리면 훅이 조용히 안 먹는다.
     let names: Vec<&str> = HookEvent::ALL.iter().map(|e| e.name()).collect();
-    assert_eq!(names, vec!["client-attached", "after-new-window", "alert-bell"]);
+    assert_eq!(names, vec!["client-attached", "after-new-window", "alert-bell", "claude-limit"]);
+}
+
+#[test]
+fn claude_limit_fires_once_on_the_rising_edge_with_the_canon_env() {
+    let mut watcher = HookWatcher::default();
+    // 붙자마자 이미 한도여도 발화한다(정본 `prev.get("limit")` 이 처음엔 없다).
+    let fire = watcher.saw_claude(Some("limit"), "work").expect("상승 에지에서 안 발화했다");
+    assert_eq!(fire.event, HookEvent::ClaudeLimit);
+    assert_eq!(
+        fire.env,
+        vec![
+            ("PYTMUX_HOOK_EVENT".to_owned(), "claude-limit".to_owned()),
+            ("PYTMUX_ACCOUNT".to_owned(), "work".to_owned()),
+        ]
+    );
+    // 같은 상태가 이어지면 다시 안 돈다 — 폭주 금지.
+    assert_eq!(watcher.saw_claude(Some("limit"), "work"), None);
+    assert_eq!(watcher.saw_claude(Some("limit"), "work"), None);
+    // 풀렸다가 다시 걸리면 다시 한 번.
+    assert_eq!(watcher.saw_claude(Some("idle"), "work"), None);
+    assert!(watcher.saw_claude(Some("limit"), "").is_some());
+    // 활성 패널이 Claude 가 아니면(없음) 한도도 아니다.
+    assert_eq!(watcher.saw_claude(None, ""), None);
+}
+
+#[test]
+fn core_events_carry_no_env_like_the_canon() {
+    // 정본 `_fire_hook("client-attached")` 등은 env 인자가 없다.
+    let fire: HookFire = HookEvent::AlertBell.into();
+    assert!(fire.env.is_empty());
 }
 
 #[test]

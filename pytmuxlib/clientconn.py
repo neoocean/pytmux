@@ -103,6 +103,10 @@ class _NetReconnectMixin:
                 # 떠 self.exit() 로 클라가 ~10초 만에 메시지 없이 종료됐다.
                 if self._force_reconnecting:
                     return
+                # bye·핸드셰이크 거절로 이미 끝내는 중(client.py `_ending`) — 뒤따르는 EOF 를
+                # 드롭으로 읽어 다시 붙으면 거절을 다시 받거나 문구가 하나 더 붙는다(pytmux-586 G5).
+                if getattr(self, "_ending", False):
+                    return
                 # 작업 보존 재시작 중이면 종료 대신 재접속(ⓔ). 단 전체 재시작
                 # (restart-all)이면 in-place 재접속 대신 클라를 relaunch 한다 —
                 # run_client 가 app.run() 반환 후 os.execv 로 새 클라를 띄운다

@@ -1808,18 +1808,21 @@ async def test_prompt_history_lists_the_same_tail_the_jump_indexes():
         assert spec["kind"] == "list" and spec["id"] == "prompt-history"
         # tail 슬라이스라 30개, 그리고 그 안의 자리가 key 다(오름차순 · 마지막 = 29).
         assert len(spec["rows"]) == 30, len(spec["rows"])
-        assert [r["key"] for r in spec["rows"]] == [str(i) for i in range(30)]
+        # key = `<패널>:<자리>`(pytmux-587 — 점프가 이 판의 패널로 간다).
+        assert [r["key"] for r in spec["rows"]] == [f"{pane.id}:{i}" for i in range(30)]
         assert spec["rows"][-1]["label"] == "p39", "최신이 아래가 아니다"
         assert spec["selected"] == 29, "처음 커서가 최신이 아니다"
 
         jumped = []
         srvmod = _server_module(plugin)
-        with harness.patched(srvmod, scroll_to_prompt=lambda s, ss, i: jumped.append(i) is None), \
+        with harness.patched(srvmod, scroll_to_prompt=lambda s, ss, i, pane_id=None:
+                             jumped.append((i, pane_id)) is None), \
              harness.patched(type(srv), _broadcast_session=lambda self, s: None):
             resp = plugin.plugin_screen(srv, sess, {
-                "id": "prompt-history", "do": "jump", "input": "29", "state": {}})
+                "id": "prompt-history", "do": "jump", "input": spec["rows"][-1]["key"],
+                "state": {}})
         assert resp == {"t": "plugin_screen_close", "id": "prompt-history"}
-        assert jumped == [29], "고른 줄의 뜻이 그대로 안 갔다: %r" % jumped
+        assert jumped == [(29, pane.id)], "고른 줄의 뜻(자리·패널)이 그대로 안 갔다: %r" % jumped
     finally:
         await teardown(srv, task, sock)
 

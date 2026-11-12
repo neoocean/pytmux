@@ -270,3 +270,140 @@ fn what_display_prints_is_what_parse_takes_back() {
 fn missing_token_file_is_not_an_error() {
     assert_eq!(read_token_at(Path::new("/nonexistent/default.token")), None);
 }
+
+// ── pytmux-586 G3: 고르는 것은 «파일이 있나» 가 아니라 «붙나» ──────────────────────────
+
+/// AF_UNIX 경로 길이(맥 104바이트) 때문에 짧은 `/tmp` 아래에 짓는다.
+#[cfg(unix)]
+fn short_scratch(name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = PathBuf::from(format!(
+        "/tmp/pytmux-ep-{name}-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dead_socket_file_is_not_chosen_over_a_live_server() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    let dir = short_scratch("probe");
+    // 죽은 서버가 남긴 소켓 파일 — 묶었다가 놓으면 파일만 남는다(정본 서버가 죽은 자리).
+    let dead = dir.join("dead.sock");
+    drop(UnixListener::bind(&dead).unwrap());
+    std::fs::set_permissions(&dead, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let live = dir.join("live.sock");
+    let listener = UnixListener::bind(&live).unwrap();
+    std::fs::set_permissions(&live, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let dead_ep = unix_endpoint(dead.clone());
+    let live_ep = unix_endpoint(live.clone());
+    assert!(dead_ep.looks_live(), "선행 조건: 파일은 남아 있다");
+    assert!(!dead_ep.probe(), "죽은 소켓 파일을 산 것으로 읽었다");
+    assert!(live_ep.probe(), "산 서버를 못 봤다");
+    drop(listener);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = (dead_ep, live_ep);
+}
+
+#[cfg(unix)]
+#[test]
+fn resolve_skips_a_dead_xdg_socket_and_finds_the_live_tmp_server() {
+    // 대조표 §3-2 의 그 그림 — XDG 쪽에 죽은 소켓 파일, `/tmp/pytmux-<uid>` 쪽에 산 서버.
+    // `uid` 를 이 런만의 가짜 값으로 지어 `/tmp` 자리도 시험 몫으로 만든다.
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    let xdg = short_scratch("xdg");
+    let fake_uid = 3_000_000_000u32 + std::process::id();
+    let tmp_dir = PathBuf::from(format!("/tmp/pytmux-{fake_uid}"));
+    std::fs::create_dir_all(xdg.join("pytmux")).unwrap();
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let dead = xdg.join("pytmux").join("default.sock");
+    drop(UnixListener::bind(&dead).unwrap());
+    std::fs::set_permissions(&dead, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let live = tmp_dir.join("default.sock");
+    let _ = std::fs::remove_file(&live);
+    let listener = UnixListener::bind(&live).unwrap();
+    std::fs::set_permissions(&live, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let rules = Rules { xdg_runtime_dir: Some(xdg.clone()), uid: fake_uid, ..unix_rules() };
+    assert_eq!(rules.candidates()[0], unix_endpoint(dead.clone()), "선행 조건: 죽은 쪽이 먼저");
+    assert_eq!(rules.resolve(), Some(unix_endpoint(live.clone())));
+    drop(listener);
+    let _ = std::fs::remove_dir_all(&xdg);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_socket_open_to_others_or_a_symlink_is_refused_before_connecting() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    let dir = short_scratch("guard");
+    let sock = dir.join("s.sock");
+    let _listener = UnixListener::bind(&sock).unwrap();
+    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(validate_local_socket(&sock), Ok(()));
+    assert!(unix_endpoint(sock.clone()).probe());
+    // 남에게 열린 권한 — 정본 `S_IMODE & 0o077` 거절.
+    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o666)).unwrap();
+    let err = validate_local_socket(&sock).unwrap_err();
+    assert!(err.contains("다른 사용자에게 열려"), "{err}");
+    assert!(!unix_endpoint(sock.clone()).probe(), "열린 소켓에 붙었다");
+    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600)).unwrap();
+    // 심볼릭 링크 — 따라가지 않는다.
+    let link = dir.join("link.sock");
+    std::os::unix::fs::symlink(&sock, &link).unwrap();
+    assert!(validate_local_socket(&link).unwrap_err().contains("심볼릭 링크"));
+    assert!(!unix_endpoint(link).probe());
+    // 소켓이 아닌 파일.
+    let plain = dir.join("plain.sock");
+    std::fs::write(&plain, "x").unwrap();
+    assert!(validate_local_socket(&plain).unwrap_err().contains("소켓이 아닌"));
+    // 없는 파일은 이 검사의 관심사가 아니다(connect 가 낼 오류).
+    assert_eq!(validate_local_socket(&dir.join("none.sock")), Ok(()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_tcp_probe_needs_a_listener_not_just_a_portfile() {
+    let dir = scratch("endpoint-tcp-probe");
+    std::fs::create_dir_all(&dir).unwrap();
+    let portfile = dir.join("default.port");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::fs::write(&portfile, format!("{port}\n")).unwrap();
+    let ep = Endpoint::Tcp {
+        host: "127.0.0.1".into(),
+        port: 0,
+        portfile: portfile.clone(),
+        token: dir.join("default.token"),
+    };
+    assert!(ep.probe());
+    drop(listener);
+    // 포트파일은 남았는데 듣는 이가 없다 — 정본 probe 는 False.
+    assert!(ep.looks_live());
+    assert!(!ep.probe(), "죽은 포트파일을 산 서버로 읽었다");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── pytmux-586 G9: PYTMUX_HOME 은 정본처럼 편다(`abspath(expanduser(h))`) ─────────────
+
+#[test]
+fn pytmux_home_tilde_and_relative_paths_are_spread_like_canon() {
+    use base::config::normalize_home_in;
+    let home = Path::new("/Users/me");
+    let cwd = Path::new("/work/tree");
+    let n = |raw: &str| normalize_home_in(PathBuf::from(raw), Some(home), Some(cwd));
+    assert_eq!(n("~/x"), Some(PathBuf::from("/Users/me/x")));
+    assert_eq!(n("~"), Some(PathBuf::from("/Users/me")));
+    assert_eq!(n("./.pytmux"), Some(PathBuf::from("/work/tree/.pytmux")));
+    assert_eq!(n("../h"), Some(PathBuf::from("/work/h")));
+    assert_eq!(n("/abs/h/"), Some(PathBuf::from("/abs/h")));
+    // DIVERGE(pytmux-598): `~user` — 정본 expanduser 는 그 사용자가 있으면 그 홈으로 편다.
+    // 우리는 펴지 않고 상대경로로 본다(드문 꼴 · 남의 홈을 상태 디렉터리로 쓸 일이 없다).
+    assert_eq!(n("~other/x"), Some(PathBuf::from("/work/tree/~other/x")));
+}

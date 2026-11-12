@@ -9,8 +9,10 @@
 //!
 //! # 탐색 순서 (파이썬 `keymap.load_config` 와 같다)
 //!
-//! `$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` → `$XDG_CONFIG_HOME/pytmux/config`
-//! → `~/.config/pytmux/config` → `~/.pytmux.conf`
+//! `$PYTMUX_CONFIG` → `$PYTMUX_HOME/config` → (`$XDG_CONFIG_HOME` **또는** `~/.config`)`/pytmux/config`
+//! → `~/.pytmux.conf`. XDG 자리는 둘 중 **하나**다(정본 `xdg = … or ~/.config`). `$PYTMUX_HOME`
+//! 이 서 있고 `<home>/config` 가 없으면 옛 첫 파일을 그 자리로 한 번 복사한다(정본
+//! `_migrate_config_to_home` · [`ConfigEnv::migrate_to_home`]).
 //!
 //! 순서가 같아야 하는 이유: 다르면 **같은 상자에서 두 클라가 다른 설정으로 돈다**. 그건
 //! "설정을 공유한다"는 결정의 목적을 정확히 뒤집는다.
@@ -507,24 +509,7 @@ impl Config {
 
     /// [`Config::path`] 앞에 **명시 경로** 하나를 세운 탐색(정본 `load_config(path)` 의 `candidates`).
     pub fn path_from(explicit: Option<&str>) -> Option<PathBuf> {
-        let mut candidates: Vec<PathBuf> = Vec::new();
-        if let Some(given) = explicit.filter(|p| !p.is_empty()) {
-            candidates.push(PathBuf::from(given));
-        }
-        if let Some(explicit) = std::env::var_os("PYTMUX_CONFIG") {
-            candidates.push(PathBuf::from(explicit));
-        }
-        if let Some(home) = std::env::var_os("PYTMUX_HOME") {
-            candidates.push(PathBuf::from(home).join("config"));
-        }
-        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-            candidates.push(PathBuf::from(xdg).join("pytmux").join("config"));
-        }
-        if let Some(home) = home_dir() {
-            candidates.push(home.join(".config").join("pytmux").join("config"));
-            candidates.push(home.join(".pytmux.conf"));
-        }
-        candidates.into_iter().find(|p| p.is_file())
+        ConfigEnv::from_env().find(explicit)
     }
 
     /// **쓸** 파일. 명시 경로가 없을 때 파이썬 `config_path_for_write` 와 같은 순서다.
@@ -537,20 +522,17 @@ impl Config {
         if let Some(sink) = WRITE_SINK.get() {
             return sink.clone();
         }
+        // DIVERGE(pytmux-598): 정본 `config_path_for_write` 는 `$PYTMUX_CONFIG` 를 **파일이 있을
+        // 때만** 후보로 본다. 우리는 서 있으면 무조건 그 자리에 쓴다 — 안전 레시피(「설정 파일은
+        // 따로 격리한다」 · client/CLAUDE.md)가 그 동작에 기대고, 없는 파일을 지목한 사람의 뜻도
+        // 그쪽이다.
         if let Some(explicit) = std::env::var_os("PYTMUX_CONFIG") {
             return PathBuf::from(explicit);
         }
         if let Some(existing) = Self::path() {
             return existing;
         }
-        if let Some(home) = std::env::var_os("PYTMUX_HOME") {
-            return PathBuf::from(home).join("config");
-        }
-        let xdg = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home_dir().map(|h| h.join(".config")))
-            .unwrap_or_else(|| PathBuf::from("."));
-        xdg.join("pytmux").join("config")
+        ConfigEnv::from_env().default_write_path()
     }
 
     /// 설정 한 줄을 파일에 남긴다. 쓴 경로를 돌려준다.
@@ -2523,6 +2505,145 @@ fn on_off(value: &str) -> bool {
 
 /// 홈 디렉토리. `dirs` 같은 크레이트를 들이지 않는 이유는 이 크레이트의 **의존이 0개**라는
 /// 계약 때문이다(PROVENANCE §2-a).
+/// 설정 탐색이 읽는 환경 — **한 번 읽어** 순수 규칙에 넘긴다(시험은 이 값을 직접 짓는다 ·
+/// ⛔ 시험에서 `set_var` 금지 규율과 같은 이유).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfigEnv {
+    pub pytmux_config: Option<PathBuf>,
+    /// 이미 펼친 값([`normalize_home`]).
+    pub pytmux_home: Option<PathBuf>,
+    pub xdg_config_home: Option<PathBuf>,
+    pub home: Option<PathBuf>,
+}
+
+impl ConfigEnv {
+    pub fn from_env() -> Self {
+        let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+        let home = home_dir();
+        Self {
+            pytmux_config: var("PYTMUX_CONFIG"),
+            pytmux_home: normalize_home(var("PYTMUX_HOME"), home.as_deref()),
+            xdg_config_home: var("XDG_CONFIG_HOME"),
+            home,
+        }
+    }
+
+    /// `$PYTMUX_HOME/config` — 서 있을 때만.
+    pub fn home_config(&self) -> Option<PathBuf> {
+        self.pytmux_home.as_ref().map(|h| h.join("config"))
+    }
+
+    /// XDG 자리 **하나** — 정본 `xdg = $XDG_CONFIG_HOME or ~/.config`(pytmux-586 G8a). 종전에는
+    /// 둘 다 후보였는데, 그러면 XDG 를 세우고 그 자리가 비어 있을 때 정본이 안 읽는
+    /// `~/.config` 파일을 우리만 읽었다.
+    pub fn xdg_config(&self) -> Option<PathBuf> {
+        self.xdg_config_home
+            .clone()
+            .or_else(|| self.home.as_ref().map(|h| h.join(".config")))
+            .map(|x| x.join("pytmux").join("config"))
+    }
+
+    fn dot_conf(&self) -> Option<PathBuf> {
+        self.home.as_ref().map(|h| h.join(".pytmux.conf"))
+    }
+
+    /// 읽기 후보(우선순위 순) — 정본 `load_config(path)` 의 `candidates`.
+    pub fn candidates(&self, explicit: Option<&str>) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+        if let Some(given) = explicit.filter(|p| !p.is_empty()) {
+            out.push(PathBuf::from(given));
+        }
+        out.extend(self.pytmux_config.clone());
+        out.extend(self.home_config());
+        out.extend(self.xdg_config());
+        out.extend(self.dot_conf());
+        out
+    }
+
+    /// 옮겨 올 옛 설정 후보 — 정본 `_legacy_config_candidates`.
+    pub fn legacy_candidates(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+        out.extend(self.pytmux_config.clone());
+        out.extend(self.xdg_config());
+        out.extend(self.dot_conf());
+        out
+    }
+
+    /// `$PYTMUX_HOME` 이 서 있고 `<home>/config` 가 아직 없으면 옛 설정의 첫 파일을 그 자리로
+    /// **복사**한다(원본은 둔다 · 멱등) — 정본 `_migrate_config_to_home`(pytmux-586 G8b).
+    ///
+    /// 덤으로 막는 사고: 스크래치 홈에서 GUI 를 띄우고 설정 판을 누르면 사용자의 진짜
+    /// `~/.config/pytmux/config` 에 써졌다(2026-08-04 · client/CLAUDE.md). 이제 쓰기는 복사본으로
+    /// 간다 — 정본과 같다. 실패는 조용하다(정본도 `OSError` 를 삼킨다).
+    pub fn migrate_to_home(&self) -> Option<PathBuf> {
+        let target = self.home_config()?;
+        if target.is_file() {
+            return Some(target);
+        }
+        if let Some(src) = self.legacy_candidates().into_iter().find(|c| c.is_file()) {
+            if let Some(dir) = target.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::copy(&src, &target);
+        }
+        Some(target)
+    }
+
+    /// 읽을 파일 — 정본 `load_config` 처럼 후보를 짓기 **전에** 옮기고(`_migrate_config_to_home`)
+    /// 첫 실재 파일을 고른다. [`Config::path_from`] 이 이것을 부른다.
+    pub fn find(&self, explicit: Option<&str>) -> Option<PathBuf> {
+        self.migrate_to_home();
+        self.candidates(explicit).into_iter().find(|p| p.is_file())
+    }
+
+    /// 아무 파일도 없을 때 만들 자리 — `<home>/config`, 없으면 XDG(정본 `default_path`).
+    pub fn default_write_path(&self) -> PathBuf {
+        self.home_config()
+            .or_else(|| self.xdg_config())
+            .unwrap_or_else(|| PathBuf::from(".").join("pytmux").join("config"))
+    }
+}
+
+/// `PYTMUX_HOME` 을 정본처럼 편다 — `os.path.abspath(os.path.expanduser(h))`(pytmux-586 G9).
+/// 앞머리 `~` 를 홈으로, 상대경로는 지금 디렉터리 기준 절대경로로, `.`·`..` 는 글자로 접는다.
+pub fn normalize_home(raw: Option<PathBuf>, home: Option<&std::path::Path>) -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok();
+    normalize_home_in(raw?, home, cwd.as_deref())
+}
+
+/// [`normalize_home`] 의 순수한 절반(시험이 부른다).
+pub fn normalize_home_in(
+    raw: PathBuf,
+    home: Option<&std::path::Path>,
+    cwd: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    use std::path::Component;
+    let text = raw.to_string_lossy().into_owned();
+    let expanded = match (text.as_str(), home) {
+        ("~", Some(h)) => h.to_path_buf(),
+        (t, Some(h)) if t.starts_with("~/") || (cfg!(windows) && t.starts_with("~\\")) => {
+            h.join(&t[2..])
+        }
+        _ => raw,
+    };
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else {
+        cwd?.join(expanded)
+    };
+    let mut out = PathBuf::new();
+    for part in absolute.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))

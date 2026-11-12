@@ -864,6 +864,8 @@ def build_client_app(sock_path: str, config: dict | None = None,
             # 조용히 종료한다. _force_reconnecting = 재접속 진행 중(중복 트리거 방지).
             self._conn_gen = 0
             self._force_reconnecting = False
+            # bye·핸드셰이크 거절로 이미 끝내는 중 — 뒤따르는 EOF 를 드롭으로 읽지 않는다.
+            self._ending = False
             self.layout = {"panes": [], "dividers": [], "active": None,
                            "cols": 80, "rows": 24}
             self.pane_content = {}   # id -> (rows, cursor)
@@ -1750,7 +1752,23 @@ def build_client_app(sock_path: str, config: dict | None = None,
                     self._relaunch_on_restart = True
                 self.display_message(i18n.t("msg.server_restarting"))
             elif t == "bye":
+                # 뒤따르는 EOF 를 드롭으로 읽어 다시 붙지 않게 한다(_reader_task 의 _ending 가드).
+                self._ending = True
                 self.exit(message=i18n.t("msg.server_terminated"))
+            elif t == "error" and msg.get("error") in ("proto_mismatch", "auth_failed"):
+                # 핸드셰이크 거절(pytmux-586 G5). 종전엔 이 프레임이 플러그인으로 넘어가 버려지고,
+                # 이어지는 EOF 가 드롭 재접속을 6번 부른 뒤 `msg.server_lost`(«외부에서 강제
+                # 종료됐는지 확인») 로 끝나 엉뚱한 곳을 의심하게 했다. 다시 붙어도 같은 답이라
+                # 재접속하지 않고 까닭을 말하고 끝낸다(GUI 도 같은 글 — base::lifecycle).
+                self._ending = True
+                if msg.get("error") == "proto_mismatch":
+                    sp = msg.get("server_proto")
+                    text = i18n.t("msg.proto_mismatch",
+                                  server=sp if isinstance(sp, int) else "?",
+                                  client=PROTO_VERSION)
+                else:
+                    text = i18n.t("msg.auth_failed")
+                self.exit(message=text)
             else:
                 # 코어가 모르는 메시지(t)는 플러그인에 위임한다(ncd 의 nc_list 등).
                 self.plugins.handle_message(self, msg)

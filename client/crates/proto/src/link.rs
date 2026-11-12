@@ -38,6 +38,9 @@ pub type Sent = std::sync::Arc<std::sync::Mutex<Vec<Outgoing>>>;
 pub struct ServerLink {
     events: Receiver<LinkEvent>,
     socket: String,
+    /// 다시 붙을 때 쓸 이름(포트 미확정 — `Connection::origin`). `socket` 은 확정 포트가
+    /// 박힌 진단용 이름이라 그걸로 다시 붙으면 새 포트를 못 따라간다(pytmux-585).
+    origin: String,
     /// 소켓 대신 **기록**하는 자리([`ServerLink::detached`]). 평소에는 `None`.
     record: Option<Sent>,
     /// 명령을 보내는 쪽. 연결이 없는 테스트에서는 `None`.
@@ -60,8 +63,11 @@ impl ServerLink {
         Ok(Self::from_connection(conn))
     }
 
-    fn from_connection(mut conn: Connection) -> Self {
+    /// 이미 붙은 연결로 링크를 세운다(읽기 스레드를 띄운다). 시험의 접속자가 상태 디렉터리
+    /// 밖의 엔드포인트로 붙을 때 쓴다(`tests/lifecycle_link.rs`).
+    pub fn from_connection(mut conn: Connection) -> Self {
         let socket = conn.socket();
+        let origin = conn.origin().to_owned();
         // 쓰기 절반을 먼저 떼어 낸다 — 아래에서 conn 을 스레드로 넘기기 때문이다.
         let sink = conn.split_sink().ok();
         let (tx, events) = channel();
@@ -88,6 +94,7 @@ impl ServerLink {
         Self {
             events,
             socket,
+            origin,
             sink,
             record: None,
         }
@@ -111,6 +118,7 @@ impl ServerLink {
             Self {
                 events,
                 socket: socket.to_owned(),
+                origin: socket.to_owned(),
                 sink: None,
                 record: Some(record.clone()),
             },
@@ -140,6 +148,23 @@ impl ServerLink {
 
     pub fn socket(&self) -> &str {
         &self.socket
+    }
+
+    /// 다시 붙을 때 쓸 이름(포트 미확정). [`ServerLink`] 의 `origin` 칸 문서.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// 소켓 없이 만든 기록판인가([`ServerLink::detached`]).
+    pub fn is_detached(&self) -> bool {
+        self.record.is_some()
+    }
+
+    /// 연결을 닫는다 — 읽기 스레드가 깨어나 `Ended` 를 보낸다. 기록판이면 아무 일 없다.
+    pub fn close(&mut self) {
+        if let Some(sink) = self.sink.as_mut() {
+            sink.shutdown();
+        }
     }
 
     /// 지금까지 도착한 것을 전부 꺼낸다. **기다리지 않는다**.
@@ -183,6 +208,7 @@ mod tests {
         ServerLink {
             events: rx,
             socket: "test".into(),
+            origin: "test".into(),
             sink: None,
             record: None,
         }

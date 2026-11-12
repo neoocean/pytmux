@@ -1369,3 +1369,89 @@ fn net_rtt_threshold_is_read_from_the_config_file_and_clamped() {
     assert_eq!(Config::parse("set net-rtt-threshold abc\n").net_rtt_threshold, 0.4);
     assert_eq!(Config::parse("set net-rtt-threshold NaN\n").net_rtt_threshold, 0.4);
 }
+
+// ── pytmux-586 G8: 설정 탐색을 정본과 같게(`ConfigEnv` — 환경을 짓는다 · set_var 없음) ──
+
+fn g8_scratch(name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "pytmux-g8-{name}-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn xdg_config_home_replaces_dot_config_instead_of_adding_to_it() {
+    // 정본 `xdg = $XDG_CONFIG_HOME or ~/.config` — 둘 중 **하나**만 후보다(G8a).
+    let env = ConfigEnv {
+        xdg_config_home: Some(PathBuf::from("/x")),
+        home: Some(PathBuf::from("/u")),
+        ..ConfigEnv::default()
+    };
+    assert_eq!(
+        env.candidates(None),
+        vec![PathBuf::from("/x/pytmux/config"), PathBuf::from("/u/.pytmux.conf")]
+    );
+    let plain = ConfigEnv { home: Some(PathBuf::from("/u")), ..ConfigEnv::default() };
+    assert_eq!(
+        plain.candidates(None),
+        vec![PathBuf::from("/u/.config/pytmux/config"), PathBuf::from("/u/.pytmux.conf")]
+    );
+    let all = ConfigEnv {
+        pytmux_config: Some(PathBuf::from("/c")),
+        pytmux_home: Some(PathBuf::from("/h")),
+        ..env
+    };
+    assert_eq!(
+        all.candidates(Some("/given")),
+        vec![
+            PathBuf::from("/given"),
+            PathBuf::from("/c"),
+            PathBuf::from("/h/config"),
+            PathBuf::from("/x/pytmux/config"),
+            PathBuf::from("/u/.pytmux.conf"),
+        ]
+    );
+}
+
+#[test]
+fn a_new_pytmux_home_copies_the_old_config_once_and_keeps_the_original() {
+    // 정본 `_migrate_config_to_home` — 복사 1회 + 원본 보존 + 멱등(G8b).
+    let root = g8_scratch("migrate");
+    let user = root.join("user");
+    let legacy = user.join(".config").join("pytmux").join("config");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, "set status-position top\n").unwrap();
+    let env = ConfigEnv {
+        pytmux_home: Some(root.join("home")),
+        home: Some(user.clone()),
+        ..ConfigEnv::default()
+    };
+    // 읽기 길(`find` = `Config::path_from` 이 부르는 것)만으로 옮겨진다 — 옮기는 함수를 따로
+    // 부르지 않는다(부르는 자리가 빠져도 통과하는 공허 통과를 막는다).
+    let target = root.join("home").join("config");
+    assert_eq!(env.find(None), Some(target.clone()));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "set status-position top\n");
+    assert!(legacy.is_file(), "원본을 지웠다");
+    // 멱등 — 복사본을 고친 뒤 다시 불러도 덮지 않는다.
+    std::fs::write(&target, "set mouse off\n").unwrap();
+    env.migrate_to_home();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "set mouse off\n");
+    // 이제 읽기 첫 후보가 복사본이다 — 쓰기도 그쪽(사용자의 진짜 파일을 안 건드린다).
+    assert_eq!(env.candidates(None).into_iter().find(|p| p.is_file()), Some(target.clone()));
+    assert_eq!(env.default_write_path(), target);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn without_pytmux_home_nothing_is_copied() {
+    let root = g8_scratch("nohome");
+    let env = ConfigEnv { home: Some(root.clone()), ..ConfigEnv::default() };
+    assert_eq!(env.migrate_to_home(), None);
+    assert_eq!(env.default_write_path(), root.join(".config").join("pytmux").join("config"));
+    let _ = std::fs::remove_dir_all(&root);
+}

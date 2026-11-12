@@ -335,6 +335,8 @@
     "pytmuxlib/plugins/claude-prompt-history/__init__.py:_clamp_lines",
     "pytmuxlib/plugins/claude-prompt-history/__init__.py:_jump_failed_notice",
     "pytmuxlib/plugins/claude-prompt-history/__init__.py:_open_spec",
+    "pytmuxlib/plugins/claude-prompt-history/__init__.py:_pane_arg",
+    "pytmuxlib/plugins/claude-prompt-history/__init__.py:_split_key",
     "pytmuxlib/plugins/claude-prompt-history/__init__.py:plugin_screen",
     "pytmuxlib/plugins/claude-resume/__init__.py:_list_sessions",
     "pytmuxlib/plugins/claude-resume/__init__.py:_open_spec",

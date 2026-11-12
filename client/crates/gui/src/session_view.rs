@@ -35,7 +35,8 @@ use proto::mouse::{self, MouseKind};
 use proto::style::{CellStyle, Color as CellColor, NamedColor};
 use proto::status;
 use proto::session::Severity;
-use proto::{LinkEvent, Selection, ServerLink, ServerMessage, SessionState};
+use proto::{Selection, ServerLink, ServerMessage, SessionState};
+use proto::supervise::{Happening, Supervisor};
 use warpui::color::ColorU;
 use warpui::elements::{
     Align, Border, Clipped, ConstrainedBox, Container, CrossAxisAlignment, DispatchEventResult,
@@ -480,6 +481,9 @@ pub struct SessionView {
     /// 서버 연결. **뷰가 들고 있다** — TUI 는 이벤트 루프가 쥐지만, GUI 에는 그 자리에
     /// 해당하는 루프가 없고 주기 작업이 `ctx.spawn` 으로 뷰에 되돌아온다(`main.rs`).
     link: ServerLink,
+    /// 링크의 수명을 지켜본다 — 끊기면 정본처럼 다시 붙는다(pytmux-585 · `proto::supervise`).
+    /// 시험은 접속자를 바꿔 끼운다(`Supervisor::with_connector`).
+    pub(crate) supervisor: Supervisor,
     /// 연결이 끝났을 때의 사유.
     ended: Option<String>,
     /// 지금 키가 패널의 것인가 클라의 것인가. 전이 규칙은 core 가 갖는다
@@ -584,6 +588,11 @@ pub struct SessionView {
     told_ime_render: bool,
     /// 이벤트 훅의 **가장자리**를 재는 자(패리티 G8u). 상태가 아니라 전이에 발화한다.
     hook_watch: base::hooks::HookWatcher,
+    /// 지금 도는 훅의 환경(pytmux-588) — 정본 `_fire_hook` 이 `_run_command` 동안만
+    /// `os.environ` 에 심는 것의 짝. 그 사이에 띄우는 셸(`spawn_shell`)이 떠 간다.
+    hook_env: Vec<(String, String)>,
+    /// 셸을 띄운 횟수 — 「한 번 전이에 한 번만 돈다」를 재는 오라클의 눈(pytmux-588).
+    shell_spawns: usize,
     /// 드라이런 회신을 기다리는 재시작(있으면 그 종류).
     ///
     /// 왜 상태로 두나: 점검은 **왕복**이다 — 무엇을 하려던 것인지 잊으면 회신이 와도 쓸
@@ -733,6 +742,8 @@ pub struct SessionView {
     /// 캔버스가 창의 어디서 시작하는지를 모르기 때문이다. 작성창을 커서 줄에 세우는
     /// 자리(pytmux-370 · [`Anchor::AtPaneCursor`])가 그 값을 처음으로 요구했다.
     canvas_px: std::cell::Cell<Option<CanvasBox>>,
+    /// 마지막으로 그린 프롬프트 바들(pytmux-587) — 누름·밑줄 판정이 **그린 그 표**를 읽는다.
+    prompt_bar_drawn: std::cell::RefCell<Vec<PromptBarSpot>>,
     /// 카운트다운을 마지막으로 그린 **초**(pytmux-371 ④). 초가 바뀔 때만 다시 그린다.
     countdown_secs: i64,
     font: FamilyId,
@@ -834,6 +845,20 @@ struct CanvasBox {
 /// 몸통은 proto 한 곳이다(`proto::config_apply` — 뷰 없이 시험으로 잰다).
 fn apply_config_globals(config: &base::Config, state: &mut SessionState) {
     proto::config_apply::apply_config_globals(config, state);
+    #[cfg(test)]
+    LAST_AMBIG_PUSH.with(|c| c.set(Some(config.ambiguous_width == "wide")));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// **이 스레드**가 마지막으로 전역에 민 폭 판정(시험 전용 관측점).
+    ///
+    /// `proto::compose::ambiguous_wide()` 는 프로세스 전역이라, 나란히 도는 시험이 뷰를 세울
+    /// 때마다(`SessionView::new` → 이 함수) 그 값을 덮는다. 「다시 읽으면 폭 판정이 밀리나」를
+    /// 전역으로 단언하면 그 사이에 다른 시험이 끼어들어 가짜로 붉어진다(2026-11-13 게이트에서
+    /// 실제로 떨어졌다). 단언은 스레드마다 따로인 이 값으로 한다 — 호출부를 겨눈다.
+    pub(crate) static LAST_AMBIG_PUSH: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
 }
 
 impl SessionView {
@@ -913,9 +938,11 @@ impl SessionView {
         state.draw_pane_numbers_natively();
         let arghist = proto::arghist::ArgHist::for_socket(link.socket());
         let mouse_log_path = proto::endpoint::parse(link.socket()).mouse_log_file();
+        let supervisor = Supervisor::for_link(&link);
         Self {
             state,
             link,
+            supervisor,
             arghist,
             ended: None,
             // 설정 파일의 prefix 를 그대로 쓴다(패리티 G5) — 파이썬 클라와 **같은
@@ -957,6 +984,8 @@ impl SessionView {
             last_ime: Instant::now(),
             told_ime_render: false,
             hook_watch: Default::default(),
+            hook_env: Vec::new(),
+            shell_spawns: 0,
             pending_restart: None,
             last_title: None,
             titlebar_band: None,
@@ -998,6 +1027,7 @@ impl SessionView {
             // 잡는다(§10-21ⓙ).
             cell_px: std::cell::Cell::new(None),
             canvas_px: std::cell::Cell::new(None),
+            prompt_bar_drawn: Default::default(),
             countdown_secs: 0,
             font,
             font_want: String::new(),
@@ -3357,11 +3387,17 @@ impl SessionView {
         }
         // 끊김 처리는 루프 **밖**이다 — `drain` 이 `self` 를 빌리고 있는 동안에는
         // 알림 이력(=`self` 전체)을 만질 수 없다.
+        // 쓰기가 실패하면 소켓은 이미 접혔다(`CommandSink::fold_on_error`) — 정본처럼 그것을
+        // EOF 로 다뤄 감독자가 다시 붙게 한다(pytmux-585). 옛 리더가 뒤이어 내는 EOF 는
+        // 상태기계가 버린다(진행 중).
         if let Some(reason) = failed
             && self.ended.is_none()
         {
             log::warn!("서버로 못 보냈다: {reason}");
-            self.note_ended(reason);
+            let size = self.size.reported();
+            for happening in self.supervisor.send_failed(&mut self.link, size) {
+                self.apply_lifecycle(happening);
+            }
         }
     }
 
@@ -3576,6 +3612,16 @@ impl SessionView {
         //   누를 길이 없고, 보이는 것이 누르는 것이다.
         if let Some((pane, delta)) = self.sticky_bar_at(x, y) {
             self.push_scroll(pane, delta);
+            return true;
+        }
+        // ★ **고정 프롬프트 바**(pytmux-587) — 누르면 **그 패널**의 프롬프트 이력 판(정본
+        //   `client_click` → `open_prompt_history(pid)`). 바는 앱 글을 덮고 있어, 안 받으면
+        //   누름이 가려진 앱 글자로 간다(정본 머리말과 같은 이유).
+        if let Some(pane) = self.pinned_prompt_bar_at(x, y) {
+            self.pending.push(Outgoing::Command(Command::PluginOpen {
+                name: "prompt-history".to_owned(),
+                args: vec![format!("pane={pane}")],
+            }));
             return true;
         }
         // ★ **Ctrl+클릭은 무동작**이다(pytmux-569 · 정본 `on_mouse_down` 「컨텍스트 메뉴는 순수
@@ -4210,6 +4256,123 @@ impl SessionView {
         out
     }
 
+    /// `:` 에 **패널 대상 명령**을 치고 있으면 그 대상(활성 패널) — 정본 `_cmd_target_pane`
+    /// (PromptScreen 이 첫 낱말이 코어 `PANE_SCOPED_CMDS` ∪ 플러그인 `pane_scoped` 이면 세운다).
+    fn cmd_target_pane(&self) -> Option<i64> {
+        if self.screens.top() != Some(Screen::Commands) {
+            return None;
+        }
+        proto::prompt_bar::is_pane_scoped(self.screens.typed(), self.state.plugin_pane_scoped())
+            .then(|| self.state.active_pane())
+            .flatten()
+    }
+
+    /// 이번 프레임의 프롬프트 바들(pytmux-587) — 규칙은 `proto::prompt_bar` 한 벌이고 여기는
+    /// 재료(이력 · 패널 자리 · 지금 보이는 행 글 · 스크롤 · 대상)를 모은다. 정본은 합성 셀을
+    /// 읽어 ③④를 판정한다 — 우리는 같은 캔버스를 읽는다. 계산한 표는 누름·밑줄 판정용으로 남긴다.
+    fn prompt_bar_spots(&self, canvas: &proto::canvas::Canvas) -> Vec<PromptBarSpot> {
+        let mut out = Vec::new();
+        if let Some(layout) = self.state.layout() {
+            let (cw, chh) = canvas.size();
+            let (cw, chh) = (usize::from(cw), usize::from(chh));
+            let target = self.cmd_target_pane();
+            for pane in &layout.panes {
+                let (px, py, pw, ph) =
+                    (usize::from(pane.x), usize::from(pane.y), usize::from(pane.w), usize::from(pane.h));
+                if py >= chh {
+                    continue;
+                }
+                let last = self.state.prompt_history(pane.id).last().map(String::as_str);
+                let x1 = (px + pw).min(cw);
+                let rows = if target == Some(pane.id) {
+                    proto::prompt_bar::preview_rows(last, self.state.ph_max_lines(), pw, ph)
+                } else {
+                    let seen: Vec<String> = (py..(py + ph).min(chh))
+                        .map(|y| {
+                            (px..x1)
+                                .filter_map(|x| canvas.cell(x, y))
+                                .filter(|c| !c.continuation)
+                                .map(|c| c.ch)
+                                .collect()
+                        })
+                        .collect();
+                    let scrolled = self.state.pane_scroll(pane.id).unwrap_or(0) > 0;
+                    proto::prompt_bar::pinned_for(last, &seen, pw, ph, scrolled, false)
+                };
+                let Some(mut rows) = rows else {
+                    continue;
+                };
+                rows.truncate(chh - py);
+                out.push(PromptBarSpot {
+                    pane: pane.id,
+                    preview: target == Some(pane.id),
+                    x: pane.x,
+                    y: pane.y,
+                    w: (x1 - px) as u16,
+                    rows,
+                });
+            }
+        }
+        *self.prompt_bar_drawn.borrow_mut() = out.clone();
+        out
+    }
+
+    /// 그 칸이 **고정 바** 위면 그 패널(정본 `pinned_at` — 그린 표를 읽는다). 미리보기는 판이
+    /// 떠 있을 때만 서고 그때 캔버스 마우스는 죽어 있어 대상이 아니다.
+    fn pinned_prompt_bar_at(&self, x: u16, y: u16) -> Option<i64> {
+        self.prompt_bar_drawn
+            .borrow()
+            .iter()
+            .find(|s| !s.preview && s.contains(x, y))
+            .map(|s| s.pane)
+    }
+
+    /// 프롬프트 바 그림들 — 블록 스티키 바와 같은 띠 말(같은 뜻 「이 프롬프트」의 띠가 두
+    /// 모양이면 사람이 갈라야 한다 — 정본도 두 바를 같은 모양으로 둔다). 미리보기는 판 딤
+    /// **위**에 얹는다(정본 `_undim_rows` — 딤에서 빼 또렷이 보이게).
+    fn prompt_bar_elements(&self, spots: &[PromptBarSpot], preview: bool) -> Vec<Box<dyn Element>> {
+        let (Some((cw, ch)), Some(cv)) = (self.cell_px.get(), self.canvas_px.get()) else {
+            return Vec::new();
+        };
+        spots
+            .iter()
+            .filter(|s| s.preview == preview)
+            .map(|spot| {
+                let mut lines = Flex::column().with_main_axis_size(MainAxisSize::Min);
+                for row in &spot.rows {
+                    lines = lines.with_child(
+                        ConstrainedBox::new(
+                            Flex::row()
+                                .with_main_axis_size(MainAxisSize::Max)
+                                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                                .with_child(self.text(row.clone(), 12., palette::FG))
+                                .finish(),
+                        )
+                        .with_height(ch)
+                        .finish(),
+                    );
+                }
+                let bar = Container::new(lines.finish())
+                    .with_horizontal_padding(4.)
+                    .with_background_color(palette::SELECTED_BG)
+                    .with_border(Border::bottom(1.).with_border_color(theme::FOCUS))
+                    .finish();
+                let sized = ConstrainedBox::new(bar)
+                    .with_width(f32::from(spot.w) * cw)
+                    .with_height(spot.rows.len() as f32 * ch)
+                    .finish();
+                Align::new(
+                    Container::new(sized)
+                        .with_padding_left(cv.left + f32::from(spot.x) * cw)
+                        .with_padding_top(cv.top + f32::from(spot.y) * ch)
+                        .finish(),
+                )
+                .top_left()
+                .finish()
+            })
+            .collect()
+    }
+
     /// 버튼 없이 움직였다(N3). 분할 경계 위인지만 본다 — 강조가 바뀔 때만 다시 그린다.
     pub fn handle_mouse_move(&mut self, at: Option<(u16, u16)>) -> bool {
         let alive = self.config.mouse && self.screens.top().is_none();
@@ -4266,6 +4429,11 @@ impl SessionView {
     /// 경로는 전체 경로로 풀 수 있어야 뜻이 있다(복사할 것이 그 값이다). 못 풀면
     /// **존을 안 만든다** — 밑줄을 그어 놓고 눌러도 아무 일이 없으면 그 밑줄이 거짓말이다.
     fn span_at(&self, x: u16, y: u16) -> Option<proto::SpanHit> {
+        // 고정 프롬프트 바 밑의 글은 밑줄 후보가 아니다(정본 `client_hit` · pytmux-541 규율 —
+        // 밑줄을 그어 놓고 누르면 다른 일이 일어나면 그 밑줄이 거짓말이다).
+        if self.pinned_prompt_bar_at(x, y).is_some() {
+            return None;
+        }
         let hit = self.state.span_at(x, y)?;
         if hit.kind == base::spans::SpanKind::Path
             && proto::info::resolve_path(self.state.pane_cwd(hit.pane), &hit.text).is_none()
@@ -4829,12 +4997,15 @@ impl SessionView {
         // 입력기 배지는 서버 메시지와 무관하게 바뀐다 — 시계와 같은 자리에서 잰다.
         dirty |= self.tick_ime();
         let mut arrived = 0usize;
-        for event in self.link.drain() {
+        // 링크는 감독자를 지나 읽는다(pytmux-585) — 끊김·`restarting`·`bye`·핸드셰이크 거절은
+        // 정본 상태기계(`base::lifecycle`)가 받아 스스로 다시 붙거나 끝낸다.
+        let size = self.size.reported();
+        for event in self.supervisor.pump(&mut self.link, size) {
             arrived += 1;
             match event {
                 // 상류 트랜스크립트 꼬리는 상태 누적기가 아니라 여기서 받는다 — 이건
                 // 화면 상태가 아니라 **패널마다 따로 파싱해 두는 원문**이다.
-                LinkEvent::Message(msg) => match *msg {
+                Happening::Message(msg) => match *msg {
                     ServerMessage::Claude { pane, tail } => {
                         self.remote.apply(pane, &tail);
                     }
@@ -4904,6 +5075,14 @@ impl SessionView {
                         // 봐야 알 수 있다(패리티 G8u · TUI 와 같은 규칙).
                         let was_layout = matches!(other, ServerMessage::Layout(_));
                         let was_status = matches!(other, ServerMessage::Status(_));
+                        // `claude-limit` 의 재료는 **이 메시지 하나**다(pytmux-588 · 정본
+                        // `saver_hook_events` 가 msg 만 읽는다) — `apply` 가 메시지를 먹기 전에 뜬다.
+                        let claude_facts = match &other {
+                            ServerMessage::Status(status) => {
+                                Some(proto::session::claude_limit_facts(status))
+                            }
+                            _ => None,
+                        };
                         let was_restart_check =
                             matches!(other, ServerMessage::RestartCheck { .. });
                         let was_search_results =
@@ -5017,15 +5196,22 @@ impl SessionView {
                             log::debug!("반영 안 된 메시지: {kind}");
                         }
                         dirty |= changed;
-                        let mut events = Vec::new();
+                        let mut events: Vec<base::hooks::HookFire> = Vec::new();
                         if was_layout {
-                            events.extend(self.hook_watch.saw_layout());
+                            events.extend(self.hook_watch.saw_layout().map(Into::into));
                         }
                         if was_status {
                             let tabs = self.state.tabs();
                             let count = tabs.tabs.len();
                             let bell = tabs.tabs.iter().any(|tab| tab.bell);
-                            events.extend(self.hook_watch.saw_status(count, bell));
+                            events.extend(
+                                self.hook_watch.saw_status(count, bell).into_iter().map(Into::into),
+                            );
+                        }
+                        // 정본은 코어 셋(`_dispatch`) 뒤에 플러그인 `client_status` 가 돈다 —
+                        // 차례도 같게.
+                        if let Some((state, account)) = &claude_facts {
+                            events.extend(self.hook_watch.saw_claude(state.as_deref(), account));
                         }
                         if !events.is_empty() {
                             self.fire_hooks(&events);
@@ -5033,20 +5219,7 @@ impl SessionView {
                         }
                     }
                 },
-                LinkEvent::Ended(reason) => {
-                    // ⛔ **로그에도 남긴다**(pytmux-171). 종전에는 사유가 화면의 빨간 한
-                    //    줄로만 갔다 — 제보자는 `--frame-dump` 그림에서 **눈으로** 보고서야
-                    //    알았고 `stdout`/`stderr` 은 둘 다 비어 있었다. 끊김은 진단이
-                    //    필요한 사건이라 자취가 화면 밖에도 있어야 하고, 그 줄이 없으면
-                    //    다음 사람은 같은 그림을 보고도 지나친다.
-                    //
-                    //    `error!` 인 이유: 기본 로그 수준에서도 보여야 한다(`debug!` 로
-                    //    두면 `RUST_LOG` 를 미리 켜 둔 사람만 본다 — 끊김은 미리 켜 둘
-                    //    수 있는 사건이 아니다).
-                    log::error!("서버 연결이 끝났다: {reason}");
-                    self.note_ended(reason);
-                    dirty = true;
-                }
+                other => dirty |= self.apply_lifecycle(other),
             }
         }
         // 화면이 멎었을 때 층을 가르는 줄(기본값에서는 안 나온다 — `RUST_LOG=debug`).
@@ -6515,6 +6688,14 @@ impl SessionView {
 
     /// 활성 탭 안의 닫기 ×. 종전 `[x]` 와 같은 자리 색인(탭들+1)·같은 액션
     /// (`Spot(Close)` → 확인 화면)이다.
+    ///
+    // DIVERGE(pytmux-598): 자리 — 정본 `clientio._draw_tab_close` 는 `[x]` 를 **활성 패널의
+    //   상단 테두리 행** 오른쪽에 글자로 찍는다. GUI 는 같은 뜻(현재 탭 닫기)·같은 길
+    //   (`confirm_kill_tab` → 원격/마지막/고정/보통 확인 갈래 · 정본 `confirm_kill_tab`)·
+    //   같은 상시성(포인터 없이 늘 그림)을 **활성 탭 칩 안의 ×** 로 낸다(허용 갈림 ⓑ 그림 —
+    //   탭이 엘리먼트인 매체에서 「이 탭 닫기」는 그 탭에 붙는다). pytmux-594 의 판정:
+    //   hover 전용도, 빠진 것도 아니다. 시험 = `the_tab_close_button_is_painted_without_a_pointer`
+    //   · `the_tab_close_click_takes_the_canon_confirm_branch`.
     fn close_button(
         &self,
         ntabs: usize,
@@ -8601,26 +8782,75 @@ impl SessionView {
             .push(Outgoing::Command(Command::RestartServer));
     }
 
+    /// 감독자가 낸 수명 사건 하나를 화면에 옮긴다(pytmux-585). 다시 그릴 일이 생겼나.
+    ///
+    /// 퍼올리기·수동 `reconnect`·보내기 실패가 **같은 자리**를 지난다 — 따로 적으면 한쪽만
+    /// 끊김 문구가 정본과 갈린다.
+    fn apply_lifecycle(&mut self, happening: Happening) -> bool {
+        let mut dirty = false;
+        match happening {
+            // 수명과 무관한 메시지는 퍼올리기가 이미 가로챘다 — 여기 오면 버린다.
+            Happening::Message(_) => {}
+            Happening::Closed(reason) => {
+                // ⛔ **로그에도 남긴다**(pytmux-171). 종전에는 사유가 화면의 빨간 한
+                //    줄로만 갔다 — 제보자는 `--frame-dump` 그림에서 **눈으로** 보고서야
+                //    알았고 `stdout`/`stderr` 은 둘 다 비어 있었다. 끊김은 진단이
+                //    필요한 사건이라 자취가 화면 밖에도 있어야 하고, 그 줄이 없으면
+                //    다음 사람은 같은 그림을 보고도 지나친다.
+                //
+                //    `error!` 인 이유: 기본 로그 수준에서도 보여야 한다(`debug!` 로
+                //    두면 `RUST_LOG` 를 미리 켜 둔 사람만 본다 — 끊김은 미리 켜 둘
+                //    수 있는 사건이 아니다).
+                //    화면 문구는 이 사유가 아니라 정본과 같은 글이다(`Happening::Ended`).
+                log::error!("서버 연결이 끝났다: {reason}");
+            }
+            Happening::Notice(text) => {
+                self.state.note_notice(text);
+                dirty = true;
+            }
+            Happening::Error(text) => {
+                self.state.note_error(text);
+                dirty = true;
+            }
+            // 새 연결 — 연결에 매달린 사실은 다시 알려야 한다(pytmux-392).
+            Happening::Reconnected => {
+                self.ended = None;
+                self.told_ime_render = false;
+                dirty = true;
+            }
+            Happening::ResetNet => self.state.rtt_mut().reset_after_reconnect(),
+            // DIVERGE(pytmux-598): relaunch 순서 — 정본은 EOF 에서 곧장 execv 하지만
+            // 우리는 제자리에서 다시 붙은 **뒤에** 띄운다(빨리 뜨는 이진이 execv 중인
+            // 서버를 «없음» 으로 읽고 두 번째 서버를 세우지 않게 · `base::lifecycle` 문서).
+            Happening::Relaunch => match base::restart::relaunch() {
+                Ok(pid) => {
+                    log::info!("전체 재시작 — 클라를 다시 띄웠다 (pid {pid})");
+                    self.quit_requested = true;
+                }
+                Err(why) => self.state.note_error(why),
+            },
+            // DIVERGE(pytmux-598): ⓒ 정본은 이 글을 단말에 남기고 앱을 끝낸다. GUI 는
+            // 창을 닫으면 글이 사라지므로 창을 남기고 바닥 줄에 건다(수동 reconnect 가
+            // 그 자리에서 되살린다).
+            Happening::Ended(text) => {
+                self.note_ended(text);
+                dirty = true;
+            }
+        }
+        dirty
+    }
+
     /// 정체된 소켓을 버리고 **같은 엔드포인트에** 다시 붙는다(`reconnect`).
     ///
     /// 다시 탐색하지 않는다 — 사용자가 지목한 것과 다른 서버에 붙을 수 있다.
+    ///
+    /// 정본 `_force_reconnect` 와 같은 길이다(pytmux-585): `재접속 중…` → 옛 소켓을 닫고 →
+    /// 스레드에서 150회 → `재접속됨 — 화면 재동기` 또는 `재접속 실패 — 네트워크 확인`(끝내지
+    /// 않는다). 붙는 이름은 붙기 전 그대로다(`ServerLink::origin` — 포트 미확정).
     fn reconnect_now(&mut self) {
-        let socket = self.link.socket().to_owned();
-        let (cols, rows) = self.size.reported();
-        match proto::ServerLink::attach_to(&socket, cols, rows) {
-            Ok(fresh) => {
-                self.link = fresh;
-                self.ended = None;
-                // 사실은 연결에 매달려 있다 — 새 연결에는 다시 알려야 한다(pytmux-392).
-                self.told_ime_render = false;
-                self.state
-                    .note_notice(tf("다시 붙었다: {socket}", &[("socket", &socket)]));
-            }
-            // 못 붙었으면 **끝내지 않는다** — 옛 링크가 아직 살아 있을 수 있고 사용자는
-            // 다시 시도할 수 있다.
-            Err(e) => self
-                .state
-                .note_error(tf("다시 붙지 못했다: {err}", &[("err", &e.to_string())])),
+        let size = self.size.reported();
+        for happening in self.supervisor.manual(&mut self.link, size) {
+            self.apply_lifecycle(happening);
         }
     }
 
@@ -9526,9 +9756,13 @@ impl SessionView {
             return;
         }
         let slot = self.shell_result.clone();
+        // 환경은 **부를 때** 떠 간다(정본 `_run_shell` 의 `env = dict(os.environ)`) — 훅이
+        // 끝나면 `hook_env` 는 비워지므로 스레드가 나중에 읽으면 그 맥락이 없다.
+        let env = self.hook_env.clone();
+        self.shell_spawns += 1;
         // 결과는 다음 tick 이 줍는다 — 뷰를 스레드에서 만지지 않는다.
         std::thread::spawn(move || {
-            let (code, text) = clip::run_shell(&cmd);
+            let (code, text) = clip::run_shell_env(&cmd, &env);
             if let Ok(mut slot) = slot.lock() {
                 *slot = Some(ShellOutcome { code, text, then, otherwise });
             }
@@ -10660,13 +10894,16 @@ impl SessionView {
     }
 
     /// 사건이 났다 — 걸린 훅이 있으면 **사람이 친 것과 같은 길**로 돌린다(패리티 G8u).
-    fn fire_hooks(&mut self, events: &[base::hooks::HookEvent]) {
-        for event in events {
-            let Some(line) = self.config.hooks.get(event.name()).map(str::to_owned) else {
+    fn fire_hooks(&mut self, events: &[base::hooks::HookFire]) {
+        for fire in events {
+            let Some(line) = self.config.hooks.get(fire.event.name()).map(str::to_owned) else {
                 continue;
             };
             // 모르는 이름은 조용히 넘긴다(정본과 같다).
+            // 환경은 이 줄을 도는 **동안만** 선다(정본 `_fire_hook` 의 심고-되돌리기).
+            let saved = std::mem::replace(&mut self.hook_env, fire.env.clone());
             self.run_command_line(&line);
+            self.hook_env = saved;
         }
     }
 
@@ -12813,8 +13050,11 @@ impl View for SessionView {
 
         // 캔버스는 **항상** 그린다(N2) — 떠 있는 화면은 딤 스크림과 함께 위에 얹는다.
         // 종전의 "대체" 방식은 팝업을 여는 순간 화면 상황이 통째로 사라졌다.
+        // 프롬프트 바(pytmux-587)는 캔버스를 읽어 정한다 — 그려진 표가 누름 판정의 표다.
+        let mut prompt_bars: Vec<PromptBarSpot> = Vec::new();
         match self.composite_for_paint() {
             Some(canvas) => {
+                prompt_bars = self.prompt_bar_spots(&canvas);
                 let (_, height) = canvas.size();
                 // 이 프레임이 실제로 그린 칸 수 — 상류가 씬 원소 수를 안 내주므로
                 // **우리가 아는 그리기 일의 크기**가 이것이다(pytmux-457).
@@ -12969,6 +13209,10 @@ impl View for SessionView {
         for bar in self.sticky_bars() {
             body = body.with_child(bar);
         }
+        // 고정 프롬프트 바(pytmux-587) — 같은 층. 스크롤 중에는 규칙이 비켜 스티키 바와 안 겹친다.
+        for bar in self.prompt_bar_elements(&prompt_bars, false) {
+            body = body.with_child(bar);
+        }
         // 패널 헤더 끌기의 드롭 대상(pytmux-580) — 같은 층.
         if let Some(hint) = self.pane_drop_hint() {
             body = body.with_child(hint);
@@ -12981,6 +13225,10 @@ impl View for SessionView {
             if screen.dims_behind() {
                 body = body
                     .with_child(Rect::new().with_background_color(theme::DIM_SCRIM).finish());
+            }
+            // `:` 미리보기(pytmux-587)는 딤 **위**·판 아래 — 정본이 딤에서 빼는 그 줄이다.
+            for bar in self.prompt_bar_elements(&prompt_bars, true) {
+                body = body.with_child(bar);
             }
             body = body.with_child(self.render_screen_panel(screen));
         }
@@ -13835,6 +14083,30 @@ struct RemoteImage {
     /// 붙일 경로. 성공이면 원격 자리, 실패면 이 상자의 자리다.
     path: String,
     ok: bool,
+}
+
+/// 이번 프레임에 선 **프롬프트 바** 하나(pytmux-587) — 무엇을 어디에 그리나와 누르는 자리가
+/// 같은 표를 읽는다(정본 `_ph_pinned` · `pinned_at` 과 같은 규율).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromptBarSpot {
+    pub pane: i64,
+    /// 미리보기(`:` 작성 중 · 대상 패널)인가, 고정 바인가.
+    pub preview: bool,
+    pub x: u16,
+    pub y: u16,
+    /// 바의 폭(패널 폭 · 캔버스로 자른 값).
+    pub w: u16,
+    /// 그릴 줄들(규칙은 `proto::prompt_bar` 한 벌).
+    pub rows: Vec<String>,
+}
+
+impl PromptBarSpot {
+    fn contains(&self, x: u16, y: u16) -> bool {
+        x >= self.x
+            && x < self.x.saturating_add(self.w)
+            && y >= self.y
+            && usize::from(y) < usize::from(self.y) + self.rows.len()
+    }
 }
 
 /// 스레드에서 돌린 셸 명령의 결과.

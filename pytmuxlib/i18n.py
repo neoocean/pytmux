@@ -547,6 +547,9 @@ register({
         "msg.server_restarting": "pytmux: 서버 재시작 중…",
         "msg.server_terminated": "pytmux: 서버가 종료되었습니다",
         "msg.server_lost": "pytmux: 서버 연결이 끊겼고 재접속에 실패했습니다 — 서버 프로세스가 외부에서 강제 종료됐는지 확인하세요(pythonw 일괄 kill 등)",
+        # 핸드셰이크 거절(pytmux-586 G5) — 종전엔 이 둘도 server_lost 로 끝나 «외부 kill» 을 의심하게 했다.
+        "msg.proto_mismatch": "pytmux: 서버와 프로토콜 버전이 다릅니다(서버 {server} · 클라 {client}) — 서버와 클라를 같은 판으로 맞추세요",
+        "msg.auth_failed": "pytmux: 서버가 인증을 거부했습니다 — 토큰이 맞지 않습니다(다른 사용자의 서버이거나 토큰 파일이 지워졌습니다)",
         "msg.restart_dryrun": "pytmux: 재시작 전 드라이런 점검 중…",
         "msg.server_restart": "pytmux: 서버 재시작…",
         "msg.config_warn_more": " 외 {n}건",
@@ -599,6 +602,8 @@ register({
         "msg.server_restarting": "pytmux: server restarting…",
         "msg.server_terminated": "pytmux: server has terminated",
         "msg.server_lost": "pytmux: lost the server connection and could not reconnect — check whether the server process was killed externally (e.g. a blanket pythonw kill)",
+        "msg.proto_mismatch": "pytmux: protocol version differs from the server (server {server} · client {client}) — run the same version of server and client",
+        "msg.auth_failed": "pytmux: the server refused authentication — the token does not match (another user's server, or the token file was removed)",
         "msg.restart_dryrun": "pytmux: pre-restart dry-run check…",
         "msg.server_restart": "pytmux: restarting server…",
         "msg.config_warn_more": " +{n} more",

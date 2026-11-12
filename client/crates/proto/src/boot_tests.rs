@@ -227,3 +227,77 @@ fn windows_prefers_pathext_over_an_extensionless_shim() {
     assert_eq!(posix.file_name().unwrap(), "pytmux");
     let _ = std::fs::remove_dir_all(&dir);
 }
+// ── pytmux-586 G2 · G4 ──────────────────────────────────────────────────────────────
+
+#[test]
+fn a_named_endpoint_is_passed_before_the_subcommand() {
+    // 정본 argparse 는 `--socket` 을 최상위 옵션으로만 받는다 — 서브커맨드 뒤에 두면 거절한다.
+    let launcher = Launcher(vec!["python3".to_owned(), "pytmux.py".to_owned()]);
+    assert_eq!(
+        launcher.start_server_argv_at(Some("tcp:a@127.0.0.1:0")),
+        ["python3", "pytmux.py", "--socket", "tcp:a@127.0.0.1:0", "start-server"]
+    );
+    assert_eq!(launcher.start_server_argv_at(None), launcher.start_server_argv());
+}
+
+#[cfg(unix)]
+#[test]
+fn the_named_endpoint_actually_reaches_the_canonical_launcher() {
+    // argv 를 짓는 함수만 재면 그것을 **부르는 자리**가 빠져도 통과한다 — 가짜 런처가 실제로
+    // 받은 인자를 파일에 적게 해 끝까지 본다.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("pytmux-boot-at-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let got = dir.join("argv");
+    let script = dir.join("fake.sh");
+    std::fs::write(&script, format!("#!/bin/sh\necho \"$@\" > '{}'\nexit 0\n", got.display()))
+        .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let search = Search { bin: Some(script.display().to_string()), ..Search::default() };
+    start_server_with_at(&search, Some("/tmp/x.sock")).expect("가짜 런처는 성공한다");
+    assert_eq!(std::fs::read_to_string(&got).unwrap().trim(), "--socket /tmp/x.sock start-server");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_zombie_that_refuses_our_token_is_noticed_before_attaching() {
+    // 정본 `existing_server_usable` 의 물음 — `list` 에 `auth_failed` 로 답하는 서버.
+    use std::io::{BufReader, BufWriter};
+    let dir = std::env::temp_dir().join(format!("pytmux-boot-zombie-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (reply, want) in [
+        (serde_json::json!({"t": "error", "error": "auth_failed"}), true),
+        (serde_json::json!({"t": "list", "sessions": []}), false),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::fs::write(dir.join("default.port"), format!("{port}\n")).unwrap();
+        std::fs::write(dir.join("default.token"), "tok\n").unwrap();
+        let server = std::thread::spawn(move || {
+            let (sock, _) = listener.accept().unwrap();
+            let asked = crate::framing::read_frame(
+                &mut BufReader::new(sock.try_clone().unwrap()),
+                crate::message::HANDSHAKE_MAX_FRAME,
+            )
+            .unwrap();
+            crate::framing::write_frame(&mut BufWriter::new(sock), &reply).unwrap();
+            asked
+        });
+        let endpoint = crate::endpoint::Endpoint::Tcp {
+            host: "127.0.0.1".into(),
+            port: 0,
+            portfile: dir.join("default.port"),
+            token: dir.join("default.token"),
+        };
+        assert_eq!(refuses_auth(&endpoint), want);
+        let asked = server.join().unwrap();
+        // 정본 `control_request` 와 같은 꼴 — proto·token 을 실은 `list`.
+        assert_eq!(asked["t"], "list");
+        assert_eq!(asked["token"], "tok");
+        assert_eq!(asked["proto"], crate::message::PROTO_VERSION);
+    }
+    // 이 상자 밖 서버에는 묻지 않는다(토큰을 싣는 물음이다).
+    let remote = crate::endpoint::parse("tcp:10.0.0.5:5000");
+    assert!(!refuses_auth(&remote));
+    let _ = std::fs::remove_dir_all(&dir);
+}

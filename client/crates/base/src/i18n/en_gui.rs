@@ -122,8 +122,6 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("전체 재시작 취소: {why}", "Full restart cancelled: {why}"),
     ("서버를 재시작한다 (셸은 산다)", "Restarting the server (shells survive)"),
-    ("다시 붙었다: {socket}", "Reattached: {socket}"),
-    ("다시 붙지 못했다: {err}", "Could not reattach: {err}"),
     // ── session_view.rs · if-shell/run-shell 이 끝났을 때 ──
     ("조건이 실패했다(코드 {code})", "The condition failed (code {code})"),
     ("끝났다(코드 {code})", "Finished (code {code})"),

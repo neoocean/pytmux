@@ -78,10 +78,31 @@ impl Endpoint {
     /// Unix 는 소켓 파일의 존재, TCP 는 포트파일의 존재로 본다. **연결까지 해 보지는
     /// 않는다** — Windows 루프백에서 죽은 포트로의 connect 는 즉시 거절되지 않고
     /// 방화벽이 SYN 을 조용히 버려 타임아웃까지 매달린다(서버 쪽에서 실측된 함정).
+    ///
+    /// ⚠ **고르는 데는 이것을 안 쓴다**(pytmux-586 G3) — [`Endpoint::probe`] 가 정본처럼 실제로
+    /// 붙어 본다. 파일만 보면 XDG 쪽에 남은 죽은 소켓을 집고 `/tmp` 쪽의 산 서버를 놓친다.
     pub fn looks_live(&self) -> bool {
         match self {
             Endpoint::Unix { path, .. } => path.exists(),
             Endpoint::Tcp { portfile, port, .. } => *port != 0 || portfile.exists(),
+        }
+    }
+
+
+    /// 지금 **실제로 붙는가** — 정본 `ipc.probe`(= `control_socket` 이 붙고 바로 닫는다).
+    ///
+    /// Unix 는 [`validate_local_socket`] 을 지난 뒤 connect, TCP 는 포트파일을 읽어 connect
+    /// (루프백 상한 0.5초 — `transport::LOOPBACK_CONNECT_TIMEOUT`, 정본 `_loopback_cap` 과 같은
+    /// 값). 남의 소켓이면 붙지 않는다 = `false`(정본: probe → False → 발견이 그 후보를 버린다).
+    pub fn probe(&self) -> bool {
+        match self {
+            Endpoint::Unix { path, .. } => {
+                validate_local_socket(path).is_ok()
+                    && crate::transport::Stream::connect_unix(path).is_ok()
+            }
+            Endpoint::Tcp { host, .. } => self
+                .resolve_port()
+                .is_some_and(|port| crate::transport::Stream::connect_tcp(host, port).is_ok()),
         }
     }
 
@@ -165,18 +186,30 @@ pub struct Rules {
 impl Rules {
     /// 지금 이 프로세스의 환경에서.
     pub fn from_env() -> Self {
-        let var = |name: &str| {
-            std::env::var_os(name)
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-        };
+        let cwd = std::env::current_dir().ok();
+        Self::from_lookup(cfg!(windows), uid(), cwd.as_deref(), |name| std::env::var_os(name))
+    }
+
+    /// 환경을 **물어보는 함수**로 짓는다 — [`Rules::from_env`] 가 이것을 부르고, 시험은
+    /// `set_var` 없이 같은 길을 지난다(`endpoint_conformance`).
+    pub fn from_lookup(
+        windows: bool,
+        uid: u32,
+        cwd: Option<&Path>,
+        lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
+    ) -> Self {
+        let var = |name: &str| lookup(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+        let home = var("HOME").or_else(|| var("USERPROFILE"));
         Self {
-            windows: cfg!(windows),
+            windows,
             xdg_runtime_dir: var("XDG_RUNTIME_DIR"),
             localappdata: var("LOCALAPPDATA"),
-            pytmux_home: var("PYTMUX_HOME"),
-            uid: uid(),
-            home: var("HOME").or_else(|| var("USERPROFILE")),
+            // 정본 `ipc.pytmux_home` 은 `abspath(expanduser(h))` 다 — `~/x` 와 상대경로를 그대로
+            // 쓰면 정본과 다른 자리를 본다(pytmux-586 G9).
+            pytmux_home: var("PYTMUX_HOME")
+                .and_then(|raw| base::config::normalize_home_in(raw, home.as_deref(), cwd)),
+            uid,
+            home,
         }
     }
 
@@ -244,9 +277,57 @@ pub fn candidates() -> Vec<Endpoint> {
     Rules::from_env().candidates()
 }
 
-/// 살아 있어 보이는 첫 후보. 없으면 `None`(서버가 안 떠 있다).
+/// **실제로 붙는** 첫 후보. 없으면 `None`(서버가 안 떠 있다).
+///
+/// 정본 `ipc.resolve_default_endpoint` 와 같은 뜻이다 — 그쪽은 후보마다 `probe`(connect)
+/// 한다(pytmux-586 G3). 종전 [`Endpoint::looks_live`](파일 존재)로는 XDG 쪽 죽은 소켓 파일이
+/// `/tmp` 쪽 산 서버를 가렸고, 정본 `start-server` 는 「이미 실행 중」 으로 rc 0 을 내 GUI 가
+/// 같은 죽은 파일에 다시 붙다 끝났다.
 pub fn resolve() -> Option<Endpoint> {
-    candidates().into_iter().find(Endpoint::looks_live)
+    Rules::from_env().resolve()
+}
+
+impl Rules {
+    /// [`resolve`] 의 규칙 판(시험이 환경을 지어 부른다).
+    pub fn resolve(&self) -> Option<Endpoint> {
+        self.candidates().into_iter().find(Endpoint::probe)
+    }
+}
+
+/// 유닉스 소켓 **파일**이 우리 것인지 연결 **전에** 본다 — 정본 `ipc.validate_local_socket`
+/// 과 같은 규칙(fail-closed): ①심볼릭 링크 아님(링크를 안 따라간다) ②소켓 파일 ③현재 uid
+/// 소유 ④group/other 권한 비트 없음. 파일이 없으면 통과다(그건 connect 가 낼 오류다).
+///
+/// 남의 소켓에 붙으면 **키 입력 전량과 토큰**이 그쪽으로 간다(정본 검수 2026-08-05 실측 ·
+/// pytmux-586 G3 에 묶었다). 문구는 정본과 같은 글이다.
+#[cfg(unix)]
+pub fn validate_local_socket(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(_) => return Ok(()),
+    };
+    let shown = path.display().to_string();
+    let fail = |ko: &str| Err(base::i18n::tf(ko, &[("path", shown.as_str())]));
+    if meta.file_type().is_symlink() {
+        return fail("소켓 경로가 심볼릭 링크임(보안상 거부): {path}");
+    }
+    if !meta.file_type().is_socket() {
+        return fail("소켓이 아닌 파일임(보안상 거부): {path}");
+    }
+    if meta.uid() != uid() {
+        return fail("소켓 소유자가 현재 사용자가 아님(보안상 거부): {path}");
+    }
+    if meta.permissions().mode() & 0o077 != 0 {
+        return fail("소켓이 다른 사용자에게 열려 있음(보안상 거부): {path}");
+    }
+    Ok(())
+}
+
+/// Windows 는 AF_UNIX 경로가 없다(정본도 이 검사를 건너뛴다 — 루프백 TCP 는 토큰이 경계다).
+#[cfg(not(unix))]
+pub fn validate_local_socket(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// TCP 엔드포인트의 상태파일 이름(`ipc.DEFAULT_ENDPOINT_NAME` 과 같은 값).

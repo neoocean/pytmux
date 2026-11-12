@@ -133,7 +133,8 @@ async def _specs():
     srv = types.SimpleNamespace(_namesync_rules=[], _ph_max_lines=2)
     out["namesync"] = _mod("claude-name-sync", "screenspec").open_spec(
         srv, None, "namesync", {})
-    pane = types.SimpleNamespace(_ph_history=["one", "two\nlines\nthree"])
+    # 패널 id 는 줄 key(`<패널>:<자리>`)에 실린다 — 점프가 **이 판의 패널**로 가게(pytmux-587).
+    pane = types.SimpleNamespace(id=7, _ph_history=["one", "two\nlines\nthree"])
     sess = types.SimpleNamespace(active_window=types.SimpleNamespace(active_pane=pane))
     out["prompt-history"] = _mod("claude-prompt-history").PLUGIN._open_spec(srv, sess)
     return out
@@ -228,7 +229,7 @@ async def test_p4_rows_and_title_are_the_canon_ones():
 
 async def test_prompt_history_is_oldest_first_with_multi_line_preview():
     spec = (await _specs())["prompt-history"]
-    assert [r["key"] for r in spec["rows"]] == ["0", "1"]
+    assert [r["key"] for r in spec["rows"]] == ["7:0", "7:1"]
     assert spec["selected"] == 1
     # 미리보기 2줄 — 넘친 프롬프트는 마지막 표시 줄에 `…`.
     assert spec["rows"][1]["label"] == "two" and spec["rows"][1]["more"] == ["lines …"]
@@ -240,7 +241,7 @@ def test_prompt_history_plus_minus_changes_and_persists_the_preview_lines():
     saved, broadcast = [], []
     srv = types.SimpleNamespace(_ph_max_lines=2, _save_opts=lambda: saved.append(1),
                                 _broadcast_session=lambda s: broadcast.append(s))
-    pane = types.SimpleNamespace(_ph_history=["a\nb\nc\nd"])
+    pane = types.SimpleNamespace(id=7, _ph_history=["a\nb\nc\nd"])
     sess = types.SimpleNamespace(active_window=types.SimpleNamespace(active_pane=pane))
     spec = ph.PLUGIN.plugin_screen(srv, sess, {"id": "prompt-history", "do": "lines+",
                                                "row": 0})

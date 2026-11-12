@@ -42,10 +42,13 @@ pub mod mouse;
 pub mod palette;
 pub mod selection;
 pub mod prompt_box;
+/// Claude 패널의 프롬프트 바(고정 · 미리보기) 규칙 한 벌(pytmux-587).
+pub mod prompt_bar;
 /// 플러그인 화면 줄의 **의미 태그 → 색**(pytmux-11·12 A).
 pub mod rowtag;
 pub mod rtt;
 pub mod session;
+pub mod supervise;
 pub mod info;
 pub mod status;
 pub mod style;

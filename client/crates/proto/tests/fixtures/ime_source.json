@@ -1,0 +1,112 @@
+{
+ "fcitx5": [
+  {
+   "id": "fcitx5:hangul",
+   "out": "hangul\n"
+  },
+  {
+   "id": "fcitx5:keyboard-us",
+   "out": "keyboard-us\n"
+  },
+  {
+   "id": null,
+   "out": ""
+  },
+  {
+   "id": null,
+   "out": "\n  \n"
+  },
+  {
+   "id": "fcitx5:hangul",
+   "out": "  hangul  \nextra\n"
+  }
+ ],
+ "ibus": [
+  {
+   "id": "ibus:hangul",
+   "out": "hangul\n"
+  },
+  {
+   "id": "ibus:xkb:us::eng",
+   "out": "xkb:us::eng\n"
+  },
+  {
+   "id": null,
+   "out": ""
+  },
+  {
+   "id": null,
+   "out": "\n"
+  }
+ ],
+ "is_korean": [
+  {
+   "id": "com.apple.keylayout.ABC",
+   "korean": false
+  },
+  {
+   "id": "com.apple.keylayout.US",
+   "korean": false
+  },
+  {
+   "id": "com.apple.inputmethod.Korean.2SetKorean",
+   "korean": true
+  },
+  {
+   "id": "com.apple.inputmethod.Korean.390Sebulshik",
+   "korean": true
+  },
+  {
+   "id": "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese",
+   "korean": false
+  },
+  {
+   "id": "org.youknowone.inputmethod.Gureum.han2",
+   "korean": true
+  },
+  {
+   "id": "org.youknowone.inputmethod.Gureum.han3final",
+   "korean": true
+  },
+  {
+   "id": "org.youknowone.inputmethod.Gureum.qwerty",
+   "korean": false
+  },
+  {
+   "id": "windows.ime.hangul",
+   "korean": true
+  },
+  {
+   "id": "windows.ime.latin",
+   "korean": false
+  },
+  {
+   "id": "fcitx5:hangul",
+   "korean": true
+  },
+  {
+   "id": "fcitx5:keyboard-us",
+   "korean": false
+  },
+  {
+   "id": "ibus:hangul",
+   "korean": true
+  },
+  {
+   "id": "ibus:xkb:us::eng",
+   "korean": false
+  },
+  {
+   "id": "HANGUL",
+   "korean": true
+  },
+  {
+   "id": "",
+   "korean": false
+  },
+  {
+   "id": null,
+   "korean": false
+  }
+ ]
+}
