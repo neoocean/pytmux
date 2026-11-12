@@ -150,6 +150,18 @@ impl Block {
             &self.command
         }
     }
+
+    /// 요약 판의 한 줄 글 — 정본 `blocks/clientside.py` `summary_lines` 의 `f"{badge:<3} {cmd}"` + `"   {cwd}"`.
+    /// GUI 판은 같은 세 조각(`badge` · `command_text` · `cwd`)을 색과 폭으로 그린다(ⓑ) — 글은 이 한 벌이다
+    /// (pytmux-653 · 판 내용 자가 맞댄다).
+    pub fn summary_line(&self) -> String {
+        let mut line = format!("{:<3} {}", self.badge(), self.command_text());
+        if let Some(cwd) = self.cwd.as_deref().filter(|c| !c.is_empty()) {
+            line.push_str("   ");
+            line.push_str(cwd);
+        }
+        line
+    }
 }
 
 /// 블록 하나가 차지하는 **절대 행 범위**(양끝 포함). 목록 밖이면 `None`.

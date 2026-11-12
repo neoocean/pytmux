@@ -115,6 +115,9 @@ GUI 의 것으로 얹는다(TUI 식 텍스트 위젯을 흉내내지 않는다).
     떨어졌다. 파이썬 스위트는 `tests/run.py` 가 제 손으로 막지만 **카고는 그 프로세스를
     안 지나서** 보호 밖이었다.
     ⚠ **`cargo test` 를 직접 치면 여전히 밖이다**(그때는 `PYTMUX_CONFIG` 를 손으로 세운다).
+    ☠ 세울 때는 **빈 파일을 실제로 만들어** 그 경로를 준다(pytmux-643 · 2026-11-13) — 쓰기는
+    정본과 같은 규칙이라 `$PYTMUX_CONFIG` 가 **없는 파일**을 가리키면 그 자리를 건너뛰어
+    `$PYTMUX_HOME/config` → 사용자의 진짜 `~/.config/pytmux/config` 에 쓴다.
   - ★ **파이썬을 고르는 법은 저장소에 한 자리다**(`scripts/pick_python.sh` · pytmux-383):
     셸 게이트(`check_licenses.sh`·`build_release.sh`)와 `pre-push` 훅이 **전부 그것을
     source 한다**. ⛔ **`command -v python3` 으로 판정하지 않는다** — Windows 에서 그

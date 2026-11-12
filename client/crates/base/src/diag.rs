@@ -86,14 +86,14 @@ pub struct RuntimeStats {
 
 fn mb(n: Option<u64>) -> String {
     match n {
-        None => crate::i18n::t("이 OS 에서는 못 잰다").to_owned(),
+        None => crate::i18n::t("이 OS 에서는 못 잽니다").to_owned(),
         Some(v) => format!("{:.1} MB", v as f64 / 1_048_576.0),
     }
 }
 
 fn or_unknown(n: Option<usize>) -> String {
     match n {
-        None => crate::i18n::t("못 쟀다").to_owned(),
+        None => crate::i18n::t("못 쟀습니다").to_owned(),
         Some(v) => v.to_string(),
     }
 }
@@ -137,7 +137,7 @@ impl RuntimeStats {
                 self.frame_ms.len()
             )),
             // ⛔ 0 으로 적지 않는다 — 아직 두 번을 안 그린 것이지 0ms 가 아니다.
-            None => out.push(format!("  {}", t("프레임 시간 표본이 아직 없다"))),
+            None => out.push(format!("  {}", t("프레임 시간 표본이 아직 없습니다"))),
         }
         out.push(format!("  {} {}", t("글리프 캐시"), or_unknown(self.glyph_cache)));
         out.push(format!("  {} {}", t("씬 원소"), or_unknown(self.scene_nodes)));
@@ -149,7 +149,7 @@ impl RuntimeStats {
             t("링크 RTT"),
             match self.rtt_ms {
                 Some(v) => format!("{} ms", format_ms(v)),
-                None => t("아직 표본이 없다").to_owned(),
+                None => t("아직 표본이 없습니다").to_owned(),
             }
         ));
         out.push(format!("  {} {}", t("보낼 큐 깊이"), self.queue_depth));
@@ -166,12 +166,12 @@ impl RuntimeStats {
         // ⛔ 꼬리말은 **판 폭 안에** 들어야 한다. 이 판은 읽는 판(`InfoScreen` 계열)이라
         //   줄을 안 접는다 — 긴 한 줄은 판 밖에서 잘리고, 잘린 문장은 없느니만 못하다
         //   (실기 컷 2026-09-03 에서 두 줄이 실제로 잘렸다). 그래서 짧게 끊어 적는다.
-        out.push(t("이 표는 **이 프로세스**를 잰다.").to_owned());
-        out.push(t("정본의 같은 이름은 파이썬 클라의 힙을 잰다 — 항목이 1:1 이 아닌").to_owned());
-        out.push(t("것은 그래서다(런타임이 다르다).").to_owned());
+        out.push(t("이 표는 **이 프로세스**를 잽니다.").to_owned());
+        out.push(t("정본의 같은 이름은 파이썬 클라의 힙을 잽니다 — 항목이 1:1 이").to_owned());
+        out.push(t("아닌 것은 그래서입니다(런타임이 다릅니다).").to_owned());
         out.push(String::new());
-        out.push(t("값이 «자라다 눕는» 모양이면 상시 세금이지 누적이 아니다.").to_owned());
-        out.push(t("계속 자라면 그것이 새 결함이다.").to_owned());
+        out.push(t("값이 «자랐다가 멈추는» 모양이면 상시 세금이지 누적이 아닙니다.").to_owned());
+        out.push(t("계속 자라면 그것이 새 결함입니다.").to_owned());
         out
     }
 }

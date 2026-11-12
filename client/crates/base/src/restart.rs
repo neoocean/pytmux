@@ -169,7 +169,7 @@ pub fn relaunch() -> Result<u32, String> {
 /// 재기동 · 정본 `os.environ["PYTMUX_CLIENT_CRASH_N"] = str(n)` 후 `_relaunch_self`).
 pub fn relaunch_with_crash_count(crash_n: Option<u32>) -> Result<u32, String> {
     let exe = std::env::current_exe()
-        .map_err(|e| crate::i18n::tf("이진 경로를 못 찾았다: {err}", &[("err", &e.to_string())]))?;
+        .map_err(|e| crate::i18n::tf("이진 경로를 못 찾았습니다: {err}", &[("err", &e.to_string())]))?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut command = std::process::Command::new(exe);
     command.args(args);
@@ -180,7 +180,7 @@ pub fn relaunch_with_crash_count(crash_n: Option<u32>) -> Result<u32, String> {
     command
         .spawn()
         .map(|child| child.id())
-        .map_err(|e| crate::i18n::tf("다시 띄우지 못했다: {err}", &[("err", &e.to_string())]))
+        .map_err(|e| crate::i18n::tf("다시 띄우지 못했습니다: {err}", &[("err", &e.to_string())]))
 }
 
 #[cfg(test)]

@@ -95,6 +95,9 @@ pub enum Command {
     /// 쪽 부수효과도 같이 따라온다 — 붙여넣은 프롬프트가 Claude 헤더 추적에 잡히고
     /// (`server_paste` 훅), 스크롤 중이었다면 live 로 복귀한다.
     Paste { text: String },
+    /// 같은 `paste` 를 **그 패널로** — 라이브 팝업이 떠 있을 때 붙여넣기·IME 확정분이 팝업 PTY 로 가게
+    /// 팝업 id 를 싣는다(정본 `on_paste` 의 팝업 갈래 · 서버 `paste_text(pane=)` · pytmux-640).
+    PasteToPane { pane: i64, text: String },
     /// 드래그로 고른 범위의 텍스트를 **서버에게 뽑아 달라고** 한다. 회신은
     /// [`ServerMessage::Selection`](crate::message::ServerMessage::Selection) 이다.
     ///
@@ -491,7 +494,7 @@ impl Command {
             Command::SelectPaneId { .. } => "select_pane_id",
             Command::KillPane => "kill_pane",
             Command::ResizeSplit { .. } => "resize",
-            Command::Paste { .. } => "paste",
+            Command::Paste { .. } | Command::PasteToPane { .. } => "paste",
             Command::CopyRange { .. } => "copy_range",
             Command::SetBuffer { .. } => "set_buffer",
             Command::RequestRedraw => "request_redraw",
@@ -600,6 +603,7 @@ impl Command {
                 json!({ "split_id": split_id, "ratio": ratio })
             }
             Command::Paste { text } => json!({ "text": text }),
+            Command::PasteToPane { pane, text } => json!({ "text": text, "pane": pane }),
             Command::CopyRange {
                 pane,
                 y0,
@@ -816,6 +820,10 @@ impl Command {
                 ratio: 0.5,
             },
             Command::Paste {
+                text: "x".into(),
+            },
+            Command::PasteToPane {
+                pane: 9,
                 text: "x".into(),
             },
             Command::CopyRange {
@@ -1402,11 +1410,12 @@ mod tests {
             Command::SetBorderStatus { .. } => 77,
             Command::CycleWindowSize => 78,
             Command::JoinPreviousTab { .. } => 79,
+            Command::PasteToPane { .. } => 80,
         }
     }
 
     /// `variant_index` 가 돌려주는 값의 가짓수. 변형을 늘리면 여기도 늘려야 한다.
-    const VARIANT_COUNT: usize = 80;
+    const VARIANT_COUNT: usize = 81;
 
     #[test]
     fn all_covers_every_variant() {

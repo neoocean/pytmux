@@ -38,7 +38,7 @@ impl Stream {
     pub fn connect_tcp(host: &str, port: u16) -> io::Result<Self> {
         let addrs: Vec<SocketAddr> = std::net::ToSocketAddrs::to_socket_addrs(&(host, port))?
             .collect();
-        let mut last = io::Error::new(io::ErrorKind::AddrNotAvailable, t("주소를 못 찾았다"));
+        let mut last = io::Error::new(io::ErrorKind::AddrNotAvailable, t("주소를 못 찾았습니다"));
         for addr in addrs {
             match TcpStream::connect_timeout(&addr, LOOPBACK_CONNECT_TIMEOUT) {
                 Ok(stream) => {
@@ -62,7 +62,7 @@ impl Stream {
     pub fn connect_unix(_path: &std::path::Path) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            t("이 OS 에는 AF_UNIX 경로가 없다 — 서버는 루프백 TCP 로 듣는다"),
+            t("이 OS 에는 AF_UNIX 경로가 없습니다 — 서버는 루프백 TCP 로 듣습니다"),
         ))
     }
 

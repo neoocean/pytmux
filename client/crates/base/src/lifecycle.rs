@@ -11,11 +11,11 @@
 //!
 //! # 정본과 일부러 다른 둘
 //!
-//! - `// DIVERGE(pytmux-598): ⓒ` 끝난 뒤에도 창을 닫지 않는다. 정본은 `self.exit(message=…)`
+//! - `// DIVERGE(exit-keeps-window): ⓒ` 끝난 뒤에도 창을 닫지 않는다. 정본은 `self.exit(message=…)`
 //!   로 앱을 끝내고 문구를 단말에 남기지만, GUI 에는 «단말» 이 없다 — 창을 닫으면 문구가
 //!   사라진다. 그래서 문구를 바닥 줄에 걸고 창을 남긴다. 그 귀결로 끝난 뒤의 수동
 //!   `reconnect` 가 뜻을 갖는다([`Input::Manual`] 이 끝난 상태도 받는다).
-//! - `// DIVERGE(pytmux-598): relaunch 순서` 정본은 `restarting{relaunch}` 뒤 EOF 를 보면
+//! - `// DIVERGE(relaunch-order): ⓒ` 정본은 `restarting{relaunch}` 뒤 EOF 를 보면
 //!   **곧장** 자기를 다시 띄운다(`os.execv`). GUI 이진은 파이썬보다 훨씬 빨리 떠서, 서버가
 //!   아직 execv 중일 때 새 프로세스가 «서버 없음» 으로 읽고 `start-server` 로 **두 번째
 //!   서버**를 세울 수 있다. 그래서 먼저 제자리에서 다시 붙고, 붙은 **뒤에** 다시 띄운다

@@ -403,7 +403,28 @@ fn pytmux_home_tilde_and_relative_paths_are_spread_like_canon() {
     assert_eq!(n("./.pytmux"), Some(PathBuf::from("/work/tree/.pytmux")));
     assert_eq!(n("../h"), Some(PathBuf::from("/work/h")));
     assert_eq!(n("/abs/h/"), Some(PathBuf::from("/abs/h")));
-    // DIVERGE(tilde-user): `~user` — 정본 expanduser 는 그 사용자가 있으면 그 홈으로 편다.
-    // 우리는 펴지 않고 상대경로로 본다(드문 꼴 · 남의 홈을 상태 디렉터리로 쓸 일이 없다).
-    assert_eq!(n("~other/x"), Some(PathBuf::from("/work/tree/~other/x")));
+    // `~user` — 정본 `expanduser` 처럼 그 사용자의 홈으로 편다(pytmux-643 · 사람 결정: 정본에 맞춘다).
+    // 그 사용자가 없으면 펴지 않는다(그 글자 그대로 → 지금 디렉터리에 잇는다 — 정본과 같다).
+    let table = |name: &str| (name == "other").then(|| PathBuf::from("/home/other"));
+    let w = |raw: &str| {
+        base::config::normalize_home_with(PathBuf::from(raw), Some(home), Some(cwd), &table)
+    };
+    assert_eq!(w("~other/x"), Some(PathBuf::from("/home/other/x")));
+    assert_eq!(w("~other"), Some(PathBuf::from("/home/other")));
+    assert_eq!(w("~nobody/x"), Some(PathBuf::from("/work/tree/~nobody/x")));
+    assert_eq!(w("~/x"), Some(PathBuf::from("/Users/me/x")), "`~/` 는 사용자 표를 안 묻는다");
+}
+
+/// 진짜 사용자 표 — 지금 사용자의 `~이름` 은 그 사람의 홈이다(정본 `pwd.getpwnam`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn tilde_user_reads_the_real_user_table() {
+    let Some(user) = std::env::var("USER").ok().filter(|u| !u.is_empty()) else {
+        return; // 이름을 모르는 상자(컨테이너 등) — 잴 것이 없다
+    };
+    let cwd = Path::new("/work/tree");
+    let got = base::config::normalize_home_in(PathBuf::from(format!("~{user}/x")), None, Some(cwd));
+    let got = got.expect("편 경로가 없다");
+    assert!(got.is_absolute() && got.ends_with("x"), "{got:?}");
+    assert!(!got.starts_with(cwd), "~{user} 를 안 폈다: {got:?}");
 }

@@ -52,9 +52,9 @@ fn what_we_could_not_measure_says_so_instead_of_zero() {
     let blank = RuntimeStats::default();
     let all = blank.lines().join("\n");
     assert!(!all.contains("글리프 캐시 0"), "못 잰 값을 0 으로 적었다:\n{all}");
-    assert!(all.contains("못 쟀다"), "못 잰 것을 그렇게 안 적었다:\n{all}");
+    assert!(all.contains("못 쟀습니다"), "못 잰 것을 그렇게 안 적었다:\n{all}");
     assert!(
-        all.contains("프레임 시간 표본이 아직 없다"),
+        all.contains("프레임 시간 표본이 아직 없습니다"),
         "표본이 없는데 0ms 로 적었다:\n{all}"
     );
 }

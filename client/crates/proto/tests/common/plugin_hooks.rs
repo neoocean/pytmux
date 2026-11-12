@@ -24,7 +24,7 @@ pub enum Cell {
     NotClient(&'static str),
 }
 
-use Cell::{Declared, Missing, NotClient, Ported};
+use Cell::{Declared, NotClient, Ported};
 
 /// (훅, 플러그인 또는 `*`, 칸, 근거).
 pub static HOOKS: &[(&str, &str, Cell, &str)] = &[
@@ -90,7 +90,7 @@ pub static HOOKS: &[(&str, &str, Cell, &str)] = &[
     ("client_key", "ime-indicator", Ported("gui/src/ime.rs::current_source_id"), "확정 키 휴리스틱이 메우던 «지금 입력기» 를 OS 질의로 낸다(창 앱은 늘 묻을 수 있다)"),
     ("client_input_badge", "ime-indicator", Ported("gui/src/session_view.rs::fn ime_chip"), "판 안 입력줄 배지(pytmux-14·392)"),
     ("client_render", "ime-indicator", Declared("plugin_cells"), "캔버스 배지는 서버 셀"),
-    ("client_status", "ime-indicator", Missing("pytmux-646"), "status 의 `ime_show` 를 GUI 가 안 읽는다 — 판 안 배지가 끄기를 안 따른다"),
+    ("client_status", "ime-indicator", Ported("proto/src/session.rs::fn absorb_ime_show"), "status 의 `ime_show` → 판 안 배지가 끄기를 따른다(pytmux-646)"),
     ("client_unload", "ime-indicator", NotClient("폴링 타이머 해제 — GUI 폴링은 뷰 수명과 함께 끝나 내릴 것이 없다"), "플러그인 끄기는 서버가 셀을 멈춘다"),
     // ── claude-code ───────────────────────────────────────────────────────────
     ("client_render", "claude-code", Ported("proto/src/session.rs::perm"), "푸터 클릭존(권한 모드·원격 제어 · pytmux-603)"),

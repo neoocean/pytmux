@@ -74,14 +74,14 @@ enum Args {
 const USAGE: &str = "\
 pytmux 네이티브 클라이언트(GUI)
 
-  pytmux-gui                  떠 있는 서버에 붙는다(없으면 서버를 띄우고 붙는다)
-  pytmux-gui attach           위와 같다(정본 `pytmux attach` 와 같은 낱말)
-  pytmux-gui --socket <경로>  그 엔드포인트로만 붙는다(`tcp:[NAME@]HOST:PORT` 도 된다)
-                              서버가 없으면 **그 자리에** 띄우고 붙는다(정본과 같다)
+  pytmux-gui                  떠 있는 서버에 붙습니다(없으면 서버를 띄우고 붙습니다)
+  pytmux-gui attach           위와 같습니다(정본 `pytmux attach` 와 같은 낱말)
+  pytmux-gui --socket <경로>  그 엔드포인트로만 붙습니다(`tcp:[NAME@]HOST:PORT` 도 됩니다)
+                              서버가 없으면 **그 자리에** 띄우고 붙습니다(정본과 같습니다)
   pytmux-gui demo             서버 없이 블록 데모
-  pytmux-gui --frame-dump=<png>  몇 초 뒤 첫 화면을 PNG 로 덤프하고 끝낸다(확인용)
-  pytmux-gui --frame-keys=<키들>  덤프 전에 키를 넣는다(예: esc,:,s,p,l — 확인용)
-                              `wait` 를 끼우면 거기서 서버 왕복을 기다린다
+  pytmux-gui --frame-dump=<png>  몇 초 뒤 첫 화면을 PNG 로 덤프하고 끝냅니다(확인용)
+  pytmux-gui --frame-keys=<키들>  덤프 전에 키를 넣습니다(예: esc,:,s,p,l — 확인용)
+                              `wait` 를 끼우면 거기서 서버 왕복을 기다립니다
 ";
 
 /// 인자 하나가 **어떤 시작**을 뜻하는가.
@@ -315,7 +315,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Args {
             "-h" | "--help" => return Args::Usage,
             "--socket" => match it.next() {
                 Some(value) => socket = Some(value),
-                None => return Args::Bad("--socket 뒤에 경로가 없다".into()),
+                None => return Args::Bad("--socket 뒤에 경로가 없습니다".into()),
             },
             other => match other.strip_prefix("--socket=") {
                 Some(value) => socket = Some(value.to_owned()),
@@ -325,7 +325,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> Args {
     }
     if demo {
         if attach || socket.is_some() {
-            return Args::Bad("demo 는 서버에 붙지 않는다 — attach·--socket 과 함께 못 쓴다".into());
+            return Args::Bad("demo 는 서버에 붙지 않습니다 — attach·--socket 과 함께 쓸 수 없습니다".into());
         }
         return Args::Demo;
     }
@@ -344,7 +344,8 @@ fn main() -> Result<()> {
     // 아무것도 안 남긴 상태가 된다. 기본은 조용하고(`RUST_LOG` 미설정 시 warn
     // 이상), 필요할 때 `RUST_LOG=info` 로 켠다.
     env_logger::init();
-    // DIVERGE(pytmux-598): `--ime-probe` 는 하네스 손잡이다(정본에 짝이 없다) — 창을 안 띄우고
+    // `--ime-probe` 는 하네스 손잡이다(정본에 짝이 없다 · 갈림 대장의 GuiOnly 줄 — `DIVERGE` 표식은
+    //   CanonDiffers 줄만 가리킨다) — 창을 안 띄우고
     //   **메인 스레드에서** 입력 소스를 한 번 읽어 `<소스 ID>\t<한|EN>` 한 줄을 찍고 끝난다
     //   (못 읽으면 `-\t-`). 정본 `oskbd.current_source_id()` 와 같은 말이라 둘을 맞대 배지
     //   판정이 같은지를 사람 손 없이 잰다(pytmux-590). 서버에 붙지 않는다.
@@ -367,7 +368,7 @@ fn main() -> Result<()> {
     // 같은 규칙이다). 규칙은 `base::crash`, 잇는 것은 `crash_hook`.
     crash_hook::install(has_console);
     let (frame_dump, frame_keys, argv) = take_frame_dump(std::env::args().skip(1));
-    // DIVERGE(pytmux-639): `--crash-probe` 는 하네스 손잡이다(정본에 짝이 없다) — 메인 스레드에서
+    // `--crash-probe` 는 하네스 손잡이다(정본에 짝이 없다 · 갈림 대장의 GuiOnly 줄) — 메인 스레드에서
     //   곧장 패닉해 크래시 자가 재기동 사슬을 서버 없이 잰다(`tests/crash_relaunch_tests.rs`).
     //   재기동이 같은 인자를 넘기므로 사슬 끝(한도 초과)까지 그대로 간다.
     let crash_probe = argv.iter().any(|a| a == "--crash-probe");
@@ -401,7 +402,7 @@ fn main() -> Result<()> {
         //   나간다(pytmux-639 G6 · 종전에는 80×24 를 싣고 첫 Resize 가 바로잡았다).
         Plan::AttachTo(spec) => match proto::boot::connect_or_start_at(&spec) {
             Ok(link) => Some(link),
-            Err(e) => die(format!("pytmux-gui: {spec} 에 붙지 못했다: {e}"), 1),
+            Err(e) => die(format!("pytmux-gui: {spec} 에 붙지 못했습니다: {e}"), 1),
         },
         // 정본 `attach` 와 같은 모델이다: 없으면 **띄우고** 붙는다. 실패는 실패로
         // 끝난다 — 데모로 떨어지면 사용자는 자기 세션이 사라졌다고 읽는다.

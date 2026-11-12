@@ -54,9 +54,163 @@ def pick(keys, kind):
     return cands[0] if cands else None
 
 
+# ── 판 «안» 의 줄(pytmux-647) — 정본 판을 **고정 자료**로 지어 줄을 뽑는다 ─────────────────────
+#
+# 자료는 픽스처에 같이 싣는다 — Rust 시험이 **같은 자료**를 `SessionState` 에 먹인다(손으로 적은 기대값 0).
+INPUTS = {
+    "buffers": [{"i": 0, "preview": "첫 버퍼"}, {"i": 1, "preview": "[x] two"}],
+    "layouts": ["work", "play"],
+    # 같은 호스트(office)의 다른 원격 탭만 후보다 — 활성 탭 · 로컬 · 다른 호스트는 빠져야 한다.
+    "merge_tabs": [
+        {"index": 0, "name": "⇄office:a", "active": True, "remote": True},
+        {"index": 1, "name": "⇄office:b", "remote": True},
+        {"index": 2, "name": "local"},
+        {"index": 3, "name": "⇄home:c", "remote": True},
+        {"index": 4, "name": "⇄office:d", "remote": True},
+    ],
+    "shell": ["a\nb\n", "a\r\nb", "x\ry", "\n".join(f"l{i}" for i in range(45)), "   "],
+    "search": {"t": "search_results", "query": "err", "panes": 2, "items": [
+        {"win": 0, "tab": "sh", "title": "zsh", "line": 12, "text": "error here"},
+        {"win": 1, "gwin": 3, "tab": "⇄h:x", "title": "t", "line": 5, "text": "remote err", "remote": True},
+        {"win": 2, "tab": "py", "title": "", "text": "no line"},
+    ]},
+    "blocks": [{"cmd": f"cmd{i}", "cwd": "/w" if i % 2 else "", "state": "done", "exit": 0 if i else 1}
+               for i in range(7)],
+    "binds": {"x": "split-window -h"},
+}
+
+
+class _Rec:
+    """Textual 위젯 대신 서는 기록 스텁 — `with` 컨테이너도 받는다."""
+
+    kind = "?"
+
+    def __init__(self, *children, **kw):
+        self.children = list(children)
+        self.kw = kw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _texts(node, out):
+    if isinstance(node, _Rec):
+        if node.kind == "Label" and node.children:
+            first = node.children[0]
+            out.append(getattr(first, "plain", None) or str(first))
+        for child in node.children:
+            _texts(child, out)
+
+
+def _rows_of(cs, screen):
+    """판 하나의 `compose()` 를 스텁 위에서 돌려 Label 글을 차례대로."""
+    names = ("Label", "ListItem", "ListView", "Static", "Vertical", "Horizontal", "_CycleListView")
+    real = {n: getattr(cs, n) for n in names if hasattr(cs, n)}
+    for n in real:
+        setattr(cs, n, type(n, (_Rec,), {"kind": n}))
+    try:
+        out = []
+        for node in screen.compose():
+            _texts(node, out)
+        return out
+    finally:
+        for n, v in real.items():
+            setattr(cs, n, v)
+
+
+def _in_locale(i18n, loc, fn):
+    i18n.set_locale(loc)
+    try:
+        return fn()
+    finally:
+        i18n.set_locale("ko")
+
+
+def canon_rows(scratch):
+    import asyncio
+    from pytmuxlib import clientscreens as cs, clientcmd, keymap
+    from pytmuxlib.client import build_client_app
+    from pytmuxlib.plugins.blocks import clientside as blocks_side
+
+    cfg = os.path.join(scratch, "config")
+    from pytmuxlib import i18n
+    loc = i18n.get_locale()
+    app = build_client_app(os.path.join(scratch, "x.sock"), keymap.load_config(cfg))
+    if loc:
+        i18n.set_locale(loc)   # 앱을 지으면 환경 로케일로 돌아간다 — 부른 쪽이 정한 것으로 되돌린다
+    pushed = []
+    app.push_screen = lambda scr, *a, **k: pushed.append(scr)
+    app.send_cmd = lambda *a, **k: None
+    app.display_message = lambda *a, **k: None
+    out = {"inputs": INPUTS}
+
+    out["buffers"] = {"items": _rows_of(cs, cs.ChooseBufferScreen(INPUTS["buffers"])),
+                      "empty": len(_rows_of(cs, cs.ChooseBufferScreen([])))}
+    out["saved_layouts"] = {"items": _rows_of(cs, cs.ChooseLayoutScreen(INPUTS["layouts"], "T")),
+                            "empty": len(_rows_of(cs, cs.ChooseLayoutScreen([], "T")))}
+
+    app.tabbar.tabs = [dict(t) for t in INPUTS["merge_tabs"]]
+    app.status.windows = [dict(t) for t in INPUTS["merge_tabs"]]   # 활성 원격 탭의 호스트는 status 가 정한다
+    pushed.clear()
+    app.merge_remote_tab_picker()
+    out["merge_remote"] = _rows_of(cs, pushed[-1]) if pushed else None
+
+    shell = []
+    real_capture = clientcmd._shell_capture
+    try:
+        for text in INPUTS["shell"]:
+            clientcmd._shell_capture = lambda cmd, env, _t=text: (_t, 0)
+            app.run_worker = lambda coro, **kw: asyncio.run(coro)
+            pushed.clear()
+            app._run_shell("x")
+            shell.append(list(pushed[-1]._lines) if pushed else None)
+    finally:
+        clientcmd._shell_capture = real_capture
+    out["shell"] = shell
+
+    pushed.clear()
+    app.bindings = {k: v for k, v in INPUTS["binds"].items()}
+    app.root_bindings = {}
+    app._run_command("list-keys")
+    out["keys"] = list(pushed[-1]._lines) if pushed else None
+
+    pushed.clear()
+    app._open_status_tabs({"t": "tree", "sessions": []})
+    out["info_tab_names"] = [name for name, _ in pushed[-1]._tabs] if pushed else None
+
+    scr = cs.SearchResultsScreen(INPUTS["search"])
+    out["search"] = {
+        "cells": [[scr._tab_of(it), str(it.get("title") or ""), scr._line_of(it), str(it.get("text", ""))]
+                  for it in INPUTS["search"]["items"]],
+        "empty": len(_rows_of(cs, cs.SearchResultsScreen({"t": "search_results", "items": []}))),
+    }
+
+    # 버전 판 — 업타임은 시각이라 글이 아니라 **줄의 모양**(몇 줄 · 빈 줄 자리 · 머리줄)을 적는다.
+    pushed.clear()
+    app._show_version_popup({"t": "version", "version": "p4:123", "uptime": 5, "pid": 42})
+    lines = list(pushed[-1]._lines) if pushed else []
+    out["version"] = {"count": len(lines), "blank": [i for i, ln in enumerate(lines) if not ln],
+                      "head": lines[0] if lines else None,
+                      "has": ["123", "42"]}
+
+    blocks_side.handle_message(app, {"t": "blocks", "pane": 1, "blocks": INPUTS["blocks"]})
+    out["summary"] = blocks_side.summary_lines(app, 1)
+    return out
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    import tempfile
+    scratch = tempfile.mkdtemp(prefix="pytmux-screen-contents-")
+    open(os.path.join(scratch, "config"), "w").close()
+    # ⛔ 이 상자의 진짜 상태·설정을 안 읽는다 — import 전에 세운다.
+    os.environ["PYTMUX_HOME"] = scratch
+    os.environ["PYTMUX_CONFIG"] = os.path.join(scratch, "config")
+    os.environ.pop("NO_COLOR", None)
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ap = argparse.ArgumentParser()
     ap.add_argument("--pytmux", default=os.path.join(here, ".."))
@@ -98,6 +252,7 @@ def main():
                     "i18n 열쇠(AST) · i18n.t 로 푼 ko/en · clientutil.COMMAND_OPTIONS.",
         "screens": screens,
         "options": options,
+        "rows": {loc: _in_locale(i18n, loc, lambda: canon_rows(scratch)) for loc in ("ko", "en")},
     }
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fp:

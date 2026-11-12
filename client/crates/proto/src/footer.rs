@@ -162,7 +162,7 @@ pub fn head(blocks: usize, claude: usize, mode: Option<&str>, remote: bool, fold
             head.push_str(&format!(" [{mode}]"));
         }
     } else if remote {
-        head.push_str(t(" · 원격 상류가 Claude 대화를 안 보낸다"));
+        head.push_str(t(" · 원격 상류가 Claude 대화를 안 보냅니다"));
     }
     head
 }

@@ -136,7 +136,7 @@ impl Hooks {
     pub fn lines(&self) -> Vec<String> {
         if self.entries.is_empty() {
             return vec![String::from(crate::i18n::t(
-                "걸어 둔 훅이 없다 (set-hook <이벤트> <명령>)",
+                "걸어 둔 훅이 없습니다 (set-hook <이벤트> <명령>)",
             ))];
         }
         self.entries

@@ -14,8 +14,9 @@ use plugin_hooks::{Cell, HOOKS, cell_of};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-/// `Missing` 칸의 상한 — ⛔ **올리지 않는다.** 지금 하나: `client_status × ime-indicator`(pytmux-646).
-const MISSING_CEILING: usize = 1;
+/// `Missing` 칸의 상한 — ⛔ **올리지 않는다.** 0 = 요구 R7 이 닫혔다(마지막 칸 `client_status × ime-indicator`
+/// 는 pytmux-646 이 옮겼다).
+const MISSING_CEILING: usize = 0;
 
 fn fixture() -> Value {
     serde_json::from_str(include_str!("fixtures/plugin_hooks.json"))

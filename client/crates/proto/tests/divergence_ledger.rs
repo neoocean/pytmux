@@ -262,18 +262,19 @@ fn the_ledger_is_sorted_and_has_no_duplicates() {
 // ══ 새 축 — 정본에 있는데 GUI 가 다르게 하는 것(pytmux-598) ═════════════════════════
 
 /// `CanonDiffers` 중 `Todo`(이슈를 단 못 맞는 줄)의 상한 — ⛔ **올리지 않는다.** 고쳤으면 같은 CL
-/// 에서 줄을 지우고 내린다. 지금 셋: `monitor-bell`(642) · `pytmux-config-write`·`tilde-user`(643).
-const CANON_DIFFERS_TODO_CEILING: usize = 3;
+/// 에서 줄을 지우고 내린다. 지금 하나: `monitor-bell`(642) — 643 의 둘은 정본에 맞춰 지웠다.
+const CANON_DIFFERS_TODO_CEILING: usize = 1;
 
 /// 남의 파일이라 아직 `DIVERGE(pytmux-598)`(이 대장 이슈 자신)으로 남은 표식 — 줄 이름으로 바꾸는 것은
 /// 그 파일의 주인 몫이다(2026-11-13 · 두 파일 다 재접속·수명 작업이 쥐고 있다). 상한을 넘거나 낡으면 운다.
-const LEGACY_598_MARKERS: &[(&str, usize)] = &[("gui/src/main.rs", 1), ("base/src/lifecycle.rs", 2)];
+/// 2026-11-13 비웠다 — 남은 셋을 줄 이름(`--ime-probe` · `exit-keeps-window` · `relaunch-order`)으로 바꿨다.
+const LEGACY_598_MARKERS: &[(&str, usize)] = &[];
 
 /// 아래 낱말 게이트에 걸리지만 **낡은 주석 고치기(pytmux-626)** 가 쥔 자리 — 그쪽 CL 이 고치면
 /// 이 줄은 낡아서 운다(그때 지운다). (파일, 주석 안의 조각).
-const WAITING_626: &[(&str, &str)] = &[
-    ("base/src/screens.rs", "그 두 탭은 플러그인이 채우므로 우리에게는 없고"),
-];
+/// 지금 비었다(2026-11-13 · 마지막 자리 `screens.rs` InfoTabs 주석을 사실로 고쳤다) — 비어 있어도 표를
+/// 두는 것은 다음 «기다리는 자리» 를 같은 모양으로 적게 하려는 것이다.
+const WAITING_626: &[(&str, &str)] = &[];
 
 /// 주석에 이 낱말이 있으면 같은 주석 덩어리 안에 `DIVERGE(` 표식이 있어야 한다.
 ///

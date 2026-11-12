@@ -1420,17 +1420,68 @@ pub struct SearchHit {
     pub pane: i64,
     #[serde(default)]
     pub title: String,
-    /// 찾은 절대 행(검색 당시 스냅샷 — 서버가 점프할 때 다시 맞춘다).
-    #[serde(default)]
+    /// 찾은 절대 행(검색 당시 스냅샷 — 서버가 점프할 때 다시 맞춘다). 서버가 안 실었으면 `-1`
+    /// (정본 `_line_of` 처럼 빈 칸으로 보인다 — 0 으로 꾸미지 않는다 · pytmux-647 의 판 내용 자가 잡았다).
+    #[serde(default = "no_line")]
     pub line: i64,
     pub text: String,
     /// 원격 히트인가(표시색이 갈린다 — `REMOTE_PINK`).
     #[serde(default)]
     pub remote: bool,
+    /// **우리 병합 탭바**의 탭 index(원격 히트에만 실린다). 사람이 보는 번호는 이것이다 — `win` 은 그
+    /// 상류의 로컬 번호(점프 좌표)다(정본 `_tab_of` 의 `gwin` 우선 · pytmux-647).
+    #[serde(default)]
+    pub gwin: Option<usize>,
     /// 점프에 실어 그대로 돌려줄 홉 경로. 로컬 히트는 비어 있다 — 이 클라는 안을
     /// 안 풀고 왕복만 시킨다(좌표계를 아는 건 서버 하나).
     #[serde(default)]
     pub route: Vec<String>,
+}
+
+fn no_line() -> i64 {
+    -1
+}
+
+/// 파이썬 `str.splitlines()` 와 같은 줄 나누기 — `\n` 만이 아니라 `\r` 홀로·`\r\n`·`\v`·`\f`·`\x1c~\x1e`·
+/// `\x85`·`U+2028/2029` 에서도 끊는다. 정본 `run-shell` 판이 `text.splitlines()[:40]` 이라 Rust `lines()` 로는
+/// 진행 표시(`\r`)가 섞인 출력이 한 줄로 뭉쳤다(pytmux-647 의 판 내용 자가 잡았다).
+fn py_splitlines(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        let breaks = matches!(
+            c,
+            '\n' | '\r' | '\u{0b}' | '\u{0c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        );
+        if !breaks {
+            continue;
+        }
+        out.push(&text[start..i]);
+        let mut end = i + c.len_utf8();
+        if c == '\r' && chars.peek().map(|(_, n)| *n) == Some('\n') {
+            chars.next();
+            end += 1;
+        }
+        start = end;
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    out
+}
+
+impl SearchHit {
+    /// 결과판 한 줄의 네 칸 — `탭번호:탭이름` · 패널 제목 · 줄 번호 · 미리보기(정본 `_row_text` 의 칸 ·
+    /// `_tab_of`/`_line_of`). 칸의 **그림**(폭·색·잘림)은 뷰의 것이고 글은 여기 한 곳이다.
+    pub fn cells(&self) -> [String; 4] {
+        [
+            format!("{}:{}", self.gwin.unwrap_or(self.win) + 1, self.tab),
+            self.title.clone(),
+            if self.line >= 0 { self.line.to_string() } else { String::new() },
+            self.text.clone(),
+        ]
+    }
 }
 
 /// 원격 중계가 응답한(또는 못한) 상류 하나(`remote_search_merge` 의 `hosts`).
@@ -1590,6 +1641,9 @@ pub struct SessionState {
     prompt_history: std::collections::HashMap<i64, Vec<String>>,
     /// `:` 미리보기 최대 줄 수(서버 `ph_max_lines` · 1~3 · 기본 3). 고정 바와는 무관하다.
     ph_max_lines: Option<usize>,
+    /// 입력기 배지를 **끈** 상태인가(서버 status 의 `ime_show = false` · ime-indicator 플러그인 · pytmux-646).
+    /// 기본은 보인다(정본 `attach_client` 의 `app.ime_show = True`). 키가 안 온 status 는 직전 값을 지킨다.
+    ime_hidden: bool,
     /// 직전 status 가 원격 탭 보기였나 — 바뀌면 프롬프트 이력 표를 버린다(pytmux-587 ②).
     ph_remote_view: bool,
     /// 플러그인의 패널 대상 명령(서버 `plugin_surface.pane_scoped`). 안 왔으면 지킨다.
@@ -1835,7 +1889,7 @@ impl SessionState {
                         .filter_map(|entry| entry.get("id").and_then(serde_json::Value::as_i64))
                         .collect();
                 }
-                let ph_changed = self.absorb_prompt_history(&status);
+                let ph_changed = self.absorb_prompt_history(&status) | self.absorb_ime_show(&status);
                 // 상태줄 표식(Tier B ③) — ★ **안 오면 「없음」이다.** 위 이웃들과
                 // 반대 규칙이라 적어 둔다: 저것들은 델타에 안 실릴 수 있어 "안 왔으면
                 // 지킨다"가 맞지만, 배지는 서버가 **매 status 마다 다시 만들고 비면
@@ -2458,7 +2512,7 @@ impl SessionState {
 
     /// 셸 출력을 담는다. 40줄까지만(파이썬 `_run_shell` 과 같은 상한).
     pub fn set_shell_output(&mut self, text: &str) {
-        self.shell_output = text.lines().take(40).map(str::to_owned).collect();
+        self.shell_output = py_splitlines(text).into_iter().take(40).map(str::to_owned).collect();
     }
 
     /// 재시작 점검 결과 줄들(`restart-check` 회신). 묻기 전에는 비어 있다.
@@ -2713,6 +2767,21 @@ impl SessionState {
     /// 플러그인 선택지 명령의 지금 값(pytmux-634). 모르면 `None`.
     pub fn plugin_option_value(&self, name: &str) -> Option<&str> {
         self.plugin_option_values.get(name).map(String::as_str)
+    }
+
+    /// 판 안 입력기 배지를 보일까 — 정본 `ime-indicator:client_input_badge` 의 `if not app.ime_show: return None`.
+    pub fn ime_badge_shown(&self) -> bool {
+        !self.ime_hidden
+    }
+
+    /// status 의 `ime_show` 를 흡수한다 — 정본 `ime-indicator:client_status` 와 같은 규칙(키가 없으면 지킨다).
+    fn absorb_ime_show(&mut self, status: &crate::message::Status) -> bool {
+        let Some(show) = status.fields.get("ime_show").and_then(serde_json::Value::as_bool) else {
+            return false;
+        };
+        let changed = self.ime_hidden == show;
+        self.ime_hidden = !show;
+        changed
     }
 
     /// status 의 `ph_panes`·`ph_max_lines`·`plugin_surface.pane_scoped` 를 흡수한다(pytmux-587).

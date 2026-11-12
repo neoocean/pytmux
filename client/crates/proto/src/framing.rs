@@ -45,7 +45,7 @@ const PARTIAL_FRAME_PATIENCE: Duration = Duration::from_secs(5);
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
     /// 상대가 연결을 닫았다. 정상 종료일 수도 있다.
-    #[error("{}", base::i18n::t("연결이 닫혔다"))]
+    #[error("{}", base::i18n::t("연결이 닫혔습니다"))]
     Closed,
     /// 광고된 길이가 상한을 넘었다. 읽지 않고 끊는다.
     ///
@@ -70,7 +70,7 @@ pub enum FrameError {
 
 fn err_too_large(advertised: &usize, limit: &usize, header: &[u8; 4]) -> String {
     let mut out = base::i18n::tf(
-        "프레임이 너무 크다: {advertised} 바이트 (상한 {limit})",
+        "프레임이 너무 큽니다: {advertised} 바이트 (상한 {limit})",
         &[
             ("advertised", advertised.to_string().as_str()),
             ("limit", limit.to_string().as_str()),
@@ -82,7 +82,7 @@ fn err_too_large(advertised: &usize, limit: &usize, header: &[u8; 4]) -> String 
     if let Some(text) = printable_ascii(header) {
         out.push(' ');
         out.push_str(&base::i18n::tf(
-            "— 길이 자리에 글자가 왔다: {text} (스트림이 어긋났다)",
+            "— 길이 자리에 글자가 왔습니다: {text} (스트림이 어긋났습니다)",
             &[("text", text.as_str())],
         ));
     }
@@ -103,7 +103,7 @@ fn printable_ascii(bytes: &[u8; 4]) -> Option<String> {
 
 fn err_stalled(got: &usize, want: &usize) -> String {
     base::i18n::tf(
-        "프레임이 오다 말았다: {got}/{want} 바이트",
+        "프레임이 중간에 끊겼습니다: {got}/{want} 바이트",
         &[("got", got.to_string().as_str()), ("want", want.to_string().as_str())],
     )
 }
@@ -113,7 +113,7 @@ fn err_io(err: &io::Error) -> String {
 }
 
 fn err_decode(err: &serde_json::Error) -> String {
-    base::i18n::tf("프레임을 해석할 수 없다: {err}", &[("err", err.to_string().as_str())])
+    base::i18n::tf("프레임을 해석할 수 없습니다: {err}", &[("err", err.to_string().as_str())])
 }
 
 /// 읽기 타임아웃인가 — "끊겼다"가 아니라 "아직 없다".

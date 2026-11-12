@@ -1419,6 +1419,29 @@ fn xdg_config_home_replaces_dot_config_instead_of_adding_to_it() {
 }
 
 #[test]
+fn pytmux_config_wins_the_write_only_when_the_file_exists() {
+    // pytmux-643 · 정본 `config_path_for_write`: `$PYTMUX_CONFIG` 도 **파일이 있을 때만** 후보다.
+    // 없는 파일을 가리키면 다음 실재 후보 → 없으면 `<home>/config`(정본 `default_path`).
+    let dir = std::env::temp_dir().join(format!("pytmux-643-write-{}", std::process::id()));
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let missing = dir.join("no-such-config");
+    let env = ConfigEnv {
+        pytmux_config: Some(missing.clone()),
+        pytmux_home: Some(home.clone()),
+        xdg_config_home: Some(dir.join("xdg")),
+        home: Some(dir.join("u")),
+    };
+    // 실재 파일이 하나도 없다 → 만들 자리(`<home>/config`) — 없는 `$PYTMUX_CONFIG` 가 아니다.
+    assert_eq!(env.write_path(), home.join("config"));
+    assert!(!missing.exists(), "쓰기 자리를 고르다 그 파일을 만들었다");
+    // `$PYTMUX_CONFIG` 파일이 생기면 그것이 이긴다.
+    std::fs::write(&missing, "").unwrap();
+    assert_eq!(env.write_path(), missing);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_new_pytmux_home_copies_the_old_config_once_and_keeps_the_original() {
     // 정본 `_migrate_config_to_home` — 복사 1회 + 원본 보존 + 멱등(G8b).
     let root = g8_scratch("migrate");

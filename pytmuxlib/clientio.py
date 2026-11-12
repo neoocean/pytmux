@@ -75,7 +75,13 @@ class _InputMixin:
             event.stop()
             return
         if self.writer and event.text:
-            self.send_cmd("paste", text=event.text)
+            # 라이브 팝업이 떠 있으면 **팝업 패널**로(키의 `send_input` 팝업 갈래와 같은 규칙 · pytmux-640).
+            # 팝업이 없으면 종전 그대로 `pane` 을 안 싣는다(서버가 활성 패널에 쓴다).
+            pu = self.layout.get("popup")
+            if pu:
+                self.send_cmd("paste", text=event.text, pane=pu["id"])
+            else:
+                self.send_cmd("paste", text=event.text)
             # IME 한글 확정 입력은 Textual 이 Paste 이벤트로 전달한다(개별 Key 가
             # 아님) — 컴포즈 '프롬프트 인계' 시드가 비던 원인. 붙여넣기/IME 확정분도
             # 현재 프롬프트 추정에 누적한다(on_key 패스스루와 같은 _prompt_buf).

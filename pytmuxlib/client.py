@@ -541,7 +541,8 @@ class _ChooseScreensMixin:
             tabs.append((t[0], t[1]))
             if len(t) > 2 and t[2]:
                 actions[len(tabs) - 1] = t[2]
-        tabs.append(("서버", server))
+        # 탭 이름도 카탈로그로(pytmux-654 — 종전 글자 그대로라 en 에서도 「서버」였다).
+        tabs.append((i18n.t("dialog.status_tab_server"), server))
         initial = max(0, min(initial, len(tabs) - 1))
         self.push_screen(InfoTabsScreen(
             tabs, initial=initial, title=i18n.t("dialog.status_title"),

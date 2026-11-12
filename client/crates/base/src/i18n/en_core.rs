@@ -75,7 +75,7 @@ pub static EN: &[(&str, &str)] = &[
     // §10-21ⓓ — 화면에서 뺀 요약 구역이 판이 됐다.
     ("블록 · Claude 요약", "Blocks · Claude summary"),
     ("블록·Claude 요약", "Blocks · Claude summary"),
-    ("블록도 Claude 항목도 없다", "No blocks and no Claude items"),
+    ("블록도 Claude 항목도 없습니다", "No blocks and no Claude items"),
     // `Action::SelectBlocks` 의 라벨(pytmux-18) — 팔레트·메뉴·키 도움말이 같이 쓴다.
     ("블록 고르기", "Select blocks"),
     ("패널에 ESC", "ESC to pane"),
@@ -195,7 +195,8 @@ pub static EN: &[(&str, &str)] = &[
     ("메인 세로 main-vertical", "Main vertical"),
     ("메인 가로 main-horizontal", "Main horizontal"),
     // ── keymap.rs — key_help_lines ──
-    ("detach (이 클라만 빠진다)", "detach (only this client leaves)"),
+    // 정본 `klist.p_d`(pytmux-595).
+    ("detach", "Detach"),
     ("패널에 Ctrl+B 보내기", "Send Ctrl+B to pane"),
     ("── esc 모드 ──", "── esc mode ──"),
     ("패널에 ESC (모드 없이)", "ESC to pane (no mode)"),
@@ -209,30 +210,30 @@ pub static EN: &[(&str, &str)] = &[
     ("고른 블록 전체 복사", "Copy the whole selected block"),
     ("고르기 끝", "Done selecting"),
     ("── 마우스 ──", "── mouse ──"),
-    ("드래그", "Drag"),
+    // MOUSE_GESTURES — 정본 `keys.g_*` 일곱의 ko/en 을 첫 ` — ` 에서 가른 것 그대로(pytmux-652).
     ("휠", "Wheel"),
-    ("경계선 드래그", "Drag border"),
-    // MOUSE_GESTURES — 정본 `keys.g_*` 와 같은 일곱(문구도 저쪽 en 을 따른다).
-    ("커서 아래 패널 스크롤 · 클릭 — 패널 포커스", "Scroll pane under cursor · Click — focus pane"),
+    ("스크롤백 스크롤 · 클릭 — 패널 포커스", "scroll scrollback · Click — focus pane"),
     ("우클릭", "Right-click"),
-    ("패널 메뉴(분할·줌·회전·삭제…)", "Pane menu (split·zoom·rotate·kill…)"),
-    ("패널 크기 조절", "Resize panes"),
-    ("패널 헤더 드래그", "Drag pane header"),
+    ("패널 메뉴(분할·줌·회전·삭제…)", "pane menu (split·zoom·rotate·kill…)"),
+    ("경계선 드래그", "Drag divider"),
+    ("패널 크기 조절", "resize panes"),
+    ("패널 헤더(위 테두리) 드래그", "Drag pane header (top border)"),
     (
         "패널을 들어 다른 패널과 swap · 탭으로 이동 · [+]에 놓아 새 탭",
-        "Pick up the pane: swap with another · move to a tab · drop on [+] for a new tab",
+        "pick up the pane: swap with another · move to a tab · drop on [+] for a new tab",
     ),
+    ("왼쪽 드래그", "Left-drag"),
     (
         "텍스트 선택 → 클립보드 복사(최소 이동 mouse-drag-threshold)",
-        "Select text → copy to clipboard (minimum travel: mouse-drag-threshold)",
+        "select text → copy to clipboard (minimum travel: mouse-drag-threshold)",
     ),
     ("Shift+드래그", "Shift+drag"),
     (
-        "패널 안 앱에 마우스 전달(에디터 패널 스플리터 등)",
-        "Forward the drag to the app inside (e.g. an editor's pane splitter)",
+        "내부 앱에 마우스 전달(에디터 패널 스플리터 등)",
+        "forward the drag to the app inside (e.g. an editor's pane splitter)",
     ),
     ("탭 드래그", "Drag tab"),
-    ("탭 재정렬 · 패널 위로 끌어 분할", "Reorder tabs · drop onto a pane to split"),
+    ("탭 재정렬 · 패널 위로 끌어 분할", "reorder · drop onto a pane to split"),
     ("── 사용자 키 바인딩 ──", "── user key bindings ──"),
     // 확인 화면의 **버튼 두 개**(screens.rs `confirm_buttons`). 2026-07-31 라이브 컷에서
     // 제목·물음만 영어이고 버튼만 한국어로 남아 있는 것이 잡혔다 — 되돌릴 수 없는 것
@@ -244,10 +245,10 @@ pub static EN: &[(&str, &str)] = &[
     //   (`gui` 의 `no_korean_survives_on_the_confirm_screen`).
     ("취소", "Cancel"),
     ("재시작", "Restart"),
-    // 확인 판의 안내줄 — 이웃 판들(Tabs·Tree·Buffers…)은 다 있는데 이것만 빠져 있었다.
+    // 확인 판의 안내줄 — 정본 `screen.confirm_sub` 그대로(pytmux-648).
     (
-        "(←→ 고르기 · Enter 확정 · y/n · Esc 취소)",
-        "(←→ choose · Enter confirm · y/n · Esc cancel)",
+        "(←→ 이동 · Enter 확정 · y/n · Esc 취소)",
+        "(←→ move · Enter confirm · y/n · Esc cancel)",
     ),
     // ── 설정 줄 이름 · 값 낱말(정본 setting.*/setval.* — gen_setting_labels.py) ──
     ("setting\u{0004}비활성 패널 흐리게", "Dim inactive panes"),
@@ -334,18 +335,21 @@ pub static EN: &[(&str, &str)] = &[
         "원격 탭 {host} 을(를) 분리할까요? 원격 셸은 그대로 두고 이 탭만 닫힙니다.",
         "Detach remote tab {host}? The remote shell stays running; only this tab closes.",
     ),
-    ("이 탭을 닫을까? 탭의 셸이 종료된다.", "Close this tab? The tab's shells will end."),
+    // ★ 확인 물음 넷 — 정본 `dialog.*_msg` 의 ko/en 그대로(pytmux-595).
+    ("이 탭을 닫을까요? 탭의 셸이 종료됩니다.", "Close this tab? The tab's shells will end."),
     (
-        "이 탭을 닫으면 pytmux 가 종료된다(모든 셸 종료). 닫을까?",
+        "이 탭을 닫으면 pytmux 가 종료됩니다(모든 셸 종료). 닫을까요?",
         "Closing this tab will quit pytmux (all shells end). Close?",
     ),
     (
-        "이것이 마지막 로컬 탭이다. 닫으면 pytmux 가 종료되고(모든 셸 종료) 열려 있는 원격 탭 보기도 함께 끊긴다. 닫을까?",
-        "This is the last local tab. Closing it quits pytmux (all shells end) and also \ndisconnects your open remote tab views. Close?",
+        "이것이 마지막 로컬 탭입니다. 닫으면 pytmux 가 종료되고(모든 셸 종료) 열려 있는 원격 탭 보기도 함께 끊깁니다. 닫을까요?",
+        "This is the last local tab. Closing it quits pytmux (all shells end) and also disconnects your open remote tab views. Close?",
     ),
+    // ⚠ 종전 열쇠는 `{name}` 없는 옛 글이라 **실제 물음과 짝이 안 맞았다** — 영어 판에서 이 물음이
+    //   한국어로 떴다(`t(match …)` 를 i18n 게이트가 못 봐서 · pytmux-595).
     (
-        "고정 탭을 닫을까? 고정 탭은 상시 유지용이다 — 탭의 셸이 종료된다.",
-        "Close pinned tab? Pinned tabs are meant to stay — the tab's shells will end.",
+        "고정 탭 '{name}' 을(를) 닫을까요? 고정 탭은 상시 유지용입니다 — 탭의 셸이 종료됩니다.",
+        "Close pinned tab '{name}'? Pinned tabs are meant to stay — the tab's shells will end.",
     ),
     // "(없음)" 은 en_proto 에 이미 있다(첫 등장 파일 규칙 — 중복 키는 게이트가 잡는다).
     // ── screens.rs — Screen::title ──
@@ -364,20 +368,28 @@ pub static EN: &[(&str, &str)] = &[
     ("상태", "Status"),
     // ── screens.rs — Screen::hint ──
     ("(아무 키나 닫기 · ↑↓ 스크롤)", "(any key closes · ↑↓ scroll)"),
-    // 알림 이력(pytmux-539) — Esc 만 닫고 커서·펼치기·복사가 있다.
-    ("(↑↓ 이동 · Enter 펼치기 · c 복사 · Esc 닫기)", "(↑↓ move · Enter expand · c copy · Esc close)"),
-    ("(Tab/↑↓ 고르기 · Enter 전환 · Esc 취소)", "(Tab/↑↓ choose · Enter switch · Esc cancel)"),
+    // ★ 아래 여섯은 정본 글 그대로다(pytmux-648 · `screen.*_sub`·`*_hint`·`plugins.hint`) — 괄호만
+    //   우리 꼬리줄 문법이다.
+    (
+        "(↑↓ PgUp/PgDn Home/End 이동 · ⏎ 전문 · c 복사 · Esc 닫기)",
+        "(↑↓ PgUp/PgDn Home/End move · ⏎ full text · c copy · Esc close)",
+    ),
+    (
+        "(Tab 다음 · Shift+Tab 이전 · Enter 전환 · Esc 취소)",
+        "(Tab next · Shift+Tab prev · Enter switch · Esc cancel)",
+    ),
+    ("(↑↓ 이동 · Enter 그 자리로 · Esc 닫기)", "(↑↓ move · Enter jump there · Esc close)"),
     ("(↑↓ 고르기 · Enter 이동 · Esc 취소)", "(↑↓ choose · Enter go · Esc cancel)"),
     ("(↑↓ 고르기 · Enter 붙여넣기 · Esc 취소)", "(↑↓ choose · Enter paste · Esc cancel)"),
     ("(Enter 확정 · Esc 취소)", "(Enter confirm · Esc cancel)"),
     ("(y / Enter 예 · n / Esc 아니오)", "(y / Enter yes · n / Esc no)"),
     (
-        "(치면 좁혀진다 · ←→ 분류 · ↑↓ 고르기 · Enter 실행 · Esc 취소)",
-        "(type to filter · ←→ category · ↑↓ choose · Enter run · Esc cancel)",
+        "(타이핑 검색 · ←→/클릭 탭 · ↑↓ 명령 · Home/End 처음·끝 · Enter 선택 · Esc 닫기)",
+        "(Type to search · ←→/click tabs · ↑↓ commands · Home/End first·last · Enter select · Esc close)",
     ),
     (
-        "(↑↓ 고르기 · ←→ 값 · Tab 카테고리 · Enter 바꾸기 · Esc 닫기)",
-        "(↑↓ choose · ←→ value · Tab category · Enter change · Esc close)",
+        "(↑↓ 이동 · ←→ 값 변경 · Tab/클릭 카테고리 · Enter 입력/열기 · Esc 닫기)",
+        "(↑↓ move · ←→ change · Tab/click category · Enter edit/open · Esc close)",
     ),
     // 커서 판(pytmux-375) — 같은 손인데 **분류가 없어** `Tab` 칸만 뺐다.
     (
@@ -385,9 +397,19 @@ pub static EN: &[(&str, &str)] = &[
         "(↑↓ choose · ←→ value · Enter change · Esc close)",
     ),
     (
-        "(↑↓ 고르기 · Enter/Space 켜고끄기 · Esc 닫기)",
-        "(↑↓ choose · Enter/Space toggle · Esc close)",
+        "(Space/Enter 토글 · Esc 닫기 · 서버 기여 플러그인은 재시작에 완전 반영)",
+        "(Space/Enter toggle · Esc close · server-contributed plugins fully apply on restart)",
     ),
+    // ── screens.rs — Screen::title 의 정본 글(pytmux-648 · 자리표는 `Screens::panel_title` 이 채운다) ──
+    ("플러그인 관리", "Plugin manager"),
+    ("알림 이력 (최근 {n})", "Notice history (last {n})"),
+    ("{cmd} 옵션 · ←→ 값 · Enter 실행 · Esc", "{cmd} options · ←→ value · Enter run · Esc"),
+    (
+        "원격 탭 머지 → {dir} · Enter 선택 · h/v 방향 · Esc",
+        "Merge remote tab → {dir} · Enter select · h/v dir · Esc",
+    ),
+    ("가로 │", "side │"),
+    ("세로 ─", "stack ─"),
     (
         "(↑↓ 고르기 · → 하위 · ← 뒤로 · Enter 실행 · Esc 취소)",
         "(↑↓ choose · → submenu · ← back · Enter run · Esc cancel)",
@@ -425,8 +447,10 @@ pub static EN: &[(&str, &str)] = &[
     // ── screens.rs — Prompt::question ──
     ("탭 이름:", "Tab name:"),
     ("옮길 자리(번호):", "Destination (number):"),
-    ("이 패널을 닫을까?", "Kill this pane?"),
-    ("이 탭을 닫을까? (안의 패널이 전부 사라진다)", "Kill this tab? (all panes inside will be lost)"),
+    ("이 패널을 닫을까요?", "Kill this pane?"),
+    // 정본 `search.all_prompt`·`menu.search_all` 의 en(pytmux-595 — 영어 판에서 한국어로 떴다).
+    ("모든 탭·패널 검색", "Search all tabs/panes"),
+    ("플러그인의 물음:", "Plugin asks:"),
     ("패널 제목:", "Pane title:"),
     ("맞바꿀 탭 번호:", "Tab number to swap with:"),
     ("출력을 흘릴 명령 (비우면 끄기):", "Command to pipe output to (empty to turn off):"),
@@ -479,19 +503,19 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("풀 키 ([-n] <키>):", "Key to unbind ([-n] <key>):"),
     ("저장할 배치 이름:", "Layout name to save:"),
-    ("불러올 배치 이름 (지금 탭을 덮어쓴다):", "Layout name to load (overwrites this tab):"),
+    ("불러올 배치 이름 (지금 탭을 덮어씁니다):", "Layout name to load (overwrites this tab):"),
     ("불러올 배치 이름 (새 탭으로):", "Layout name to load (into a new tab):"),
     ("새 prefix 키 (C-a · M-x 표기):", "New prefix key (C-a · M-x notation):"),
     (
-        "서버를 끝낼까? (이 서버의 모든 탭과 셸이 사라진다)",
-        "Kill the server? (all tabs and shells on this server will be lost)",
+        "서버와 모든 탭·셸을 종료합니다. 이 pytmux 세션이 끝납니다. 계속할까요?",
+        "This kills the server and all tabs/shells. This pytmux session will end. Continue?",
     ),
     (
-        "서버를 재시작할까? (셸은 살고 화면이 잠깐 끊긴다)",
+        "서버를 재시작할까요? (셸은 유지되고 화면이 잠깐 끊깁니다)",
         "Restart the server? (shells survive; the screen blinks briefly)",
     ),
     (
-        "서버와 이 클라를 함께 재시작할까? (셸은 산다)",
+        "서버와 이 클라를 함께 재시작할까요? (셸은 유지됩니다)",
         "Restart the server and this client together? (shells survive)",
     ),
     ("붙을 상자 (host):", "Box to attach to (host):"),
@@ -572,7 +596,7 @@ pub static EN: &[(&str, &str)] = &[
     ("공유크기", "Shared size"),
     // ── hooks.rs ──
     (
-        "걸어 둔 훅이 없다 (set-hook <이벤트> <명령>)",
+        "걸어 둔 훅이 없습니다 (set-hook <이벤트> <명령>)",
         "No hooks set (set-hook <event> <command>)",
     ),
     // ── restart.rs ──
@@ -583,48 +607,48 @@ pub static EN: &[(&str, &str)] = &[
     ("상태 직렬화 round-trip", "State serialization round-trip"),
     ("패널 master fd 보유", "Pane master fds held"),
     ("클라 재기동 가능(이진 경로 해석)", "Client relaunch possible (binary path resolved)"),
-    ("이진 경로를 못 찾았다: {err}", "Could not find binary path: {err}"),
-    ("다시 띄우지 못했다: {err}", "Failed to relaunch: {err}"),
+    ("이진 경로를 못 찾았습니다: {err}", "Could not find binary path: {err}"),
+    ("다시 띄우지 못했습니다: {err}", "Failed to relaunch: {err}"),
     // ── diag.rs — `debug-stats` 판(pytmux-457) ──
     // ⚠ 판 제목(`debug-stats`)과 팔레트 이름은 **번역하지 않는다** — 명령 이름이라
     //   옮기면 정본과 이름이 갈리고, 그러면 「어느 명령이 이 판을 열었나」가 끊긴다.
     ("격자", "Grid"),
     ("상주 메모리", "Resident memory"),
-    ("이 OS 에서는 못 잰다", "not measurable on this OS"),
-    ("못 쟀다", "not measured"),
+    ("이 OS 에서는 못 잽니다", "not measurable on this OS"),
+    ("못 쟀습니다", "not measured"),
     ("그리는 쪽", "Drawing"),
     ("그린 프레임", "Frames drawn"),
     ("프레임 중앙값", "Frame median"),
     ("최댓값", "max"),
     ("최근 표본", "recent samples"),
-    ("프레임 시간 표본이 아직 없다", "No frame-time samples yet"),
+    ("프레임 시간 표본이 아직 없습니다", "No frame-time samples yet"),
     ("글리프 캐시", "Glyph cache"),
     ("씬 원소", "Scene elements"),
     ("그린 칸", "Cells painted"),
     ("붙어 있는 쪽", "Link"),
     ("링크 RTT", "Link RTT"),
-    ("아직 표본이 없다", "no samples yet"),
+    ("아직 표본이 없습니다", "no samples yet"),
     ("보낼 큐 깊이", "Outgoing queue depth"),
     ("탭", "Tabs"),
     ("패널", "Panes"),
     ("판 깊이", "Screen depth"),
     // ⛔ 이 판은 줄을 안 접는다(읽는 판) — **짧게** 옮긴다. 긴 한 줄은 판 밖에서 잘리고
     //    잘린 문장은 없느니만 못하다(실기 컷 2026-09-03).
-    ("이 표는 **이 프로세스**를 잰다.", "This table measures **this process**."),
+    ("이 표는 **이 프로세스**를 잽니다.", "This table measures **this process**."),
     (
-        "정본의 같은 이름은 파이썬 클라의 힙을 잰다 — 항목이 1:1 이 아닌",
+        "정본의 같은 이름은 파이썬 클라의 힙을 잽니다 — 항목이 1:1 이",
         "The canon command of the same name measures the Python client's",
     ),
     (
-        "것은 그래서다(런타임이 다르다).",
+        "아닌 것은 그래서입니다(런타임이 다릅니다).",
         "heap — that is why the entries are not 1:1 (different runtimes).",
     ),
     (
-        "값이 «자라다 눕는» 모양이면 상시 세금이지 누적이 아니다.",
+        "값이 «자랐다가 멈추는» 모양이면 상시 세금이지 누적이 아닙니다.",
         "Values that grow and then flatten are a standing cost, not a leak.",
     ),
     (
-        "계속 자라면 그것이 새 결함이다.",
+        "계속 자라면 그것이 새 결함입니다.",
         "Values that keep growing are a new defect.",
     ),
     // ── proto/diag.rs — `debug-stats` 판의 **서버 절반**(pytmux-382) ──
@@ -645,13 +669,13 @@ pub static EN: &[(&str, &str)] = &[
     ("프로브 마지막 회차", "probe last run"),
     ("성공", "ok"),
     ("실패", "failed"),
+    // ⚠ 서버 절반의 두 글은 정본 `clientdiag.render_server` 의 글 그대로다(해라체여도 — pytmux-595 규칙 ⓐ).
     ("프로브가 아직 한 번도 안 돌았다", "probe has not run yet"),
     ("전", "ago"),
     ("서버가 아직 답하지 않았다", "The server has not answered yet"),
-    ("서버가 이 물음을 모른다(구서버)", "This server does not know the question (old server)"),
     // ── session_view.rs — 붙여넣은 그림의 썸네일(pytmux-472) ──
     ("그림 읽는 중…", "Loading image…"),
-    ("그림을 못 읽었다", "Could not read the image"),
+    ("그림을 못 읽었습니다", "Could not read the image"),
     // ── lifecycle.rs — 접속 수명(pytmux-585 · 정본 `msg.*` 와 같은 글) ──
     ("pytmux: 서버 재시작 중…", "pytmux: server restarting…"),
     ("pytmux: 서버 재시작 완료 — 재접속됨", "pytmux: server restarted — reconnected"),

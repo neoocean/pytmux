@@ -192,7 +192,8 @@ class ServerCmdMixin:
 
     @_cmd("paste", HANDLED)
     async def _cmd_paste(self, client, sess, msg):
-        self.paste_text(sess, str(msg.get("text", "")))
+        # `pane` 이 팝업 패널이면 그 PTY 로(키의 `input` 팝업 갈래와 같은 규칙 · pytmux-640).
+        self.paste_text(sess, str(msg.get("text", "")), pane=msg.get("pane"))
 
     @_cmd("request_buffers", HANDLED)
     async def _cmd_request_buffers(self, client, sess, msg):
@@ -447,9 +448,11 @@ class ServerCmdMixin:
     @_cmd("copy_range", HANDLED)
     async def _cmd_copy_range(self, client, sess, msg):
         win = sess.active_window if sess else None
-        p = (win.pane_by_id(msg.get("pane")) or win.active_pane) if win else None
-        if p is None and sess is not None and sess.popup:
-            p = sess.popup.get("pane")      # 팝업 패널(트리 밖)도 선택 대상이 된다
+        # 팝업 패널(트리 밖)을 **먼저** 본다 — 종전에는 `or win.active_pane` 이 먼저 서서 팝업 id 로
+        # 물어도 활성 트리 패널의 스크롤백에서 뽑았다(조용한 오답 · pytmux-640).
+        p = self._popup_pane_for(sess, msg.get("pane"))
+        if p is None and win:
+            p = win.pane_by_id(msg.get("pane")) or win.active_pane
         text = ""
         if p is not None:
             try:

@@ -137,4 +137,5 @@ def status_tab(app, tree):
 
     actions = [("c", "[c] 캡처 켜기/끄기", _toggle_capture),
                ("o", "[o] 기록 폴더 열기", _open_capture_dir)]
-    return ("출력 캡처(REC)", capture_info_lines(app), actions)
+    # 탭 이름도 카탈로그로(pytmux-654 — 종전 글자 그대로라 en 에서도 한국어였다).
+    return (i18n.t("capture.tab"), capture_info_lines(app), actions)

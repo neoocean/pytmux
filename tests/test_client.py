@@ -681,6 +681,27 @@ async def test_resize_pane_directional_command():
     await _with_app(body)
 
 
+async def test_paste_and_ime_commit_go_to_the_live_popup():
+    """pytmux-640 — 라이브 팝업은 «항상 포커스»: 키(`send_input`)처럼 붙여넣기·IME 확정분(Textual 은
+    확정분을 `Paste` 로 준다)도 팝업 패널 id 를 실어 보낸다. 팝업이 없으면 종전 그대로 pane 없이."""
+    from textual.events import Paste
+
+    async def body(app, pilot, srv):
+        sent = []
+        orig_send, orig_layout = app.send_cmd, app.layout
+        app.send_cmd = lambda action, **kw: sent.append((action, kw))
+        try:
+            app.layout = dict(orig_layout, popup={"id": 99, "x": 10, "y": 5, "w": 40, "h": 10})
+            app.on_paste(Paste("한글"))
+            app.layout = {k: v for k, v in orig_layout.items() if k != "popup"}
+            app.on_paste(Paste("뒤 패널"))
+        finally:
+            app.send_cmd, app.layout = orig_send, orig_layout
+        assert ("paste", {"text": "한글", "pane": 99}) in sent, sent
+        assert ("paste", {"text": "뒤 패널"}) in sent, sent
+    await _with_app(body)
+
+
 async def test_swap_pane_index_command():
     """swap-pane -s/-t <번호> 가 display-panes 0-based 번호로 임의의 두 패널을
     swap_pane_to 로 교환한다(§2.3 — 과거엔 인접 순환 -U/-D 만 가능, 임의 swap 은

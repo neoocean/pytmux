@@ -1695,9 +1695,10 @@ async def test_remote_paste_relays_to_remote_pane():
         recA, recB = [], []
         _ptA, _pbA = srvA.paste_text, srvA.paste_buffer
         _ptB, _pbB = srvB.paste_text, srvB.paste_buffer
-        srvA.paste_text = lambda s, t, _r=recA: _r.append(("text", t))
+        # `pane=` 은 팝업 갈래 칸이다(pytmux-640) — 기록기도 그 칸을 받는다.
+        srvA.paste_text = lambda s, t, pane=None, _r=recA: _r.append(("text", t))
         srvA.paste_buffer = lambda s, i=0, _r=recA: _r.append(("buf", i))
-        srvB.paste_text = lambda s, t, _r=recB: _r.append(("text", t))
+        srvB.paste_text = lambda s, t, pane=None, _r=recB: _r.append(("text", t))
         srvB.paste_buffer = lambda s, i=0, _r=recB: _r.append(("buf", i))
         reader, writer = await _attach_client(sockA)
         await _read_until(reader, lambda m: m.get("t") == "status",

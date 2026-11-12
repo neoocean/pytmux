@@ -188,6 +188,21 @@ async def test_rec_client_badge_init_and_tab_present():
             self.status.capture_size = 42
     t = reg.client_status_tabs(_App(), {"sessions": []})[0]
     assert t[0] == "출력 캡처(REC)" and len(t) == 3 and len(t[2]) == 2
+    # pytmux-654 — 탭 이름은 카탈로그 글이다(종전 글자 그대로라 en 에서도 한국어였다). 서버 탭 이름도
+    # 같은 자리에서 잰다(코어 `_open_status_tabs` 가 쓰는 열쇠).
+    from pytmuxlib import i18n
+    before = i18n.get_locale()
+    i18n.set_locale("en")
+    try:
+        t_en = reg.client_status_tabs(_App(), {"sessions": []})[0]
+        server_en = i18n.t("dialog.status_tab_server")
+        i18n.set_locale("ko")
+        server_ko = i18n.t("dialog.status_tab_server")
+    finally:
+        i18n.set_locale(before)
+    assert t_en[0] == "Output capture (REC)", t_en[0]
+    assert server_en == "Server", server_en
+    assert server_ko == "서버", server_ko
 
 
 async def test_rec_disabled_client_noop():

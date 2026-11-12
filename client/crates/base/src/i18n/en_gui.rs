@@ -13,17 +13,18 @@ pub static EN: &[(&str, &str)] = &[
     //   낱말만 한국어로 남는다(2026-08-02p 에서 배운 자리 — 사유를 줄에 이어 붙이지
     //   않는다). 줄이 둘로 늘어도 그쪽이 옳다.
     ("글자 크기: {scale}×", "Text size: {scale}×"),
-    ("글자 크기: {scale}× — 더 키울 수 없다", "Text size: {scale}× — cannot go larger"),
-    ("글자 크기: {scale}× — 더 줄일 수 없다", "Text size: {scale}× — cannot go smaller"),
+    ("글자 크기: {scale}× — 더 키울 수 없습니다", "Text size: {scale}× — cannot go larger"),
+    ("글자 크기: {scale}× — 더 줄일 수 없습니다", "Text size: {scale}× — cannot go smaller"),
     // 트리 판이 개요를 기다리는 동안의 한 줄(§10-21ⓖ2 — 프레임 오라클이 잡았다).
     ("개요를 기다리는 중…", "Waiting for the overview…"),
     ("첫 화면을 기다리는 중…", "Waiting for the first frame…"),
-    ("맞는 명령이 없다", "No matching command"),
+    ("맞는 명령이 없습니다", "No matching command"),
     // 플러그인 관리 판의 검색 칸(pytmux-591) — 정본 `ui.search`·`screen.no_search_results`.
     ("검색…", "Search…"),
     ("(검색 결과 없음)", "(no results)"),
-    ("아직 알림이 없다", "No notices yet"),
-    ("버퍼가 없다", "No buffers"),
+    // 빈 판 둘 — 정본 `screen.notice_history_empty`·`screen.no_buffers` 그대로(pytmux-595).
+    ("(지나간 알림 없음)", "(no past notices)"),
+    ("(버퍼 없음)", "(no buffers)"),
     ("(탭 없음)", "(no tabs)"),
     // §10-21ⓓ3 — 재시작 점검 판의 단추.
     ("지금 재시작 (restart-all)", "Restart now (restart-all)"),
@@ -48,10 +49,10 @@ pub static EN: &[(&str, &str)] = &[
     // ── console.rs — 창도 못 띄운 실패의 대화상자 제목(Windows) ──
     ("pytmux 를 시작하지 못했습니다", "Could not start pytmux"),
     // ── session_view.rs · 설정을 만졌을 때 ──
-    ("설정을 다시 읽었다", "Reloaded the config"),
-    ("설정을 저장하지 못했다: {err}", "Could not save the config: {err}"),
-    ("설정 형식이 아니다: {line}", "Not a config line: {line}"),
-    ("바인딩을 저장하지 못했다: {err}", "Could not save the binding: {err}"),
+    ("설정을 다시 읽었습니다", "Reloaded the config"),
+    // 정본 `msg.setting_save_failed` 그대로(pytmux-595).
+    ("설정 파일 저장 실패: {err}", "Failed to save config file: {err}"),
+    ("설정 형식이 아닙니다: {line}", "Not a config line: {line}"),
     ("읽을 수 없는 키 표기: {answer}", "Unreadable key notation: {answer}"),
     // ── session_view.rs · OS 클립보드 붙여넣기(pytmux-159·363·364) ──
     // ⛔ 영어는 **정본이 이미 적은 것 그대로**다(`pytmuxlib/i18n.py` 의 `msg.paste_*`
@@ -64,7 +65,7 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("클립보드가 비어있거나 읽을 수 없음", "Clipboard is empty or unreadable"),
     // ── session_view.rs · 오버레이(시계·달력)를 아직 못 켜는 자리(pytmux-366) ──
-    ("아직 화면을 받지 못했다 — 잠시 뒤 다시", "No frame yet — try again in a moment"),
+    ("아직 화면을 받지 못했습니다 — 잠시 뒤 다시 시도하세요", "No frame yet — try again in a moment"),
     // 원격 탭 — 파일은 이 상자에 생기므로 `scp` 로 옮긴 뒤 저쪽 경로를 붙인다.
     // ⚠ 「중…」 줄만 정본과 다르다: 정본은 `(ESC 로 빠져나가기)` 를 붙이는데 그건 그동안
     //   키를 막기 때문이다(`_pasting` 가드). 여기서는 스레드로 나가 아무것도 안 막으므로
@@ -79,8 +80,12 @@ pub static EN: &[(&str, &str)] = &[
         "Image remote transfer failed (scp error) — pasted local path: {path}",
     ),
     // ── session_view.rs · 원격 탭 합치기(G8n) ──
-    ("지금 탭이 원격이 아니라 합칠 것이 없다", "This tab is not remote — nothing to merge"),
-    ("같은 원격에 다른 탭이 없다", "No other tab on the same remote"),
+    // 정본 `msg.merge_remote_not_remote`·`msg.merge_remote_no_peers` 그대로(pytmux-595).
+    (
+        "원격 탭을 보고 있을 때만 원격 탭을 머지할 수 있습니다",
+        "You can only merge a remote tab while viewing a remote tab",
+    ),
+    ("같은 원격 서버의 머지할 다른 탭이 없습니다", "No other tab from the same remote server to merge"),
     ("분할 방향: {dir}", "Split direction: {dir}"),
     // ⚠ 끝값 둘은 `분할 방향: {dir}` 에 끼워지는 낱말이다. 낱말만 한국어로 남으면 그
     //   줄은 반만 영어다 — 명령 도움말(`패널 분할 (-h 좌우 │ · -v/기본 상하 ─)`)이
@@ -88,13 +93,15 @@ pub static EN: &[(&str, &str)] = &[
     ("좌우 │", "side-by-side │"),
     ("상하 ─", "stacked ─"),
     // ── session_view.rs · 조각을 눌렀을 때(링크·경로) ──
-    ("링크를 열었다: {url}", "Opened the link: {url}"),
-    ("링크를 열지 못했다: {url}", "Could not open the link: {url}"),
+    ("링크를 열었습니다: {url}", "Opened the link: {url}"),
+    ("링크를 열지 못했습니다: {url}", "Could not open the link: {url}"),
     ("경로를 복사했다: {path}", "Copied the path: {path}"),
-    ("경로를 복사하지 못했다: {path}", "Could not copy the path: {path}"),
+    ("경로를 복사하지 못했습니다: {path}", "Could not copy the path: {path}"),
     // ── session_view.rs · 알림 이력 `c`(pytmux-539) ──
-    ("알림을 복사했다: {n}자", "Copied the notice ({n} chars)"),
-    ("알림을 복사하지 못했다", "Could not copy the notice"),
+    // 정본 `msg.copied_chars` + `msg.clipboard_suffix` 그대로(pytmux-595).
+    ("{n} chars 복사됨", "{n} chars copied"),
+    (" (클립보드)", " (clipboard)"),
+    ("알림을 복사하지 못했습니다", "Could not copy the notice"),
     // ── session_view.rs · 재시작(§10-21ⓓ3) ──
     (
         "재시작 안전성 점검 중… (부작용 없는 드라이런)",
@@ -112,22 +119,22 @@ pub static EN: &[(&str, &str)] = &[
         "No prompt to jump to — this pane has no scrollback (in Claude fullscreen, click its sticky bar or use the transcript mode prompt keys)",
     ),
     (
-        "전체 재시작 — 클라를 다시 띄웠다 (pid {pid})",
+        "전체 재시작 — 클라를 다시 띄웠습니다 (pid {pid})",
         "Full restart — relaunched the client (pid {pid})",
     ),
     ("전체 재시작 취소: {why}", "Full restart cancelled: {why}"),
-    ("서버를 재시작한다 (셸은 산다)", "Restarting the server (shells survive)"),
+    ("서버를 재시작합니다 (셸은 유지됩니다)", "Restarting the server (shells survive)"),
     // ── session_view.rs · if-shell/run-shell 이 끝났을 때 ──
-    ("조건이 실패했다(코드 {code})", "The condition failed (code {code})"),
-    ("끝났다(코드 {code})", "Finished (code {code})"),
-    ("모르는 명령이다: {name}", "Unknown command: {name}"),
-    ("조건과 명령을 `|` 로 갈라 적는다", "Write the condition and the command separated by `|`"),
+    ("조건이 실패했습니다(코드 {code})", "The condition failed (code {code})"),
+    ("끝났습니다(코드 {code})", "Finished (code {code})"),
+    ("모르는 명령입니다: {name}", "Unknown command: {name}"),
+    ("조건과 명령을 `|` 로 갈라 적습니다", "Write the condition and the command separated by `|`"),
     // ── session_view.rs · set-hook 한 줄 ──
     ("훅 {event} → {command}", "Hook {event} → {command}"),
-    ("훅 {event} 를 풀었다", "Unset hook {event}"),
-    ("그런 훅이 없다", "No such hook"),
+    ("훅 {event} 를 풀었습니다", "Unset hook {event}"),
+    ("그런 훅이 없습니다", "No such hook"),
     (
-        "훅은 <이벤트> <명령> 또는 -u <이벤트> 로 적는다",
+        "훅은 <이벤트> <명령> 또는 -u <이벤트> 로 적습니다",
         "Write a hook as <event> <command>, or -u <event>",
     ),
     // ── session_view.rs · 쓰는 법을 되돌려 주는 한 줄들 ──
@@ -140,7 +147,7 @@ pub static EN: &[(&str, &str)] = &[
     ("{q} (이어서 치기)", "{q} (type it inline)"),
     // ── session_view.rs · 보일 것이 없을 때 ──
     (
-        "서버가 플러그인 목록을 안 보냈다 (옛 서버이거나 아직 첫 full status 전)",
+        "서버가 플러그인 목록을 안 보냈습니다 (옛 서버이거나 아직 첫 full status 전)",
         "The server sent no plugin list (an old server, or before the first full status)",
     ),
     // `막힌 호출` = "Denied call"(en_claude.rs)에 맞춘다 — 같은 판의 두 낱말이다.
@@ -156,18 +163,17 @@ pub static EN: &[(&str, &str)] = &[
         "This screen kind ({kind}) cannot be drawn in this client yet — use the terminal client (pytmux)",
     ),
     // ── session_view.rs — render_search_results(pytmux-27) ──
-    ("검색 결과가 없다", "No search results"),
     // ── session_view.rs — 커서 판(pytmux-375) ──
     ("미리보기", "Preview"),
     // 두께 줄이 `block` 에서 흐린 이유. 값 대신 **왜 없는지**를 적는 자리라, 영어도
     // 「반전한다」를 그대로 옮긴다 — 그것이 두께를 줄 자리가 없는 진짜 이유다.
     (
-        "채운 네모는 칸을 반전한다 — 두께를 줄 자리가 없다",
+        "채운 네모는 칸을 반전합니다 — 두께를 줄 자리가 없습니다",
         "the filled block inverts the cell — there is no edge to thicken",
     ),
     // ── session_view.rs · 고른 글꼴이 이 상자에 없을 때(pytmux-408 ③) ──
     (
-        "글꼴 «{name}» 이 이 상자에 없다 — 기본 글꼴로 그린다",
+        "글꼴 «{name}» 이 이 상자에 없습니다 — 기본 글꼴로 그립니다",
         "font «{name}» is not on this box — drawing with the default",
     ),
     // ── session_view.rs · 설정 파일 bind 경고가 셋을 넘을 때(pytmux-607 · 정본 `msg.config_warn_more`) ──

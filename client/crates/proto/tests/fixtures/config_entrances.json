@@ -1,0 +1,399 @@
+{
+  "_comment": "python3 scripts/gen_config_entrances.py 로 생성. 출처 = 정본 client.py 의 _run_command(\"set …\")·apply_setting 을 set_config_option 기록 스텁 위에서 부른 결과. 명령 옵션 판은 명령 줄과 같은 길이고, 플러그인 판은 서버 opts.json 이라 설정 파일 밖이다.",
+  "entrances": {
+    "command_line": "apply_option — 설정 파일을 안 쓴다",
+    "command_options_panel": "완성한 명령 줄을 _run_command 로 — command_line 과 같다",
+    "plugin_panel": "set_plugin_enabled → 서버 opts.json — 설정 파일 밖",
+    "settings_panel": "apply_setting — backend == config 면 set_config_option"
+  },
+  "rows": [
+    {
+      "backend": "config",
+      "cmd": "inactive-dim",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "inactive-dim",
+      "settings_panel_writes": [
+        "inactive-dim"
+      ],
+      "value": "off"
+    },
+    {
+      "backend": "config",
+      "cmd": "inactive-dim-ratio",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "inactive-dim-ratio",
+      "settings_panel_writes": [
+        "inactive-dim-ratio"
+      ],
+      "value": "0.30"
+    },
+    {
+      "backend": "config",
+      "cmd": "set tab-bar",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "tab-bar",
+      "settings_panel_writes": [
+        "tab-bar"
+      ],
+      "value": "auto"
+    },
+    {
+      "backend": "config",
+      "cmd": "set status-position",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "status-position",
+      "settings_panel_writes": [
+        "status-position"
+      ],
+      "value": "top"
+    },
+    {
+      "backend": "server",
+      "cmd": "single-border",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "single-border",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "pane-border-status",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "pane-border-status",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "config",
+      "cmd": "set remote-title",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "remote-title",
+      "settings_panel_writes": [
+        "remote-title"
+      ],
+      "value": "name"
+    },
+    {
+      "backend": "lang",
+      "cmd": "lang",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "language",
+      "settings_panel_writes": [],
+      "value": "en"
+    },
+    {
+      "backend": "config",
+      "cmd": "set mouse",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "mouse",
+      "settings_panel_writes": [
+        "mouse"
+      ],
+      "value": "off"
+    },
+    {
+      "backend": "config",
+      "cmd": "set mouse-drag-copy",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "mouse-drag-copy",
+      "settings_panel_writes": [
+        "mouse-drag-copy"
+      ],
+      "value": "shift"
+    },
+    {
+      "backend": "config",
+      "cmd": "set mouse-drag-threshold",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "mouse-drag-threshold",
+      "settings_panel_writes": [
+        "mouse-drag-threshold"
+      ],
+      "value": "4"
+    },
+    {
+      "backend": "config",
+      "cmd": "set copy-unwrap",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "copy-unwrap",
+      "settings_panel_writes": [
+        "copy-unwrap"
+      ],
+      "value": "off"
+    },
+    {
+      "backend": "config",
+      "cmd": "set set-clipboard",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "set-clipboard",
+      "settings_panel_writes": [
+        "set-clipboard"
+      ],
+      "value": "off"
+    },
+    {
+      "backend": "config",
+      "cmd": "set mode-keys",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "mode-keys",
+      "settings_panel_writes": [
+        "mode-keys"
+      ],
+      "value": "emacs"
+    },
+    {
+      "backend": "config",
+      "cmd": "set alt-scroll",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "alt-scroll",
+      "settings_panel_writes": [
+        "alt-scroll"
+      ],
+      "value": "off"
+    },
+    {
+      "backend": "config",
+      "cmd": "set ambiguous-width",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "ambiguous-width",
+      "settings_panel_writes": [
+        "ambiguous-width"
+      ],
+      "value": "wide"
+    },
+    {
+      "backend": "config",
+      "cmd": "set prefix",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "prefix",
+      "settings_panel_writes": [
+        "prefix"
+      ],
+      "value": "x"
+    },
+    {
+      "backend": "config",
+      "cmd": "strip-box-drawing",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "strip-box-drawing",
+      "settings_panel_writes": [
+        "strip-box-drawing"
+      ],
+      "value": "off"
+    },
+    {
+      "backend": "config",
+      "cmd": "set default-path",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "default-path",
+      "settings_panel_writes": [
+        "default-path"
+      ],
+      "value": "x"
+    },
+    {
+      "backend": "config",
+      "cmd": "set claude-command",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "claude-command",
+      "settings_panel_writes": [
+        "claude-command"
+      ],
+      "value": "x"
+    },
+    {
+      "backend": "config",
+      "cmd": "set set-titles",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "set-titles",
+      "settings_panel_writes": [
+        "set-titles"
+      ],
+      "value": "off"
+    },
+    {
+      "backend": "config",
+      "cmd": "set status-interval",
+      "command_line_error": "RuntimeError",
+      "command_line_writes": false,
+      "key": "status-interval",
+      "settings_panel_writes": [
+        "status-interval"
+      ],
+      "value": "4"
+    },
+    {
+      "backend": "server",
+      "cmd": "automatic-rename",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "automatic-rename",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "monitor-activity",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "monitor-activity",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "monitor-bell",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "monitor-bell",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "synchronize-panes",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "synchronize-panes",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "coalesce-repaints",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "coalesce-repaints",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "nest-auto-attach",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "nest-auto-attach",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "exit-empty",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "exit-empty",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "win-mouse-motion",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "win-mouse-motion",
+      "settings_panel_writes": [],
+      "value": "off"
+    },
+    {
+      "backend": "server",
+      "cmd": "vt-parser",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "vt-parser",
+      "settings_panel_writes": [],
+      "value": "native"
+    },
+    {
+      "backend": "server",
+      "cmd": "window-size",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "window-size",
+      "settings_panel_writes": [],
+      "value": "largest"
+    },
+    {
+      "backend": "config",
+      "cmd": "set status-left",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "status-left",
+      "settings_panel_writes": [
+        "status-left"
+      ],
+      "value": "x"
+    },
+    {
+      "backend": "config",
+      "cmd": "set status-right",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "status-right",
+      "settings_panel_writes": [
+        "status-right"
+      ],
+      "value": "x"
+    },
+    {
+      "backend": "config",
+      "cmd": "set status-bg",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "status-bg",
+      "settings_panel_writes": [
+        "status-bg"
+      ],
+      "value": "x"
+    },
+    {
+      "backend": "config",
+      "cmd": "set status-fg",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "status-fg",
+      "settings_panel_writes": [
+        "status-fg"
+      ],
+      "value": "x"
+    },
+    {
+      "backend": "",
+      "cmd": "",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "plugins",
+      "settings_panel_writes": [],
+      "value": "x"
+    },
+    {
+      "backend": "",
+      "cmd": "",
+      "command_line_error": null,
+      "command_line_writes": false,
+      "key": "list-keys",
+      "settings_panel_writes": [],
+      "value": "x"
+    }
+  ]
+}

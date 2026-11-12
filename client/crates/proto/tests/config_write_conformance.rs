@@ -101,3 +101,73 @@ fn writing_twice_does_not_pile_up() {
     assert_eq!(twice.lines().count(), 1, "{twice:?}");
     assert_eq!(twice.trim(), "set prefix C-t");
 }
+
+// ── 어느 입구가 파일을 쓰나(pytmux-649) — 모집단 = 정본에서 뽑은 표 ─────────────────────────
+
+#[derive(Deserialize)]
+struct Entrances {
+    rows: Vec<EntranceRow>,
+}
+
+#[derive(Deserialize)]
+struct EntranceRow {
+    key: String,
+    backend: String,
+    command_line_writes: bool,
+    settings_panel_writes: Vec<String>,
+}
+
+fn entrances() -> Entrances {
+    serde_json::from_str(include_str!("fixtures/config_entrances.json"))
+        .expect("config_entrances.json 을 못 읽는다 — scripts/gen_config_entrances.py 로 다시 뽑을 것")
+}
+
+/// GUI 설정 판의 그 줄이 **설정 파일에 쓰는 갈래**인가 — 줄의 종류가 정한다. 설정 파일 줄
+/// (`ConfigToggle`·`ConfigEnum`·`Number`·`Text` — 대답은 `set_config`/`set_prefix` 로 간다)은 쓰고,
+/// 서버 토글·열거(`Toggle`·`Enum` → 서버 명령)·언어(`.lang`)·링크(판 열기)는 안 쓴다.
+fn gui_panel_writes(kind: &base::config::SettingKind) -> bool {
+    use base::config::SettingKind as K;
+    matches!(kind, K::ConfigToggle | K::ConfigEnum(_) | K::Number { .. } | K::Text(_))
+}
+
+#[test]
+fn the_canon_never_writes_the_file_from_a_typed_set() {
+    // 정본 사실을 못 박는다 — 이 값이 뒤집히면 GUI `apply_set_line` 의 규칙(파일을 안 쓴다)도 다시 볼 것.
+    let fx = entrances();
+    assert!(fx.rows.len() >= 30, "모집단이 너무 작다: {}", fx.rows.len());
+    let writes: Vec<&str> =
+        fx.rows.iter().filter(|r| r.command_line_writes).map(|r| r.key.as_str()).collect();
+    assert!(writes.is_empty(), "정본 명령 줄 set 이 파일을 쓴다: {writes:?}");
+}
+
+#[test]
+fn the_settings_panel_writes_exactly_the_rows_the_canon_writes() {
+    let fx = entrances();
+    let mut wrong = Vec::new();
+    let mut seen = 0;
+    for row in &fx.rows {
+        let canon = !row.settings_panel_writes.is_empty();
+        let Some(gui) = base::config::SETTINGS.iter().find(|s| s.key == row.key) else {
+            // 판에 그 줄이 없는 것은 설정 판 축(`setting_effect_conformance` · 갈림 대장)의 몫이다 —
+            // 여기서는 「정본이 파일에 쓰는 줄인데 GUI 판에 없다」만 운다(저장할 길이 사라진다).
+            if canon {
+                wrong.push(format!("{}: 정본은 설정 판에서 파일에 쓰는데 GUI 판에 그 줄이 없다", row.key));
+            }
+            continue;
+        };
+        seen += 1;
+        if canon && row.settings_panel_writes != [row.key.clone()] {
+            wrong.push(format!("{}: 정본이 다른 키를 쓴다 {:?}", row.key, row.settings_panel_writes));
+        }
+        if gui_panel_writes(&gui.kind) != canon {
+            wrong.push(format!(
+                "{} [backend {}]: 정본 쓰기={canon} · GUI 쓰기={}",
+                row.key,
+                row.backend,
+                gui_panel_writes(&gui.kind)
+            ));
+        }
+    }
+    assert!(seen >= 30, "맞댄 줄이 너무 적다: {seen}");
+    assert!(wrong.is_empty(), "설정 판의 저장 여부가 정본과 다르다:\n  {}", wrong.join("\n  "));
+}

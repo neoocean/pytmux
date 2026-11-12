@@ -469,6 +469,9 @@ pub struct SessionView {
     /// 실제로 복사하는 함수. 시험이 느린 가짜를 끼워 「UI 스레드가 안 기다린다」를 잰다 —
     /// 시험 빌드의 기본값은 **이 상자의 클립보드를 안 건드리는** 가짜다.
     pub(crate) os_copier: fn(&str) -> bool,
+    /// UI 언어를 바꾸는 함수(`Action::SetLang` — 전역 로케일 + `.lang` 영속). 시험이 기록 가짜를 끼워
+    /// 전역을 안 건드리고 «그 값이 실제로 넘어가나» 를 잰다(설정 효과 자 · pytmux-645).
+    pub(crate) lang_setter: fn(&str) -> &'static str,
     /// `debug-stats` 판의 **서버 절반**(pytmux-382) — `debug_stats` 회신이 온 뒤에야 있다.
     ///
     /// 판을 열 때 비우고 명령을 보낸다. 회신이 안 오면(구서버 · 끊김) 판은 「서버가 아직
@@ -894,7 +897,7 @@ impl SessionView {
         //    가린다. 떨어진 것은 맞지만 **무엇이 없었는지**는 말한다.
         if let Some(want) = missed {
             view.state.note_notice(base::i18n::tf(
-                "글꼴 «{name}» 이 이 상자에 없다 — 기본 글꼴로 그린다",
+                "글꼴 «{name}» 이 이 상자에 없습니다 — 기본 글꼴로 그립니다",
                 &[("name", &want)],
             ));
         }
@@ -972,6 +975,11 @@ impl SessionView {
             os_copier: clip::copy,
             #[cfg(test)]
             os_copier: |_| true,
+            lang_setter: |loc| {
+                let loc = base::i18n::set_locale(loc);
+                base::i18n::persist(loc);
+                loc
+            },
             server_stats: None,
             pending: Vec::new(),
             pinger: proto::rtt::Pinger::default(),
@@ -1427,7 +1435,7 @@ impl SessionView {
             log::info!("오버레이 {name} 요청 — 아직 레이아웃이 없어 대상 패널을 모른다");
             // ⚠ 인자 이름 `t` 가 i18n 의 `t` 를 가린다 — 여기서만 길게 부른다.
             self.state
-                .note_notice(base::i18n::t("아직 화면을 받지 못했다 — 잠시 뒤 다시"));
+                .note_notice(base::i18n::t("아직 화면을 받지 못했습니다 — 잠시 뒤 다시 시도하세요"));
             return;
         };
         if let Some(closed) = t.closed {
@@ -2579,12 +2587,12 @@ impl SessionView {
             }
             Action::MergeRemoteTab => {
                 if self.state.active_remote_host().is_none() {
-                    self.state.note_notice(t("지금 탭이 원격이 아니라 합칠 것이 없다"));
+                    self.state.note_notice(t("원격 탭을 보고 있을 때만 원격 탭을 머지할 수 있습니다"));
                     return true;
                 }
                 if self.state.merge_candidates().is_empty() {
                     self.state
-                        .note_notice(t("같은 원격에 다른 탭이 없다"));
+                        .note_notice(t("같은 원격 서버의 머지할 다른 탭이 없습니다"));
                     return true;
                 }
                 self.screens.open(Screen::MergeRemote);
@@ -2691,9 +2699,9 @@ impl SessionView {
                 if (next - self.config.font_scale).abs() < f32::EPSILON {
                     let scale = format!("{next:.1}");
                     self.state.note_notice(if up {
-                        tf("글자 크기: {scale}× — 더 키울 수 없다", &[("scale", &scale)])
+                        tf("글자 크기: {scale}× — 더 키울 수 없습니다", &[("scale", &scale)])
                     } else {
-                        tf("글자 크기: {scale}× — 더 줄일 수 없다", &[("scale", &scale)])
+                        tf("글자 크기: {scale}× — 더 줄일 수 없습니다", &[("scale", &scale)])
                     });
                     return true;
                 }
@@ -2715,8 +2723,7 @@ impl SessionView {
             // 로케일도 클라 안에서만 끝난다(per-user — `base::i18n` 모듈 문서).
             // 적용 → 영속 → 피드백. 다음 렌더부터 표면이 그 언어다.
             Action::SetLang(loc) => {
-                let loc = base::i18n::set_locale(loc);
-                base::i18n::persist(loc);
+                let loc = (self.lang_setter)(loc);
                 let name = if loc == "en" { "English" } else { "한국어" };
                 self.state.note_notice(base::i18n::tf(
                     "언어: {name}",
@@ -2857,7 +2864,13 @@ impl SessionView {
             //   패널(셸)로 샌다 — 정본이 `on_paste` 를 같은 이유로 잡았다.
             TypedTo::SessionEdit => self.session_edit_typed(text),
             TypedTo::Pane => {
-                self.pending.push(Outgoing::Input(text.as_bytes().to_vec()));
+                // 라이브 팝업이 떠 있으면 IME 확정분도 **팝업 PTY 로** — 키(`handle_key` 의 팝업 갈래)와
+                // 같은 규칙이다. 종전에는 pane 없는 `input` 이 뒤 활성 패널로 갔다(pytmux-640).
+                let data = text.as_bytes().to_vec();
+                match self.state.popup().map(|p| p.id) {
+                    Some(popup) => self.pending.push(Outgoing::InputToPane { pane: popup, data }),
+                    None => self.pending.push(Outgoing::Input(data)),
+                }
                 true
             }
             // 판이 열려 있으면 **그 판의 입력처**로 넣는다(§10-21ⓜ2). 낱자로 풀어
@@ -3246,7 +3259,8 @@ impl SessionView {
         if self.screens.paste_into_compose(&text) {
             return true;
         }
-        self.pending.push(Outgoing::Command(Command::Paste { text }));
+        let paste = self.paste_command(text);
+        self.pending.push(Outgoing::Command(paste));
         true
     }
 
@@ -4046,11 +4060,11 @@ impl SessionView {
         match hit.kind {
             SpanKind::Url => {
                 if proto::info::open_link(&hit.text) {
-                    self.state.note_notice(tf("링크를 열었다: {url}", &[("url", &hit.text)]));
+                    self.state.note_notice(tf("링크를 열었습니다: {url}", &[("url", &hit.text)]));
                 } else {
                     // 안 여는 것과 못 여는 것이 여기서 합쳐진다 — 둘 다 사용자에게는
                     // "안 열렸다"이고, 스킴 때문이면 그건 **일부러** 안 연 것이다.
-                    self.state.note_error(tf("링크를 열지 못했다: {url}", &[("url", &hit.text)]));
+                    self.state.note_error(tf("링크를 열지 못했습니다: {url}", &[("url", &hit.text)]));
                 }
             }
             SpanKind::Path => {
@@ -5099,7 +5113,7 @@ impl SessionView {
         self.cell_px.set(None);
         if let Some(name) = missed {
             self.state.note_notice(base::i18n::tf(
-                "글꼴 «{name}» 이 이 상자에 없다 — 기본 글꼴로 그린다",
+                "글꼴 «{name}» 이 이 상자에 없습니다 — 기본 글꼴로 그립니다",
                 &[("name", &name)],
             ));
         }
@@ -5688,6 +5702,10 @@ impl SessionView {
     }
 
     fn ime_chip(&self) -> Option<Box<dyn Element>> {
+        // 배지를 끄면(서버 `ime_show = false`) 판 안 배지도 안 그린다 — 정본 `client_input_badge` (pytmux-646).
+        if !self.state.ime_badge_shown() {
+            return None;
+        }
         let label = self.ime_badge?;
         // 정본 플러그인과 **같은 의미 이름**. 모르는 이름이면 안 칠하는 대신 안 그린다 —
         // 검은 글자만 남아 "배지가 사라진" 것처럼 보이는 것이 pytmux-16 의 모양이었다.
@@ -7796,7 +7814,7 @@ impl SessionView {
         let blocks = self.state.active_blocks();
         let (block_rows, claude_rows) = footer::split(!blocks.is_empty(), !self.claude.is_empty());
         if block_rows == 0 && claude_rows == 0 {
-            return column.with_child(self.text(t("블록도 Claude 항목도 없다"), 13., palette::DIM));
+            return column.with_child(self.text(t("블록도 Claude 항목도 없습니다"), 13., palette::DIM));
         }
         // 폭 예산은 **캔버스와 같다** — 요약이 그림보다 넓으면 창이 그만큼 늘어나거나
         // 글자가 창 밖으로 나간다. 캔버스가 아직 없으면 서버에 알린 값(80)을 쓴다.
@@ -7816,7 +7834,11 @@ impl SessionView {
         );
         let column = column.with_child(self.text(head, 12., palette::DIM));
         let mut inner = Flex::column();
-        for block in footer::tail(blocks, block_rows) {
+        // 블록은 **전부** 싣고 판 안에서 굴린다(정본 `summary_lines` — 잘라 내면 «블록이 안 생긴다» 와 구분이
+        // 안 된다 · pytmux-653). 종전에는 바닥 구역처럼 꼬리 다섯만 그렸다. 굴리는 손은 `Keys` 판과 같다.
+        let start = self.screens.scroll().min(blocks.len().saturating_sub(1));
+        let budget = self.panel_budget().saturating_sub(claude_rows + 1).max(1);
+        for block in blocks.iter().skip(start).take(budget) {
             inner = inner.with_child(self.render_block(block, cols));
         }
         for item in footer::tail(&self.claude, claude_rows) {
@@ -8271,7 +8293,7 @@ impl SessionView {
             column = column.with_child(self.text(notes, 12., palette::DIM));
         }
         if sr.items.is_empty() {
-            return column.with_child(self.text(t("검색 결과가 없다"), 13., palette::DIM));
+            return column.with_child(self.text(t("(검색 결과 없음)"), 13., palette::DIM));
         }
         let selected = self.screens.selected().min(sr.items.len() - 1);
         // 창은 core 의 보기 자리다(pytmux-636) — 커서는 `follow_cursor` 가 창 안에 둔다.
@@ -8279,13 +8301,15 @@ impl SessionView {
         for (row, item) in sr.items.iter().enumerate().skip(start).take(budget) {
             // 원격 히트는 정본과 같은 색으로 갈린다(`REMOTE_PINK`).
             let tab_fg = if item.remote { REMOTE_PINK } else { palette::DIM };
+            // 칸의 글은 정본과 한 벌이다(`SearchHit::cells` — `gwin` 번호 · 없는 줄은 빈 칸 · pytmux-647).
+            let [tab_cell, _, line_cell, _] = item.cells();
             let line = Flex::row()
                 .with_main_axis_size(MainAxisSize::Min)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(8.)
                 .with_child(
                     ConstrainedBox::new(self.text(
-                        footer::elide(&format!("{}:{}", item.win + 1, item.tab), 24),
+                        footer::elide(&tab_cell, 24),
                         12.,
                         tab_fg,
                     ))
@@ -8303,7 +8327,7 @@ impl SessionView {
                 )
                 .with_child(
                     ConstrainedBox::new(self.text(
-                        if item.line >= 0 { item.line.to_string() } else { String::new() },
+                        line_cell,
                         12.,
                         palette::DIM,
                     ))
@@ -8501,7 +8525,7 @@ impl SessionView {
         )
         .contain()
         .before_load(self.text(t("그림 읽는 중…"), 12., palette::DIM))
-        .on_load_failure(self.text(t("그림을 못 읽었다"), 12., palette::DIM))
+        .on_load_failure(self.text(t("그림을 못 읽었습니다"), 12., palette::DIM))
         .finish();
         let boxed = Container::new(
             ConstrainedBox::new(image).with_width(THUMB_W).with_height(THUMB_H).finish(),
@@ -8571,7 +8595,8 @@ impl SessionView {
             wid: item.wid,
             win: item.win,
             pane: item.pane,
-            line: item.line,
+            // 줄을 모르는 히트(`-1`)는 종전처럼 0 으로 보낸다 — 서버가 같은 쿼리로 근처를 다시 찾는다.
+            line: item.line.max(0),
             route: item.route.clone(),
             query: sr.query.clone(),
         };
@@ -8907,7 +8932,7 @@ impl SessionView {
             return self.pad_rows(column, drawn, budget).with_child(input(self));
         }
         if matches.is_empty() {
-            let column = column.with_child(self.text(t("맞는 명령이 없다"), 13., palette::DIM));
+            let column = column.with_child(self.text(t("맞는 명령이 없습니다"), 13., palette::DIM));
             return self.pad_rows(column, 1, budget).with_child(input(self));
         }
         let selected = self.screens.selected().min(matches.len() - 1);
@@ -9008,7 +9033,7 @@ impl SessionView {
                 Ok(pid) => {
                     self.state
                         .note_notice(tf(
-                            "전체 재시작 — 클라를 다시 띄웠다 (pid {pid})",
+                            "전체 재시작 — 클라를 다시 띄웠습니다 (pid {pid})",
                             &[("pid", &pid.to_string())],
                         ));
                     self.quit_requested = true;
@@ -9022,7 +9047,7 @@ impl SessionView {
                 }
             }
         } else {
-            self.state.note_notice(t("서버를 재시작한다 (셸은 산다)"));
+            self.state.note_notice(t("서버를 재시작합니다 (셸은 유지됩니다)"));
         }
         self.pending
             .push(Outgoing::Command(Command::RestartServer));
@@ -9112,15 +9137,23 @@ impl SessionView {
     /// 로드맵은 "mac·headless 만 있다"고 적어 두고 이 표면을 막힌 것으로 분류했는데,
     /// 그건 틀렸다 — 상류를 손댈 일이 없었다.
     fn refresh_title(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(title) = self.title_to_set() {
+            ctx.windows().set_window_title(ctx.window_id(), &title);
+        }
+    }
+
+    /// 창 제목으로 **새로 세울** 글 — 설정이 꺼져 있거나 같으면 `None`. 창을 안 만지는 절반이라
+    /// 설정 효과 자(pytmux-645)가 `set-titles`·`set-titles-string` 을 행동으로 잰다.
+    fn title_to_set(&mut self) -> Option<String> {
         if !self.config.set_titles {
-            return;
+            return None;
         }
         let title = self.state.window_title(&self.config.set_titles_string);
         if self.last_title.as_deref() == Some(title.as_str()) {
-            return;
+            return None;
         }
-        ctx.windows().set_window_title(ctx.window_id(), &title);
-        self.last_title = Some(title);
+        self.last_title = Some(title.clone());
+        Some(title)
     }
 
     /// **끌 수 있는 띠**의 높이를 창에게 다시 말한다(`pytmux-1`).
@@ -9218,7 +9251,17 @@ impl SessionView {
             self.pending
                 .push(Outgoing::Input(vec![0x7f; now.chars().count()]));
         }
-        self.pending.push(Outgoing::Command(Command::Paste { text }));
+        let paste = self.paste_command(text);
+        self.pending.push(Outgoing::Command(paste));
+    }
+
+    /// `paste` 명령 — 라이브 팝업이 떠 있으면 팝업 id 를 싣는다(정본 `on_paste` 의 팝업 갈래 · pytmux-640).
+    /// 팝업이 없으면 종전 그대로 `pane` 없는 `paste`(서버가 활성 패널에 쓴다).
+    fn paste_command(&self, text: String) -> Command {
+        match self.state.popup().map(|p| p.id) {
+            Some(pane) => Command::PasteToPane { pane, text },
+            None => Command::Paste { text },
+        }
     }
 
     /// 탭으로 나뉜 정보 팝업(패리티 `InfoTabsScreen`). 내용은 `proto` 가 만든다 —
@@ -9958,7 +10001,7 @@ impl SessionView {
             .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
         if let Err(err) = written {
             self.state
-                .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())]));
+                .note_error(tf("설정 파일 저장 실패: {err}", &[("err", &err.to_string())]));
         }
     }
 
@@ -9999,13 +10042,18 @@ impl SessionView {
     }
     /// `set <옵션> <값>` 한 줄을 반영한다(패리티 G8i). 두 뷰가 같은 표다.
     ///
-    /// **설정 파일에 쓰는 길로만** 보낸다 — 서버 옵션은 이름이 다르고(`set_sync` 등)
-    /// 여기서 갈라 주기 시작하면 두 어휘가 섞인다. 서버 것은 설정 화면·팔레트가 입구다.
+    /// ★ **이번 판만 바꾼다 — 설정 파일을 안 쓴다**(pytmux-649 · 정본 `apply_option`). 명령 줄 ·
+    /// 명령 옵션 판 · 바인딩 · 훅이 이 길을 지난다. 파일에 남기는 입구는 설정 판 하나다(정본
+    /// `apply_setting` — `backend == "config"` 줄만 쓴다 · 표 = `config_entrances.json`).
+    /// 값은 파일 읽기와 **같은 문법**([`base::Config::apply_text`])으로 지금 설정 위에 먹인다.
+    ///
+    /// 서버 옵션은 이름이 다르고(`set_sync` 등) 여기서 갈라 주기 시작하면 두 어휘가 섞인다.
+    /// 서버 것은 설정 화면·팔레트가 입구다.
     fn apply_set_line(&mut self, line: &str) {
         let mut parts = line.trim().splitn(2, char::is_whitespace);
         let (Some(option), Some(value)) = (parts.next(), parts.next()) else {
             self.state
-                .note_error(tf("설정 형식이 아니다: {line}", &[("line", line)]));
+                .note_error(tf("설정 형식이 아닙니다: {line}", &[("line", line)]));
             return;
         };
         let value = value.trim();
@@ -10020,23 +10068,16 @@ impl SessionView {
             }
             return;
         }
-        // 파일에 쓰고 **다시 읽는다** — 파싱 규칙이 한 곳(Config::parse)에만 있어야
-        // "파일로 적은 것"과 "여기서 적은 것"이 갈리지 않는다.
-        match base::Config::write_option(option, value) {
-            Ok(_) => {
-                self.config = base::Config::load();
-                self.mode.set_prefix(self.config.prefix);
-                apply_config_globals(&self.config, &mut self.state);
-                if matches!(option, "ambiguous-width" | "ambiguous_width") {
-                    // 정본 `apply_option` 은 이 옵션에서 서버까지 맞추고 제 글로 알린다.
-                    self.apply_ambiguous(value);
-                } else {
-                    self.state.note_notice(format!("set {option} {value}"));
-                }
-            }
-            Err(err) => self
-                .state
-                .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())])),
+        // 파싱 규칙은 한 곳(`Config::apply_text`)이다 — "파일로 적은 것"과 "여기서 친 것"이
+        // 갈리지 않는다. 종전에는 파일에 쓰고 다시 읽어 친 `set` 이 다음 기동에도 남았다.
+        self.config.apply_text(&format!("set {option} {value}"));
+        self.mode.set_prefix(self.config.prefix);
+        apply_config_globals(&self.config, &mut self.state);
+        if matches!(option, "ambiguous-width" | "ambiguous_width") {
+            // 정본 `apply_option` 은 이 옵션에서 서버까지 맞추고 제 글로 알린다.
+            self.apply_ambiguous(value);
+        } else {
+            self.state.note_notice(format!("set {option} {value}"));
         }
     }
 
@@ -10050,7 +10091,7 @@ impl SessionView {
         self.config = base::Config::load_from(path);
         self.mode.set_prefix(self.config.prefix);
         apply_config_globals(&self.config, &mut self.state);
-        self.state.note_notice(t("설정을 다시 읽었다"));
+        self.state.note_notice(t("설정을 다시 읽었습니다"));
     }
 
     /// 셸 명령을 **스레드에서** 돌린다(패리티 G8p). 두 뷰가 같은 표다.
@@ -10091,7 +10132,7 @@ impl SessionView {
                 } else {
                     self.state
                         .note_notice(tf(
-                            "조건이 실패했다(코드 {code})",
+                            "조건이 실패했습니다(코드 {code})",
                             &[("code", &outcome.code.to_string())],
                         ));
                     return (true, None);
@@ -10104,7 +10145,7 @@ impl SessionView {
                         Some(run) => return (true, Some(run)),
                         None => self
                             .state
-                            .note_error(tf("모르는 명령이다: {name}", &[("name", &name)])),
+                            .note_error(tf("모르는 명령입니다: {name}", &[("name", &name)])),
                     }
                 }
             }
@@ -10113,7 +10154,7 @@ impl SessionView {
                 if outcome.text.trim().is_empty() {
                     self.state
                         .note_notice(tf(
-                            "끝났다(코드 {code})",
+                            "끝났습니다(코드 {code})",
                             &[("code", &outcome.code.to_string())],
                         ));
                 } else {
@@ -10143,7 +10184,7 @@ impl SessionView {
             .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
         if let Err(err) = written {
             self.state
-                .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())]));
+                .note_error(tf("설정 파일 저장 실패: {err}", &[("err", &err.to_string())]));
         }
     }
 
@@ -10160,7 +10201,7 @@ impl SessionView {
         }
         if let Err(err) = written {
             self.state
-                .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())]));
+                .note_error(tf("설정 파일 저장 실패: {err}", &[("err", &err.to_string())]));
         }
     }
 
@@ -10196,7 +10237,7 @@ impl SessionView {
                 self.mode.set_prefix(prefix);
                 if let Err(err) = written {
                     self.state
-                        .note_error(tf("설정을 저장하지 못했다: {err}", &[("err", &err.to_string())]));
+                        .note_error(tf("설정 파일 저장 실패: {err}", &[("err", &err.to_string())]));
                 }
             }
             None => self
@@ -10291,7 +10332,7 @@ impl SessionView {
     fn render_notices(&self, column: Flex) -> Flex {
         let total = self.state.notices().len();
         if total == 0 {
-            return column.with_child(self.text(t("아직 알림이 없다"), 13., palette::DIM));
+            return column.with_child(self.text(t("(지나간 알림 없음)"), 13., palette::DIM));
         }
         let budget = self.panel_budget().saturating_sub(1);
         // ★ **커서가 있는 읽기 판**이다(pytmux-539 · 정본 `NoticeHistoryScreen` 의 ListView).
@@ -10373,13 +10414,14 @@ impl SessionView {
                     .note_notice(tf("경로를 복사했다: {path}", &[("path", full)])),
                 (OsCopyWhat::Path(full), false) => self
                     .state
-                    .note_error(tf("경로를 복사하지 못했다: {path}", &[("path", full)])),
-                (OsCopyWhat::Notice(n), true) => self.state.note_notice(tf(
-                    "알림을 복사했다: {n}자",
-                    &[("n", n.to_string().as_str())],
-                )),
+                    .note_error(tf("경로를 복사하지 못했습니다: {path}", &[("path", full)])),
+                // 정본 알림 이력의 `c` = `copy_text` → `msg.copied_chars` + `msg.clipboard_suffix`
+                // (pytmux-595 — 같은 뜻의 정본 글 그대로).
+                (OsCopyWhat::Notice(n), true) => self.state.note_notice(
+                    tf("{n} chars 복사됨", &[("n", n.to_string().as_str())]) + t(" (클립보드)"),
+                ),
                 (OsCopyWhat::Notice(_), false) => {
-                    self.state.note_error(t("알림을 복사하지 못했다").to_owned())
+                    self.state.note_error(t("알림을 복사하지 못했습니다").to_owned())
                 }
             }
         }
@@ -10498,7 +10540,7 @@ impl SessionView {
             // full status 를 아직 못 받았거나 서버가 옛 버전이다 — 빈 목록을 말없이
             // 보이면 "플러그인이 하나도 없다"로 읽힌다.
             return column.with_child(self.text(
-                t("서버가 플러그인 목록을 안 보냈다 (옛 서버이거나 아직 첫 full status 전)"),
+                t("서버가 플러그인 목록을 안 보냈습니다 (옛 서버이거나 아직 첫 full status 전)"),
                 13.,
                 palette::DIM,
             ));
@@ -10973,7 +11015,7 @@ impl SessionView {
                 // ⛔ 안 먹는 줄에 **누를 것**을 두지 않는다 — 눌러도 아무 일이 없는
                 //    화살표는 「고장 났다」로 읽힌다. 값 대신 **왜 없는지**를 적는다.
                 line.with_child(self.ui_text(
-                    t("채운 네모는 칸을 반전한다 — 두께를 줄 자리가 없다"),
+                    t("채운 네모는 칸을 반전합니다 — 두께를 줄 자리가 없습니다"),
                     12.,
                     palette::DIM,
                 ))
@@ -11188,7 +11230,7 @@ impl SessionView {
                     Some(then.to_owned()),
                     parts.next().filter(|s| !s.is_empty()).map(str::to_owned),
                 ),
-                _ => self.state.note_error(t("조건과 명령을 `|` 로 갈라 적는다")),
+                _ => self.state.note_error(t("조건과 명령을 `|` 로 갈라 적습니다")),
             }
         } else if prompt == Prompt::BindKey {
             self.apply_bind_line(&answer, true);
@@ -11242,14 +11284,14 @@ impl SessionView {
             Some(SetHook::Unset { event }) => {
                 if self.config.hooks.unset(&event) {
                     self.state
-                        .note_notice(tf("훅 {event} 를 풀었다", &[("event", &event)]));
+                        .note_notice(tf("훅 {event} 를 풀었습니다", &[("event", &event)]));
                 } else {
-                    self.state.note_error(t("그런 훅이 없다"));
+                    self.state.note_error(t("그런 훅이 없습니다"));
                 }
             }
             None => self
                 .state
-                .note_error(t("훅은 <이벤트> <명령> 또는 -u <이벤트> 로 적는다")),
+                .note_error(t("훅은 <이벤트> <명령> 또는 -u <이벤트> 로 적습니다")),
         }
     }
 
@@ -11664,14 +11706,14 @@ impl SessionView {
     fn render_buffer_list(&self, column: Flex) -> Flex {
         let items = self.state.buffers();
         if items.is_empty() {
-            return column.with_child(self.text(t("버퍼가 없다"), 13., palette::DIM));
+            return column.with_child(self.text(t("(버퍼 없음)"), 13., palette::DIM));
         }
         let selected = self.screens.selected().min(items.len() - 1);
         let cols = self.state.composite().map_or(80, |c| c.size().0) as usize;
         let mut column = column;
         let (top, budget) = self.list_window(items.len());
         for (i, item) in items.iter().enumerate().skip(top).take(budget) {
-            let text = format!("{}: {}", item.index, item.preview);
+            let text = proto::info::buffer_row(item);
             let label = self.text(footer::elide(&text, cols), 13., palette::FG);
             column = column.with_child(if i == selected {
                 Container::new(label)
@@ -11991,11 +12033,13 @@ impl SessionView {
                     .then(|| self.state.search_results().map(|sr| sr.headline()))
                     .flatten()
             });
+        // 자리표(`{n}`·`{cmd}`·`{dir}`)가 든 정본 제목은 `panel_title` 이 채운다(pytmux-648).
+        let filled = self.screens.panel_title(screen, self.state.notices().count());
         let title = self.screens.confirm_title().unwrap_or(if screen == Screen::SavedLayouts {
             // 정본은 고른 쪽(새 탭/덮어쓰기)을 제목이 말한다(`layout_to_new`/`layout_to_over`).
             self.screens.saved_layouts_title()
         } else {
-            screen.title()
+            filled.as_str()
         });
         header = header.with_child(match spec_title {
             Some(t) => self.text(t, 14., palette::FG),

@@ -87,6 +87,11 @@ Test-Path "$env:PYTMUX_HOME\state\default.ptyhost.pid"   # False
     멀쩡한데 **환경이 실패를 만든** 부류라, 원인을 코드에서 찾으면 한참 헤맨다.
   - 처방: 위 레시피처럼 `$PYTMUX_HOME\config` 를 **빈 파일로 먼저 만들거나**
     `$env:PYTMUX_CONFIG` 를 스크래치 파일로 세운다. 빈 파일이면 기본값으로 뜬다.
+    ☠ **그 파일을 실제로 «만들어» 세운다 — 경로만 가리키면 안 된다**(pytmux-643 ·
+    2026-11-13). 쓰기는 이제 정본과 같은 규칙이다: `$PYTMUX_CONFIG` 는 **그 파일이 있을
+    때만** 쓰기 자리를 이긴다. **없는 파일**을 가리킨 채 설정을 고치면(설정 판 · 플러그인
+    토글) 쓰기가 `$PYTMUX_HOME/config` → 그것도 없으면 **사용자의 `~/.config/pytmux/config`**
+    로 떨어진다. `: > "$SP/empty.config"` 처럼 **빈 파일을 먼저 만들고** 그 경로를 세울 것.
   - ★ **합본 게이트는 이제 그것을 저절로 한다**(2026-08-16 · pytmux/pytmux-202).
     `scripts/check_all.py` 가 자식 env 를 만드는 자리(§`child_env`)에서 `PYTMUX_CONFIG`
     를 빈 임시 파일로 세우므로, **패리티 래칫·Rust 스위트·크로스OS 스텝이 한꺼번에**

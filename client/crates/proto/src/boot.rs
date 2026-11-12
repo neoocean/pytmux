@@ -269,7 +269,7 @@ fn err_no_launcher(missing: &Missing) -> String {
 
 fn err_spawn(argv: &str, source: &std::io::Error) -> String {
     tf(
-        "서버 기동을 실행하지 못했다: {source} ({argv})",
+        "서버 기동을 실행하지 못했습니다: {source} ({argv})",
         &[("source", source.to_string().as_str()), ("argv", argv)],
     )
 }
@@ -282,7 +282,7 @@ fn err_start_failed(detail: &str) -> String {
 }
 
 fn err_start_timeout() -> String {
-    t("서버 기동이 시한 안에 끝나지 않았다").to_owned()
+    t("서버 기동이 시한 안에 끝나지 않았습니다").to_owned()
 }
 
 /// 이 붙기 실패가 **"서버가 없다"** 는 뜻인가.

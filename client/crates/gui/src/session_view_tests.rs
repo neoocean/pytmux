@@ -4738,6 +4738,20 @@ fn a_hello_that_never_got_a_layout_still_goes_out_before_the_server_gives_up() {
 }
 
 #[test]
+fn a_typed_set_changes_this_session_only_and_never_the_config_file() {
+    // pytmux-649 · 정본 `apply_option`: 명령으로 **친** `set` 은 이번 판의 값만 바꾼다(파일을 안 쓴다 —
+    // 파일에 남기는 입구는 설정 판 하나). 사물함 파일을 다른 시험도 쓰므로 **이 시험만 쓰는 값**으로 잰다.
+    let (mut view, _tx, _sent) = harness();
+    let sink = std::env::temp_dir().join(format!("pytmux-gui-test-config-{}", std::process::id()));
+    assert!(view.run_command_line("set claude-command PYTMUX-649-ORACLE"));
+    assert!(view.run_command_line("set mouse off"));
+    assert_eq!(view.config.claude_command, "PYTMUX-649-ORACLE", "이번 판의 값이 안 바뀌었다");
+    assert!(!view.config.mouse, "이번 판의 값이 안 바뀌었다");
+    let written = std::fs::read_to_string(&sink).unwrap_or_default();
+    assert!(!written.contains("PYTMUX-649-ORACLE"), "친 set 이 설정 파일에 남았다:\n{written}");
+}
+
+#[test]
 fn a_bell_fires_its_own_hook() {
     let out = sent_after_hook(
         "alert-bell next-tab",
@@ -11171,6 +11185,100 @@ fn the_ime_badge_rides_the_prompt_input_line() {
 }
 
 #[test]
+fn the_summary_panel_carries_every_block_not_just_the_tail() {
+    // pytmux-653 — 정본 `summary_lines` 는 블록 **전부**를 싣는다(굴릴 수 있다). 종전 GUI 는 꼬리 다섯만.
+    let blocks: Vec<serde_json::Value> = (0..7)
+        .map(|i| serde_json::json!({"cmd": format!("SUMCMD{i}"), "state": "done", "exit": 0}))
+        .collect();
+    let paint = |downs: usize| {
+        painted_after_setup(
+            vec![
+                layout_one_pane(),
+                serde_json::from_value(serde_json::json!({"t": "blocks", "pane": 1, "blocks": blocks.clone()}))
+                    .unwrap(),
+            ],
+            &[],
+            move |v| {
+                v.screens.open(base::screens::Screen::Summary);
+                for _ in 0..downs {
+                    v.handle_key(Key::Down, Mods::NONE);
+                }
+            },
+        )
+    };
+    // 처음엔 **가장 오래된 것**부터(정본 차례) — 종전 꼬리 그림에는 SUMCMD0 이 없었다.
+    let first = paint(0);
+    assert!(first.iter().any(|t| t == "SUMCMD0"), "요약 판이 첫 블록부터 안 싣는다(꼬리만 그렸다): {first:?}");
+    // 굴리면 마지막 블록까지 닿는다 — 판 높이보다 많은 블록도 빠지지 않는다.
+    let last = paint(6);
+    assert!(last.iter().any(|t| t == "SUMCMD6"), "굴려도 마지막 블록이 안 보인다: {last:?}");
+}
+
+#[test]
+fn ime_commits_and_pastes_go_to_the_live_popup_like_keys_do() {
+    // pytmux-640 — 팝업은 «항상 포커스»: 키뿐 아니라 IME 확정분·붙여넣기도 팝업 PTY 로 가야 한다.
+    let layout = |popup: bool| -> ServerMessage {
+        let mut v = serde_json::json!({
+            "t": "layout", "cols": 80, "rows": 24, "active": 1,
+            "panes": [{"id": 1, "x": 0, "y": 0, "w": 80, "h": 24, "active": true}]
+        });
+        if popup {
+            v["popup"] = serde_json::json!({"id": 99, "x": 10, "y": 5, "w": 40, "h": 10,
+                                             "cx": 11, "cy": 6, "cw": 38, "ch": 8});
+        }
+        serde_json::from_value(v).unwrap()
+    };
+    let frames = |popup: bool| {
+        let (mut view, tx, sent) = harness();
+        tx.send(LinkEvent::Message(Box::new(layout(popup)))).unwrap();
+        view.pump_headless();
+        view.handle_typed("한");
+        view.paste_from_clipboard_as(clipboard("붙일 글", vec![]), PasteEntry::Terminal);
+        view.pump_headless();
+        let out = sent.lock().unwrap().clone();
+        out.iter().map(|o| o.to_frame()).collect::<Vec<_>>()
+    };
+    let with = frames(true);
+    let typed = with.iter().find(|f| f["t"] == "input").expect("IME 확정분이 안 나갔다");
+    assert_eq!(typed["pane"], 99, "팝업이 떠 있는데 IME 확정분이 팝업으로 안 갔다: {with:?}");
+    let paste = with.iter().find(|f| f["action"] == "paste").expect("붙여넣기가 안 나갔다");
+    assert_eq!(paste["pane"], 99, "팝업이 떠 있는데 붙여넣기가 팝업으로 안 갔다: {with:?}");
+    // 대조군 — 팝업이 없으면 종전 그대로 pane 없이(서버가 활성 패널에 쓴다).
+    let without = frames(false);
+    let paste = without.iter().find(|f| f["action"] == "paste").expect("붙여넣기가 안 나갔다");
+    assert!(paste.get("pane").is_none(), "팝업이 없는데 pane 이 실렸다: {without:?}");
+    let typed = without.iter().find(|f| f["t"] == "input").expect("IME 확정분이 안 나갔다");
+    assert!(typed.get("pane").map_or(true, |p| p.is_null()), "팝업이 없는데 pane 이 실렸다: {typed}");
+}
+
+#[test]
+fn the_ime_badge_follows_the_server_ime_show_switch() {
+    // pytmux-646 — 정본 `client_input_badge` 는 `ime_show` 가 꺼지면 None. 키가 없는 status 는 직전 값을 지킨다.
+    let status = |show: Option<bool>| -> ServerMessage {
+        let mut v = serde_json::json!({"t": "status", "windows": [{"index": 0, "name": "a", "active": true}]});
+        if let Some(show) = show {
+            v["ime_show"] = serde_json::json!(show);
+        }
+        serde_json::from_value(v).unwrap()
+    };
+    let pills_after = |msgs: Vec<ServerMessage>| {
+        ime_pills("한", move |v| {
+            for m in msgs {
+                v.state.apply(m);
+            }
+            v.screens.open(base::screens::Screen::Commands);
+        })
+    };
+    assert!(pills_after(vec![status(Some(true))]) >= 1, "켜져 있는데 배지가 없다");
+    assert_eq!(pills_after(vec![status(Some(false))]), 0, "끈 배지가 판 안에 그려졌다");
+    assert_eq!(
+        pills_after(vec![status(Some(false)), status(None)]),
+        0,
+        "키가 없는 status 가 끈 배지를 되살렸다(정본은 직전 값을 지킨다)"
+    );
+}
+
+#[test]
 fn in_the_composer_the_badge_rides_the_cursor_row_only() {
     // 작성창은 여러 줄이라 "입력줄"이 곧 **커서 줄**이다 — 캔버스 규칙과 같은 자리다.
     // 알약이 **딱 하나**여야 한다: 줄마다 붙으면 글을 읽을 수 없다.
@@ -13752,7 +13860,7 @@ fn copying_a_notice_does_not_wait_for_the_clipboard_tool() {
     let mut said = false;
     while std::time::Instant::now() < deadline {
         view.pump_headless();
-        if view.state.notices().any(|n| n.text.contains("알림을 복사했다")) {
+        if view.state.notices().any(|n| n.text.contains("chars 복사됨")) {
             said = true;
             break;
         }

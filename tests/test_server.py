@@ -5784,6 +5784,48 @@ async def test_popup_layout_advertises_mouse():
         await teardown(srv, task, sock)
 
 
+async def test_paste_and_copy_range_reach_the_live_popup_pane():
+    """pytmux-640 — `paste` 에 팝업 id 가 실리면 팝업 PTY 로(트리 밖이라 `pane_by_id` 로는 못 찾는다),
+    `copy_range` 도 팝업 id 면 팝업 패널에서 뽑는다(종전 `or win.active_pane` 이 먼저라 닿지 않았다)."""
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        assert srv.popup_open(sess, "sleep 100", want_w=40, want_h=10)
+        pp = sess.popup["pane"]
+        back = sess.active_window.active_pane
+
+        class _Rec:
+            def __init__(self):
+                self.data = b""
+
+            def write(self, data):
+                self.data += data
+
+        pp_pty, back_pty = pp.pty, back.pty
+        pp.pty, back.pty = _Rec(), _Rec()
+        try:
+            srv.paste_text(sess, "팝업에", pane=pp.id)
+            srv.paste_text(sess, "뒤에")
+            assert "팝업에".encode() in pp.pty.data and b"\xeb\x92\xa4" not in pp.pty.data, pp.pty.data
+            assert "뒤에".encode() in back.pty.data and "팝업에".encode() not in back.pty.data, back.pty.data
+        finally:
+            pp.pty, back.pty = pp_pty, back_pty
+
+        sent = []
+
+        async def _send_to(client, msg):
+            sent.append(msg)
+
+        srv._send_to = _send_to                      # 인스턴스 칸 — 이 서버에만 산다
+        pp.extract_range = lambda *a: "POPUP-TEXT"
+        back.extract_range = lambda *a: "BACK-TEXT"
+        await srv._cmd_copy_range(None, sess, {"pane": pp.id, "y0": 0, "x0": 0, "y1": 0, "x1": 3})
+        await srv._cmd_copy_range(None, sess, {"pane": back.id, "y0": 0, "x0": 0, "y1": 0, "x1": 3})
+        assert [m["text"] for m in sent] == ["POPUP-TEXT", "BACK-TEXT"], sent
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_no_window_kwargs():
     """§10 Windows: subprocess 콘솔 창 팝업 방지 헬퍼. POSIX 에선 빈 dict(무영향),
     Windows 에선 CREATE_NO_WINDOW creationflags 를 담는다(clip.exe·PowerShell

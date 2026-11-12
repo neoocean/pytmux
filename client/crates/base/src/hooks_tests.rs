@@ -26,7 +26,7 @@ fn setting_the_same_event_again_keeps_its_place() {
 fn an_empty_hook_list_still_says_something() {
     let hooks = Hooks::default();
     assert_eq!(hooks.lines().len(), 1);
-    assert!(hooks.lines()[0].contains("없다"));
+    assert!(hooks.lines()[0].contains("없습니다"));
 }
 
 #[test]

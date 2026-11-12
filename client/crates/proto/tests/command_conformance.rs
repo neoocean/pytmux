@@ -124,6 +124,8 @@ fn only_the_two_known_commands_skip_the_full_resync() {
         })
         .collect();
     exceptions.sort_unstable();
+    // 같은 action 을 싣는 변형이 둘일 수 있다(`paste` = `Paste`·`PasteToPane` · pytmux-640) — 이름으로 센다.
+    exceptions.dedup();
 
     assert_eq!(
         exceptions,

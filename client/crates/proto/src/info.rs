@@ -286,6 +286,12 @@ fn server_lines(state: &SessionState, endpoint: &str, now: f64) -> Vec<String> {
 /// 모양은 정본 `_show_version_popup` 과 같다(머리줄 · 클라 · 서버 · 빈 줄 · pid). 업타임
 /// 표기도 정본 `fmt_uptime` 과 같은 `1d 02:03:04` 다 — 나란히 놓고 보는 판이라 한쪽만
 /// 다른 단위면 사람이 매번 환산해야 한다.
+/// 버퍼 고르기 판의 한 줄 — 정본 `ChooseBufferScreen.compose` 의 `f"{i}: {preview}"`(pytmux-647).
+/// 폭에 맞춰 자르는 것은 뷰의 그림이다.
+pub fn buffer_row(item: &crate::message::BufferItem) -> String {
+    format!("{}: {}", item.index, item.preview)
+}
+
 pub fn version_lines(state: &SessionState) -> Vec<String> {
     let client = format!("{} · {}", base::build::NAME, base::build::os_label());
     let mut lines = vec![
@@ -310,9 +316,13 @@ pub fn version_lines(state: &SessionState) -> Vec<String> {
             lines.push(String::new());
             lines.push(tf("  (서버 pid {pid})", &[("pid", reply.pid.to_string().as_str())]));
         }
-        None => lines.push(tf("  서버        {ver}", &[("ver", t(WAITING))])),
+        None => {
+            lines.push(tf("  서버        {ver}", &[("ver", t(WAITING))]));
+            lines.push(String::new());
+        }
     }
-    lines.push(String::new());
+    // 회신이 왔으면 pid 줄 **바로 뒤**가 빌드 줄이다 — 정본 `_show_version_popup` 일곱 줄과 같은 모양
+    // (종전에는 그 사이에 빈 줄이 하나 더 있었다 · pytmux-647 의 판 내용 자가 잡았다).
     // 받아야 할 파일 이름 그대로 — 화면에 뜬 이름으로 `build/` 에서 바로 찾는다.
     lines.push(tf("  (빌드 {name})", &[("name", base::build::artifact().as_str())]));
     lines
@@ -348,7 +358,8 @@ pub fn restart_check_lines(state: &SessionState) -> (bool, Vec<String>) {
         restart::Kind::All,
     );
     let mut lines = vec![
-        if safe { t("✅ 안전 — 지금 재시작할 수 있다") } else { t("⚠️ 주의 — 아래 FAIL 을 확인할 것") }
+        // 정본 `restartcheck.safe`/`unsafe` 글 그대로(pytmux-595).
+        if safe { t("✅ 안전 — restart-all 수행 가능") } else { t("⚠️ 주의 — 아래 FAIL 항목 확인 후 진행") }
             .to_owned(),
         String::new(),
     ];

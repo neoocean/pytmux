@@ -523,17 +523,12 @@ impl Config {
         if let Some(sink) = WRITE_SINK.get() {
             return sink.clone();
         }
-        // DIVERGE(pytmux-config-write): 정본 `config_path_for_write` 는 `$PYTMUX_CONFIG` 를 **파일이 있을
-        // 때만** 후보로 본다. 우리는 서 있으면 무조건 그 자리에 쓴다 — 안전 레시피(「설정 파일은
-        // 따로 격리한다」 · client/CLAUDE.md)가 그 동작에 기대고, 없는 파일을 지목한 사람의 뜻도
-        // 그쪽이다.
-        if let Some(explicit) = std::env::var_os("PYTMUX_CONFIG") {
-            return PathBuf::from(explicit);
-        }
-        if let Some(existing) = Self::path() {
-            return existing;
-        }
-        ConfigEnv::from_env().default_write_path()
+        // ★ 정본 `config_path_for_write` 와 같다(pytmux-643 · 사람 결정 2026-11-13: 정본에 맞춘다) —
+        //   `$PYTMUX_CONFIG` 도 **파일이 있을 때만** 후보다(읽기 후보와 같은 차례에서 첫 실재 파일).
+        //   ⚠ 그래서 격리할 때는 `$PYTMUX_CONFIG` 가 가리키는 **파일을 먼저 만들어 둔다** — 없는 파일을
+        //   가리키면 정본처럼 홈 설정(`$PYTMUX_HOME/config` → XDG)으로 간다(client/CLAUDE.md 의 레시피는
+        //   빈 파일을 만든다). 종전 GUI 는 서 있으면 무조건 그 자리에 새 파일을 만들었다.
+        ConfigEnv::from_env().write_path()
     }
 
     /// 설정 한 줄을 파일에 남긴다. 쓴 경로를 돌려준다.
@@ -556,6 +551,14 @@ impl Config {
     /// 파일 내용을 읽는다. **모르는 줄은 조용히 넘긴다.**
     pub fn parse(text: &str) -> Self {
         let mut config = Self::default();
+        config.apply_text(text);
+        config
+    }
+
+    /// 설정 줄들을 **이 값 위에** 먹인다 — 파일 읽기([`Config::parse`])와 런타임 `set` 한 줄
+    /// (정본 `apply_option` · pytmux-649)이 같은 문법 한 벌을 지난다. 파일은 안 건드린다.
+    pub fn apply_text(&mut self, text: &str) {
+        let config = self;
         // ★ BOM 을 떼고 읽는다. 안 떼면 **첫 줄만** 조용히 사라진다 — `\u{feff}set` 은
         // `set` 이 아니라서 그 줄이 통째로 무시되고, 나머지 줄은 멀쩡히 먹으므로
         // 증상이 "이 설정 하나만 안 먹는다"가 된다.
@@ -759,7 +762,6 @@ impl Config {
                 _ => {}
             }
         }
-        config
     }
 }
 
@@ -2566,6 +2568,12 @@ impl ConfigEnv {
         self.candidates(explicit).into_iter().find(|p| p.is_file())
     }
 
+    /// **쓸** 파일 — 정본 `config_path_for_write(None)`: 읽기 후보 차례에서 첫 실재 파일, 없으면
+    /// [`Self::default_write_path`]. `$PYTMUX_CONFIG` 도 파일이 있을 때만 이긴다(pytmux-643).
+    pub fn write_path(&self) -> PathBuf {
+        self.find(None).unwrap_or_else(|| self.default_write_path())
+    }
+
     /// 아무 파일도 없을 때 만들 자리 — `<home>/config`, 없으면 XDG(정본 `default_path`).
     pub fn default_write_path(&self) -> PathBuf {
         self.home_config()
@@ -2575,25 +2583,49 @@ impl ConfigEnv {
 }
 
 /// `PYTMUX_HOME` 을 정본처럼 편다 — `os.path.abspath(os.path.expanduser(h))`(pytmux-586 G9).
-/// 앞머리 `~` 를 홈으로, 상대경로는 지금 디렉터리 기준 절대경로로, `.`·`..` 는 글자로 접는다.
-// DIVERGE(tilde-user): `~other/…` 는 펴지 않는다(정본 expanduser 는 그 사용자 홈으로 편다 · pytmux-643).
+/// 앞머리 `~` 를 홈으로, `~user` 를 그 사용자의 홈으로(정본 `expanduser` 와 같다 · pytmux-643),
+/// 상대경로는 지금 디렉터리 기준 절대경로로, `.`·`..` 는 글자로 접는다.
 pub fn normalize_home(raw: Option<PathBuf>, home: Option<&std::path::Path>) -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok();
     normalize_home_in(raw?, home, cwd.as_deref())
 }
 
-/// [`normalize_home`] 의 순수한 절반(시험이 부른다).
+/// [`normalize_home`] 의 순수한 절반(시험이 부른다) — `~user` 는 이 상자의 사용자 표로 푼다.
 pub fn normalize_home_in(
     raw: PathBuf,
     home: Option<&std::path::Path>,
     cwd: Option<&std::path::Path>,
 ) -> Option<PathBuf> {
+    normalize_home_with(raw, home, cwd, &|name| user_home_dir(name, home))
+}
+
+/// [`normalize_home_in`] 에 **사용자 홈 찾기**를 밖에서 주는 판(시험이 가짜 사용자 표를 준다).
+///
+/// 정본 `os.path.expanduser` 의 `~user` 갈래: 첫 구분자까지가 이름이고, 그 사용자가 없으면 **펴지
+/// 않는다**(그 글자 그대로 — 뒤의 `abspath` 가 지금 디렉터리에 잇는다).
+pub fn normalize_home_with(
+    raw: PathBuf,
+    home: Option<&std::path::Path>,
+    cwd: Option<&std::path::Path>,
+    user_home: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
     use std::path::Component;
     let text = raw.to_string_lossy().into_owned();
+    let is_sep = |c: char| c == '/' || (cfg!(windows) && c == '\\');
     let expanded = match (text.as_str(), home) {
         ("~", Some(h)) => h.to_path_buf(),
         (t, Some(h)) if t.starts_with("~/") || (cfg!(windows) && t.starts_with("~\\")) => {
             h.join(&t[2..])
+        }
+        (t, _) if t.starts_with('~') && t.len() > 1 => {
+            let end = t[1..].find(is_sep).map_or(t.len(), |i| i + 1);
+            match user_home(&t[1..end]) {
+                Some(dir) => {
+                    let rest = t[end..].trim_start_matches(is_sep);
+                    if rest.is_empty() { dir } else { dir.join(rest) }
+                }
+                None => raw,
+            }
         }
         _ => raw,
     };
@@ -2613,6 +2645,81 @@ pub fn normalize_home_in(
         }
     }
     Some(out)
+}
+
+/// `~name` 의 홈 — 정본 `os.path.expanduser` 와 같은 자리에서 찾는다(pytmux-643).
+///
+/// - POSIX: `pwd.getpwnam(name).pw_dir`(libc `getpwnam` — 이 크레이트는 외부 의존 0개라 선언만
+///   직접 한다. 구조체는 OS 마다 `pw_dir` 앞의 칸이 달라 두 갈래다). 없으면 `None`.
+/// - Windows: 정본(파이썬 3.8+)은 사용자 표를 안 묻고 **지금 홈의 부모 + 이름**으로 짓는다
+///   (이름이 지금 사용자면 지금 홈).
+fn user_home_dir(name: &str, home: Option<&std::path::Path>) -> Option<PathBuf> {
+    if name.is_empty() {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        let home = home?;
+        if home.file_name().is_some_and(|n| n.to_string_lossy() == name) {
+            return Some(home.to_path_buf());
+        }
+        return Some(home.parent()?.join(name));
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let _ = home;
+        posix_user_home(name)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = home;
+        None
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn posix_user_home(name: &str) -> Option<PathBuf> {
+    use std::ffi::{CStr, CString};
+    use std::os::raw::c_char;
+    // `struct passwd` 의 앞머리(우리가 읽는 `pw_dir` 까지) — 나머지 칸은 안 읽는다.
+    #[cfg(target_os = "macos")]
+    #[repr(C)]
+    #[allow(dead_code)]
+    struct Passwd {
+        pw_name: *mut c_char,
+        pw_passwd: *mut c_char,
+        pw_uid: u32,
+        pw_gid: u32,
+        pw_change: i64,
+        pw_class: *mut c_char,
+        pw_gecos: *mut c_char,
+        pw_dir: *mut c_char,
+    }
+    #[cfg(target_os = "linux")]
+    #[repr(C)]
+    #[allow(dead_code)]
+    struct Passwd {
+        pw_name: *mut c_char,
+        pw_passwd: *mut c_char,
+        pw_uid: u32,
+        pw_gid: u32,
+        pw_gecos: *mut c_char,
+        pw_dir: *mut c_char,
+    }
+    unsafe extern "C" {
+        fn getpwnam(name: *const c_char) -> *mut Passwd;
+    }
+    let cname = CString::new(name).ok()?;
+    // SAFETY: `getpwnam` 은 정적 버퍼를 돌려준다 — 곧바로 `pw_dir` 을 복사하고 포인터를 버린다
+    // (이 함수는 기동 때 한 번 불리는 경로라 재진입 경합이 없다).
+    unsafe {
+        let entry = getpwnam(cname.as_ptr());
+        if entry.is_null() || (*entry).pw_dir.is_null() {
+            return None;
+        }
+        let dir = CStr::from_ptr((*entry).pw_dir).to_string_lossy().into_owned();
+        Some(PathBuf::from(dir))
+    }
 }
 
 fn home_dir() -> Option<PathBuf> {

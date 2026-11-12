@@ -52,32 +52,32 @@ pub enum AttachError {
 }
 
 fn err_no_server(names: &str) -> String {
-    base::i18n::tf("서버를 찾을 수 없다 (후보: {names})", &[("names", names)])
+    base::i18n::tf("서버를 찾을 수 없습니다 (후보: {names})", &[("names", names)])
 }
 
 /// ★ 사용자 입력이 섞이는 값(엔드포인트 = 경로)을 **마지막에** 끼운다 — `tf` 는 순차
 /// 치환이라 값 안의 `{...}` 가 재치환되지 않게(core `block.rs` `summary()` 의 규칙).
 fn err_connect(endpoint: &str, source: &std::io::Error) -> String {
     base::i18n::tf(
-        "{endpoint} 에 연결하지 못했다: {source}",
+        "{endpoint} 에 연결하지 못했습니다: {source}",
         &[("source", source.to_string().as_str()), ("endpoint", endpoint)],
     )
 }
 
 fn err_no_port(path: &str) -> String {
-    base::i18n::tf("포트파일에서 포트를 못 읽었다: {path}", &[("path", path)])
+    base::i18n::tf("포트파일에서 포트를 못 읽었습니다: {path}", &[("path", path)])
 }
 
 fn err_no_token(path: &str) -> String {
     base::i18n::tf(
-        "인증 토큰을 못 읽었다: {path} (서버가 띄운 사용자와 같은 계정인지 확인)",
+        "인증 토큰을 못 읽었습니다: {path} (서버가 띄운 사용자와 같은 계정인지 확인하세요)",
         &[("path", path)],
     )
 }
 
 fn err_non_loopback(host: &str) -> String {
     base::i18n::tf(
-        "루프백이 아닌 호스트({host})에는 이 상자의 인증 토큰을 보내지 않는다 — 원격은 remote-attach 를 쓴다 (꼭 필요하면 PYTMUX_ALLOW_REMOTE_TOKEN=1)",
+        "루프백이 아닌 호스트({host})에는 이 상자의 인증 토큰을 보내지 않습니다 — 원격은 remote-attach 를 쓰세요 (꼭 필요하면 PYTMUX_ALLOW_REMOTE_TOKEN=1)",
         &[("host", host)],
     )
 }

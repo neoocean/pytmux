@@ -383,9 +383,28 @@ class Server(*_SERVER_BASES):
             pane._match_abs = None
             pane.dirty = True
 
-    def paste_text(self, sess: Session, text: str):
+    def _popup_pane_for(self, sess, pane_id):
+        """`pane_id` 가 지금 떠 있는 라이브 팝업의 패널이면 그 패널, 아니면 None.
+
+        팝업 패널은 트리 밖이라 `pane_by_id` 로 못 찾는다 — 키(`input`)·붙여넣기(`paste`)·선택
+        복사(`copy_range`)가 같은 술어로 팝업을 가린다(pytmux-640)."""
+        popup = getattr(sess, "popup", None) if sess is not None else None
+        pp = popup.get("pane") if popup else None
+        if pp is not None and pane_id is not None and pane_id == pp.id:
+            return pp
+        return None
+
+    def paste_text(self, sess: Session, text: str, pane=None):
+        """붙여넣기(과 Textual 이 Paste 로 주는 IME 확정분)를 쓴다. `pane` 이 떠 있는 팝업의 패널이면
+        그 PTY 로 — 팝업은 «항상 포커스» 라 키와 같은 곳으로 가야 한다(pytmux-640)."""
+        if not text:
+            return
+        pp = self._popup_pane_for(sess, pane)
+        if pp is not None:
+            self._write_paste(pp, text)
+            return
         win = sess.active_window
-        if not win or not text:
+        if not win:
             return
         self._reset_view(win.active_pane)
         self._write_paste(win.active_pane, text)

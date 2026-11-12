@@ -47,8 +47,9 @@ pub static EN: &[(&str, &str)] = &[
     ("  (서버 pid {pid})", "  (server pid {pid})"),
     ("  (빌드 {name})", "  (build {name})"),
     // ── info.rs — 재시작 점검 판(§10-21ⓓ3 · 정본 `restartcheck.*` 와 같은 모양) ──
-    ("✅ 안전 — 지금 재시작할 수 있다", "✅ Safe — you can restart now"),
-    ("⚠️ 주의 — 아래 FAIL 을 확인할 것", "⚠️ Caution — review the FAIL items below"),
+    // 정본 `restartcheck.safe`/`unsafe` 의 ko/en 그대로(pytmux-595).
+    ("✅ 안전 — restart-all 수행 가능", "✅ Safe — restart-all can proceed"),
+    ("⚠️ 주의 — 아래 FAIL 항목 확인 후 진행", "⚠️ Caution — review FAIL items below before proceeding"),
     // `  [{res}] {label}` 은 두 로케일이 같은 글이라 표에 안 넣는다(같은 번역은
     // 표를 키우기만 하고, 폴백이 이미 그 글을 준다 — `en_tables_have_no_identity_rows`).
     ("  서버 버전: 실행={run}  디스크={disk}", "  Server version: running={run}  disk={disk}"),
@@ -66,10 +67,6 @@ pub static EN: &[(&str, &str)] = &[
     ("(모름)", "(unknown)"),
     ("원격 탭 있음", "has remote tabs"),
     ("로컬", "local"),
-    (
-        "응답 지연(RTT)은 아직 재지 않는다 — 파이썬 클라의 그래프가 이 자리다.",
-        "Round-trip time (RTT) is not measured yet — the Python client's graph goes here.",
-    ),
     ("세션     {name}", "Session    {name}"),
     ("탭       {n}개", "Tabs       {n}"),
     ("패널     {n}개 (이 탭)", "Panes      {n} (this tab)"),
@@ -83,7 +80,7 @@ pub static EN: &[(&str, &str)] = &[
     (" 블록 {n}개", " {n} blocks"),
     (" Claude {n}개", " {n} Claude items"),
     (
-        " · 원격 상류가 Claude 대화를 안 보낸다",
+        " · 원격 상류가 Claude 대화를 안 보냅니다",
         " · the remote upstream does not send Claude conversations",
     ),
     // ── blocks.rs ──
@@ -95,49 +92,49 @@ pub static EN: &[(&str, &str)] = &[
         "{n} chars copied (pytmux buffer only — no OS clipboard tool)",
     ),
     // ── link.rs ──
-    ("기록판이 망가졌다", "the recording pad is broken"),
-    ("보낼 연결이 없다", "no connection to send on"),
-    ("읽기 스레드가 끝났다", "the reader thread ended"),
+    ("기록판이 망가졌습니다", "the recording pad is broken"),
+    ("보낼 연결이 없습니다", "no connection to send on"),
+    ("읽기 스레드가 끝났습니다", "the reader thread ended"),
     // ── transport.rs ──
-    ("주소를 못 찾았다", "address not found"),
+    ("주소를 못 찾았습니다", "address not found"),
     (
-        "이 OS 에는 AF_UNIX 경로가 없다 — 서버는 루프백 TCP 로 듣는다",
+        "이 OS 에는 AF_UNIX 경로가 없습니다 — 서버는 루프백 TCP 로 듣습니다",
         "no AF_UNIX path on this OS — the server listens on loopback TCP",
     ),
     // ── client.rs — AttachError ──
-    ("서버를 찾을 수 없다 (후보: {names})", "Server not found (candidates: {names})"),
-    ("{endpoint} 에 연결하지 못했다: {source}", "Could not connect to {endpoint}: {source}"),
+    ("서버를 찾을 수 없습니다 (후보: {names})", "Server not found (candidates: {names})"),
+    ("{endpoint} 에 연결하지 못했습니다: {source}", "Could not connect to {endpoint}: {source}"),
     (
-        "포트파일에서 포트를 못 읽었다: {path}",
+        "포트파일에서 포트를 못 읽었습니다: {path}",
         "Could not read the port from the port file: {path}",
     ),
     (
-        "인증 토큰을 못 읽었다: {path} (서버가 띄운 사용자와 같은 계정인지 확인)",
+        "인증 토큰을 못 읽었습니다: {path} (서버가 띄운 사용자와 같은 계정인지 확인하세요)",
         "Could not read the auth token: {path} (check you are the same account that started the server)",
     ),
     (
-        "루프백이 아닌 호스트({host})에는 이 상자의 인증 토큰을 보내지 않는다 — 원격은 remote-attach 를 쓴다 (꼭 필요하면 PYTMUX_ALLOW_REMOTE_TOKEN=1)",
+        "루프백이 아닌 호스트({host})에는 이 상자의 인증 토큰을 보내지 않습니다 — 원격은 remote-attach 를 쓰세요 (꼭 필요하면 PYTMUX_ALLOW_REMOTE_TOKEN=1)",
         "Not sending this machine's auth token to a non-loopback host ({host}) — use remote-attach for remote servers (set PYTMUX_ALLOW_REMOTE_TOKEN=1 if you really need to)",
     ),
     ("핸드셰이크 실패: {err}", "Handshake failed: {err}"),
     // ── framing.rs — FrameError ──
-    ("연결이 닫혔다", "Connection closed"),
+    ("연결이 닫혔습니다", "Connection closed"),
     (
-        "프레임이 너무 크다: {advertised} 바이트 (상한 {limit})",
+        "프레임이 너무 큽니다: {advertised} 바이트 (상한 {limit})",
         "Frame too large: {advertised} bytes (limit {limit})",
     ),
     // 길이 자리에 본문 글자가 온 경우의 덧말(pytmux-171) — 그 수를 손으로
     // 16진수로 바꿔 보는 일을 오류가 대신한다.
     (
-        "— 길이 자리에 글자가 왔다: {text} (스트림이 어긋났다)",
+        "— 길이 자리에 글자가 왔습니다: {text} (스트림이 어긋났습니다)",
         "— text arrived where the length should be: {text} (the stream is out of sync)",
     ),
     (
-        "프레임이 오다 말았다: {got}/{want} 바이트",
+        "프레임이 중간에 끊겼습니다: {got}/{want} 바이트",
         "Frame stopped mid-way: {got}/{want} bytes",
     ),
     ("입출력 오류: {err}", "I/O error: {err}"),
-    ("프레임을 해석할 수 없다: {err}", "Could not decode the frame: {err}"),
+    ("프레임을 해석할 수 없습니다: {err}", "Could not decode the frame: {err}"),
     // ── boot.rs — 서버를 못 띄웠을 때(§10-24 · pytmux-36) ──
     // 어디를 찾아봤는지 나열하는 두 마디. `$PYTMUX_BIN` 같은 환경변수 이름은 번역
     // 대상이 아니라(모듈 머리말의 "서버 어휘" 규약) 이 둘만 옮긴다.
@@ -157,13 +154,13 @@ pub static EN: &[(&str, &str)] = &[
         "If a server is already up, point at it with `pytmux-gui --socket <endpoint>`; to see only the drawing, run `pytmux-gui demo`",
     ),
     (
-        "서버 기동을 실행하지 못했다: {source} ({argv})",
+        "서버 기동을 실행하지 못했습니다: {source} ({argv})",
         "Could not execute the server launch: {source} ({argv})",
     ),
     ("서버 기동 실패", "Server launch failed"),
     ("서버 기동 실패: {detail}", "Server launch failed: {detail}"),
     (
-        "서버 기동이 시한 안에 끝나지 않았다",
+        "서버 기동이 시한 안에 끝나지 않았습니다",
         "The server launch did not finish in time",
     ),
     // ── status.rs — 붙어 있지 않을 때의 그 한 줄(message_line) ──

@@ -1770,7 +1770,8 @@ pub fn key_help_lines(binds: &[crate::config::Bind]) -> Vec<(String, String)> {
         // 끝낸다"이고 prefix 의 `d` 는 tmux 의 **detach** 다. 라벨이 액션 하나에 묶여
         // 있으면 화면이 사용자에게 다른 말을 한다.
         let what = if b.key == "d" && b.action == Action::Quit {
-            t("detach (이 클라만 빠진다)").to_owned()
+            // 정본 키 도움말 `klist.p_d` 그대로(pytmux-595).
+            t("detach").to_owned()
         } else {
             b.action.label().to_owned()
         };
@@ -1836,13 +1837,17 @@ pub fn key_help_lines(binds: &[crate::config::Bind]) -> Vec<(String, String)> {
 /// 여섯 줄이었고 그 둘이 한 줄이었는데, 둘은 **서로 다른 일**을 한다 — 평드래그는
 /// 선택→복사이고 Shift+드래그는 그 드래그를 패널 안 앱에 넘긴다(p4 65423 에서 뒤바뀐
 /// 자리다). 묶어 두면 "Shift 를 왜 쓰나"가 한 줄 꼬리로 밀려 안 읽힌다.
+///
+/// ★ **문구도 정본 글 그대로**다(pytmux-652) — 정본 한 줄(`keys.g_*` = `<제스처> — <하는 일>`)을 첫
+/// ` — ` 에서 둘로 가른 것이다(휠 줄도 정본 낱말 「스크롤백 스크롤」). 재는 자 =
+/// `proto/tests/screen_content_conformance.rs`(`the_rows_of_the_list_screens_match_the_canon` 의 `Keys`).
 pub static MOUSE_GESTURES: &[(&str, &str)] = &[
-    ("휠", "커서 아래 패널 스크롤 · 클릭 — 패널 포커스"),
+    ("휠", "스크롤백 스크롤 · 클릭 — 패널 포커스"),
     ("우클릭", "패널 메뉴(분할·줌·회전·삭제…)"),
     ("경계선 드래그", "패널 크기 조절"),
-    ("패널 헤더 드래그", "패널을 들어 다른 패널과 swap · 탭으로 이동 · [+]에 놓아 새 탭"),
-    ("드래그", "텍스트 선택 → 클립보드 복사(최소 이동 mouse-drag-threshold)"),
-    ("Shift+드래그", "패널 안 앱에 마우스 전달(에디터 패널 스플리터 등)"),
+    ("패널 헤더(위 테두리) 드래그", "패널을 들어 다른 패널과 swap · 탭으로 이동 · [+]에 놓아 새 탭"),
+    ("왼쪽 드래그", "텍스트 선택 → 클립보드 복사(최소 이동 mouse-drag-threshold)"),
+    ("Shift+드래그", "내부 앱에 마우스 전달(에디터 패널 스플리터 등)"),
     ("탭 드래그", "탭 재정렬 · 패널 위로 끌어 분할"),
 ];
 

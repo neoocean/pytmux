@@ -372,10 +372,12 @@ pub static LEDGER: &[Row] = &[
     r(
         Axis::ScreenItems,
         "PluginView:token-log-models-daily",
-        Class::Todo("pytmux-644"),
+        Class::Pixels,
         "토큰 로그의 **모델·일별** 판은 정본 `TokenLogScreen` 띠에 없다 — 서버 `screenspec._HUB_EXTRA` 가 \
-         띠 **뒤에** 붙인다(더하기만 · 순환에서 빠진다 · pytmux-617). 정본에도 낼 수 있다(ⓖ3 ⑷)",
-        "없음 — 정본의 차례·첫 화면·순환은 그대로다",
+         띠 **뒤에** 붙인다(`proto::session::PluginTab::extra` · 더하기만 · 순환에서 빠진다 · pytmux-617). \
+         사람 결정(2026-11-12 ① · pytmux-644): 정본의 것을 하나도 안 빼는 한 GUI 가 얹는 표면은 남긴다",
+        "없음 — 정본 띠의 차례·첫 화면·순환을 안 흐트러뜨린다(`session_tests::\
+         the_tab_cycle_skips_the_tabs_the_canon_strip_does_not_have`)",
     ),
     // ── 명령줄 ────────────────────────────────────────────────────────────────
     //
@@ -538,22 +540,7 @@ pub static LEDGER: &[Row] = &[
          세우지 않게). 정본 Windows 갈래와 같은 길",
         "없음 — 차례만 다르고 결과(새 클라 하나 · 서버 하나)는 같다",
     ),
-    // ── 명령줄 ────────────────────────────────────────────────────────────────
-    d(
-        Axis::Cli,
-        "pytmux-config-write",
-        Class::Todo("pytmux-643"),
-        "설정 쓰기 자리 — 정본 `config_path_for_write` 는 `$PYTMUX_CONFIG` 를 **파일이 있을 때만** 본다. \
-         GUI 는 서 있으면 그 자리에 쓴다(격리 레시피가 그 동작에 기댄다)",
-        "`$PYTMUX_CONFIG` 가 없는 파일을 가리킬 때 정본은 다음 후보(홈 설정)에 쓰고 GUI 는 새 파일을 만든다",
-    ),
-    d(
-        Axis::Cli,
-        "tilde-user",
-        Class::Todo("pytmux-643"),
-        "`~user/…` — 정본 `expanduser` 는 그 사용자가 있으면 그 홈으로 편다. GUI 는 펴지 않고 상대경로로 본다",
-        "`--socket`/상태 경로에 `~other/…` 를 쓴 사람의 뜻",
-    ),
+    // (명령줄의 `pytmux-config-write`·`tilde-user` 두 줄은 pytmux-643 이 정본에 맞춰 지웠다.)
 ];
 
 /// 표식(`DIVERGE(<이름>)`)이 가리킬 수 있는 줄 이름 — `CanonDiffers` 줄 전부.

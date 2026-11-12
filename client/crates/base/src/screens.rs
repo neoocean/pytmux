@@ -140,8 +140,9 @@ pub enum Screen {
     /// 아니라 방향키 넷이 자기 것이다.
     ///
     /// 파이썬은 상태줄의 두 버튼(REC 캡처·토큰 사용량)이 **한 팝업**을 열되 서로 다른 탭을
-    /// 펴도록 통합한 것이다. 그 두 탭은 플러그인이 채우므로 우리에게는 없고, 코어가 늘
-    /// 갖는 **서버** 탭이 우리 것의 첫 탭이다.
+    /// 펴도록 통합한 것이다. 그 두 탭은 플러그인이 채운다 — 우리도 REC 캡처 탭을 서버가 준
+    /// 자료로 짓는다(`proto::info` · 캡처를 켰을 때 맨 앞 · pytmux-589). 그 뒤에 코어가 늘
+    /// 갖는 **서버**·**세션** 탭이 온다.
     InfoTabs,
     /// 여러 줄 작성창(파이썬 `ComposePromptScreen` · `esc Insert`).
     ///
@@ -287,15 +288,17 @@ impl Screen {
             Screen::Confirm => "확인",
             Screen::Commands => "명령",
             Screen::Settings => "설정",
-            Screen::Plugins => "플러그인",
+            // ★ 정본 글 그대로다(pytmux-648). `{…}` 자리는 뷰가 [`Screens::panel_title`] 로 채운다.
+            Screen::Plugins => "플러그인 관리",
             // 제목의 주인은 **스펙**이다(플러그인이 정한다) — 뷰가 그것으로 덮어 그린다.
             // 여기 값은 스펙이 제목을 안 줬을 때의 폴백이다.
             Screen::PluginView => "플러그인 화면",
             Screen::Menu => "메뉴",
-            Screen::Notices => "알림 이력",
+            Screen::Notices => "알림 이력 (최근 {n})",
             Screen::Hooks => "훅",
-            Screen::Options => "인자",
-            Screen::Layouts => "레이아웃",
+            // 정본 인자 폼 `screen.options_title` — 레이아웃 고르기도 정본은 같은 판(`select-layout` 의
+            // 인자 폼)이다.
+            Screen::Options | Screen::Layouts => "{cmd} 옵션 · ←→ 값 · Enter 실행 · Esc",
             // 정본 `screen.layout_load` — 고른 쪽(새 탭/덮어쓰기)에 맞는 제목은 뷰가
             // `Screens::saved_layouts_title` 로 덮어 그린다(정본 `_open_choose_layout`).
             Screen::SavedLayouts => "레이아웃 불러오기",
@@ -307,16 +310,16 @@ impl Screen {
             //   이 판을 열었나」를 사용자가 못 잇는다(pytmux-457).
             Screen::DebugStats => "debug-stats",
             Screen::ShellOutput => "셸 결과",
-            Screen::MergeRemote => "원격 탭 머지",
+            Screen::MergeRemote => "원격 탭 머지 → {dir} · Enter 선택 · h/v 방향 · Esc",
             // 파이썬 `compose.title` 과 같은 문구다.
             Screen::Compose => "프롬프트 작성 (블록 선택 편집)",
             // 파이썬 `dialog.status_title` 과 같은 자리다.
             Screen::InfoTabs => "상태",
             // §10-21ⓓ — 종전 화면 아래 구역의 머리줄이 하던 말을 판 제목이 한다.
             Screen::Summary => "블록 · Claude 요약",
-            // 진짜 제목(쿼리+건수)은 **회신이 준다** — 이건 회신 오기 전·못 받았을
-            // 때의 폴백이다(PluginView 와 같은 자리).
-            Screen::SearchResults => "전역 검색",
+            // 진짜 제목(쿼리+건수)은 **회신이 준다**(같은 글 — `SearchResults::headline`) — 이건
+            // 회신 오기 전·못 받았을 때의 폴백이다(PluginView 와 같은 자리).
+            Screen::SearchResults => "전역 검색 «{q}» — {n}건 · 패널 {panes}개",
         })
     }
 
@@ -531,29 +534,36 @@ impl Screen {
     pub fn hint(self) -> &'static str {
         crate::i18n::t(match self {
             Screen::Keys => "(아무 키나 닫기 · ↑↓ 스크롤)",
-            Screen::Tabs => "(Tab/↑↓ 고르기 · Enter 전환 · Esc 취소)",
+            // ★ 판의 제목·꼬리줄은 **정본 글 그대로**다(pytmux-648 · 사람 결정 2026-11-13 — 정본에 그
+            //   판의 글이 있으면 그 글). 괄호만 우리 꼬리줄 문법이다. 재는 자 =
+            //   `proto/tests/screen_content_conformance.rs`(`titles_and_hints_match_the_canon_in_both_locales`).
+            Screen::Tabs => "(Tab 다음 · Shift+Tab 이전 · Enter 전환 · Esc 취소)",
             Screen::Tree => "(↑↓ 고르기 · Enter 이동 · Esc 취소)",
             Screen::Buffers => "(↑↓ 고르기 · Enter 붙여넣기 · Esc 취소)",
             Screen::Prompt => "(Enter 확정 · Esc 취소)",
             // 정본과 같은 안내다(`↔ 이동 · Enter 확정 · y/n · Esc 취소`). Enter 가
             // **고른 버튼**을 누르는 것이라, 안내도 "Enter 예"라고 적으면 안 된다.
-            Screen::Confirm => "(←→ 고르기 · Enter 확정 · y/n · Esc 취소)",
-            Screen::Commands => "(치면 좁혀진다 · ←→ 분류 · ↑↓ 고르기 · Enter 실행 · Esc 취소)",
-            Screen::Settings => "(↑↓ 고르기 · ←→ 값 · Tab 카테고리 · Enter 바꾸기 · Esc 닫기)",
+            Screen::Confirm => "(←→ 이동 · Enter 확정 · y/n · Esc 취소)",
+            Screen::Commands => {
+                "(타이핑 검색 · ←→/클릭 탭 · ↑↓ 명령 · Home/End 처음·끝 · Enter 선택 · Esc 닫기)"
+            }
+            Screen::Settings => {
+                "(↑↓ 이동 · ←→ 값 변경 · Tab/클릭 카테고리 · Enter 입력/열기 · Esc 닫기)"
+            }
             // 설정 화면과 같은 손인데 **분류가 없어** `Tab` 칸만 뺀다 — 안내에 적힌
             // 키가 안 먹으면 도움말이 없느니만 못하다(이 함수 머리말).
             Screen::Cursor => "(↑↓ 고르기 · ←→ 값 · Enter 바꾸기 · Esc 닫기)",
             // 정본 `InfoScreen` 의 손 그대로(아무 키나 닫고 넷이 굴린다).
             Screen::DebugStats => "(아무 키나 닫기 · ↑↓ 스크롤)",
             // Space 도 받는 것은 파이썬 클라와 같다 — 체크박스 목록의 손버릇이다.
-            Screen::Plugins => "(↑↓ 고르기 · Enter/Space 켜고끄기 · Esc 닫기)",
+            Screen::Plugins => "(Space/Enter 토글 · Esc 닫기 · 서버 기여 플러그인은 재시작에 완전 반영)",
             // 안내도 스펙이 준다(플러그인이 자기 키를 안다) — 이건 폴백이다.
             Screen::PluginView => "(↑↓ 이동 · Enter 실행 · Esc 닫기)",
             Screen::Menu => "(↑↓ 고르기 · → 하위 · ← 뒤로 · Enter 실행 · Esc 취소)",
             // 알림 이력은 `Esc` 만 닫고(pytmux-273 ②) 커서·`Enter` 펼치기·`c` 복사가 있다
             // (pytmux-539). 종전 꼬리줄 「아무 키나 닫기」는 273 뒤로 거짓말이었다 — 후 화면
             // (539 첨부)이 그 줄을 보여 줬다.
-            Screen::Notices => "(↑↓ 이동 · Enter 펼치기 · c 복사 · Esc 닫기)",
+            Screen::Notices => "(↑↓ PgUp/PgDn Home/End 이동 · ⏎ 전문 · c 복사 · Esc 닫기)",
             Screen::Hooks => "(아무 키나 닫기 · ↑↓ 스크롤)",
             Screen::Layouts => "(↑↓ 고르기 · Enter 적용 · Esc 취소)",
             Screen::SavedLayouts => "(↑↓ 고르기 · Enter 불러오기 · Esc 취소)",
@@ -574,7 +584,7 @@ impl Screen {
             Screen::InfoTabs => "(←→ 탭·닫기[x] · ↑↓ 항목 · Enter/Esc 닫기)",
             Screen::Summary => "(아무 키나 닫기 · ↑↓ 스크롤)",
             // 진짜 안내(상한·누락 상류)는 회신이 준다 — 이건 회신 오기 전의 폴백.
-            Screen::SearchResults => "(↑↓ 고르기 · Enter 이동 · Esc 취소)",
+            Screen::SearchResults => "(↑↓ 이동 · Enter 그 자리로 · Esc 닫기)",
         })
     }
 
@@ -927,17 +937,19 @@ impl Prompt {
         crate::i18n::t(match self {
             Prompt::RenameTab => "탭 이름:",
             Prompt::MoveTab => "옮길 자리(번호):",
-            Prompt::KillPane => "이 패널을 닫을까?",
+            Prompt::KillPane => "이 패널을 닫을까요?",
             // 정본 `dialog.kill_tab_msg` 와 같은 자리다. 아래 셋은 **상황이 다르면 다른
             // 것을 잃는다**는 것을 적는다 — 되돌릴 수 없는 화면에서 문구가 상황을 모르면
             // 사용자는 무엇이 사라지는지 모른 채 누른다.
-            Prompt::KillTab => "이 탭을 닫을까? 탭의 셸이 종료된다.",
-            Prompt::KillTabLast => "이 탭을 닫으면 pytmux 가 종료된다(모든 셸 종료). 닫을까?",
+            // ★ 아래 넷은 정본 `dialog.*_msg` 글 그대로다(pytmux-595 — 정본에 같은 뜻의 글이 있으면
+            //   그 글 · 재는 자 = `proto/tests/canon_phrase_conformance.rs`).
+            Prompt::KillTab => "이 탭을 닫을까요? 탭의 셸이 종료됩니다.",
+            Prompt::KillTabLast => "이 탭을 닫으면 pytmux 가 종료됩니다(모든 셸 종료). 닫을까요?",
             Prompt::KillTabLastRemote => {
-                "이것이 마지막 로컬 탭이다. 닫으면 pytmux 가 종료되고(모든 셸 종료) 열려 있는 원격 탭 보기도 함께 끊긴다. 닫을까?"
+                "이것이 마지막 로컬 탭입니다. 닫으면 pytmux 가 종료되고(모든 셸 종료) 열려 있는 원격 탭 보기도 함께 끊깁니다. 닫을까요?"
             }
             Prompt::KillTabPinned => {
-                "고정 탭 '{name}' 을(를) 닫을까? 고정 탭은 상시 유지용이다 — 탭의 셸이 종료된다."
+                "고정 탭 '{name}' 을(를) 닫을까요? 고정 탭은 상시 유지용입니다 — 탭의 셸이 종료됩니다."
             }
             // 정본 `dialog.detach_remote_msg` 그대로(`{host}` 는 detail 이 채운다).
             Prompt::DetachRemoteTab => {
@@ -947,7 +959,7 @@ impl Prompt {
             Prompt::SwapTab => "맞바꿀 탭 번호:",
             // 문구의 주인은 **플러그인**이다(스펙의 `text`) — 뷰가 그것으로 덮어 그린다.
             // 여기 값은 스펙이 물음을 안 줬을 때의 폴백이다.
-            Prompt::PluginAsk => "플러그인이 물었다:",
+            Prompt::PluginAsk => "플러그인의 물음:",
             // 빈 대답이 **뜻을 갖는** 자리라 물음에 적는다(원격 떼기와 같은 부류).
             Prompt::PipePane => "출력을 흘릴 명령 (비우면 끄기):",
             Prompt::JoinPane => "합칠 패널이 있는 탭 번호:",
@@ -977,12 +989,13 @@ impl Prompt {
             Prompt::SaveTabLayout => "저장할 배치 이름:",
             // ★ 덮어쓴다는 말을 물음에 적는다 — 지금 배치가 사라지는 것을 모르고
             // 이름을 치는 사람이 있다.
-            Prompt::LoadTabLayout => "불러올 배치 이름 (지금 탭을 덮어쓴다):",
+            Prompt::LoadTabLayout => "불러올 배치 이름 (지금 탭을 덮어씁니다):",
             Prompt::LoadTabLayoutNew => "불러올 배치 이름 (새 탭으로):",
             Prompt::SetPrefix => "새 prefix 키 (C-a · M-x 표기):",
-            Prompt::KillServer => "서버를 끝낼까? (이 서버의 모든 탭과 셸이 사라진다)",
-            Prompt::RestartServer => "서버를 재시작할까? (셸은 살고 화면이 잠깐 끊긴다)",
-            Prompt::RestartAll => "서버와 이 클라를 함께 재시작할까? (셸은 산다)",
+            // 정본 `dialog.kill_server_msg` 그대로(pytmux-595).
+            Prompt::KillServer => "서버와 모든 탭·셸을 종료합니다. 이 pytmux 세션이 끝납니다. 계속할까요?",
+            Prompt::RestartServer => "서버를 재시작할까요? (셸은 유지되고 화면이 잠깐 끊깁니다)",
+            Prompt::RestartAll => "서버와 이 클라를 함께 재시작할까요? (셸은 유지됩니다)",
             Prompt::RemoteAttach => "붙을 상자 (host):",
             Prompt::RemoteNewTab => "새 셸을 띄울 상자 (host):",
             Prompt::RemoteDetach => "뗄 상자 (host · 비우면 전부):",
@@ -1192,6 +1205,33 @@ impl Screens {
     /// 원격 머지의 분할 방향(참 = 좌우).
     pub fn merge_horizontal(&self) -> bool {
         self.merge_horizontal
+    }
+
+    /// 판 제목을 **채워서**(pytmux-648) — [`Screen::title`] 은 정본 글(자리표 `{…}` 포함)이고 여기서
+    /// 자리를 채운다. 정본이 같은 자리에 넣는 값 그대로다:
+    /// 알림 이력 `{n}` = 목록 길이 · 인자 폼 `{cmd}` = 그 명령(레이아웃 고르기는 `select-layout`) ·
+    /// 원격 머지 `{dir}` = `가로 │`/`세로 ─`(정본 `screen.merge_remote_lr`/`_tb`). 전역 검색은 회신의
+    /// 제목(`SearchResults::headline`)이 덮고, 회신 전에는 자리를 `…` 로 둔다.
+    pub fn panel_title(&self, screen: Screen, notices: usize) -> String {
+        // `title()` 은 이미 이 로케일의 글이다 — 자리표 이름은 두 언어가 같다(정본 카탈로그와 같다).
+        let fill = |args: &[(&str, &str)]| {
+            let mut out = screen.title().to_owned();
+            for (name, value) in args {
+                out = out.replace(&format!("{{{name}}}"), value);
+            }
+            out
+        };
+        match screen {
+            Screen::Notices => fill(&[("n", &notices.to_string())]),
+            Screen::Options => fill(&[("cmd", self.options.map_or("", |o| o.command))]),
+            Screen::Layouts => fill(&[("cmd", "select-layout")]),
+            Screen::MergeRemote => fill(&[(
+                "dir",
+                crate::i18n::t(if self.merge_horizontal { "가로 │" } else { "세로 ─" }),
+            )]),
+            Screen::SearchResults => fill(&[("q", "…"), ("n", "…"), ("panes", "…")]),
+            _ => screen.title().to_owned(),
+        }
     }
 
     /// 지금 무엇을 묻고 있나(입력·확인 화면일 때).

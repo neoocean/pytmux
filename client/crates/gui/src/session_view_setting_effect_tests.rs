@@ -12,9 +12,8 @@
 //!   프레임(`server_frames`)과 JSON 그대로 같다. 바꾼 값이 다르면 프레임도 다르므로 그 자체가 효과다.
 //! - **클라 줄** — [`probe`] 가 값을 세우고 그 값을 읽는 자리를 실제로 누르거나(마우스·붙여넣기·복사·명령)
 //!   한 프레임을 그려(글자·색·세로 자리) 관측값 문자열을 낸다.
-//! - **소스 줄**([`SOURCE_ONLY`]) — 뷰 밖(창 제목 · 전역 로케일·모호폭)에 닿아 이 하네스로 못 누르는 줄.
-//!   그 값을 읽는 **소비처 줄이 소스에 있는지**를 잰다(설정 판 스냅샷 `setting_values` 는 소비처로 안 센다).
-//!   행동으로 올리는 일은 pytmux-645 이고 수에 상한이 있다.
+//! - **소스 줄**([`SOURCE_ONLY`]) — 이 하네스로 못 누르는 줄의 자리. 그때는 소비처 줄이 소스에 있는지만 잰다.
+//!   지금 **0줄**이다(pytmux-645 가 일곱을 행동으로 올렸다 · 상한 0).
 //!
 //! 선언된 무효과(`SettingNote::NoEffectHere` — `alt-scroll`)는 거꾸로 «달라지지 않는다» 를 **양성으로**
 //! 잰다 — 소비처가 생기면 선언이 낡았다고 운다.
@@ -29,16 +28,23 @@ fn fixture() -> Value {
 
 /// 이 하네스로 못 누르는 줄 — (키, 소비처가 읽는 `self.config.<칸>` 또는 정확한 소스 조각, 이슈).
 /// ⛔ 늘리지 않는다([`SOURCE_ONLY_CEILING`]).
-const SOURCE_ONLY: &[(&str, &str, &str)] = &[
-    ("ambiguous-width", "proto::compose::resolve_ambiguous(", "pytmux-578"),
-    ("language", "Action::SetLang(loc) =>", "pytmux-645"),
-    ("mode-keys", "self.mode.press_routed(&self.config.mode_keys", "pytmux-645"),
-    ("mouse-debug", "opts.mouse_debug", "pytmux-645"),
-    ("mouse-log", "opts.mouse_debug", "pytmux-645"),
-    ("set-titles", "if !self.config.set_titles", "pytmux-645"),
-    ("set-titles-string", "window_title(&self.config.set_titles_string)", "pytmux-645"),
-];
-const SOURCE_ONLY_CEILING: usize = 7;
+///
+/// 비었다(pytmux-645 · 2026-11-13) — 일곱 줄을 행동으로 올렸다: 모호폭(`set_ambig` 프레임) · 언어(설정 판 →
+/// `lang_setter`) · mode-keys(스크롤 모드 키가 내는 `scroll` 프레임) · mouse-debug/-log(진단 로그 파일) ·
+/// set-titles/-string(`title_to_set`). 비어 있어도 표를 두는 것은 다음 줄이 같은 모양·같은 상한으로 서게 하려는 것이다.
+const SOURCE_ONLY: &[(&str, &str, &str)] = &[];
+const SOURCE_ONLY_CEILING: usize = 0;
+
+thread_local! {
+    /// `language` 줄이 로케일 함수에 넘긴 값(전역 로케일 대신 여기 적는다).
+    static LAST_LANG: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+fn record_lang(loc: &str) -> &'static str {
+    let loc = if loc == "en" { "en" } else { "ko" };
+    LAST_LANG.with(|c| c.set(Some(loc)));
+    loc
+}
 
 /// 정본 `SETTINGS` 에 있는데 GUI 설정 판에 줄이 없는 것 — (키, 이슈).
 const NOT_IN_OUR_SETTINGS: &[(&str, &str)] = &[("monitor-bell", "pytmux-642")];
@@ -214,6 +220,70 @@ fn probe(key: &str, v: &str) -> Option<String> {
             );
             format!("{} {}", tab.to_frame(), win.to_frame())
         }
+        "ambiguous-width" => {
+            // 서버로 나가는 `set_ambig` 프레임과 뷰의 폭 판정(pytmux-578). 폭은 프로세스 전역이기도 해서
+            // 재기 전 값으로 돌려 둔다 — 형제 시험이 보는 폭을 바꾸지 않게.
+            let before = proto::compose::ambiguous_wide();
+            let (mut view, tx, sent) = harness();
+            tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+            view.pump_headless();
+            view.apply_set_line(&format!("ambiguous-width {v}"));
+            view.pump_headless();
+            let got = format!("wide={} {}", view.ambig_wide, sent_frames(&sent));
+            proto::compose::set_ambiguous_wide(before);
+            got
+        }
+        "language" => {
+            // 설정 판 줄을 실제로 골라 `Action::SetLang` 이 로케일 함수에 무엇을 넘기나 — 전역은 안 건드린다.
+            let (mut view, _tx, _sent) = harness();
+            view.lang_setter = record_lang;
+            LAST_LANG.with(|c| c.set(None));
+            let row = row_of("language");
+            let idx = ["ko", "en"].iter().position(|c| *c == v).unwrap();
+            // 이미 그 로케일이면 판은 아무것도 안 한다(`None`) — 그것도 관측값이다.
+            view.apply_setting_pick(base::config::setting_pick_at(row, &view.setting_values(), idx));
+            format!("{:?}", LAST_LANG.with(|c| c.get()))
+        }
+        "mode-keys" => {
+            let (mut view, tx, sent) = harness();
+            tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+            view.pump_headless();
+            view.config.mode_keys = v;
+            // 스크롤 모드는 키 표가 연다(`prefix [` → `ModeChanged(Scroll)`) — 액션으로는 안 들어간다.
+            view.handle_key(Key::Char('b'), Mods::CTRL);
+            view.handle_key(Key::Char('['), Mods::NONE);
+            view.pump_headless();
+            sent.lock().unwrap().clear();
+            view.handle_key(Key::Char('u'), Mods::CTRL);
+            view.handle_key(Key::Char('n'), Mods::CTRL);
+            view.pump_headless();
+            sent_frames(&sent)
+        }
+        "mouse-debug" | "mouse-log" => {
+            let (mut view, sent) = mouse_app_view(3);
+            let path = std::env::temp_dir()
+                .join(format!("pytmux-effect-{}-{key}-{v}.mouse.log", std::process::id()));
+            let _ = std::fs::remove_file(&path);
+            view.set_mouse_log_path_for_test(path.clone());
+            view.apply_set_line(&format!("{key} {v}"));
+            let _ = press_drag_release(&mut view, &sent, (7, 3), (7, 3));
+            let logged = std::fs::read_to_string(&path).map(|t| t.lines().count()).unwrap_or(0);
+            let _ = std::fs::remove_file(&path);
+            format!("logged_lines>0={}", logged > 0)
+        }
+        "set-titles" | "set-titles-string" => {
+            let (mut view, tx, _sent) = harness();
+            tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+            tx.send(LinkEvent::Message(Box::new(status_one_tab("TITLE-TAB")))).unwrap();
+            view.pump_headless();
+            if key == "set-titles" {
+                view.config.set_titles = on;
+            } else {
+                view.config.set_titles = true;
+                view.config.set_titles_string = v;
+            }
+            format!("{:?}", view.title_to_set())
+        }
         "status-interval" => {
             let (mut view, _tx, _sent) = harness();
             view.config.status_interval = v.parse().unwrap();
@@ -249,6 +319,11 @@ fn two_values(key: &str, kind: &str, default: &str) -> (String, String) {
         "status-bg" | "status-fg" => "red",
         "status" => "off",
         "status-format" => "FMT-ORACLE",
+        "language" => if default == "en" { "ko" } else { "en" },
+        "mode-keys" => "emacs",
+        "ambiguous-width" => if default == "wide" { "narrow" } else { "wide" },
+        "mouse-debug" | "mouse-log" => "on",
+        "set-titles-string" => "#W-ORACLE",
         "plugins" | "list-keys" => "pick",
         _ if kind == "bool" => if default == "on" { "off" } else { "on" },
         _ => panic!("{key}: 두 번째 값을 정하지 않았다"),
@@ -256,6 +331,8 @@ fn two_values(key: &str, kind: &str, default: &str) -> (String, String) {
     let default = match key {
         "status" => "1".to_owned(),
         "status-format" => "".to_owned(),
+        "mouse-debug" | "mouse-log" => "off".to_owned(),
+        "set-titles-string" => "#S:#I:#W".to_owned(),
         "plugins" | "list-keys" => "none".to_owned(),
         _ => default.to_owned(),
     };

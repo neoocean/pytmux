@@ -538,5 +538,537 @@
         ]
       }
     ]
+  },
+  "rows": {
+    "ko": {
+      "inputs": {
+        "buffers": [
+          {
+            "i": 0,
+            "preview": "첫 버퍼"
+          },
+          {
+            "i": 1,
+            "preview": "[x] two"
+          }
+        ],
+        "layouts": [
+          "work",
+          "play"
+        ],
+        "merge_tabs": [
+          {
+            "index": 0,
+            "name": "⇄office:a",
+            "active": true,
+            "remote": true
+          },
+          {
+            "index": 1,
+            "name": "⇄office:b",
+            "remote": true
+          },
+          {
+            "index": 2,
+            "name": "local"
+          },
+          {
+            "index": 3,
+            "name": "⇄home:c",
+            "remote": true
+          },
+          {
+            "index": 4,
+            "name": "⇄office:d",
+            "remote": true
+          }
+        ],
+        "shell": [
+          "a\nb\n",
+          "a\r\nb",
+          "x\ry",
+          "l0\nl1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nl19\nl20\nl21\nl22\nl23\nl24\nl25\nl26\nl27\nl28\nl29\nl30\nl31\nl32\nl33\nl34\nl35\nl36\nl37\nl38\nl39\nl40\nl41\nl42\nl43\nl44",
+          "   "
+        ],
+        "search": {
+          "t": "search_results",
+          "query": "err",
+          "panes": 2,
+          "items": [
+            {
+              "win": 0,
+              "tab": "sh",
+              "title": "zsh",
+              "line": 12,
+              "text": "error here"
+            },
+            {
+              "win": 1,
+              "gwin": 3,
+              "tab": "⇄h:x",
+              "title": "t",
+              "line": 5,
+              "text": "remote err",
+              "remote": true
+            },
+            {
+              "win": 2,
+              "tab": "py",
+              "title": "",
+              "text": "no line"
+            }
+          ]
+        },
+        "blocks": [
+          {
+            "cmd": "cmd0",
+            "cwd": "",
+            "state": "done",
+            "exit": 1
+          },
+          {
+            "cmd": "cmd1",
+            "cwd": "/w",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd2",
+            "cwd": "",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd3",
+            "cwd": "/w",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd4",
+            "cwd": "",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd5",
+            "cwd": "/w",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd6",
+            "cwd": "",
+            "state": "done",
+            "exit": 0
+          }
+        ],
+        "binds": {
+          "x": "split-window -h"
+        }
+      },
+      "buffers": {
+        "items": [
+          "0: 첫 버퍼",
+          "1: [x] two"
+        ],
+        "empty": 1
+      },
+      "saved_layouts": {
+        "items": [
+          "work",
+          "play"
+        ],
+        "empty": 1
+      },
+      "merge_remote": [
+        "2: ⇄office:b",
+        "5: ⇄office:d"
+      ],
+      "shell": [
+        [
+          "a",
+          "b"
+        ],
+        [
+          "a",
+          "b"
+        ],
+        [
+          "x",
+          "y"
+        ],
+        [
+          "l0",
+          "l1",
+          "l2",
+          "l3",
+          "l4",
+          "l5",
+          "l6",
+          "l7",
+          "l8",
+          "l9",
+          "l10",
+          "l11",
+          "l12",
+          "l13",
+          "l14",
+          "l15",
+          "l16",
+          "l17",
+          "l18",
+          "l19",
+          "l20",
+          "l21",
+          "l22",
+          "l23",
+          "l24",
+          "l25",
+          "l26",
+          "l27",
+          "l28",
+          "l29",
+          "l30",
+          "l31",
+          "l32",
+          "l33",
+          "l34",
+          "l35",
+          "l36",
+          "l37",
+          "l38",
+          "l39"
+        ],
+        null
+      ],
+      "keys": [
+        "마우스 제스처",
+        "  휠 — 스크롤백 스크롤 · 클릭 — 패널 포커스",
+        "  우클릭 — 패널 메뉴(분할·줌·회전·삭제…)",
+        "  경계선 드래그 — 패널 크기 조절",
+        "  패널 헤더(위 테두리) 드래그 — 패널을 들어 다른 패널과 swap · 탭으로 이동 · [+]에 놓아 새 탭",
+        "  왼쪽 드래그 — 텍스트 선택 → 클립보드 복사(최소 이동 mouse-drag-threshold)",
+        "  Shift+드래그 — 내부 앱에 마우스 전달(에디터 패널 스플리터 등)",
+        "  탭 드래그 — 탭 재정렬 · 패널 위로 끌어 분할",
+        "",
+        "사용자 키 바인딩",
+        "prefix x → split-window -h"
+      ],
+      "info_tab_names": [
+        "출력 캡처(REC)",
+        "서버"
+      ],
+      "search": {
+        "cells": [
+          [
+            "1:sh",
+            "zsh",
+            "12",
+            "error here"
+          ],
+          [
+            "4:⇄h:x",
+            "t",
+            "5",
+            "remote err"
+          ],
+          [
+            "3:py",
+            "",
+            "",
+            "no line"
+          ]
+        ],
+        "empty": 1
+      },
+      "version": {
+        "count": 7,
+        "blank": [
+          1,
+          4
+        ],
+        "head": "pytmux 버전 / 업타임",
+        "has": [
+          "123",
+          "42"
+        ]
+      },
+      "summary": [
+        "▾ 블록 7개",
+        "err cmd0",
+        "ok  cmd1   /w",
+        "ok  cmd2",
+        "ok  cmd3   /w",
+        "ok  cmd4",
+        "ok  cmd5   /w",
+        "ok  cmd6"
+      ]
+    },
+    "en": {
+      "inputs": {
+        "buffers": [
+          {
+            "i": 0,
+            "preview": "첫 버퍼"
+          },
+          {
+            "i": 1,
+            "preview": "[x] two"
+          }
+        ],
+        "layouts": [
+          "work",
+          "play"
+        ],
+        "merge_tabs": [
+          {
+            "index": 0,
+            "name": "⇄office:a",
+            "active": true,
+            "remote": true
+          },
+          {
+            "index": 1,
+            "name": "⇄office:b",
+            "remote": true
+          },
+          {
+            "index": 2,
+            "name": "local"
+          },
+          {
+            "index": 3,
+            "name": "⇄home:c",
+            "remote": true
+          },
+          {
+            "index": 4,
+            "name": "⇄office:d",
+            "remote": true
+          }
+        ],
+        "shell": [
+          "a\nb\n",
+          "a\r\nb",
+          "x\ry",
+          "l0\nl1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\nl14\nl15\nl16\nl17\nl18\nl19\nl20\nl21\nl22\nl23\nl24\nl25\nl26\nl27\nl28\nl29\nl30\nl31\nl32\nl33\nl34\nl35\nl36\nl37\nl38\nl39\nl40\nl41\nl42\nl43\nl44",
+          "   "
+        ],
+        "search": {
+          "t": "search_results",
+          "query": "err",
+          "panes": 2,
+          "items": [
+            {
+              "win": 0,
+              "tab": "sh",
+              "title": "zsh",
+              "line": 12,
+              "text": "error here"
+            },
+            {
+              "win": 1,
+              "gwin": 3,
+              "tab": "⇄h:x",
+              "title": "t",
+              "line": 5,
+              "text": "remote err",
+              "remote": true
+            },
+            {
+              "win": 2,
+              "tab": "py",
+              "title": "",
+              "text": "no line"
+            }
+          ]
+        },
+        "blocks": [
+          {
+            "cmd": "cmd0",
+            "cwd": "",
+            "state": "done",
+            "exit": 1
+          },
+          {
+            "cmd": "cmd1",
+            "cwd": "/w",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd2",
+            "cwd": "",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd3",
+            "cwd": "/w",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd4",
+            "cwd": "",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd5",
+            "cwd": "/w",
+            "state": "done",
+            "exit": 0
+          },
+          {
+            "cmd": "cmd6",
+            "cwd": "",
+            "state": "done",
+            "exit": 0
+          }
+        ],
+        "binds": {
+          "x": "split-window -h"
+        }
+      },
+      "buffers": {
+        "items": [
+          "0: 첫 버퍼",
+          "1: [x] two"
+        ],
+        "empty": 1
+      },
+      "saved_layouts": {
+        "items": [
+          "work",
+          "play"
+        ],
+        "empty": 1
+      },
+      "merge_remote": [
+        "2: ⇄office:b",
+        "5: ⇄office:d"
+      ],
+      "shell": [
+        [
+          "a",
+          "b"
+        ],
+        [
+          "a",
+          "b"
+        ],
+        [
+          "x",
+          "y"
+        ],
+        [
+          "l0",
+          "l1",
+          "l2",
+          "l3",
+          "l4",
+          "l5",
+          "l6",
+          "l7",
+          "l8",
+          "l9",
+          "l10",
+          "l11",
+          "l12",
+          "l13",
+          "l14",
+          "l15",
+          "l16",
+          "l17",
+          "l18",
+          "l19",
+          "l20",
+          "l21",
+          "l22",
+          "l23",
+          "l24",
+          "l25",
+          "l26",
+          "l27",
+          "l28",
+          "l29",
+          "l30",
+          "l31",
+          "l32",
+          "l33",
+          "l34",
+          "l35",
+          "l36",
+          "l37",
+          "l38",
+          "l39"
+        ],
+        null
+      ],
+      "keys": [
+        "Mouse gestures",
+        "  Wheel — scroll scrollback · Click — focus pane",
+        "  Right-click — pane menu (split·zoom·rotate·kill…)",
+        "  Drag divider — resize panes",
+        "  Drag pane header (top border) — pick up the pane: swap with another · move to a tab · drop on [+] for a new tab",
+        "  Left-drag — select text → copy to clipboard (minimum travel: mouse-drag-threshold)",
+        "  Shift+drag — forward the drag to the app inside (e.g. an editor's pane splitter)",
+        "  Drag tab — reorder · drop onto a pane to split",
+        "",
+        "User key bindings",
+        "prefix x → split-window -h"
+      ],
+      "info_tab_names": [
+        "Output capture (REC)",
+        "Server"
+      ],
+      "search": {
+        "cells": [
+          [
+            "1:sh",
+            "zsh",
+            "12",
+            "error here"
+          ],
+          [
+            "4:⇄h:x",
+            "t",
+            "5",
+            "remote err"
+          ],
+          [
+            "3:py",
+            "",
+            "",
+            "no line"
+          ]
+        ],
+        "empty": 1
+      },
+      "version": {
+        "count": 7,
+        "blank": [
+          1,
+          4
+        ],
+        "head": "pytmux version / uptime",
+        "has": [
+          "123",
+          "42"
+        ]
+      },
+      "summary": [
+        "▾ 7 blocks",
+        "err cmd0",
+        "ok  cmd1   /w",
+        "ok  cmd2",
+        "ok  cmd3   /w",
+        "ok  cmd4",
+        "ok  cmd5   /w",
+        "ok  cmd6"
+      ]
+    }
   }
 }

@@ -121,7 +121,7 @@ impl BlockList {
             Block::new(
                 "grep -rn 'OSC 133' pytmuxlib/",
                 "~/p4/playground/scripts/pytmux",
-                ["(결과 없음 — 셸 통합이 아직 없다)"],
+                ["(결과 없음 — 셸 통합이 아직 없습니다)"],
                 BlockState::Exited(1),
             ),
             Block::new(

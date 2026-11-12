@@ -190,12 +190,12 @@ impl ServerLink {
         // 기록판(`detached`)은 **성공한다** — 실패로 두면 뷰가 `ended` 를 세워, 오라클이
         // 보려던 배선이 첫 항목에서 끊긴다.
         if let Some(record) = self.record.as_ref() {
-            record.lock().map_err(|_| t("기록판이 망가졌다").to_owned())?.push(item.clone());
+            record.lock().map_err(|_| t("기록판이 망가졌습니다").to_owned())?.push(item.clone());
             return Ok(());
         }
         match self.sink.as_mut() {
             Some(sink) => sink.send_outgoing(item).map_err(|e| e.to_string()),
-            None => Err(t("보낼 연결이 없다").into()),
+            None => Err(t("보낼 연결이 없습니다").into()),
         }
     }
 
@@ -236,7 +236,7 @@ impl ServerLink {
                         .iter()
                         .any(|e| matches!(e, LinkEvent::Ended(_)))
                     {
-                        out.push(LinkEvent::Ended(t("읽기 스레드가 끝났다").into()));
+                        out.push(LinkEvent::Ended(t("읽기 스레드가 끝났습니다").into()));
                     }
                     break;
                 }
