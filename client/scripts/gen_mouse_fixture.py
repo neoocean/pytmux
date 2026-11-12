@@ -44,6 +44,10 @@ CASES = [
     ("drag_right",              9,   7, "drag",      3),
     ("wheel_up",                8,   6, "wheelup",   0),
     ("wheel_down",              8,   6, "wheeldown", 0),
+    # 버튼 없는 이동(1003 · pytmux-581) — 버튼을 안 보고 cb=35. 레거시 X10 도 같은 값이다.
+    ("move_inside",             8,   6, "move",      0),
+    ("move_bottom_right",      24,  12, "move",      0),
+    ("move_outside",            4,   6, "move",      0),
     ("bottom_right_corner",    24,  12, "press",     1),
     # 밖 — 빈 결과라야 한다. 클램프해서 억지로 넣으면 앱은 **누른 적 없는 자리**를 받는다.
     ("left_of_pane",            4,   6, "press",     1),

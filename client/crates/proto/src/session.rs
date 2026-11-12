@@ -240,6 +240,15 @@ pub struct PluginScreen {
     /// 키 → 플러그인 액션 이름. 이 표에 있는 키만 되돌려준다.
     #[serde(default)]
     pub keys: std::collections::BTreeMap<String, String>,
+    /// 타이핑 찾기(pytmux-611·612). 없으면 표 밖 글자는 종전대로 삼킨다.
+    #[serde(default)]
+    pub typeahead: Option<PluginTypeahead>,
+    /// 사람이 이 판을 **`Esc` 로 걷을 때** 서버에 보낼 액션(비면 안 보낸다 · pytmux-615).
+    ///
+    /// 정본 namesync 편집기는 `Esc` 에서 규칙을 **한꺼번에 저장**한다. 판을 걷는 것은 이
+    /// 클라 혼자 하는 일이라(서버에 안 묻는다) 그 순간을 서버가 알 길이 이 칸뿐이다.
+    #[serde(default)]
+    pub on_close: String,
     /// `title`·`hint`·`note` 를 우리 로케일로 다시 지을 재료(있는 것만 온다).
     #[serde(default)]
     pub i18n: I18nMap,
@@ -427,27 +436,56 @@ impl PluginScreen {
     pub fn key_action(&self, key: base::Key, mods: base::Mods) -> Option<&str> {
         // `Alt+글자` — 정본 mdir 의 정렬(`Alt+N/E/S/T/O`)·마스크(`Alt+F`)가 그 손이다.
         // 글자 키로 옮기면 손버릇이 갈리고, 이미 `t`(태그)가 정렬의 `t`(시각)와 부딪힌다.
-        if mods.alt {
-            let base::Key::Char(c) = key else { return None };
-            return self.keys.get(&format!("alt-{c}")).map(String::as_str);
+        // 글자는 **글자 그대로** 찾는다(`ncd` 의 `c`·mdir 의 `+`·`\` — 종전 어휘 그대로).
+        // 공백은 아래 이름(`space`)으로 간다 — 정본 Textual 의 이름이 그것이다.
+        if mods == base::Mods::NONE
+            && let base::Key::Char(c) = key
+            && c != ' '
+        {
+            return self.char_action(c);
         }
-        if mods != base::Mods::NONE {
+        // ⛔ **목록 판의 뜻이 이미 정해진 키**는 스펙이 못 가져간다 — ↑↓·Tab·Home/End·
+        //   PgUp/PgDn·Esc·(수정자 없는) Enter. 판마다 그 손이 달라지면 고르기·닫기가
+        //   판마다 갈린다. `Enter` 는 [`enter_action`](Self::enter_action) 길로 간다.
+        if mods == base::Mods::NONE
+            && matches!(
+                key,
+                base::Key::Up
+                    | base::Key::Down
+                    | base::Key::Tab
+                    | base::Key::BackTab
+                    | base::Key::Home
+                    | base::Key::End
+                    | base::Key::PageUp
+                    | base::Key::PageDown
+                    | base::Key::Escape
+                    | base::Key::Enter
+            )
+        {
             return None;
         }
-        let name = match key {
-            base::Key::Char(c) => return self.char_action(c),
-            base::Key::Right => "right".to_owned(),
-            base::Key::Left => "left".to_owned(),
-            // ★ F1~F12(pytmux-125) — 정본 mdir 의 `F10`(트리)·`F5`(복사)·`F8`(삭제)…가
-            //   그 손이다. 글자 키로 옮기지 않는 이유는 `alt-` 때와 같다: 손버릇이
-            //   갈린다(그리고 `F5` 의 글자 짝인 `c` 는 이미 복사라 옮길 자리도 없다).
-            //   이름은 **core 의 표가 짓는다**(`binding_name_with`) — 여기서
-            //   `format!("f{n}")` 을 다시 적으면 어휘가 두 벌이 되고, 갈리는 순간
-            //   그 키만 조용히 안 먹는다.
-            base::Key::Function(_) => base::keys::binding_name_with(key, mods)?,
-            _ => return None,
-        };
+        // ★ 나머지는 **core 의 이름 표가 짓는다**(`binding_name_with`) — `space`·`insert`·
+        //   `delete`·`backspace`·`shift-enter`·`ctrl-o`·`ctrl-enter`·`alt-c`·`f10`(pytmux-611).
+        //   종전에는 이 함수가 글자·←→·F-키·`alt-글자` 만 이름으로 알아서, 정본 mdir 의
+        //   Space(태그)·Insert(복사)·Delete(삭제)·Shift+Enter/Ctrl+O(새 패널)가 **스펙에
+        //   실을 수조차 없었다**(공통 뿌리). 여기서 이름을 다시 적으면 어휘가 두 벌이 되고,
+        //   갈리는 순간 그 키만 조용히 안 먹는다.
+        let name = base::keys::binding_name_with(key, mods)?;
         self.keys.get(&name).map(String::as_str)
+    }
+
+    /// `@` 로 시작하는 액션 = **이 클라의 손**(pytmux-615 — 정본 namesync 의 `j`/`k`).
+    ///
+    /// 서버에 보낼 뜻이 없으니 core 의 그 키로 바꿔 누른다. `Some(None)` 은 «`@` 이름인데
+    /// 모르는 것»(보내지 않고 버린다), `None` 은 «서버로 보낼 보통 액션»이다.
+    /// 어휘는 여기 한 자리다 — 계층 게이트가 뷰에 키 이름 글자를 못 적게 막는다.
+    pub fn local_key(act: &str) -> Option<Option<base::Key>> {
+        let local = act.strip_prefix('@')?;
+        Some(match local {
+            "down" => Some(base::Key::Down),
+            "up" => Some(base::Key::Up),
+            _ => None,
+        })
     }
 
     /// 물음·확인 화면에 적을 글 — **첫 줄이 물음이고 나머지가 상세**다.
@@ -876,6 +914,45 @@ pub struct PluginRow {
     /// 모르는 이름이 오면 글자 줄로 그린다 — 힌트는 **제안**이지 계약이 아니다.
     #[serde(default)]
     pub w: String,
+    /// **타이핑 찾기**가 견줄 이 줄의 이름(pytmux-611·612). 비면 찾기가 이 줄을 건너뛴다.
+    ///
+    /// `label` 을 그대로 못 쓰는 이유: mdir 의 label 에는 태그 표식(`✓ `)과 `/` 가 붙고
+    /// `..`·드라이브 줄은 정본 찾기가 **아예 안 본다**(`_MdirView._jump`). 무엇을 견줄지는
+    /// 줄을 짓는 플러그인이 안다.
+    #[serde(default)]
+    pub find: String,
+    /// 이 줄의 **이어지는 표시줄**들(pytmux-616) — 고르는 단위는 줄 하나 그대로이고
+    /// 그림만 여러 줄이다(정본 `_HistView` 가 프롬프트 하나를 최대 N 줄로 펼친다).
+    #[serde(default)]
+    pub more: Vec<String>,
+}
+
+/// 판의 **타이핑 찾기** 선언(pytmux-611·612) — 없으면 그 판은 글자를 찾기로 안 쓴다.
+///
+/// 상태(친 글자)와 뛰기는 클라가 쥔다(`base::Screens`) — 한 글자마다 서버를 다녀오면
+/// 정본의 「치는 대로 커서가 따라온다」가 지연만큼 갈린다. 서버는 **무엇을 찾나**(줄의
+/// [`PluginRow::find`])와 **못 찾으면 누구에게 묻나**([`server`](Self::server))만 정한다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct PluginTypeahead {
+    /// 친 글자 앞에 붙일 말(정본 `찾기` — 서버가 로케일로 지어 보낸다).
+    #[serde(default)]
+    pub label: String,
+    /// 찾기로 **안 먹는** 글자 — 정본 mdir `_RESERVED_CHARS` 중 키 표에 없는 것.
+    #[serde(default)]
+    pub reserved: String,
+    /// 로컬에 없을 때 물을 액션(정본 ncd `request_nc_find`). 비면 안 묻는다.
+    #[serde(default)]
+    pub server: String,
+    /// 서버에 물을 최소 글자 수(정본 ncd = 2).
+    #[serde(default)]
+    pub min: usize,
+    /// `Esc` 가 찾기를 **먼저 지우나**(정본 mdir) — 아니면 늘 닫는다(정본 ncd).
+    #[serde(default)]
+    pub esc_clears: bool,
+    /// 이 스펙이 **어느 질의의 답**인가(서버 찾기 회신의 메아리). 지금 친 글자와 다르면
+    /// 커서를 안 옮긴다 — 정본 `apply_found` 의 「그새 더 쳤으면 무시」.
+    #[serde(default)]
+    pub query: String,
 }
 
 impl PluginRow {
@@ -2995,6 +3072,20 @@ impl SessionState {
         let screen = self.screens.get(&pane_id)?;
         let (_, _, _, h) = self.pane_rect(pane_id)?;
         Some(screen.top + screen.scroll + usize::from(h).saturating_sub(1))
+    }
+
+    /// **커서가 설 패널**과 그 내용 사각형 — 키가 가는 곳 한 자리(pytmux-602).
+    ///
+    /// `display-popup` 이 떠 있으면 **팝업**이다(정본 `clientio._composite` ⑤ 「팝업은 항상
+    /// 포커스」 — 커서 반전과 IME 하드웨어 커서를 그리로 옮긴다). 없으면 활성 패널.
+    /// 커서·조합 글자·커서 기준 판 배치가 전부 이 한 자리를 읽는다 — 각자 `active_pane` 을
+    /// 보면 팝업 안에서 친 한글이 뒤 패널 자리에 뜬다.
+    pub fn cursor_focus(&self) -> Option<(i64, (u16, u16, u16, u16))> {
+        if let Some(p) = self.popup() {
+            return Some((p.id, (p.cx, p.cy, p.cw, p.ch)));
+        }
+        let pane = self.active_pane()?;
+        Some((pane, self.pane_rect(pane)?))
     }
 
     /// 패널의 **내용** 사각형 `(x, y, w, h)`. 테두리는 뺀 안쪽이다.

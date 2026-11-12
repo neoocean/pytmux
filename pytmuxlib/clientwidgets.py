@@ -774,7 +774,11 @@ class MultiplexerView(Widget):
                     for mark in (old_mark, span):
                         if mark:
                             self.refresh(Region(0, mark[0], w, 1))
-            # 버튼 없는 모션 — any-motion(1003) 앱에만 전달
+            # 버튼 없는 모션 — any-motion(1003) 앱에만 전달.
+            # ★ `set mouse off` 면 안 보낸다(pytmux-581) — 누름·휠은 첫 줄에서 막는데 이
+            #   자리만 빠져 있어, 마우스를 꺼도 1003 앱에는 모션이 계속 흘렀다.
+            if not self.app.mouse_enabled:
+                return
             pd = self._mouse_target(event.x, event.y)
             if pd is not None and pd.get("mouse", 0) >= 3:
                 data = self._encode_mouse(pd, event.x, event.y, "move", 0)

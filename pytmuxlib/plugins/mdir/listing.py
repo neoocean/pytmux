@@ -111,3 +111,45 @@ def counts(dirs, files, tags=(), free=0, total=0,
     if tail:
         text += f"  {tail}"
     return text
+
+
+# ---- 압축 파일 안 보기(pytmux-611) ----
+#
+# 정본 화면(`screen.py:_MdirView._arc_level_items`)에만 있던 규칙이라 네이티브 클라의
+# mdir 은 압축 파일을 글 뷰어로만 열었다. 화면이 둘이어도 **한 층에 무엇이 보이나**는
+# 한 벌이어야 한다 — 그래서 여기로 옮기고 두 쪽이 부른다.
+
+#: 압축으로 보고 안을 여는 확장자(정본 `_ARCHIVE_EXTS` 그대로).
+ARCHIVE_EXTS = frozenset({"zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz",
+                          "zst", "7z", "rar", "lzh", "arj", "jar"})
+
+
+def is_archive(name: str) -> bool:
+    """이 이름이 압축 파일인가(정본 `_open_file` 의 확장자 판정)."""
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name[1:] else ""
+    return ext in ARCHIVE_EXTS
+
+
+def arc_level(entries, pfx: str):
+    """압축 내부의 접두 `pfx` 한 단계 → `(디렉터리 이름들, 파일 항목들)`.
+
+    하위 경로에서 디렉터리를 유도해 tar 처럼 디렉터리 엔트리가 없는 형식도 계층으로
+    보인다(원조 '디렉토리 재현'). 둘 다 이름순(대소문자 무시)."""
+    dirs: dict = {}
+    files: list = []
+    for e in entries or []:
+        n = str(e.get("n", "")).replace("\\", "/")
+        if not n.startswith(pfx):
+            continue
+        rest = n[len(pfx):].strip("/")
+        if not rest:
+            continue
+        if "/" in rest:
+            dirs.setdefault(rest.split("/", 1)[0])
+        elif e.get("d"):
+            dirs.setdefault(rest)
+        else:
+            files.append({"n": rest, "d": False, "s": e.get("s", 0),
+                          "m": 0, "h": False})
+    return (sorted(dirs, key=str.lower),
+            sorted(files, key=lambda f: f["n"].lower()))

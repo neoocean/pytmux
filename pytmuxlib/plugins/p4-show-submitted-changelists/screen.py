@@ -62,14 +62,9 @@ class _ChangesView(Widget):
         줄어들어 설명 좌측 시작점이 행마다 어긋난다(설명 한글량에 비례). desc 앞을
         ASCII 전용 세그먼트로만 두면 그 폭이 정확히 계산돼 desc 좌측이 모든 행에서
         같은 열에 선다(실 터미널은 본래 정렬됨 — 이건 SVG 정렬 교정)."""
-        cl = row.get("change", "")
-        when = row.get("when", "")
-        user = row.get("user", "")
-        desc = (row.get("desc", "") or "").splitlines()
-        desc = desc[0] if desc else ""
-        head = f"  @{cl:<7} "
-        mid = f"{when:<16}  {user:<14} "
-        return head, mid, desc
+        # 규칙은 `server.row_parts` 한 벌이다(GUI 판도 같은 함수 — pytmux-613).
+        from .server import row_parts
+        return row_parts(row)
 
     def render_line(self, y: int) -> Strip:
         width = self.size.width

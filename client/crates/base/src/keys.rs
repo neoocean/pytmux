@@ -1008,6 +1008,9 @@ fn binding_name(key: Key) -> Option<String> {
         // 이름이 없으면 서버가 준 `keys` 표에서 영영 안 찾아진다.
         Key::Home => "home".to_owned(),
         Key::Insert => "insert".to_owned(),
+        // `Shift+Enter` — 정본 mdir·ncd 의 「새 패널에서 열기」(pytmux-611·612)가 플러그인
+        // 스펙으로 가져간다. 우리 표(`BINDINGS`)에는 그 이름이 없어 내장 동작은 안 바뀐다.
+        Key::ShiftEnter => "shift-enter".to_owned(),
         // 백스페이스·Delete — 사용자 `bind -n BSpace …`(정본 `_NAMED_KEYS` 의 `bspace`·`dc`)가
         // 걸릴 자리다. 이름이 없으면 설정 파일에 적어도 영영 안 찾아진다(pytmux-600 · 우리 표
         // `BINDINGS` 에는 두 키가 없으므로 내장 동작은 안 바뀐다).

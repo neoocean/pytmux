@@ -124,9 +124,12 @@ async def test_the_spec_declares_the_keys_that_move_the_tree():
         spec, _mine = _tree(td)
         assert spec["keys"].get("right") == "expand", spec["keys"]
         assert spec["keys"].get("left") == "collapse", spec["keys"]
-        # 종전 손도 그대로다(제보는 더하라는 것이지 없애라는 것이 아니었다).
         assert spec["keys"].get("enter") == "into", spec["keys"]
-        assert spec["keys"].get("c") == "cd", spec["keys"]
+        # 정본에는 글자 액션이 없다 — 글자는 타이핑 찾기다(pytmux-612). 새 패널은
+        # `⇧Enter`/`Ctrl+O`.
+        assert "c" not in spec["keys"], spec["keys"]
+        assert spec["keys"].get("ctrl-o") == "newpane", spec["keys"]
+        assert spec["keys"].get("shift-enter") == "newpane", spec["keys"]
 
 
 class _Pty:

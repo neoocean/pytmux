@@ -60,6 +60,7 @@ fn kind_from_name(name: &str) -> MouseKind {
         "press" => MouseKind::Press,
         "release" => MouseKind::Release,
         "drag" => MouseKind::Drag,
+        "move" => MouseKind::Move,
         "wheelup" => MouseKind::WheelUp,
         "wheeldown" => MouseKind::WheelDown,
         other => panic!("픽스처에 모르는 종류가 있다: {other}"),

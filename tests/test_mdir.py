@@ -1083,16 +1083,17 @@ async def test_the_spec_declares_the_canonical_sort_and_mask_keys():
         for k, act in (("alt-n", "sort-n"), ("alt-e", "sort-e"), ("alt-s", "sort-s"),
                        ("alt-t", "sort-t"), ("alt-o", "sort-o"), ("alt-f", "mask")):
             assert keys.get(k) == act, (k, keys)
-        # 종전 손도 그대로다(제보는 더하라는 것이지 없애라는 것이 아니었다).
-        assert keys.get("t") == "tag" and keys.get("enter") == "into", keys
+        # 태그는 정본처럼 `Space` 다 — 글자 `t` 는 빨리찾기의 것이다(pytmux-611).
+        assert keys.get("space") == "tag" and keys.get("enter") == "into", keys
+        assert "t" not in keys, keys
 
 
 async def test_the_spec_declares_the_canonical_function_keys():
     """★ F-키도 **정본과 같은 표**다(pytmux-125) — 정본 화면(`screen.py::on_key`)의
     `f2`·`f3`·`f4`·`f5`·`f6`·`f7`·`f8`·`f10` 을 그대로 옮겼다.
 
-    ⛔ 글자 키를 **대체하지 않는다**: 노트북 자판에서 F-키는 Fn 조합이라 한 손을
-    없애면 그 사람에게는 기능이 사라진 것과 같다."""
+    F-키가 없는 자판의 손은 정본과 같은 **Alt+글자**다(pytmux-611 — 종전 글자 별칭
+    `c m d r k v p` 는 정본에서 빨리찾기 글자라 걷었다. 사람 결정 2026-11-13)."""
     import importlib, tempfile
     mod = importlib.import_module("pytmuxlib.plugins.mdir")
     plug = mod.PLUGIN
@@ -1103,11 +1104,13 @@ async def test_the_spec_declares_the_canonical_function_keys():
                        ("f5", "copy"), ("f6", "move"), ("f7", "mkdir"),
                        ("f8", "delete"), ("f10", "tree")):
             assert keys.get(k) == act, (k, keys)
-        # 글자 짝은 그대로 있다 — F-키는 별칭이지 이사가 아니다.
-        for letter, act in (("r", "rename"), ("v", "view"), ("p", "cd"),
-                            ("c", "copy"), ("m", "move"), ("k", "mkdir"),
-                            ("d", "delete")):
-            assert keys.get(letter) == act, (letter, keys)
+        # Alt 짝(정본 `alt+r/v/c/m/k/d`)과 Insert/Delete/Ctrl+Enter — 정본 `on_key` 그대로.
+        for k, act in (("alt-r", "rename"), ("alt-v", "view"), ("ctrl-enter", "cd"),
+                       ("alt-c", "copy"), ("insert", "copy"), ("alt-m", "move"),
+                       ("alt-k", "mkdir"), ("alt-d", "delete"), ("delete", "delete")):
+            assert keys.get(k) == act, (k, keys)
+        # 글자 별칭은 없다 — 있으면 그 글자로 시작하는 파일로 못 뛴다.
+        assert not [k for k in keys if len(k) == 1 and k.isalpha()], keys
         # 안내줄이 `F10` 을 말한다 — 글자 짝이 없는 유일한 손이라, 안 적으면 아무도
         # 그 키가 있는 줄 모른다.
         assert "F10" in spec["hint"], spec["hint"]

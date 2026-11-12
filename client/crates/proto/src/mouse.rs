@@ -44,6 +44,14 @@ impl MouseMode {
     pub fn wants_drag(&self) -> bool {
         self.track >= 2
     }
+
+    /// 버튼 없는 이동까지 원하는가(1003 · pytmux-581).
+    ///
+    /// 서버가 Windows 에서 `win-mouse-motion off` 면 3 을 2 로 낮춰 광고한다 — 그 설정의
+    /// 효과는 **이 판정이 그 값을 믿는 것**으로 클라에 닿는다.
+    pub fn wants_motion(&self) -> bool {
+        self.track >= 3
+    }
 }
 
 /// 넘길 이벤트 한 가지.
@@ -52,6 +60,8 @@ pub enum MouseKind {
     Press,
     Release,
     Drag,
+    /// 버튼 없이 움직였다(1003 앱에게만 · pytmux-581). 버튼은 안 본다(정본 cb=35).
+    Move,
     WheelUp,
     WheelDown,
 }
@@ -86,6 +96,8 @@ pub fn encode(
         MouseKind::WheelUp => 64,
         MouseKind::WheelDown => 65,
         MouseKind::Drag => base_button(button) + 32,
+        // 정본 `_encode_mouse` 의 `35 if kind == "move"` — 버튼 없음(3) + 모션 비트(32).
+        MouseKind::Move => 35,
         MouseKind::Press | MouseKind::Release => base_button(button),
     };
     if mode.sgr {

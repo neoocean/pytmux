@@ -97,8 +97,7 @@ _EXT_COLORS = {
     "exe": "#55ff55", "com": "#55ffff",
     "bat": "#ffff55", "btm": "#ffff55", "cmd": "#ffff55", "sh": "#ffff55",
 }
-_ARCHIVE_EXTS = {"zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz",
-                 "zst", "7z", "rar", "lzh", "arj", "jar"}
+from .listing import ARCHIVE_EXTS as _ARCHIVE_EXTS   # 한 벌(pytmux-611 — GUI 판도 쓴다)
 _ARC_COLOR = "#ff55ff"
 
 from .rowtag import row_tag        # 판정 한 벌(UI 무의존)
@@ -303,29 +302,14 @@ class _MdirView(Widget):
         """압축 내부의 현재 접두(_arc_dir) 한 단계를 디렉토리/파일 항목으로 만든다
         (원조 '디렉토리 재현'). 하위 경로에서 디렉토리를 유도해 tar 처럼 디렉토리
         엔트리가 없는 형식도 계층으로 보인다."""
-        pfx = self._arc_dir
-        dirs: dict[str, None] = {}
-        files: list[dict] = []
-        for e in self._arc["entries"]:
-            n = e["n"].replace("\\", "/")
-            if not n.startswith(pfx):
-                continue
-            rest = n[len(pfx):].strip("/")
-            if not rest:
-                continue
-            if "/" in rest:
-                dirs.setdefault(rest.split("/", 1)[0])
-            elif e.get("d"):
-                dirs.setdefault(rest)
-            else:
-                files.append({"n": rest, "d": False, "s": e.get("s", 0),
-                              "m": 0, "h": False})
+        # 한 층의 규칙은 `listing.arc_level` 한 벌이다(GUI 판과 같은 함수 · pytmux-611).
+        from .listing import arc_level
+        dirs, files = arc_level(self._arc["entries"], self._arc_dir)
         items: list[dict] = [{"k": "up"}]
         items += [{"k": "dir", "e": {"n": d, "d": True, "s": 0, "m": 0,
                                      "h": False}}
-                  for d in sorted(dirs, key=str.lower)]
-        items += [{"k": "file", "e": f}
-                  for f in sorted(files, key=lambda e: e["n"].lower())]
+                  for d in dirs]
+        items += [{"k": "file", "e": f} for f in files]
         return items
 
     def _rebuild(self, keep_name: str | None = None):
@@ -592,17 +576,14 @@ class _MdirView(Widget):
     def _jump(self):
         if not self._find or not self._items:
             return
-        q = self._find.lower()
-        n = len(self._items)
-        for match_prefix in (True, False):
-            for off in range(n):
-                i = (self._idx + off) % n
-                if self._items[i]["k"] in ("up", "drive"):
-                    continue
-                name = self._item_name(self._items[i]).lower()
-                if (name.startswith(q) if match_prefix else q in name):
-                    self._move(i)
-                    return
+        # 규칙은 코어 한 벌이다(`pytmuxlib/typeahead.py` — GUI 와 같은 자로 잰다).
+        # `..`·드라이브 줄은 빈 이름으로 넘겨 건너뛴다(종전 `continue` 와 같다).
+        from pytmuxlib.typeahead import find_jump
+        names = ["" if it["k"] in ("up", "drive") else self._item_name(it)
+                 for it in self._items]
+        i = find_jump(names, self._idx, self._find)
+        if i is not None:
+            self._move(i)
 
     # ---- 태그(선택) ----
     def _tag_toggle(self):
@@ -792,8 +773,8 @@ class _MdirView(Widget):
     def _open_file(self, name: str):
         """실디렉토리에서 파일 Enter — 압축이면 내부 보기, 아니면 뷰어(현대화:
         원조는 실행이지만 멀티플렉서 안에서 임의 실행은 위험해 열람으로 대응)."""
-        ext = name.rsplit(".", 1)[-1].lower() if "." in name[1:] else ""
-        if ext in _ARCHIVE_EXTS:
+        from .listing import is_archive
+        if is_archive(name):
             self.app.request_mdir_arc(self._join(name))
         else:
             self.app.request_mdir_view(self._join(name))

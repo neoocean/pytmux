@@ -25,15 +25,19 @@ i18n.register({
         # 화면은 트리이고 `Enter` 는 정본과 같이 **그 자리로 cd** 다 — 화면이 스스로
         # 틀린 기대를 만들고 있었다. 정본 화면의 힌트(`ncd/screen.py:_HINT`)와 같은
         # 뜻으로 맞춘다(항해 키 넷은 pytmux-417 ① 에서 실제로 먹게 됐다).
-        "ncd.hint": ("↑↓·PgUp/PgDn·Home/End 이동 · →펼치기 ←접기 · "
-                     "Enter cd · c 여기로 cd · Esc 닫기"),
+        # ★ 정본 화면 꼬리줄(`ncd/screen.py:_HINT`)과 **같은 글**이다(pytmux-612) — 종전
+        #   글은 정본에 없는 `c 여기로 cd` 를 광고하고 정본의 타이핑 찾기·새 패널을 뺐다.
+        "ncd.hint": ("↑↓·PgUp/PgDn·Home/End 이동 · →펼치기 ←접기 · 타이핑 찾기 · "
+                     "Enter cd · ⇧Enter/^O 새 패널 · Esc"),
+        "ncd.find": "찾기",
         "ncd.empty": "하위 디렉터리가 없습니다",
         "ncd.too_many": "줄이 너무 많아 일부만 보입니다 — 접으면 줄어듭니다",
     },
     "en": {
         "ncd.title": "Directory — {path}",
-        "ncd.hint": ("↑↓·PgUp/PgDn·Home/End move · → expand ← collapse · "
-                     "Enter cd · c cd here · Esc close"),
+        "ncd.hint": ("↑↓·PgUp/PgDn·Home/End move · → expand ← collapse · type to "
+                     "find · Enter cd · ⇧Enter/^O new pane · Esc"),
+        "ncd.find": "Find",
         "ncd.empty": "No subdirectories",
         "ncd.too_many": "Too many rows — collapse to see fewer",
     },
@@ -246,6 +250,8 @@ class _NcdPlugin:
             # 셸이 지금 서 있는 자리 — 목록에서 **강조**할 줄을 고르는 데 쓴다
             # (정본은 노랑 + 표식으로 가리킨다. pytmux-11 A).
             mine["cwd"] = mine["path"]
+            # `:ncd` 로 직접 연 트리는 늘 패널에 cd 한다(mdir `F10` 의 표식은 그쪽 몫).
+            mine.pop("pick_only", None)
             return _offload(self._open_tree, mine)
         if req.get("id") != "ncd":
             return None
@@ -254,11 +260,30 @@ class _NcdPlugin:
             # "들어가기"가 아니다. 이름은 계약이라 그대로 두고 뜻만 정본에 맞춘다.
             # ★ 네이티브 클라에서는 이 경로가 mdir 갱신에 필요하므로 응답에 실어 보낸다.
             target = str(req.get("input") or "")
-            if target:
+            # ★ mdir 의 `F10` 이 연 트리면 **패널은 그대로** 두고 mdir 만 옮긴다(pytmux-611 —
+            #   정본 `_MdirView._open_tree` 의 콜백은 `_navigate` 만 한다). 종전에는 그때도
+            #   패널에 cd 를 쳐서, 파일 관리자 안에서 고른 자리로 셸이 같이 끌려갔다.
+            if target and not mine.pop("pick_only", False):
                 mine["cwd"] = target
                 cmd = ("cd /d " if os.name == "nt" else "cd ") + _quote(target)
                 self._send_to_pane(server, sess, cmd + "\r")
             return {"t": "plugin_screen_close", "id": "ncd", "input": target}
+        if do == "newpane":
+            # 정본 `Shift+Enter`/`Ctrl+O`(pytmux-612) — 그 디렉터리에서 **새 패널**을 연다
+            # (정본 `_done` 의 `send_cmd("split", orient="lr", path=…)` 와 같은 서버 길).
+            target = str(req.get("input") or "")
+            mine.pop("pick_only", None)
+            if target:
+                server.split_pane(sess, "lr", path=target)
+                server._broadcast_session(sess)
+            return {"t": "plugin_screen_close", "id": "ncd"}
+        if do == "find":
+            # 타이핑 찾기가 트리 안에서 못 찾았다(정본 `_jump` → `request_nc_find`) — 안 열린
+            # 디렉터리까지 재귀로 찾아 그 자리까지 펴고 커서를 둔다(정본 `apply_found`).
+            # 못 찾으면 **아무것도 안 보낸다**(`[]`) — 정본도 조용히 둔다(찾기 부제 유지).
+            # `None` 을 돌려주면 서버가 「화면 스펙 없음」 알림을 띄운다.
+            query = str(req.get("input") or "")
+            return _offload(self._found, mine, query)
         if do == "expand":
             return _offload(self._expand, mine, str(req.get("input") or ""))
         if do == "collapse":
@@ -468,6 +493,8 @@ class _NcdPlugin:
             # 이름은 **자료 그대로**다 — 들여쓰기를 글자로 섞으면 타이핑 찾기·복사가
             # 그 공백을 물고 간다(그래서 깊이를 따로 싣는다).
             "label": pm.basename(path.rstrip("/\\")) or path,
+            # 타이핑 찾기가 견줄 이름 — 정본 `_disp_name` 과 같은 값(pytmux-612).
+            "find": pm.basename(path.rstrip("/\\")) or path,
             "cols": [],
             "depth": depth,
             # 접힘과 **잎**은 다르다 — 빈 디렉터리에 눌러도 안 열리는 화살표를 안 붙인다.
@@ -510,8 +537,15 @@ class _NcdPlugin:
             "selected": sel,
             # 키 → 액션. 글자뿐 아니라 **이름 있는 키**도 실을 수 있다(pytmux-11 B) —
             # 트리는 `←→` 로 접고 펴는 것이 손버릇이고 그 둘은 글자가 아니다.
-            "keys": {"enter": "into", "c": "cd",
-                     "right": "expand", "left": "collapse"},
+            # ★ 정본 `_NcdView.on_key` 의 손 그대로다(pytmux-612) — 글자는 **타이핑 찾기**라
+            #   글자 키를 액션에 쓰지 않는다(종전 `c` = 여기로 cd 가 찾기의 `c` 를 먹었다).
+            "keys": {"enter": "into",
+                     "right": "expand", "left": "collapse",
+                     "shift-enter": "newpane", "ctrl-o": "newpane"},
+            # 타이핑 찾기(정본: 글자 → 트리 안 접두>포함 → 2글자↑ 서버 재귀 `find`).
+            # 정본 ncd 의 Esc 는 찾는 중에도 바로 닫는다(`esc_clears` 끔).
+            "typeahead": {"label": i18n.t("ncd.find"), "reserved": "",
+                          "server": "find", "min": 2, "esc_clears": False},
             "note": (i18n.t("ncd.too_many") if over
                      else "" if rows else i18n.t("ncd.empty")),
             "i18n": {"title": title_spec},
@@ -564,6 +598,29 @@ class _NcdPlugin:
             # 누를 때 자리가 왔다 갔다 한다(`_expand` 와 같은 결).
             return self._select(self._tree_spec(mine), path)
         return self._select(self._tree_spec(mine), self._parent(path))
+
+    def _found(self, mine, query):
+        """서버 재귀 찾기(정본 `nc_find_msg` 한 벌) → 그 자리까지 편 트리(순수 fs).
+
+        스펙은 `typeahead.query` 에 **어느 질의의 답인지**를 싣는다 — 클라가 그새 더
+        쳤으면 커서를 안 옮긴다(정본 `apply_found` 의 「query 가 바뀌었으면 무시」)."""
+        from .server import nc_find_msg
+        if not query:
+            return []
+        root = mine.get("root") or None
+        found = nc_find_msg(None, None, query, root)
+        target = found.get("target")
+        if not target:
+            return []
+        opened = set(mine.get("open") or [])
+        for entry in found.get("chain") or []:
+            p = entry[0]
+            opened.add(self._norm(p))
+            self._kids(mine, p)
+        mine["open"] = sorted(opened)
+        spec = self._select(self._tree_spec(mine), target)
+        spec["typeahead"] = dict(spec.get("typeahead") or {}, query=query)
+        return spec
 
 
 def _quote(path: str) -> str:

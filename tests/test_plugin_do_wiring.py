@@ -637,6 +637,26 @@ def _survey():
 
 
 # ── ③ 오라클 ────────────────────────────────────────────────────────────────
+#: 클라가 서버로 안 보내고 제 키로 바꿔 누르는 이름(GUI `session_view.rs` 의 `@` 갈래).
+_CLIENT_LOCAL_DOS = frozenset({"@up", "@down"})
+
+
+def test_the_client_local_names_are_the_ones_the_gui_knows():
+    """`@` 어휘가 클라의 한 자리와 같다 — 한쪽만 늘면 그 키는 조용히 아무 일도 안 한다."""
+    # 어휘는 proto 한 자리(`PluginScreen::local_key`)이고 GUI 는 그것을 부른다.
+    with open(os.path.join(ROOT, "client", "crates", "proto", "src", "session.rs"),
+              encoding="utf-8") as f:
+        src = f.read()
+    at = src.index("pub fn local_key(")
+    body = src[at:at + 600]
+    import re as _re
+    known = {"@" + m for m in _re.findall(r'"(\w+)" => Some\(base::Key::', body)}
+    assert known == set(_CLIENT_LOCAL_DOS), (known, _CLIENT_LOCAL_DOS)
+    with open(os.path.join(ROOT, "client", "crates", "gui", "src", "session_view.rs"),
+              encoding="utf-8") as f:
+        assert "PluginScreen::local_key(" in f.read(), "GUI 가 클라 로컬 손을 안 푼다"
+
+
 def test_every_key_the_spec_declares_is_a_do_the_plugin_takes():
     """**죽은 키가 없다** — 표에 실린 이름을 그 화면이 전부 받는다.
 
@@ -646,6 +666,11 @@ def test_every_key_the_spec_declares_is_a_do_the_plugin_takes():
     for pkg, rows in sorted(emits.items()):
         for sid, dos, where in rows:
             for do in sorted(dos):
+                # `@` 이름은 **클라 로컬 손**이라 서버에 안 간다(pytmux-615 — namesync 의
+                # `j`/`k`). 받는 쪽은 GUI 의 `session_view.rs` 한 자리이고 그 어휘는 둘뿐이다
+                # — 모르는 `@` 는 여기서도 죽은 키로 센다.
+                if do in _CLIENT_LOCAL_DOS:
+                    continue
                 if not _takes(accepts[pkg], sid, do):
                     dead.append(f"{where} — 화면 {sid!r} 이 키로 내는 {do!r} 를 "
                                 f"{pkg} 가 안 받는다")

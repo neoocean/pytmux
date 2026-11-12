@@ -963,6 +963,9 @@ fn a_rows_columns_are_read_in_our_own_locale_but_its_name_is_not() {
         until: 0,
         // 위젯 힌트도 없다 — 고르개는 한도 판의 맨 위 두 줄만이다(pytmux-130).
         w: String::new(),
+        // 찾기 이름·이어지는 줄도 없다(pytmux-611·616) — 이 시험의 축이 아니다.
+        find: String::new(),
+        more: Vec::new(),
     };
     // 그리는 자리가 부르는 것과 **같은 함수**로 잰다 — `label` 을 직접 읽으면 뷰가
     // 그 자리에서 무엇을 하는지는 안 재는 오라클이 된다.
@@ -1485,9 +1488,56 @@ fn a_function_key_the_spec_declares_is_found_in_its_table() {
         keys: [("alt-f5".to_owned(), "x".to_owned())].into_iter().collect(),
         ..Default::default()
     };
-    // ⚠ `alt-<글자>` 는 글자 키의 문법이라 `Alt+F5` 는 여기 안 걸린다 — 정본 mdir 도
-    //    `Alt+F5` 를 안 쓴다. 이 단언은 그 선을 못박는다(넓히려면 두 표를 같이 고친다).
-    assert_eq!(alt.key_action(base::Key::Function(5), base::Mods::ALT), None);
+    // ★ 이름은 **core 의 표 한 벌**(`binding_name_with`)이 짓는다(pytmux-611) — 그래서
+    //   `Alt+F5` 도 표에 `alt-f5` 로 적으면 걸린다(종전에는 `alt-` 가 글자 키만 알아서
+    //   안 걸렸다 — 그 좁은 어휘가 Space·Insert·Delete·⇧Enter 를 막은 공통 뿌리였다).
+    assert_eq!(alt.key_action(base::Key::Function(5), base::Mods::ALT), Some("x"));
+}
+
+#[test]
+fn the_spec_key_table_reaches_every_named_key_the_canon_plugins_use() {
+    // 정본 mdir·ncd·p4·namesync 가 쓰는 손 — 종전 `key_action` 은 이 가운데 Space·Insert·
+    // Delete·Backspace·Shift+Enter·Ctrl+O·Ctrl+Enter·Ctrl+S 를 **스펙으로 못 건넸다**
+    // (pytmux-611 공통 뿌리). 이름은 정본 Textual 이름의 `+` → `-` 다.
+    use base::{Key, Mods};
+    let cases: &[(&str, Key, Mods)] = &[
+        ("space", Key::Char(' '), Mods::NONE),
+        ("insert", Key::Insert, Mods::NONE),
+        ("delete", Key::Delete, Mods::NONE),
+        ("backspace", Key::Backspace, Mods::NONE),
+        ("shift-enter", Key::ShiftEnter, Mods::NONE),
+        ("ctrl-o", Key::Char('o'), Mods::CTRL),
+        ("ctrl-enter", Key::Enter, Mods::CTRL),
+        ("ctrl-s", Key::Char('s'), Mods::CTRL),
+        ("alt-c", Key::Char('c'), Mods::ALT),
+        ("f4", Key::Function(4), Mods::NONE),
+        ("+", Key::Char('+'), Mods::NONE),
+        ("\\", Key::Char('\\'), Mods::NONE),
+        ("q", Key::Char('q'), Mods::NONE),
+    ];
+    let spec = crate::session::PluginScreen {
+        keys: cases.iter().map(|(n, _, _)| ((*n).to_owned(), format!("do-{n}"))).collect(),
+        ..Default::default()
+    };
+    for (name, key, mods) in cases {
+        assert_eq!(
+            spec.key_action(*key, *mods),
+            Some(format!("do-{name}").as_str()),
+            "{name}: 스펙 표에 적힌 키가 배달되지 않는다"
+        );
+    }
+    // ⛔ 목록 판의 뜻이 정해진 키는 표에 적어도 **안 가져간다** — 고르기·닫기가 판마다
+    //    갈리면 안 된다.
+    let reserved = crate::session::PluginScreen {
+        keys: ["up", "down", "escape", "tab", "home", "end", "pageup", "pagedown"]
+            .into_iter()
+            .map(|n| (n.to_owned(), "x".to_owned()))
+            .collect(),
+        ..Default::default()
+    };
+    for key in [Key::Up, Key::Down, Key::Escape, Key::Tab, Key::Home, Key::End, Key::PageUp, Key::PageDown] {
+        assert_eq!(reserved.key_action(key, Mods::NONE), None, "{key:?} 를 스펙이 가져갔다");
+    }
 }
 
 // ── 글 판의 **구역**(§10-21ⓛ2) ────────────────────────────────────────────────

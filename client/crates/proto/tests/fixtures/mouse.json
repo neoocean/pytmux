@@ -152,6 +152,51 @@
       "bytes_b64": "G1tNYSQk"
     },
     {
+      "name": "move_inside_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 8,
+      "y": 6,
+      "kind": "move",
+      "button": 0,
+      "bytes_b64": "G1tNQyQk"
+    },
+    {
+      "name": "move_bottom_right_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 24,
+      "y": 12,
+      "kind": "move",
+      "button": 0,
+      "bytes_b64": "G1tNQzQq"
+    },
+    {
+      "name": "move_outside_x10",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": false,
+      "x": 4,
+      "y": 6,
+      "kind": "move",
+      "button": 0,
+      "bytes_b64": ""
+    },
+    {
       "name": "bottom_right_corner_x10",
       "pane": [
         5,
@@ -375,6 +420,51 @@
       "kind": "wheeldown",
       "button": 0,
       "bytes_b64": "G1s8NjU7NDs0TQ=="
+    },
+    {
+      "name": "move_inside_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 8,
+      "y": 6,
+      "kind": "move",
+      "button": 0,
+      "bytes_b64": "G1s8MzU7NDs0TQ=="
+    },
+    {
+      "name": "move_bottom_right_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 24,
+      "y": 12,
+      "kind": "move",
+      "button": 0,
+      "bytes_b64": "G1s8MzU7MjA7MTBN"
+    },
+    {
+      "name": "move_outside_sgr",
+      "pane": [
+        5,
+        3,
+        20,
+        10
+      ],
+      "sgr": true,
+      "x": 4,
+      "y": 6,
+      "kind": "move",
+      "button": 0,
+      "bytes_b64": ""
     },
     {
       "name": "bottom_right_corner_sgr",

@@ -219,7 +219,7 @@ static COMMANDS: &[Item] = &[
     i("unpin-tab", Done, "팔레트 - 끄기"),
     i("version", Done, "팔레트 - 서버 버전·가동 시간"),
     i("vt-parser", Done, "설정 화면 → 다음 값 · 팔레트"),
-    i("win-mouse-motion", Done, "팔레트"),
+    i("win-mouse-motion", Done, "팔레트 · 효과 = 서버 광고 캡(3→2) · GUI 는 1003 앱에 move(pytmux-581)"),
     i("window-size", Done, "설정 화면 → 다음 값 · 팔레트"),
 ];
 
@@ -351,7 +351,7 @@ static SETTINGS: &[Item] = &[
     i("synchronize-panes", Done, "설정 화면 · 팔레트"),
     i("tab-bar", Done, "설정 화면 - auto 면 탭 하나일 때 감춘다"),
     i("vt-parser", Done, "설정 화면 → 다음 값 · 팔레트"),
-    i("win-mouse-motion", Done, "설정 화면 · 팔레트"),
+    i("win-mouse-motion", Done, "설정 화면 · 팔레트 · 효과 = 서버 광고 캡 · GUI move(pytmux-581)"),
     i("window-size", Done, "설정 화면 → 다음 값 · 팔레트"),
 ];
 

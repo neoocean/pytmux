@@ -131,10 +131,15 @@ async def test_the_list_spec_shape_is_the_contract():
         # ★ `key` 는 **그 줄의 뜻**(CL 번호)이다 — 클라가 액션에 이것을 실어 보낸다.
         #   자리(번호)로 가리키면 목록이 바뀔 때 엉뚱한 CL 을 연다.
         assert row["key"] == "68995", row
-        assert "플러그인 호환 P2" in row["label"], row
-        assert row["cols"] == ["woojinkim", "2026/08/01"], row
-        # 키 표에 있는 것만 클라가 되돌려준다.
+        # ★ 줄은 정본 `_ChangesView` 와 같은 토막·같은 차례다(pytmux-613) —
+        #   `@CL · 날짜 · 유저 · 설명 첫 줄`.
+        assert row["label"] == "@68995", row
+        assert row["cols"] == ["2026/08/01", "woojinkim", "플러그인 호환 P2"], row
+        # 제목은 정본 `p4cl.title_port`(포트 그대로 — dict 표기가 아니다).
+        assert spec["title"] == "submitted changelists — srv:1666", spec["title"]
+        # 키 표에 있는 것만 클라가 되돌려준다 — 정본처럼 `q` 도 닫는다.
         assert spec["keys"]["enter"] == "describe", spec
+        assert spec["keys"]["q"] == "close", spec
         # 빈 목록과 실패를 가르는 자리.
         assert spec["note"] == "", spec
     finally:
@@ -1217,8 +1222,12 @@ async def test_ncd_walks_with_state_and_cd_closes_the_screen():
         assert spec["rows"][spec["selected"]]["tag"] == "cwd", spec["rows"][spec["selected"]]
         # 스펙이 자기 키를 정한다(클라는 이 표에 있는 것만 먹는다). 글자뿐 아니라
         # **이름 있는 키**도 실린다 — 트리는 `←→` 로 접고 편다.
-        assert spec["keys"] == {"enter": "into", "c": "cd",
-                                "right": "expand", "left": "collapse"}
+        # ★ 정본 `_NcdView.on_key` 의 손 그대로다(pytmux-612) — 글자는 타이핑 찾기라
+        #   글자 키(`c`)가 없고, `⇧Enter`/`Ctrl+O` 가 새 패널이다.
+        assert spec["keys"] == {"enter": "into",
+                                "right": "expand", "left": "collapse",
+                                "shift-enter": "newpane", "ctrl-o": "newpane"}
+        assert spec["typeahead"]["server"] == "find", spec["typeahead"]
 
         # `cd` 는 패널에 명령을 넣고 화면을 닫는다 — 정본 Enter 와 같은 결과다.
         pane = sess.active_window.active_pane
@@ -1277,12 +1286,16 @@ async def test_mdir_lists_a_directory_as_a_panel_the_client_can_draw(tmp_path=No
         # 조작 대상 목록은 `..` 를 안 담는다 — 담기면 부모를 지울 수 있다.
         assert os.path.dirname(tmp) not in mine["items"], mine["items"]
         assert os.path.join(tmp, "a.txt") in mine["items"], mine["items"]
-        # 칸 둘(크기·시각)이 실린다.
+        # 칸 셋(크기·시각·속성 — 정본 정보줄 `크기│날짜│속성` · pytmux-611)이 실린다.
         row = next(r for r in spec["rows"] if r["label"].strip().startswith("a.txt"))
-        assert len(row["cols"]) == 2 and row["cols"][0] != "<DIR>", row
-        # 글자 키를 스펙이 정한다 — 여기 없는 글자는 클라에서 판을 닫는다.
+        assert len(row["cols"]) == 3 and row["cols"][0] != "<DIR>", row
+        assert row["cols"][2] in ("--", "r-", "-h", "rh"), row
+        # 키는 정본 손(Alt+글자·F-키·Space·Insert·Delete)이고 **글자 별칭은 없다** —
+        # 정본에서 글자는 빨리찾기다(pytmux-611).
         assert spec["keys"]["enter"] == "into", spec["keys"]
-        assert spec["keys"]["d"] == "delete" and spec["keys"]["p"] == "cd", spec["keys"]
+        assert spec["keys"]["alt-d"] == "delete" and spec["keys"]["f4"] == "cd", spec["keys"]
+        assert "d" not in spec["keys"] and "p" not in spec["keys"], spec["keys"]
+        assert row["find"] == "a.txt" and spec["rows"][0]["find"] == "", row
 
 
 async def test_mdir_panel_carries_the_column_count_and_the_head_and_foot_lines():
@@ -1395,16 +1408,109 @@ async def test_mdir_copy_asks_where_and_the_two_step_overwrite_protocol_survives
         p._spec(mine, 0, "")
         ask = p._begin(mine, "copy", os.path.join(src, "same.txt"), 1)
         assert ask["kind"] == "prompt" and "복사" in ask["title"], ask
-        # 답 = 목적지. 겹치니 **수행 없이** 되묻는다.
+        # 답 = 목적지. 겹치니 **수행 없이** 되묻는다 — 정본과 같은 셋(모두 덮어쓰기 /
+        # 건너뛰기 / 취소)이고 기본은 '취소'다(pytmux-611 · 정본 `apply_result`).
         again = p._apply(mine, dst, 1)
-        assert again["kind"] == "confirm" and "덮어쓸까요" in again["title"], again
+        assert again["id"] == "mdir-ow" and again["kind"] == "list", again
+        assert [r["key"] for r in again["rows"]] == ["all", "skip", "cancel"], again
+        assert again["selected"] == 2 and again["keys"] == {"enter": "ow"}, again
+        assert "same.txt" in again["note"], again
         with open(os.path.join(dst, "same.txt")) as f:
             assert f.read() == "old", "되묻기 전에 이미 덮어썼다"
-        # '예' 면 그때 덮어쓴다.
-        spec = p._apply(mine, "y", 1)
+        # '모두 덮어쓰기' 면 그때 덮어쓰고, 물음 판을 닫고 mdir 판을 낸다.
+        closing, spec = p._overwrite(mine, "all", 1)
+        assert closing == {"t": "plugin_screen_close", "id": "mdir-ow"}, closing
         with open(os.path.join(dst, "same.txt")) as f:
             assert f.read() == "new", spec
         assert "복사 1건" in spec["note"], spec["note"]
+
+
+async def test_mdir_skip_copies_only_what_does_not_collide():
+    """덮어쓰기 물음의 **건너뛰기**는 겹치는 것만 거르고 나머지는 복사한다(pytmux-611).
+
+    종전 GUI 판에는 이 갈래가 없었다(예/아니오 둘뿐 — 「터미널 클라에서 하라」는 빚)."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "src"), os.path.join(tmp, "dst")
+        os.makedirs(src)
+        os.makedirs(dst)
+        for name, body in (("same.txt", "new"), ("fresh.txt", "fresh")):
+            with open(os.path.join(src, name), "w") as f:
+                f.write(body)
+        with open(os.path.join(dst, "same.txt"), "w") as f:
+            f.write("old")
+        p = _mdir()
+        mine = {"path": src, "tags": []}
+        p._spec(mine, 0, "")
+        mine["tags"] = [os.path.join(src, "same.txt"), os.path.join(src, "fresh.txt")]
+        p._begin(mine, "copy", "", 0)
+        assert p._apply(mine, dst, 0)["id"] == "mdir-ow"
+        _closing, spec = p._overwrite(mine, "skip", 0)
+        with open(os.path.join(dst, "same.txt")) as f:
+            assert f.read() == "old", "건너뛰기인데 덮어썼다"
+        with open(os.path.join(dst, "fresh.txt")) as f:
+            assert f.read() == "fresh", "건너뛰기가 겹치지 않는 것까지 걸렀다"
+        # 취소는 아무것도 안 한다.
+        p._begin(mine, "copy", "", 0)
+        mine["tags"] = [os.path.join(src, "same.txt")]
+        p._begin(mine, "copy", "", 0)
+        assert p._apply(mine, dst, 0)["id"] == "mdir-ow"
+        closing, _spec = p._overwrite(mine, "cancel", 0)
+        assert closing["id"] == "mdir-ow"
+        with open(os.path.join(dst, "same.txt")) as f:
+            assert f.read() == "old"
+
+
+async def test_mdir_delete_of_a_directory_warns_that_the_subtree_goes_too():
+    """디렉터리가 섞인 삭제 물음은 **하위까지 지워진다**고 말한다(정본 `_DEL_WARN` · 611)."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree(tmp)
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        ask = p._begin(mine, "delete", os.path.join(tmp, "sub"), 1)
+        assert ask["kind"] == "confirm", ask
+        assert "하위까지 영구 삭제" in ask["title"], ask["title"]
+        assert ask["i18n"]["title"]["args"] == {"n": "1", "d": "1"}, ask["i18n"]
+        # 파일 하나면 경고가 없다(대조군).
+        ask = p._begin(mine, "delete", os.path.join(tmp, "a.txt"), 2)
+        assert "하위까지" not in ask["title"], ask["title"]
+
+
+async def test_mdir_enter_on_an_archive_opens_the_read_only_archive_view():
+    """압축 파일 `Enter` 는 **안 보기 판**을 연다(정본 `_open_file` → `apply_arc` · 611).
+
+    안에서 디렉터리로 들어가고, 최상위 `..` 는 그 판만 닫고 mdir 판을 압축 파일 줄에
+    커서를 둔 채로 다시 낸다(정본 `_exit_arc`). 조작 키는 「읽기전용」을 말한다."""
+    import os
+    import tempfile
+    import zipfile
+    with tempfile.TemporaryDirectory() as tmp:
+        arc = os.path.join(tmp, "box.zip")
+        with zipfile.ZipFile(arc, "w") as z:
+            z.writestr("docs/readme.txt", "hi")
+            z.writestr("top.txt", "x")
+        p = _mdir()
+        mine = {"path": tmp, "tags": []}
+        p._spec(mine, 0, "")
+        spec = p._into(mine, arc, 1)
+        assert spec["id"] == "mdir-arc" and spec["kind"] == "panel", spec
+        keys = [r["key"] for r in spec["rows"]]
+        assert keys == ["..", "d:docs", "f:top.txt"], keys
+        req = {"id": "mdir-arc", "state": {"mdir": mine}}
+        inner = p.plugin_screen(None, None, dict(req, do="arc-into", input="d:docs", row=1))
+        assert [r["key"] for r in inner["rows"]] == ["..", "f:readme.txt"], inner["rows"]
+        ro = p.plugin_screen(None, None, dict(req, do="ro", row=1))
+        assert ro["note"] == "압축 보기: 읽기전용", ro
+        up = p.plugin_screen(None, None, dict(req, do="arc-up", row=0))
+        assert up["rows"][up["selected"]]["key"] == "d:docs", up
+        out = await p.plugin_screen(None, None, dict(req, do="arc-up", row=0))
+        closing, panel = out
+        assert closing == {"t": "plugin_screen_close", "id": "mdir-arc"}, closing
+        assert panel["id"] == "mdir" and panel["rows"][panel["selected"]]["key"] == arc
 
 
 async def test_a_closed_screen_reaches_the_other_plugins_through_a_hook():
@@ -1528,7 +1634,11 @@ async def test_claude_resume_lists_sessions_and_remembers_where_each_one_lives()
             spec = await plugin._open_spec(state)
         assert spec["kind"] == "list" and spec["id"] == "claude-resume"
         assert [r["key"] for r in spec["rows"]] == ["abc-1", "abc-2"]
-        assert spec["rows"][0]["label"] == "첫 세션"
+        # ★ 칸 차례는 정본 줄 `시각 · 프로젝트 · 제목` 그대로다(pytmux-614).
+        import time as _time
+        assert spec["rows"][0]["label"] == _time.strftime(
+            "%m-%d %H:%M", _time.localtime(1_700_000_000.0)), spec["rows"][0]
+        assert spec["rows"][0]["cols"] == ["work/one", "첫 세션"], spec["rows"][0]
         assert spec["keys"] == {"enter": "resume"}
         assert state["claude-resume"]["cwds"] == {"abc-1": "/work/one",
                                                   "abc-2": "/work/two"}
@@ -1542,7 +1652,11 @@ async def test_claude_resume_lists_sessions_and_remembers_where_each_one_lives()
                 "id": "claude-resume", "do": "resume", "input": "abc-2",
                 "state": state,
             })
-        assert resp == {"t": "plugin_screen_close", "id": "claude-resume"}
+        # 닫으면서 정본처럼 「새 탭에서 세션 리줌: …」 안내를 낸다(pytmux-614 — 정본
+        # `_resume` 의 `cresume.opening`). 서버발 글이라 키+재료로 간다.
+        assert resp[0] == {"t": "plugin_screen_close", "id": "claude-resume"}, resp
+        assert resp[1]["t"] == "notice" and resp[1]["key"] == "cresume.opening", resp
+        assert resp[1]["kw"] == {"title": "둘"}, resp
         assert opened == ["/work/two"], "적어 둔 cwd 로 안 열었다: %r" % opened
     finally:
         await teardown(srv, task, sock)
@@ -1572,7 +1686,8 @@ async def test_claude_resume_refuses_a_session_id_that_is_not_one():
 
 
 async def test_prompt_history_lists_the_same_tail_the_jump_indexes():
-    """프롬프트 목록 — **최신이 위**이고, 줄의 뜻은 tail 슬라이스 안의 자리다.
+    """프롬프트 목록 — **오래된 것이 위, 최신이 아래**이고 처음 커서는 최신이다(정본
+    `_HistView._sel = len - 1` · pytmux-616). 줄의 뜻은 tail 슬라이스 안의 자리다.
 
     ⚠ 여기가 조용히 틀리는 자리다: 점프(`scroll_to_prompt`)의 index 는 tail 기준인데
     목록을 전체 히스토리로 만들면 오래된 패널에서 **엉뚱한 자리로** 점프한다. 그래서
@@ -1586,10 +1701,11 @@ async def test_prompt_history_lists_the_same_tail_the_jump_indexes():
         pane._ph_history = ["p%d" % i for i in range(40)]
         spec = plugin._open_spec(srv, sess)
         assert spec["kind"] == "list" and spec["id"] == "prompt-history"
-        assert spec["rows"][0]["label"] == "p39", "최신이 위가 아니다"
-        # tail 슬라이스라 30개, 그리고 그 안의 자리가 key 다(마지막 = 29).
+        # tail 슬라이스라 30개, 그리고 그 안의 자리가 key 다(오름차순 · 마지막 = 29).
         assert len(spec["rows"]) == 30, len(spec["rows"])
-        assert spec["rows"][0]["key"] == "29", spec["rows"][0]
+        assert [r["key"] for r in spec["rows"]] == [str(i) for i in range(30)]
+        assert spec["rows"][-1]["label"] == "p39", "최신이 아래가 아니다"
+        assert spec["selected"] == 29, "처음 커서가 최신이 아니다"
 
         jumped = []
         srvmod = _server_module(plugin)
@@ -1658,9 +1774,12 @@ async def test_a_screen_spec_says_the_same_words_the_catalog_does():
         plugin = _plugin(srv, "claude-prompt-history")
         sess.active_window.active_pane._ph_history = []
         spec = plugin._open_spec(srv, sess)
-        for field in ("title", "hint", "note"):
+        for field in ("title", "note"):
             assert spec[field] in values, (
                 "prompt-history 스펙의 %s 가 카탈로그에 없다: %r" % (field, spec[field]))
+        # 꼬리줄은 **자리가 있는 글**이다(정본 `ph.popup_sub` 의 `{n}` · pytmux-616) — 그
+        # 포맷이 카탈로그 값이고 재료째 실려야 영어 클라가 제 말로 짓는다.
+        assert spec["i18n"]["hint"]["fmt"] in values, spec["i18n"]
 
         plugin = _plugin(srv, "claude-resume")
         spec = await plugin._open_spec({})

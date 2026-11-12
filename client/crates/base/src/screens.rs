@@ -622,6 +622,51 @@ pub enum ScreenKey {
     /// `NoticeHistoryScreen.on_key` 의 `c`). 무엇이 그 줄인지는 뷰가 안다(알림 목록은
     /// 상태에 있다).
     CopyRow(usize),
+    /// 타이핑 찾기가 **이 판 안에서 못 찾았다** — 이 질의를 서버에 물어라(정본 ncd
+    /// `request_nc_find` · pytmux-612). 판은 그대로다. 누구에게 묻는지는 뷰가 안다(스펙).
+    FindMiss(String),
+}
+
+/// 플러그인 판의 **타이핑 찾기** 선언(pytmux-611·612) — 스펙의 `typeahead` 를 core 말로.
+///
+/// core 는 스펙을 모르므로 뷰가 옮겨 담아 넘긴다([`Screens::set_plugin_find`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PluginFind {
+    /// 찾기로 안 먹는 글자(그 글자는 삼킨다 — 정본 mdir `_RESERVED_CHARS`).
+    pub reserved: String,
+    /// `Esc` 가 찾기를 먼저 지우나(정본 mdir) — 아니면 늘 닫는다(정본 ncd).
+    pub esc_clears: bool,
+    /// 이 판 안에서 못 찾았을 때 서버에 묻는 최소 글자 수. `0` 이면 안 묻는다.
+    pub ask_min: usize,
+}
+
+/// 타이핑 찾기의 **뛰기** — 정본 `_MdirView._jump`·`_NcdView._jump` 와 같은 규칙.
+///
+/// 지금 줄(`start`)부터 감아 돌며 **접두 일치를 먼저**, 없으면 **포함 일치**를 찾는다
+/// (대소문자 무시). 빈 이름의 줄은 건너뛴다(mdir 의 `..`·드라이브). 못 찾으면 `None`.
+///
+/// ⛔ 규칙은 정본 순수 함수(`pytmuxlib/typeahead.py:find_jump`)가 쥐고, 같은 사례를
+///    `proto/tests/typeahead_conformance.rs` 가 맞댄다 — 여기만 고치면 그 자가 운다.
+pub fn typeahead_jump(names: &[String], start: usize, query: &str) -> Option<usize> {
+    let n = names.len();
+    if query.is_empty() || n == 0 {
+        return None;
+    }
+    let q = query.to_lowercase();
+    let start = start.min(n - 1);
+    for prefix in [true, false] {
+        for off in 0..n {
+            let i = (start + off) % n;
+            if names[i].is_empty() {
+                continue;
+            }
+            let name = names[i].to_lowercase();
+            if (prefix && name.starts_with(&q)) || (!prefix && name.contains(&q)) {
+                return Some(i);
+            }
+        }
+    }
+    None
 }
 
 /// 무엇을 묻고 있나. **대답을 어디에 쓸지**가 이 값에 달렸다.
@@ -995,6 +1040,15 @@ pub struct Screens {
     /// 뜻이 없을 때(다열 판의 열 이동 · 스펙이 묶은 키 — 그건 뷰가 먼저 본다) 탭 순환.
     /// 뷰가 키를 먹기 직전에 넣는다(`set_plugin_grid` 와 같은 때).
     plugin_tabs: usize,
+    /// 그 판의 **타이핑 찾기** 선언(없으면 끔 · pytmux-611·612). 뷰가 키를 먹기 직전에
+    /// 넣는다(`set_plugin_grid` 와 같은 때) — 선언과 줄 이름은 스펙(proto)이 든다.
+    plugin_find_cfg: Option<PluginFind>,
+    /// 찾기가 견줄 줄 이름들(빈 이름 = 그 줄은 건너뛴다). 뷰가 선언과 함께 넣는다.
+    plugin_find_names: Vec<String>,
+    /// 지금까지 친 찾기 글자(정본 `_find`).
+    plugin_find: String,
+    /// 마지막으로 서버에 물은 질의 — 같은 질의를 또 안 묻는다(정본 `_find_requested`).
+    plugin_find_asked: String,
     /// 알림 이력에서 **펼친 줄들**(pytmux-539 · 정본 `NoticeHistoryScreen._expanded`).
     /// `Enter` 로 토글, 판을 닫으면 비운다(다음에 열 때 옛 펼침이 되살아나면 그것은
     /// 「내가 안 한 일」로 보인다).
@@ -1534,6 +1588,8 @@ impl Screens {
         self.prompt_sel_anchor = None;
         self.menu_group = None;
         self.detail.clear();
+        self.plugin_find.clear();
+        self.plugin_find_asked.clear();
         self.stack.pop().is_some()
     }
 
@@ -1559,6 +1615,15 @@ impl Screens {
         // 이미 글자로 오므로 여기서는 Ctrl/Alt 만 거른다 — 그건 여전히 화면 밖의 것이다.
         if matches!(self.top(), Some(Screen::Prompt)) && !mods.ctrl && !mods.alt {
             return Some(self.press_prompt(key));
+        }
+        // ★ 플러그인 판은 **모르는 수정키 조합을 삼킨다**(pytmux-611) — 정본 판들
+        //   (`_MdirView`·`_NcdView`·`_ChangesView`…)은 제 것 아닌 Ctrl/Alt 조합을 그냥
+        //   흘려보내고 판은 그대로다. 스펙이 묶은 조합(`ctrl-o`·`alt-c`)은 뷰가 여기
+        //   오기 전에 가로챈다(`key_action`). 아래 「닫는다」를 그대로 두면 Mdir 에서
+        //   `Ctrl+X` 한 번에 판이 통째로 사라진다.
+        if mods != Mods::NONE && matches!(self.top(), Some(Screen::PluginView)) {
+            self.plugin_find.clear();
+            return Some(ScreenKey::Consumed);
         }
         // 수정키가 붙은 조합은 화면이 알 바가 아니다 — 닫고 나서 다시 누르게 한다.
         if mods != Mods::NONE {
@@ -1612,6 +1677,11 @@ impl Screens {
         // 플러그인이 준 화면 — 목록이면 고르는 화면, 글이면 읽는 화면이다.
         // 그 갈림은 **스펙**에 있고 뷰가 열 때 알려 준다(core 는 스펙을 안 든다).
         if matches!(self.top(), Some(Screen::PluginView)) {
+            if self.plugin_list
+                && let Some(found) = self.press_plugin_find(key)
+            {
+                return Some(found);
+            }
             // ★ **탭 띠가 있는 판은 `Tab`/`Shift+Tab` 이 탭 순환**이다(pytmux-516 ·
             //   정본 `TokenLogScreen.on_key` 와 같은 규칙 — 같은 CL 에 둘 다 섰다).
             //   `←`/`→` 도 그 줄에 다른 뜻이 없으면 같다: 다열 판의 열 이동(아래)이
@@ -1678,6 +1748,17 @@ impl Screens {
                 }
                 Key::PageDown => {
                     self.scroll += PAGE;
+                    ScreenKey::Consumed
+                }
+                // 정본 글 판(`p4` 상세 `_TextView.on_key`)은 Home/End 로 처음·끝에 간다
+                // (pytmux-613). 끝이 어디인지는 그리는 쪽이 안다 — `usize::MAX` 를 두면
+                // 뷰가 내용 길이로 접는다(`settle_plugin_scroll`).
+                Key::Home => {
+                    self.scroll = 0;
+                    ScreenKey::Consumed
+                }
+                Key::End => {
+                    self.scroll = usize::MAX;
                     ScreenKey::Consumed
                 }
                 Key::Escape => {
@@ -2203,6 +2284,94 @@ impl Screens {
     /// 같은 `PluginView` 변형이 그 판들을 다 맡으므로 열 때 한 번으로는 낡는다.
     pub fn set_plugin_tabs(&mut self, count: usize) {
         self.plugin_tabs = count;
+    }
+
+    /// 그 판의 **타이핑 찾기** 선언과 줄 이름들을 넣는다(pytmux-611·612). 선언이 없으면
+    /// `None` — 그 판의 표 밖 글자는 종전대로 삼킨다.
+    ///
+    /// `set_plugin_grid` 와 같은 때(키를 먹기 직전)에 넣는다. 선언이 사라지면(다른 판으로
+    /// 바뀌었다) 친 글자도 버린다 — 남기면 다음 판의 첫 글자가 옛 질의에 붙는다.
+    pub fn set_plugin_find(&mut self, cfg: Option<PluginFind>, names: Vec<String>) {
+        if cfg.is_none() {
+            self.plugin_find.clear();
+            self.plugin_find_asked.clear();
+        }
+        self.plugin_find_cfg = cfg;
+        self.plugin_find_names = names;
+    }
+
+    /// 지금까지 친 찾기 글자(비면 찾는 중이 아니다) — 그리는 쪽이 꼬리줄에 보인다.
+    pub fn plugin_find(&self) -> &str {
+        &self.plugin_find
+    }
+
+    /// 찾기 글자를 버린다 — 스펙이 묶은 액션 키가 나갔을 때(정본 `_set_find("")`).
+    pub fn clear_plugin_find(&mut self) {
+        self.plugin_find.clear();
+    }
+
+    /// 이 키가 **찾는 중의 찾기 몫**인가 — 그러면 스펙의 키 표보다 먼저다.
+    ///
+    /// 정본 mdir 의 `Backspace` 는 찾는 중이면 한 글자 지우기이고 아니면 상위 디렉터리다
+    /// (`_MdirView.on_key`). 뷰는 스펙의 `backspace` 를 먼저 보므로, 이 물음 없이는 찾는
+    /// 중의 Backspace 가 디렉터리를 바꾼다.
+    pub fn plugin_find_owns(&self, key: Key, mods: Mods) -> bool {
+        if mods != Mods::NONE || self.plugin_find.is_empty() || self.plugin_find_cfg.is_none() {
+            return false;
+        }
+        match key {
+            Key::Backspace => true,
+            Key::Escape => self.plugin_find_cfg.as_ref().is_some_and(|c| c.esc_clears),
+            _ => false,
+        }
+    }
+
+    /// 타이핑 찾기 판에서의 키 — 찾기가 먹었으면 `Some`, 아니면 `None`(종전 길로).
+    fn press_plugin_find(&mut self, key: Key) -> Option<ScreenKey> {
+        let cfg = self.plugin_find_cfg.clone()?;
+        match key {
+            Key::Char(c) if !c.is_control() => {
+                if cfg.reserved.contains(c) {
+                    return Some(ScreenKey::Consumed);
+                }
+                self.plugin_find.push(c);
+                Some(self.plugin_find_jump(&cfg))
+            }
+            Key::Backspace if !self.plugin_find.is_empty() => {
+                self.plugin_find.pop();
+                Some(self.plugin_find_jump(&cfg))
+            }
+            Key::Escape if cfg.esc_clears && !self.plugin_find.is_empty() => {
+                self.plugin_find.clear();
+                Some(ScreenKey::Consumed)
+            }
+            // 그 밖의 키(이동·Enter·Esc)는 **찾기를 지우고** 제 일을 한다(정본
+            // `_set_find("")`·`_reset_find()`).
+            _ => {
+                self.plugin_find.clear();
+                self.plugin_find_asked.clear();
+                None
+            }
+        }
+    }
+
+    /// 친 글자로 뛴다. 이 판 안에 없고 선언이 허락하면 서버에 물으라고 돌려준다.
+    fn plugin_find_jump(&mut self, cfg: &PluginFind) -> ScreenKey {
+        if self.plugin_find.is_empty() {
+            return ScreenKey::Consumed;
+        }
+        if let Some(i) = typeahead_jump(&self.plugin_find_names, self.selected, &self.plugin_find) {
+            self.selected = i;
+            return ScreenKey::Consumed;
+        }
+        if cfg.ask_min > 0
+            && self.plugin_find.chars().count() >= cfg.ask_min
+            && self.plugin_find != self.plugin_find_asked
+        {
+            self.plugin_find_asked = self.plugin_find.clone();
+            return ScreenKey::FindMiss(self.plugin_find.clone());
+        }
+        ScreenKey::Consumed
     }
 
     /// 알림 이력에서 그 줄이 **펼쳐져** 있나(pytmux-539).

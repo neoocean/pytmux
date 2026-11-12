@@ -263,6 +263,31 @@ async def test_wheel_without_drag_still_reaches_the_app():
     await _with_app(body)
 
 
+async def test_any_motion_reaches_a_1003_app_but_not_when_mouse_is_off():
+    """pytmux-581: 버튼 없는 이동은 1003 앱에만 `move`(cb 35)로 간다 — 그리고 `set mouse
+    off` 면 **안 간다**. 누름·휠은 첫 줄에서 막는데 모션만 빠져 있었다(대조군: 켜면 간다 ·
+    1002 앱이면 안 간다)."""
+    from test_client import _with_app
+
+    async def body(app, pilot, srv):
+        v = app.view
+        sent = []
+        app.send_mouse = lambda p, d: sent.append((p, d))
+        pid = _one_pane_app(app, mouse=3)
+        app.mouse_enabled = True
+        v.on_mouse_move(_FakeMouse(5, 3, 0))
+        assert sent == [(pid, b"\x1b[<35;4;3M")], sent
+        sent.clear()
+        app.mouse_enabled = False
+        v.on_mouse_move(_FakeMouse(6, 3, 0))
+        assert sent == [], "mouse off 인데 1003 앱에 모션이 갔다"
+        app.mouse_enabled = True
+        _one_pane_app(app, mouse=2)
+        v.on_mouse_move(_FakeMouse(6, 3, 0))
+        assert sent == [], "1002 앱(드래그만)에 버튼 없는 모션이 갔다"
+    await _with_app(body)
+
+
 async def test_screen_messages_carry_absolute_top_on_the_wire():
     """**호출부** 오라클: `top` 이 실제로 screen·screen-delta 프레임에 실린다.
 

@@ -73,6 +73,8 @@ const READS: &[(&str, &str)] = &[
     // `"choose"` 를 직접 비교하지 않고 `is_chooser()` 를 부르는 것이 계약이다
     // (`coltags` → `col_level(` 과 같은 이유: 표를 두 벌로 안 적는다).
     ("w", "is_chooser("),
+    // 여러 줄 미리보기(pytmux-616) — 같은 줄의 이어지는 표시줄.
+    ("more", ".more"),
 ];
 
 /// 그리는 갈래 **밖**에서 드는 칸 — 여기 있는 것은 갈래에서 안 찾는다.
@@ -82,7 +84,20 @@ const READS: &[(&str, &str)] = &[
 ///   (`spec.rows.get(row).map(|r| r.key.clone())`).
 /// · `i18n` — 줄의 글을 우리 로케일로 다시 짓는 **재료**다. 푸는 것은 proto 안의
 ///   `say_label`/`say_cols` 이고, 갈래는 그 함수를 부르는 것으로 이미 지난다.
-const ELSEWHERE: &[&str] = &["key", "i18n"];
+/// · `find` — 타이핑 찾기가 견줄 **이름**이다(pytmux-611·612). 그림이 아니라 키 처리의
+///   재료라, 뷰가 키 직전에 core 로 넘기는 자리(`sync_plugin_find`)가 읽는다 — 그 자리가
+///   실제로 읽는지는 아래 `the_typeahead_names_reach_the_core` 가 따로 잰다.
+const ELSEWHERE: &[&str] = &["key", "i18n", "find"];
+
+#[test]
+fn the_typeahead_names_reach_the_core() {
+    let body = match_body(GUI_SRC, "fn sync_plugin_find(&mut self) {");
+    assert!(
+        body.contains("r.find.clone()") && body.contains("set_plugin_find("),
+        "타이핑 찾기의 줄 이름(`find`)을 core 로 넘기는 자리가 사라졌다 — 그러면 글자를 쳐도 \
+         아무 줄로도 안 뛴다"
+    );
+}
 
 /// `match <머리> {` 블록의 몸통 — 여는 중괄호부터 짝이 맞는 닫는 중괄호까지.
 ///

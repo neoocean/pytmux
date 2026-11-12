@@ -170,3 +170,19 @@ def describe_msg(server, sess, change: str, cwd=_UNSET) -> dict:
     if r.returncode != 0:
         err = r.stderr.decode("utf-8", "ignore").strip() or "p4 describe error"
     return {"t": "p4_describe", "change": str(change), "text": text, "err": err}
+
+
+def row_parts(row: dict):
+    """목록 한 줄의 세 토막 `(head, mid, desc)` — 정본 화면과 GUI 판이 **같이 쓴다**(pytmux-613).
+
+    head=`  @<CL> ` · mid=`<날짜>  <user> `(고정폭) · desc=설명 **첫 줄**. 종전에는 이 규칙이
+    Textual 화면 안(`screen.py:_ChangesView._row_parts`)에만 있어 서버가 못 불렀고, GUI 판은
+    따로 지은 줄(`CL 설명 전체`, 칸 차례 user→date)을 냈다."""
+    cl = row.get("change", "")
+    when = row.get("when", "")
+    user = row.get("user", "")
+    desc = (row.get("desc", "") or "").splitlines()
+    desc = desc[0] if desc else ""
+    head = f"  @{cl:<7} "
+    mid = f"{when:<16}  {user:<14} "
+    return head, mid, desc

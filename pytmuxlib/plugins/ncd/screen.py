@@ -262,16 +262,13 @@ class _NcdView(Widget):
     def _jump(self):
         if not self._find or not self._rows:
             return
-        q = self._find.lower()
-        n = len(self._rows)
-        start = self._sel
-        for match_prefix in (True, False):
-            for off in range(n):
-                i = (start + off) % n
-                name = self._disp_name(self._rows[i][0]).lower()
-                if (name.startswith(q) if match_prefix else q in name):
-                    self._move(i)
-                    return
+        # 규칙은 코어 한 벌이다(`pytmuxlib/typeahead.py` — GUI 와 같은 자로 잰다).
+        from pytmuxlib.typeahead import find_jump
+        i = find_jump([self._disp_name(p) for p, _d in self._rows],
+                      self._sel, self._find)
+        if i is not None:
+            self._move(i)
+            return
         # 보이는 트리에 없음 → 트리에 안 열린 디렉토리까지 서버에 재귀 검색을 요청해
         # (요청 2026-06-16) 매치가 있으면 그 경로까지 펼쳐 선택한다(apply_found).
         # 2글자 이상 + 같은 query 중복 요청 방지(키 입력마다 광역 walk 폭주 차단).

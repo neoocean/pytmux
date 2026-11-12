@@ -300,7 +300,7 @@ fn session_keys() -> SessionKeys {
 /// 정본 평소 갈래 중 **뷰가 base 앞에서** 가로채는 키와 그 자리. base 한 층으로는 못 잰다 —
 /// 이유 없는 예외는 빠뜨린 것이다(`a_normal_key_the_view_owns_is_named` 가 지킨다).
 static VIEW_OWNED: &[(&str, &str)] = &[
-    ("ctrl+v", "붙여넣기 — `gui::session_view::keydown_action` 의 `is_paste_chord` 가 base 앞에서 받는다(pytmux-364)"),
+    ("ctrl+v", "붙여넣기 — `gui::session_view::keydown_action` 의 `paste_entry` 가 base 앞에서 받는다(pytmux-364). 평소 모드가 아니면 `paste_route` 가 키로 흘려 이 표의 모드 핸들러가 받는다(pytmux-609)"),
     ("super+v", "같은 자리(`Cmd`/`Super`+V)"),
 ];
 

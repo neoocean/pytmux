@@ -476,7 +476,8 @@ class _NameSyncPlugin:
         없던 동안 `namesync` 는 네이티브 클라에서 죽은 줄이었다."""
         from . import screenspec
         if req.get("do") == "open":
-            return screenspec.open_spec(server, sess, req.get("name"))
+            # 초안(정본 편집기의 로컬 사본)은 **이 클라의 보관함**에 둔다(pytmux-615).
+            return screenspec.open_spec(server, sess, req.get("name"), req.get("state"))
         return screenspec.action(server, sess, req)
 
     # ---- 클라이언트 측 ----

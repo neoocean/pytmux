@@ -1686,3 +1686,100 @@ fn the_info_tabs_page_is_five_rows_like_the_canon() {
     assert_eq!(screens.press(Key::PageUp, Mods::NONE), Some(ScreenKey::Consumed));
     assert_eq!(screens.selected(), 0);
 }
+
+// ── 플러그인 판의 **타이핑 찾기**(pytmux-611·612 · 정본 `_MdirView`·`_NcdView`) ────────
+
+fn find_names() -> Vec<String> {
+    ["", "alpha", "beta", "albert", "gamma"].iter().map(|s| (*s).to_owned()).collect()
+}
+
+fn find_screens(esc_clears: bool, ask_min: usize) -> Screens {
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    screens.set_plugin_find(
+        Some(PluginFind { reserved: "/".into(), esc_clears, ask_min }),
+        find_names(),
+    );
+    screens.select_row(0);
+    screens
+}
+
+#[test]
+fn typing_in_a_plugin_list_jumps_to_the_first_matching_name() {
+    let mut screens = find_screens(true, 0);
+    assert_eq!(screens.press(Key::Char('a'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 1, "`a` 가 alpha 로 안 갔다");
+    assert_eq!(screens.press(Key::Char('l'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.press(Key::Char('b'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 3, "`alb` 가 albert 로 안 갔다");
+    assert_eq!(screens.plugin_find(), "alb");
+    // Backspace 는 찾기 글자를 지운다 — 찾는 중이면 판의 Backspace(mdir = 상위)보다 먼저다.
+    assert!(screens.plugin_find_owns(Key::Backspace, Mods::NONE));
+    assert_eq!(screens.press(Key::Backspace, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.plugin_find(), "al");
+    // 예약 글자는 찾기로 안 먹고 삼킨다(판은 그대로).
+    assert_eq!(screens.press(Key::Char('/'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.plugin_find(), "al");
+    // 찾는 중의 Esc 는 찾기만 지운다(정본 mdir) — 판은 남는다.
+    assert_eq!(screens.press(Key::Escape, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.plugin_find(), "");
+    assert_eq!(screens.top(), Some(Screen::PluginView));
+    // 이동 키는 찾기를 비운다(정본 `_set_find("")`).
+    screens.press(Key::Char('g'), Mods::NONE);
+    assert_eq!(screens.selected(), 4);
+    screens.press(Key::Up, Mods::NONE);
+    assert_eq!(screens.plugin_find(), "");
+    assert_eq!(screens.selected(), 3);
+}
+
+#[test]
+fn ncd_escape_closes_even_while_finding_and_a_miss_asks_the_server_once() {
+    let mut screens = find_screens(false, 2);
+    // 한 글자 미스는 안 묻는다(정본 ncd: 2글자부터).
+    assert_eq!(screens.press(Key::Char('z'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(
+        screens.press(Key::Char('q'), Mods::NONE),
+        Some(ScreenKey::FindMiss("zq".into())),
+        "2글자 미스가 서버로 안 갔다"
+    );
+    // 같은 질의를 또 묻지 않는다 — Backspace 뒤 다시 쳐도 직전 질의와 같으면 조용하다.
+    assert_eq!(screens.press(Key::Backspace, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.press(Key::Char('q'), Mods::NONE), Some(ScreenKey::Consumed));
+    // 정본 ncd 의 Esc 는 찾는 중에도 바로 닫는다.
+    assert!(!screens.plugin_find_owns(Key::Escape, Mods::NONE));
+    assert_eq!(screens.press(Key::Escape, Mods::NONE), Some(ScreenKey::Closed));
+}
+
+#[test]
+fn a_list_without_a_typeahead_still_swallows_letters() {
+    // 선언이 없는 판(종전 판 전부)은 글자를 삼킨다 — 커서도 그대로다.
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    screens.set_plugin_find(None, Vec::new());
+    screens.select_row(2);
+    assert_eq!(screens.press(Key::Char('a'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 2);
+    assert_eq!(screens.plugin_find(), "");
+}
+
+#[test]
+fn an_unbound_modifier_chord_does_not_close_a_plugin_panel() {
+    // 정본 판들은 제 것 아닌 Ctrl/Alt 조합을 흘려보낸다 — 판이 사라지지 않는다(pytmux-611).
+    let mut screens = Screens::new();
+    screens.open_plugin_view(true);
+    assert_eq!(screens.press(Key::Char('x'), Mods::CTRL), Some(ScreenKey::Consumed));
+    assert_eq!(screens.press(Key::Char('q'), Mods::ALT), Some(ScreenKey::Consumed));
+    assert_eq!(screens.top(), Some(Screen::PluginView));
+}
+
+#[test]
+fn home_and_end_scroll_a_plugin_text_screen() {
+    // 정본 p4 상세 판(`_TextView.on_key`)의 Home/End — 종전에는 삼켰다(pytmux-613).
+    let mut screens = Screens::new();
+    screens.open_plugin_view(false);
+    screens.press(Key::Down, Mods::NONE);
+    assert_eq!(screens.press(Key::End, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.scroll(), usize::MAX, "End 가 끝으로 안 갔다(뷰가 길이로 접는다)");
+    assert_eq!(screens.press(Key::Home, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.scroll(), 0);
+}

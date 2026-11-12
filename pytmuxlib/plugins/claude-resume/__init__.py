@@ -161,7 +161,15 @@ class _ClaudeResumePlugin:
             cwd = (((req.get("state") or {}).get("claude-resume") or {})
                    .get("cwds") or {}).get(sid)
             self._resume(server, sess, sid, cwd)
-            return {"t": "plugin_screen_close", "id": "claude-resume"}
+            # ★ 정본 `_resume` 은 고른 뒤 「새 탭에서 세션 리줌: …」 안내를 띄운다(pytmux-614).
+            #   종전 GUI 길은 아무 말 없이 닫혀, 새 탭이 뜰 때까지 무엇이 일어나는지 몰랐다.
+            #   서버발 글이라 키+재료로 싣는다(클라가 제 로케일로 짓는다).
+            title = str((((req.get("state") or {}).get("claude-resume") or {})
+                         .get("titles") or {}).get(sid) or "")
+            text, _spec = i18n.phrase("cresume.opening", title=title)
+            return [{"t": "plugin_screen_close", "id": "claude-resume"},
+                    {"t": "notice", "sev": "info", "key": "cresume.opening",
+                     "kw": {"title": title}, "text": text}]
         if do == "close":
             return {"t": "plugin_screen_close", "id": "claude-resume"}
         return None
@@ -172,8 +180,10 @@ class _ClaudeResumePlugin:
         import time
         found = (await self._list_sessions())["sessions"]
         # 고른 줄로 리줌할 때 쓸 cwd 를 적어 둔다(위 `resume` 주석).
-        state.setdefault("claude-resume", {})["cwds"] = {
-            s["id"]: s.get("cwd") for s in found}
+        mine = state.setdefault("claude-resume", {})
+        mine["cwds"] = {s["id"]: s.get("cwd") for s in found}
+        # 「여는 중」 안내에 쓸 제목도 같이(정본 `cresume.opening` 의 `title`).
+        mine["titles"] = {s["id"]: s.get("title", "") for s in found}
 
         def when(mtime):
             try:
@@ -188,8 +198,10 @@ class _ClaudeResumePlugin:
             "hint": i18n.t("cresume.hint"),
             # `key` 는 그 줄의 **뜻**(세션 id)이다 — 자리로 가리키면 목록이 바뀔 때
             # 엉뚱한 세션이 열린다.
-            "rows": [{"key": s["id"], "label": s.get("title") or s["id"],
-                      "cols": [s.get("project") or "", when(s.get("mtime"))]}
+            # ★ 칸 차례는 정본 줄(`ClaudeResumeScreen._row`)과 같다 — `시각 · 프로젝트 · 제목`
+            #   (pytmux-614). 제목이 없으면 정본처럼 빈 칸이다(id 로 대신하지 않는다).
+            "rows": [{"key": s["id"], "label": when(s.get("mtime")),
+                      "cols": [s.get("project") or "", s.get("title") or ""]}
                      for s in found],
             "selected": 0,
             "keys": {"enter": "resume"},

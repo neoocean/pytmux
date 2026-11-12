@@ -268,29 +268,47 @@ async def test_namesync_rules_can_be_read_added_edited_and_deleted():
             return spec_mod.action(srv, sess, dict(req, state=state))
 
         srv._namesync_rules = []
-        spec = spec_mod.open_spec(srv, sess, "namesync")
+        spec = spec_mod.open_spec(srv, sess, "namesync", state)
         assert spec["kind"] == "table" and spec["rows"] == [] and spec["note"]
+        # 정본 `Esc` = 저장하고 닫기 — 클라가 판을 걷을 때 보낼 액션을 싣는다.
+        assert spec["on_close"] == "save", spec
 
-        # 더하기는 두 걸음이다(값이 둘인데 물음은 글 하나다).
-        ask = act(id="namesync", do="add", row=0)
+        # 더하기는 정본처럼 **폼**이다(`a`) — 네 칸(키워드·경로·호스트·OS)과 저장·취소.
+        ns = importlib.import_module("pytmuxlib.plugins.claude-name-sync")
+        form = act(id="namesync", do="add", row=0)
+        assert form["id"] == "namesync-form" and form["kind"] == "form", form
+        vals = {r["key"]: r["cols"][0] for r in form["rows"]}
+        # 새 규칙의 host/os 는 **이 머신의 값**(정본 `namesync_get` 과 같은 함수).
+        assert vals["host"] == ns._this_host() and vals["os"] == ns._this_os(), vals
+        ask = act(id="namesync-form", do="field", row=1, input="path")
         assert ask["kind"] == "prompt"
-        ask2 = act(id="namesync", do="apply", row=0, input="/tmp/work")
-        assert ask2["kind"] == "prompt"
-        lst = act(id="namesync", do="apply", row=0, input="일감")
-        assert [r["label"] for r in lst["rows"]] == ["일감"]
-        assert srv._namesync_rules[0]["path"] == "/tmp/work"
+        act(id="namesync-form", do="apply", row=0, input="/tmp/work")
+        act(id="namesync-form", do="field", row=0, input="keyword")
+        act(id="namesync-form", do="apply", row=0, input="일감")
+        closing, lst = act(id="namesync-form", do="save", row=0)
+        assert closing == {"t": "plugin_screen_close", "id": "namesync-form"}
+        assert [r["cols"][1] for r in lst["rows"]] == ["→ 일감"], lst["rows"]
+        # 저장은 **닫을 때**다(정본 `Esc` 일괄 저장) — 아직 서버 규칙은 비었다.
+        assert srv._namesync_rules == []
 
-        # 키워드 고치기 — 지금 값이 초기값으로 실린다.
-        ask3 = act(id="namesync", do="kw", row=0, input="0")
-        assert ask3["text"] == "일감"
-        act(id="namesync", do="apply", row=0, input="딴일")
+        # 수정 폼(`e`) — 지금 값이 칸에 실린다.
+        form = act(id="namesync", do="edit", row=0, input="0")
+        assert {r["key"]: r["cols"][0] for r in form["rows"]}["keyword"] == "일감"
+        act(id="namesync-form", do="field", row=0, input="keyword")
+        act(id="namesync-form", do="apply", row=0, input="딴일")
+        act(id="namesync-form", do="field", row=0, input="@save")
+
+        # 닫으면(`on_close`) 그때 저장된다.
+        out = act(id="namesync", do="save", row=0)
+        assert out[1]["key"] == "nsmsg.saved", out
         assert srv._namesync_rules[0]["keyword"] == "딴일"
 
-        # 지우기는 되돌릴 수 없어 **묻는다** — 무엇이 사라지는지와 함께.
-        ask4 = act(id="namesync", do="del", row=0, input="0")
-        assert ask4["kind"] == "confirm" and "딴일" in ask4["note"]
-        gone = act(id="namesync", do="apply", row=0, input="yes")
-        assert srv._namesync_rules == [] and gone["rows"] == []
+        # 지우기는 정본처럼 **확인 없이**(초안에서) — 저장은 닫을 때.
+        spec_mod.open_spec(srv, sess, "namesync", state)
+        gone = act(id="namesync", do="del", row=0, input="0")
+        assert gone["rows"] == [] and srv._namesync_rules != []
+        act(id="namesync", do="save", row=0)
+        assert srv._namesync_rules == []
 
         # 낡은 줄을 되돌려받아도 엉뚱한 것을 안 건드린다.
         assert act(id="namesync", do="del", row=9, input="9")["rows"] == []

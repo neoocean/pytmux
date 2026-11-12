@@ -10,13 +10,16 @@
       "cols",
       "depth",
       "expand",
+      "find",
       "i18n",
       "key",
       "label",
+      "more",
       "tag"
     ],
     "panel": [
       "cols",
+      "find",
       "key",
       "label",
       "tag"
@@ -38,12 +41,14 @@
   },
   "sites": {
     "form": [
-      "pytmuxlib/plugins/claude-code/screenspec.py"
+      "pytmuxlib/plugins/claude-code/screenspec.py",
+      "pytmuxlib/plugins/claude-name-sync/screenspec.py"
     ],
     "list": [
       "pytmuxlib/plugins/claude-code/screenspec.py",
       "pytmuxlib/plugins/claude-prompt-history/__init__.py",
       "pytmuxlib/plugins/claude-resume/__init__.py",
+      "pytmuxlib/plugins/mdir/__init__.py",
       "pytmuxlib/plugins/ncd/__init__.py",
       "pytmuxlib/plugins/p4-show-submitted-changelists/__init__.py"
     ],

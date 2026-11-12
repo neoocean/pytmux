@@ -199,18 +199,42 @@ class _P4ChangesPlugin:
         return None
 
     def _changes_spec(self, server, sess, count, cwd):
-        from .server import list_changes_msg
+        from .server import list_changes_msg, row_parts
         msg = list_changes_msg(server, sess, count, cwd)
-        rows = [{
-            # `key` 는 그 줄의 **뜻**(CL 번호)이고 클라가 액션에 그대로 실어 보낸다.
-            "key": str(r.get("change", "")),
-            "label": f"{r.get('change', '')}  {r.get('desc', '')}".strip(),
-            "cols": [r.get("user", ""), r.get("when", "")],
-        } for r in msg.get("rows") or []]
+        rows = []
+        for r in msg.get("rows") or []:
+            # ★ 줄은 정본 화면과 **같은 함수**로 짓는다(`row_parts` · pytmux-613) —
+            #   `@CL · 날짜 · 유저 · 설명 첫 줄`. 종전 판은 `CL 설명 전체`(여러 줄 그대로)에
+            #   칸 차례가 유저→날짜였다. 고정폭 채움은 그리는 쪽 몫이라 걷어서 싣는다.
+            head, _mid, desc = row_parts(r)
+            when = str(r.get("when", ""))
+            user = str(r.get("user", ""))
+            rows.append({
+                # `key` 는 그 줄의 **뜻**(CL 번호)이고 클라가 액션에 그대로 실어 보낸다.
+                "key": str(r.get("change", "")),
+                "label": head.strip(),
+                "cols": [when, user, desc],
+            })
         err = msg.get("err")
+        # 제목도 정본과 같다(`ChangesScreen.on_mount`): 포트가 있으면 `title_port`, 없으면
+        # `title`. 종전에는 `info` dict 를 통째로 f-string 에 넣어 제목에
+        # `{'port': …, 'user': …}` 가 찍혔다(pytmux-613 — 코드로 확정).
+        info = msg.get("info")
+        port = str((info.get("port") if isinstance(info, dict) else info) or "")
+        if port:
+            title, title_spec = i18n.phrase("p4cl.title_port", port=port)
+        else:
+            title, title_spec = i18n.t("p4cl.title"), None
+        carried = {"title": title_spec} if title_spec else {}
+        if err:
+            note, note_spec = i18n.phrase("p4cl.error", err=str(err))
+            carried["note"] = note_spec
+        else:
+            note = "" if rows else i18n.t("p4cl.empty")
         return {
             "t": "plugin_screen", "id": "p4changes", "kind": "list",
-            "title": f"Perforce submitted changelists ({msg.get('info') or ''})".strip(),
+            "title": title,
+            "i18n": carried,
             # ⚠ 여기에 문구를 **직접 적으면** 게이트가 못 본다(2026-08-02o): 픽스처는
             # 카탈로그에서 뽑히므로, 카탈로그에 없는 리터럴은 영어 표에도 안 들어가고
             # 영어 사용자에게 한국어로 뜬다. 손으로 적은 판은 괄호까지 달라 같은 문구가
@@ -219,9 +243,11 @@ class _P4ChangesPlugin:
             "rows": rows,
             "selected": 0,
             # 키 → 플러그인 액션 이름. 클라는 이 표에 있는 키만 되돌려준다.
-            "keys": {"enter": "describe"},
-            # 빈 목록과 **실패**는 다르다 — 실패면 그 사실이 화면에 있어야 한다.
-            "note": err or ("" if rows else i18n.t("p4cl.empty")),
+            # 정본 `_ChangesView.on_key` 는 `Esc` 와 `q` 둘 다 닫는다(pytmux-613).
+            "keys": {"enter": "describe", "q": "close"},
+            # 빈 목록과 **실패**는 다르다 — 실패면 그 사실이 화면에 있어야 한다
+            # (정본 `p4cl.error` 문구 그대로).
+            "note": note,
         }
 
     def _describe_spec(self, server, sess, change, cwd):
@@ -230,7 +256,8 @@ class _P4ChangesPlugin:
         text = msg.get("text") or ""
         return {
             "t": "plugin_screen", "id": "p4changes", "kind": "text",
-            "title": f"CL {change}",
+            # 정본 상세 판의 제목(`DescribeScreen.on_mount`)과 같다.
+            "title": f"@{change}",
             "hint": i18n.t("p4cl.detail_back"),
             # 스크롤될 때만 붙는 토막(pytmux-478 ⑵). CL 설명은 한 줄짜리도 흔하고,
             # 그때 「↑↓ 스크롤」은 **할 수 없는 조작을 광고하는 것**이다.

@@ -13048,3 +13048,413 @@ fn copying_a_notice_does_not_wait_for_the_clipboard_tool() {
     }
     assert!(said, "복사가 끝났는데 결과 알림이 안 떴다");
 }
+
+// ── pytmux-581 · 버튼 없는 이동(1003) ─────────────────────────────────────────
+//
+// 정본은 `on_mouse_move` 끝에서 1003 앱에만 `move`(cb 35)를 넘긴다. 같은 칸 반복이 없는
+// 것은 바깥 단말의 성질이라, 픽셀마다 이동을 받는 GUI 는 그 규칙을 스스로 진다.
+
+/// 왼쪽 패널(1)에 `track` 을 켠 앱(SGR), 오른쪽 패널(2)은 마우스를 안 켠 셸.
+fn motion_view(track: u8) -> (SessionView, Sent) {
+    let (mut view, tx, sent) = harness();
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 41, "rows": 10, "active": 1,
+        "panes": [
+            {"id": 1, "x": 0, "y": 0, "w": 20, "h": 10, "title": "app", "active": true,
+             "mouse": track, "mouse_sgr": true},
+            {"id": 2, "x": 21, "y": 0, "w": 20, "h": 10, "title": "sh"}
+        ],
+        "dividers": [{"x": 20, "y": 0, "w": 1, "h": 10, "split_id": 7, "orient": "lr",
+                      "rect": [0, 0, 41, 10], "ratio": 0.5}]
+    }))
+    .unwrap();
+    tx.send(LinkEvent::Message(Box::new(layout))).unwrap();
+    view.pump_headless();
+    view.config.mouse = true;
+    (view, sent)
+}
+
+fn moved_through(view: &mut SessionView, sent: &Sent, cells: &[(u16, u16)]) -> Vec<String> {
+    for &c in cells {
+        view.handle_mouse_move(Some(c));
+    }
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    mouse_reports(&out)
+}
+
+#[test]
+fn motion_reaches_an_any_motion_app_once_per_cell() {
+    let (mut view, sent) = motion_view(3);
+    // 같은 칸 두 번(픽셀만 움직였다) + 옆 칸 하나 + 마우스 안 켠 패널 위 하나.
+    let got = moved_through(&mut view, &sent, &[(3, 3), (3, 3), (4, 3), (25, 3)]);
+    assert_eq!(got, vec!["\x1b[<35;4;4M".to_owned(), "\x1b[<35;5;4M".to_owned()]);
+}
+
+#[test]
+fn leaving_the_cell_and_coming_back_reports_it_again() {
+    // 단말은 칸이 바뀔 때마다 보고한다 — 경계로 나갔다 돌아온 같은 칸은 새 보고다.
+    let (mut view, sent) = motion_view(3);
+    let got = moved_through(&mut view, &sent, &[(3, 3), (20, 3), (3, 3)]);
+    assert_eq!(got.len(), 2, "{got:?}");
+}
+
+#[test]
+fn motion_is_not_sent_to_a_drag_only_app() {
+    // 1002 = Windows 에서 `win-mouse-motion off` 일 때 서버가 3 을 낮춰 광고한 값이기도 하다.
+    let (mut view, sent) = motion_view(2);
+    assert!(moved_through(&mut view, &sent, &[(3, 3), (4, 3)]).is_empty());
+}
+
+#[test]
+fn motion_is_not_sent_when_the_mouse_is_off_or_outside_normal_mode() {
+    let (mut view, sent) = motion_view(3);
+    view.config.mouse = false;
+    assert!(moved_through(&mut view, &sent, &[(3, 3), (4, 3)]).is_empty(), "mouse off");
+    view.config.mouse = true;
+    view.mode.enter_scroll();
+    assert!(moved_through(&mut view, &sent, &[(5, 3), (6, 3)]).is_empty(), "스크롤 모드");
+}
+
+#[test]
+fn motion_is_not_sent_while_a_button_is_held_or_a_screen_is_open() {
+    let (mut view, sent) = motion_view(3);
+    view.handle_mouse_down((3, 3), false);
+    assert!(moved_through(&mut view, &sent, &[(7, 3)]).is_empty(), "누른 채");
+    view.handle_mouse_up(Some((3, 3)));
+    view.pump_headless(); // 뗌이 낸 클릭(앱에 press+release)을 먼저 흘려 보내고 비운다
+    sent.lock().unwrap().clear();
+    view.screens.open(Screen::Menu);
+    assert!(moved_through(&mut view, &sent, &[(8, 3), (9, 3)]).is_empty(), "판이 떠 있다");
+}
+
+// ── pytmux-602 · 팝업이 떠 있으면 커서는 팝업 안 ──────────────────────────────
+//
+// 정본 `clientio._composite` ⑤ 「팝업은 항상 포커스」 — 커서 반전과 IME 하드웨어 커서를
+// 팝업 커서로 옮긴다. GUI 커서는 «키가 갈 곳» 하나라 뒤 활성 패널 자리에는 안 그린다.
+
+/// 뒤 패널(1, 커서 (5,2)) + 팝업(99, 안쪽 (11,6) 부터 · 커서 (2,1)).
+fn view_with_popup_cursor(popup_open: bool) -> SessionView {
+    let (mut view, tx, _sent) = harness();
+    let mut layout = serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 20, "active": 1,
+        "panes": [{"id": 1, "x": 0, "y": 0, "w": 80, "h": 20, "title": "sh", "active": true}]
+    });
+    if popup_open {
+        layout["popup"] = serde_json::json!({"id": 99, "x": 10, "y": 5, "w": 40, "h": 10,
+                                             "cx": 11, "cy": 6, "cw": 38, "ch": 8, "title": "pop"});
+    }
+    let back: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1, "rows": [[["HELLO", {}]]], "cursor": [5, 2], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    let pop: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 99, "rows": [[["pop", {}]]], "cursor": [2, 1], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    for msg in [serde_json::from_value(layout).unwrap(), back, pop] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view
+}
+
+#[test]
+fn the_cursor_sits_in_the_popup_while_one_is_open() {
+    let view = view_with_popup_cursor(true);
+    let cur = view.cursor_cell().expect("팝업이 떠 있는데 커서가 없다");
+    assert_eq!((cur.x, cur.y), (11 + 2, 6 + 1), "팝업 안쪽 + 팝업 커서 자리가 아니다");
+    assert_ne!((cur.x, cur.y), (5, 2), "뒤 활성 패널 자리에 커서를 그린다");
+    // 대조군: 팝업이 없으면 뒤 패널 자리다.
+    let view = view_with_popup_cursor(false);
+    let cur = view.cursor_cell().expect("팝업이 없을 때 커서가 없다");
+    assert_eq!((cur.x, cur.y), (5, 2));
+}
+
+#[test]
+fn the_composing_text_is_drawn_at_the_popup_cursor() {
+    let mut view = view_with_popup_cursor(true);
+    view.handle_preedit("한");
+    let canvas = view.composite_for_paint().expect("합성이 없다");
+    assert_eq!(canvas.cell(13, 7).map(|c| c.ch), Some('한'), "조합 글자가 팝업 커서 자리에 없다");
+    assert_ne!(canvas.cell(5, 2).map(|c| c.ch), Some('한'), "조합 글자가 뒤 패널 자리에 떴다");
+}
+
+// ── pytmux-609 · 붙여넣기의 두 입구 ───────────────────────────────────────────
+//
+// 정본: 단말 붙여넣기(`on_paste`) = strip 안 함 · 모드 무관 · 모드 유지 /
+// `paste-clipboard`(`ctrl+v`·`super+v`) = 평소 모드에서만 · strip · `_pasting` 동안 ESC 외 키 삼킴.
+
+#[test]
+fn each_paste_chord_names_the_canon_entrance_it_stands_for() {
+    let mac = |k| SessionView::paste_entry(&k, true);
+    let other = |k| SessionView::paste_entry(&k, false);
+    assert_eq!(mac(ks("v", true, false, false)), Some(PasteEntry::Clipboard), "맥 Ctrl+V");
+    assert_eq!(other(ks("v", true, false, false)), Some(PasteEntry::Clipboard), "Ctrl+V");
+    assert_eq!(mac(ks_cmd("v", true, false, false)), Some(PasteEntry::Terminal), "맥 Cmd+V");
+    assert_eq!(other(ks_cmd("v", false, true, false)), Some(PasteEntry::Clipboard), "비맥 Super+V");
+    assert_eq!(other(ks("v", true, false, true)), Some(PasteEntry::Terminal), "Ctrl+Shift+V");
+    assert_eq!(other(ks("v", false, false, false)), None, "맨 V 는 글자다");
+}
+
+fn pasted_text(view: &mut SessionView, sent: &Sent, text: &str, entry: PasteEntry) -> Vec<String> {
+    view.paste_from_clipboard_as(clipboard(text, vec![]), entry);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    out.iter()
+        .filter_map(|o| match o {
+            Outgoing::Command(Command::Paste { text }) => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_terminal_paste_keeps_box_drawing_and_the_clipboard_entrance_strips_it() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.config.strip_box_drawing = true;
+    let table = "│ a │";
+    let got = pasted_text(&mut view, &sent, table, PasteEntry::Terminal);
+    assert_eq!(got, vec![table.to_owned()], "단말 붙여넣기(맥 Cmd+V)가 표를 지웠다");
+    sent.lock().unwrap().clear();
+    let got = pasted_text(&mut view, &sent, table, PasteEntry::Clipboard);
+    assert_eq!(got.len(), 1);
+    assert!(!got[0].contains('│'), "paste-clipboard(Ctrl+V)가 박스 문자를 안 지웠다: {got:?}");
+}
+
+#[test]
+fn ctrl_v_outside_normal_mode_is_a_key_not_a_paste() {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    assert_eq!(view.paste_route(PasteEntry::Clipboard), PasteRoute::Paste, "평소 모드면 붙인다");
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.mode.mode(), InputMode::Command, "먼저 esc 모드에 들어가야 뜻이 있다");
+    assert_eq!(view.paste_route(PasteEntry::Clipboard), PasteRoute::AsKey);
+    // 단말 붙여넣기는 모드를 안 본다(정본 `on_paste`).
+    assert_eq!(view.paste_route(PasteEntry::Terminal), PasteRoute::Paste);
+    // 키로 흘리면 esc 모드의 모르는 키 — 모드가 풀린다(정본과 같은 표).
+    view.handle_key(Key::Char('v'), Mods { ctrl: true, alt: false });
+    assert_eq!(view.mode.mode(), InputMode::Normal, "esc 모드의 Ctrl+V 가 모드를 안 풀었다");
+}
+
+#[test]
+fn a_terminal_paste_in_esc_mode_pastes_and_keeps_the_mode() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.mode.mode(), InputMode::Command);
+    let got = pasted_text(&mut view, &sent, "hi", PasteEntry::Terminal);
+    assert_eq!(got, vec!["hi".to_owned()]);
+    assert_eq!(view.mode.mode(), InputMode::Command, "단말 붙여넣기가 모드를 풀었다");
+}
+
+#[test]
+fn keys_are_swallowed_while_a_remote_image_is_on_its_way() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.pasting = true; // `send_image_to_remote` 가 세우는 그 상태
+    view.handle_key(Key::Char('a'), Mods::NONE);
+    view.pump_headless();
+    assert!(
+        !sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Input(_))),
+        "scp 대기 중 글자 키가 패널로 갔다"
+    );
+    assert_eq!(view.paste_route(PasteEntry::Clipboard), PasteRoute::Ignore, "재진입을 안 막았다");
+    // ESC 는 통과한다 — 빠져나갈 수단.
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.mode.mode(), InputMode::Command, "ESC 까지 삼켰다");
+    // 결과가 오면 내려간다(양성 짝).
+    *view.paste_result.lock().unwrap() = Some(RemoteImage { path: "/tmp/x.png".into(), ok: true });
+    view.pump_headless();
+    assert!(!view.pasting, "scp 결과가 왔는데 가드가 안 내려갔다");
+}
+
+// ── pytmux-569 · 세션 뷰 마우스 적합성 자(정본 시나리오 픽스처) ─────────────────
+#[path = "session_view_mouse_conformance_tests.rs"]
+mod mouse_conformance;
+
+/// pytmux-609 — **IME 확정 글자는 `Input`(마커 없음)으로 간다.** 정본은 Textual 이 확정분을
+/// Paste 이벤트로 주는 사정 때문에 `paste` 명령(앱이 2004 를 켰으면 bracketed 마커)으로 간다.
+/// 그 갈래는 정본에서도 «진짜 붙여넣기와 IME 를 가를 수 없어서» 생긴 것이라(ⓐ 단말이 못 주는
+/// 구분) GUI 는 «사람이 친 글자»로 둔다(사람 결정 2026-11-13). 갈림 대장에 키 입력 축이 서면
+/// 그리로 옮긴다.
+#[test]
+fn an_ime_commit_goes_as_typed_input_not_as_a_paste_known_divergence() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.handle_typed("한글");
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(out.iter().any(|o| matches!(o, Outgoing::Input(b) if b == "한글".as_bytes())), "{out:?}");
+    assert!(!out.iter().any(|o| matches!(o, Outgoing::Command(Command::Paste { .. }))), "{out:?}");
+}
+
+// ── 플러그인 판의 정본 손(pytmux-611~616) ─────────────────────────────────────────
+//
+// 공통 뿌리: 스펙의 키 표가 정본 mdir·ncd 의 Space·Insert·Delete·⇧Enter·Ctrl+O·Ctrl+Enter
+// 를 **배달받지 못했고**, 표 밖 글자는 `press_list` 가 삼켜 타이핑 찾기가 하나도 없었다.
+// 여기서는 창 키 이벤트(`keydown_action`)부터 **서버로 실제 나간 것**까지 잰다.
+//
+// 되돌리면 실패해야 하는 오라클:
+//   · `key_action` 을 종전(글자·←→·F-키·alt-글자만)으로 되돌리면 → plugin_keys_from_the_window_reach_the_plugin
+//   · `sync_plugin_find` 를 안 부르면(타이핑 찾기 미배선)       → typing_in_a_typeahead_panel_moves_the_cursor_without_a_round_trip
+//   · `FindMiss` 갈래를 지우면                                   → a_typeahead_miss_asks_the_server_once_with_the_query
+//   · `on_close` 갈래를 지우면                                   → escaping_a_panel_with_on_close_tells_the_server
+
+fn canon_keys_spec() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "mdir", "kind": "list", "title": "파일 관리자",
+        "hint": "F10=트리", "text": "", "note": "",
+        "keys": {"enter": "into", "space": "tag", "insert": "copy", "delete": "delete",
+                 "backspace": "up", "shift-enter": "newpane", "ctrl-o": "newpane",
+                 "ctrl-enter": "cd", "alt-c": "copy", "f4": "cd", "\\": "root",
+                 "j": "@down", "k": "@up"},
+        "typeahead": {"label": "찾기", "reserved": "/", "server": "", "min": 0,
+                      "esc_clears": true},
+        "rows": [
+            {"key": "/p", "label": "   ..", "cols": [], "find": ""},
+            {"key": "/p/alpha", "label": "  alpha", "cols": [], "find": "alpha"},
+            {"key": "/p/beta", "label": "  beta", "cols": [], "find": "beta"},
+            {"key": "/p/gamma", "label": "  gamma", "cols": [], "find": "gamma"}
+        ]
+    }))
+    .unwrap()
+}
+
+fn plugin_acts(out: &[Outgoing]) -> Vec<(String, Option<String>)> {
+    out.iter()
+        .filter_map(|o| match o {
+            Outgoing::Command(Command::PluginAction { act, input, .. }) => {
+                Some((act.clone(), input.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn plugin_keys_from_the_window_reach_the_plugin() {
+    // 창이 주는 키 이름(warpui `Keystroke`)부터 — 정본 mdir 이 쓰는 손 전부.
+    let cases: &[(warpui::keymap::Keystroke, &str, &str)] = &[
+        (ks("space", false, false, false), " ", "tag"),
+        (ks("insert", false, false, false), "", "copy"),
+        (ks("delete", false, false, false), "", "delete"),
+        (ks("enter", false, false, true), "", "newpane"),
+        (ks("o", true, false, false), "", "newpane"),
+        (ks("enter", true, false, false), "", "cd"),
+        (ks("c", false, true, false), "c", "copy"),
+        (ks("f4", false, false, false), "", "cd"),
+        (ks("\\", false, false, false), "\\", "root"),
+    ];
+    for (stroke, chars, want) in cases {
+        let (mut view, tx, sent) = harness();
+        tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+        tx.send(LinkEvent::Message(Box::new(canon_keys_spec()))).unwrap();
+        view.pump_headless();
+        view.screens.select_row(1);
+        let Some(ViewAction::RawKey(key, mods)) = SessionView::keydown_action(stroke, chars) else {
+            panic!("{stroke:?}: 창 키가 원시 키로 안 왔다");
+        };
+        view.handle_key(key, mods);
+        view.pump_headless();
+        let out = sent.lock().unwrap().clone();
+        assert_eq!(
+            plugin_acts(&out),
+            vec![((*want).to_owned(), Some("/p/alpha".to_owned()))],
+            "{stroke:?}: 정본 키가 플러그인으로 안 갔다(나간 것: {out:?})"
+        );
+        assert_eq!(view.screens.top(), Some(Screen::PluginView), "{stroke:?}: 판이 닫혔다");
+    }
+}
+
+#[test]
+fn typing_in_a_typeahead_panel_moves_the_cursor_without_a_round_trip() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(canon_keys_spec()))).unwrap();
+    view.pump_headless();
+    view.handle_key(Key::Char('g'), Mods::NONE);
+    view.pump_headless();
+    assert_eq!(view.screens.selected(), 3, "`g` 가 gamma 로 안 뛰었다");
+    assert!(sent.lock().unwrap().is_empty(), "찾기 글자가 서버로 나갔다");
+    // 찾는 중의 Backspace 는 찾기 몫이다 — 스펙의 `backspace`(상위)가 나가면 안 된다.
+    view.handle_key(Key::Backspace, Mods::NONE);
+    view.pump_headless();
+    assert!(plugin_acts(&sent.lock().unwrap()).is_empty(), "찾는 중 Backspace 가 상위로 갔다");
+    // 찾는 중이 아니면 Backspace 는 스펙의 손(정본 mdir = 상위)이다.
+    view.handle_key(Key::Backspace, Mods::NONE);
+    view.pump_headless();
+    assert_eq!(plugin_acts(&sent.lock().unwrap())[0].0, "up");
+    // `j`/`k` 같은 클라 로컬 손은 서버에 안 가고 커서를 옮긴다.
+    sent.lock().unwrap().clear();
+    view.screens.select_row(1);
+    view.handle_key(Key::Char('j'), Mods::NONE);
+    view.pump_headless();
+    assert_eq!(view.screens.selected(), 2, "`@down` 이 커서를 안 옮겼다");
+    assert!(plugin_acts(&sent.lock().unwrap()).is_empty(), "클라 로컬 손이 서버로 나갔다");
+}
+
+#[test]
+fn the_typed_query_shows_on_the_hint_line() {
+    let painted = painted_after(
+        vec![layout_one_pane(), canon_keys_spec()],
+        &[(Key::Char('b'), Mods::NONE)],
+    );
+    assert!(
+        painted.iter().any(|t| t.starts_with("찾기: b")),
+        "친 찾기 글자가 꼬리줄에 안 보인다: {painted:?}"
+    );
+}
+
+#[test]
+fn a_typeahead_miss_asks_the_server_once_with_the_query() {
+    let mut spec = canon_keys_spec();
+    if let ServerMessage::PluginScreen(ref mut s) = spec {
+        s.id = "ncd".into();
+        let t = s.typeahead.as_mut().unwrap();
+        t.server = "find".into();
+        t.min = 2;
+        t.esc_clears = false;
+    }
+    let out = sent_after(
+        vec![layout_one_pane(), spec],
+        &[(Key::Char('z'), Mods::NONE), (Key::Char('q'), Mods::NONE),
+          (Key::Backspace, Mods::NONE), (Key::Char('q'), Mods::NONE)],
+    );
+    assert_eq!(
+        plugin_acts(&out),
+        vec![("find".to_owned(), Some("zq".to_owned()))],
+        "서버 찾기가 한 번, 친 질의로 나가야 한다: {out:?}"
+    );
+}
+
+#[test]
+fn escaping_a_panel_with_on_close_tells_the_server() {
+    let spec: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_screen", "id": "namesync", "kind": "table", "title": "규칙",
+        "hint": "", "text": "", "note": "", "keys": {"enter": "addcwd"},
+        "on_close": "save", "rows": [{"key": "0", "label": "a/b", "cols": []}]
+    }))
+    .unwrap();
+    let out = sent_after(vec![layout_one_pane(), spec], &[(Key::Escape, Mods::NONE)]);
+    assert_eq!(plugin_acts(&out), vec![("save".to_owned(), Some("0".to_owned()))], "{out:?}");
+}
+
+#[test]
+fn an_unbound_ctrl_chord_does_not_close_a_plugin_panel() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    tx.send(LinkEvent::Message(Box::new(canon_keys_spec()))).unwrap();
+    view.pump_headless();
+    view.handle_key(Key::Char('x'), Mods::CTRL);
+    view.pump_headless();
+    assert_eq!(view.screens.top(), Some(Screen::PluginView), "Ctrl+X 가 판을 닫았다");
+    assert!(sent.lock().unwrap().iter().all(|o| !matches!(o, Outgoing::Input(_))),
+            "판이 떠 있는데 키가 패널로 샜다");
+}

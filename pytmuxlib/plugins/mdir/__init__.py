@@ -40,9 +40,23 @@ i18n.register({
         # `[*.txt]`). 판이 둘인 이유: 한 판에 `[{mask}]` 를 두면 마스크가 없을 때
         # `[]` 한 쌍이 늘 붙는다.
         "mdir.title_mask": "파일 관리자 — {path}  [{mask}]",
-        "mdir.hint": ("(Enter 열기 · . 상위 · t 태그 · u 전체태그 · c 복사 · m 이동 · "
-                      "d 삭제 · r 이름 · k 새 디렉터리 · v 보기 · h 숨김 · p 패널 cd · "
-                      "F10 트리 · Esc 닫기)"),
+        # ★ 정본 정보줄의 키 안내(`screen.py:_BARKEYS`)와 **같은 글**이다(pytmux-611). 종전
+        #   글은 정본에 없는 글자 별칭(t·c·m·d…)을 광고했다 — 정본에서 글자는 빨리찾기다.
+        "mdir.hint": "F10=트리│F4=cd│⇧↵=분할│Esc",
+        "mdir.find": "찾기",
+        "mdir.ask_delete_dirs": ("{n}개를 지웁니다 — 되돌릴 수 없습니다\n"
+                                 "디렉토리 {d}개 포함 — 하위까지 영구 삭제됩니다"),
+        "mdir.ow_title": "대상에 같은 이름이 있습니다",
+        "mdir.ow_all": "모두 덮어쓰기",
+        "mdir.ow_skip": "건너뛰기",
+        "mdir.ow_cancel": "취소",
+        "mdir.ow_hint": "↑↓ 고르기 · Enter 확정 · Esc 취소",
+        "mdir.readonly": "압축 보기: 읽기전용",
+        "mdir.arc_unsupported": "지원하지 않는 압축 형식",
+        "mdir.arc_title": "압축 보기 — {path}",
+        "mdir.arc_hint": "Enter 들어가기 · Backspace/. 상위 · \\ 최상위 · Esc 나가기",
+        "mdir.mask_sel": "선택 마스크 (예: *.txt)",
+        "mdir.mask_unsel": "해제 마스크",
         # 줄의 **칸**으로 나가는 표식(이름은 자료라 번역 대상이 아니다).
         "mdir.parent": "<상위>",
         "mdir.drive": "<드라이브>",
@@ -95,9 +109,21 @@ i18n.register({
     "en": {
         "mdir.title": "File manager — {path}",
         "mdir.title_mask": "File manager — {path}  [{mask}]",
-        "mdir.hint": ("(Enter open · . up · t tag · u tag all · c copy · m move · "
-                      "d delete · r rename · k new directory · v view · h hidden · "
-                      "p cd panel · F10 tree · Esc close)"),
+        "mdir.hint": "F10=Tree│F4=cd│⇧↵=split│Esc",
+        "mdir.find": "Find",
+        "mdir.ask_delete_dirs": ("Deleting {n} — this cannot be undone\n"
+                                 "{d} director(y/ies) included — deleted permanently"),
+        "mdir.ow_title": "Destination has same name(s)",
+        "mdir.ow_all": "Overwrite all",
+        "mdir.ow_skip": "Skip",
+        "mdir.ow_cancel": "Cancel",
+        "mdir.ow_hint": "↑↓ choose · Enter confirm · Esc cancel",
+        "mdir.readonly": "Archive view: read-only",
+        "mdir.arc_unsupported": "Unsupported archive format",
+        "mdir.arc_title": "Archive — {path}",
+        "mdir.arc_hint": "Enter open · Backspace/. up · \\ top · Esc leave",
+        "mdir.mask_sel": "Select mask (e.g. *.txt)",
+        "mdir.mask_unsel": "Unselect mask",
         "mdir.parent": "<UP>",
         "mdir.drive": "<DRIVE>",
         "mdir.read_fail": "Read failed: {err}",
@@ -153,33 +179,63 @@ NOARG = {"mdir", "m"}
 
 # ---- 선언형 화면 스펙(Tier C · P6)의 어휘 ----
 #
-# 글자 키는 **스펙이 정한다**(P5). 정본의 Alt-C/Alt-M/… 를 같은 글자로 옮겼다 — 스펙의
-# 어휘에 조합키가 없기도 하고, 표에 **없는** 글자는 판을 닫는 규약이라(그래야 닫을 길이
-# 있다) 손 하나가 빠지면 "안 먹는다"가 아니라 "닫힌다"로 보이기 때문이다. 그래서 여기에
-# 다 적는다 — 화면 안내(`hint`)도 이 표에서 나온다.
+# ★ **정본 `_MdirView.on_key` 의 손 그대로다**(pytmux-611 · 사람 결정 2026-11-13). 키 이름은
+#   `base::keys::binding_name_with` 문법(정본 Textual 이름의 `+` → `-`)이고, GUI 의
+#   `key_action` 이 그 이름을 전부 배달한다(`space`·`insert`·`delete`·`backspace`·
+#   `shift-enter`·`ctrl-o`·`ctrl-enter`·`alt-글자`·F-키).
+#
+# ⛔ **글자 별칭을 두지 않는다.** 종전 표는 정본의 Alt-C/Alt-M/… 를 `c`·`m`·`d`·`t`… 글자로
+#   옮겼는데, 정본에서 **글자는 빨리찾기**다(`_RESERVED_CHARS` 밖의 인쇄 가능 글자). 별칭이
+#   그 글자를 먹으면 `c` 로 시작하는 파일로 뛸 길이 사라진다 — 정본의 기능을 빼는 갈림이다.
+#   표에 없는 글자는 스펙의 `typeahead` 가 찾기로 쓴다(`_spec`).
 _SCREEN_KEYS = {
-    "enter": "into",                       # 디렉터리면 들어가고 파일이면 본다
-    ".": "up", "t": "tag", "u": "tagall", "h": "hidden",
-    "c": "copy", "m": "move", "d": "delete", "r": "rename",
-    "k": "mkdir", "v": "view", "p": "cd",
-    # ★ 정렬·마스크는 **정본과 같은 키**다(pytmux-12 C) — `Alt+N/E/S/T/O` 와 `Alt+F`.
-    #   글자 키로 옮기지 않는 이유: 그러면 손버릇이 갈리고, 이미 `t`(태그)가 정렬의
-    #   `t`(시각)와 부딪힌다. 스펙의 키 어휘가 `alt-` 를 알아 그럴 필요가 없다.
+    "enter": "into",                       # 디렉터리면 들어가고 파일이면 본다(압축이면 안 보기)
+    "space": "tag",                        # 태그 토글(+커서 아래로)
+    "alt-u": "tagall",                     # 전체 태그/해제
+    "+": "tagmask", "-": "untagmask",      # 마스크로 태그/해제(정본 회색 +/-)
+    "*": "invert",                         # 태그 반전
+    "alt-c": "copy", "f5": "copy", "insert": "copy",
+    "alt-m": "move", "f6": "move",
+    "alt-d": "delete", "delete": "delete", "f8": "delete",
+    "alt-r": "rename", "f2": "rename",
+    "alt-k": "mkdir", "f7": "mkdir",
+    "alt-v": "view", "f3": "view",
+    # 정렬(재입력=내림차순)·숨김·마스크·열 수 — 정본과 같은 키(pytmux-12 C·126).
     "alt-n": "sort-n", "alt-e": "sort-e", "alt-s": "sort-s",
     "alt-t": "sort-t", "alt-o": "sort-o",
+    "alt-z": "hidden",
     "alt-f": "mask",
-    # ★ **열 수**도 정본과 같은 손이다(pytmux-126) — 원조 Mdir 의 `Alt+1~6` 이 열을
-    #   못박고 `Alt+0` 이 자동으로 되돌린다. 이 값은 스펙의 `columns` 로 나가고
-    #   (설계 §4.3 `panel`), 0 이면 «클라가 자기 폭을 보고» 정한다.
     "alt-0": "cols-0", "alt-1": "cols-1", "alt-2": "cols-2",
     "alt-3": "cols-3", "alt-4": "cols-4", "alt-5": "cols-5",
     "alt-6": "cols-6",
-    # ★ F-키도 정본과 같은 표다(pytmux-125·pytmux-236) — 정본 화면(`screen.py::on_key`)의
-    #   F2/F3/F4/F5/F6/F7/F8/F10 을 그대로 옮겼다. 글자 짝은 대체가 아니라 별칭이라
-    #   그대로 둔다(노트북 자판에서 F-키는 Fn 조합이라 한 손을 없애면 기능이 사라진다).
-    "f2": "rename", "f3": "view", "f4": "cd", "f5": "copy", "f6": "move",
-    "f7": "mkdir", "f8": "delete", "f10": "tree",
+    "f10": "tree",                         # 디렉터리 트리(ncd)
+    "f4": "cd", "ctrl-enter": "cd",        # 패널 cd 후 닫기
+    "shift-enter": "newpane", "ctrl-o": "newpane",   # 새 패널 분할(ncd 동형)
+    "backspace": "up", ".": "up",          # 상위(찾는 중의 Backspace 는 찾기가 먼저다)
+    "\\": "root",                          # 루트(Windows 면 그 드라이브 루트)
 }
+
+#: 정본 `_RESERVED_CHARS`(". \\+-*/") 중 **표에 없는** 글자 — 찾기로 안 먹고 삼킨다.
+_FIND_RESERVED = "/"
+
+#: 압축 보기(읽기 전용) 판의 키. 조작 키는 정본처럼 「읽기전용」을 말한다(`_ro`).
+_ARC_KEYS = {
+    "enter": "arc-into", "backspace": "arc-up", ".": "arc-up", "\\": "arc-root",
+    "f4": "cd", "ctrl-enter": "cd",
+    # 조작 키 — 정본 `_ro()` 가 「읽기전용」을 말하는 그 키들(리터럴로 적는다: 스펙을
+    # 소스에서 읽는 자 `test_plugin_do_wiring` 이 컴프리헨션은 못 푼다).
+    "space": "ro", "alt-u": "ro", "+": "ro", "-": "ro", "*": "ro",
+    "alt-c": "ro", "f5": "ro", "insert": "ro", "alt-m": "ro", "f6": "ro",
+    "alt-d": "ro", "delete": "ro", "f8": "ro", "alt-r": "ro", "f2": "ro",
+    "alt-k": "ro", "f7": "ro", "alt-v": "ro", "f3": "ro", "alt-f": "ro", "f10": "ro",
+}
+
+#: 압축 보기 판의 화면 id — mdir 판과 **따로** 둔다. 닫을 때 그 id 만 걷으면 밑의
+#: mdir 판이 그대로 남는다(정본 `_exit_arc` = 실디렉터리로 복귀).
+ARC_ID = "mdir-arc"
+
+#: 덮어쓰기 물음(모두 / 건너뛰기 / 취소) 판의 화면 id — 같은 까닭으로 따로 둔다.
+OW_ID = "mdir-ow"
 
 def _reason(code) -> str:
     """서버가 코드로 돌려준 실패 사유를 사람 말로. 카탈로그에 없는 코드는 코드 그대로
@@ -508,12 +564,43 @@ class _MdirPlugin:
             mine["path"] = mdir_list_resolve_base(server, sess, None)
             mine["tags"] = []
             return _offload(self._spec, mine, 0, "")
+        if req.get("id") == ARC_ID:
+            return self._arc_action(server, sess, mine, do, req)
+        if req.get("id") == OW_ID:
+            # 덮어쓰기 물음의 답(모두 / 건너뛰기 / 취소 — 정본 `apply_result`). 회신은
+            # [물음 판 닫기, 갱신된 mdir 판] 둘이다(순수 fs 라 executor 로).
+            if do != "ow":
+                return None
+            return _offload(self._overwrite, mine, str(req.get("input") or ""),
+                            int(req.get("row") or 0))
         if req.get("id") != "mdir":
             return None
         row = int(req.get("row") or 0)
         picked = str(req.get("input") or "")
         if do == "up":
             return _offload(self._up, mine)
+        if do == "root":
+            # 정본 `\` — 루트로(Windows 면 그 드라이브의 루트).
+            return _offload(self._root, mine)
+        if do == "invert":
+            # 정본 `*` — 태그 반전(이 디렉터리의 항목만).
+            items = list(mine.get("items") or [])
+            tags = set(mine.get("tags") or [])
+            mine["tags"] = [p for p in items if p not in tags]
+            return _offload(self._spec, mine, row, "")
+        if do in ("tagmask", "untagmask"):
+            # 정본 `+`/`-` — 마스크를 물어 그에 맞는 것을 태그/해제한다.
+            mine["ask"] = {"op": do}
+            return self._ask("prompt", i18n.t(
+                "mdir.mask_sel" if do == "tagmask" else "mdir.mask_unsel"))
+        if do == "newpane":
+            # 정본 `Shift+Enter`/`Ctrl+O` — 커서가 디렉터리·드라이브면 그 자리, `..` 면 부모,
+            # 아니면 지금 디렉터리에서 **새 패널**(정본 `_cur_dir_target` → `split`).
+            target = self._dir_target(mine, picked)
+            if target:
+                server.split_pane(sess, "lr", path=target)
+                server._broadcast_session(sess)
+            return {"t": "plugin_screen_close", "id": "mdir"}
         if do == "into":
             return _offload(self._into, mine, picked, row)
         if do == "tag":
@@ -558,6 +645,9 @@ class _MdirPlugin:
             ncd_state = req.get("state", {}).setdefault("ncd", {})
             ncd_state["path"] = mine.get("path", "")
             ncd_state["cwd"] = mine.get("path", "")
+            # 트리에서 고른 자리는 **mdir 만** 옮긴다 — 패널 셸은 그대로(정본
+            # `_MdirView._open_tree` 의 콜백 · pytmux-611). ncd 가 이 표식을 보고 cd 를 안 친다.
+            ncd_state["pick_only"] = True
             # ncd 플러그인의 트리 스펙을 만든다
             ncd_plugin = next(
                 (p for p in server.plugins.plugins if getattr(p, "name", "") == "ncd"),
@@ -628,13 +718,18 @@ class _MdirPlugin:
             # `..` 는 **자리가 아니라 뜻**으로 나른다(부모 경로 그대로 — ncd 동형).
             rows.append({"key": parent, "label": "   ..",
                          "cols": [i18n.t("mdir.parent")],
+                         # 빨리찾기는 `..` 를 안 본다(정본 `_jump`) — 빈 이름.
+                         "find": "",
                          # 줄의 **뜻**(색은 각 클라가 이 이름으로 푼다 — pytmux-12 A).
                          "tag": row_tag("up")})
         operable = []
         for e in items:
             full = os.path.join(path, e["n"])
             operable.append(full)
-            cols = ["<DIR>" if e["d"] else _human(e["s"]), _when(e["m"])]
+            # 셋째 칸 = **속성**(`r`=읽기 전용 · `h`=숨김) — 정본 정보줄(`_line_info`)의
+            # `크기│날짜│속성` 그대로(pytmux-611). 빠지면 「왜 안 지워지나」를 볼 길이 없다.
+            attr = ("r" if e.get("ro") else "-") + ("h" if e.get("h") else "-")
+            cols = ["<DIR>" if e["d"] else _human(e["s"]), _when(e["m"]), attr]
             if e["n"] in fails:
                 # 사유는 **칸**으로 나간다 — 칸은 플러그인이 적은 말이라 클라가 자기
                 # 로케일로 읽는다(`PluginRow::say_cols`). 이름은 자료라 안 건드린다.
@@ -648,6 +743,8 @@ class _MdirPlugin:
                 "label": ("✓ " if full in tags else "  ")
                          + e["n"] + ("/" if e["d"] else ""),
                 "cols": cols,
+                # 빨리찾기가 견줄 이름(정본 `_item_name` — 표식·`/` 없는 그 이름).
+                "find": e["n"],
                 # 판정은 정본 화면과 **같은 함수**다(`rowtag`) — 두 벌이면 같은 파일이
                 # 두 클라에서 다른 색으로 뜬다.
                 "tag": row_tag("dir" if e["d"] else "file", e, full in tags),
@@ -655,6 +752,7 @@ class _MdirPlugin:
         for d in _drive_roots():
             rows.append({"key": d, "label": f"  [-{d[:1]}-]",
                          "cols": [i18n.t("mdir.drive")],
+                         "find": "",
                          "tag": row_tag("drive")})
         # 조작 대상은 이 목록 안의 것뿐이다 — 다음 액션이 `input` 으로 받은 경로를
         # 여기 대고 검증한다(클라가 옛 목록의 줄을 되돌려줘도 엉뚱한 것을 안 지운다).
@@ -702,6 +800,10 @@ class _MdirPlugin:
                            key=lambda e: os.path.join(path, e["n"])),
             "selected": max(0, min(int(sel), max(0, len(rows) - 1))),
             "keys": dict(_SCREEN_KEYS),
+            # 빨리찾기(정본: 예약 글자 밖의 인쇄 가능 글자 → 접두>포함으로 뛴다 · 서버에는
+            # 안 묻는다). 찾는 중의 Esc 는 찾기를 먼저 지운다(정본 `on_key` 의 escape).
+            "typeahead": {"label": i18n.t("mdir.find"), "reserved": _FIND_RESERVED,
+                          "server": "", "min": 0, "esc_clears": True},
             "note": note_text,
             # 자리가 있는 글은 재료까지(로케일 ⓑ). 자리가 없는 글은 원문이 곧 키라
             # 클라가 `t()` 로 읽는다(로케일 ⓐ) — 그래서 여기 안 싣는다.
@@ -728,6 +830,10 @@ class _MdirPlugin:
         if os.path.isdir(picked):
             mine["path"] = os.path.abspath(picked)
             return self._spec(mine, 0, "")
+        # 압축 파일이면 **안을 본다**(읽기 전용 · 정본 `_open_file` → `apply_arc` · pytmux-611).
+        from .listing import is_archive
+        if is_archive(os.path.basename(picked)):
+            return self._arc_open(mine, picked, row)
         return self._view(mine, picked, row)
 
     def _tag(self, mine, picked, row):
@@ -768,6 +874,170 @@ class _MdirPlugin:
             "text": m.get("text") or "", "selected": 0, "keys": {},
             "note": i18n.t("mdir.truncated") if m.get("truncated") else "",
         }
+
+    def _root(self, mine):
+        """정본 `\\` — 루트로. Windows 면 지금 드라이브의 루트(`C:\\`)."""
+        import os
+        path = str(mine.get("path") or "")
+        drive = os.path.splitdrive(path)[0]
+        mine["path"] = (drive + os.sep) if drive else os.path.abspath(os.sep)
+        return self._spec(mine, 0, "")
+
+    @staticmethod
+    def _dir_target(mine, picked):
+        """새 패널(⇧Enter)의 대상 — 정본 `_cur_dir_target` 동형.
+
+        줄의 `key` 가 곧 경로다: 디렉터리·드라이브 줄은 그 자리, `..` 줄은 부모 경로를
+        싣는다. 파일 줄이거나 줄이 없으면 지금 디렉터리."""
+        import os
+        if picked and os.path.isdir(picked):
+            return picked
+        return str(mine.get("path") or "")
+
+    # ---- 압축 파일 안 보기(읽기 전용 · pytmux-611) ----
+    def _arc_open(self, mine, picked, row):
+        from .server import mdir_arc_msg
+        res = mdir_arc_msg(None, None, picked)
+        err = res.get("err")
+        if err:
+            note = (i18n.t("mdir.arc_unsupported") if err == "arc_unsupported"
+                    else str(err))
+            return self._spec(mine, row, note)
+        mine["arc"] = {"path": res.get("path") or picked,
+                       "entries": res.get("entries") or []}
+        mine["arc_dir"] = ""
+        return self._arc_spec(mine, 0, "")
+
+    def _arc_spec(self, mine, sel, note):
+        """압축 안 한 층의 판(정본 `_arc_level_items` — 규칙은 `listing.arc_level` 한 벌).
+
+        id 가 mdir 판과 **다르다**([`ARC_ID`]) — 그래서 클라는 이 판을 mdir 판 **위에
+        쌓고**, `Esc` 로 걷으면 밑의 mdir 판이 그대로 드러난다(정본 압축 보기의 Esc =
+        실디렉터리 복귀). 최상위 `..` 는 서버가 이 id 만 닫는다(`_arc_action`)."""
+        import os
+        from .listing import arc_level
+        arc = mine.get("arc") or {}
+        pfx = str(mine.get("arc_dir") or "")
+        dirs, files = arc_level(arc.get("entries"), pfx)
+        rows = [{"key": "..", "label": "   ..", "cols": [i18n.t("mdir.parent")],
+                 "find": "", "tag": row_tag("up")}]
+        for d in dirs:
+            rows.append({"key": "d:" + d, "label": "  " + d + "/", "cols": ["<DIR>"],
+                         "find": d, "tag": row_tag("dir", {"n": d, "d": True, "h": False})})
+        for f in files:
+            rows.append({"key": "f:" + f["n"], "label": "  " + f["n"],
+                         "cols": [_human(int(f.get("s") or 0))], "find": f["n"],
+                         "tag": row_tag("file", f)})
+        where = os.path.basename(str(arc.get("path") or "")) + ("/" + pfx if pfx else "")
+        title, title_spec = i18n.phrase("mdir.arc_title", path=where)
+        note_text, note_spec = note if isinstance(note, tuple) else (note, None)
+        carried = {"title": title_spec}
+        if note_spec:
+            carried["note"] = note_spec
+        return {
+            "t": "plugin_screen", "id": ARC_ID, "kind": "panel",
+            "title": title, "hint": i18n.t("mdir.arc_hint"),
+            "rows": rows, "text": "",
+            "columns": int(mine.get("cols") or 0),
+            "head": "", "foot": "",
+            "selected": max(0, min(int(sel), len(rows) - 1)),
+            "keys": dict(_ARC_KEYS),
+            "typeahead": {"label": i18n.t("mdir.find"), "reserved": _FIND_RESERVED,
+                          "server": "", "min": 0, "esc_clears": True},
+            "note": note_text, "i18n": carried,
+        }
+
+    def _arc_action(self, server, sess, mine, do, req):
+        """압축 판 안의 키. 조작 키는 정본처럼 「읽기전용」을 말한다(`_ro`)."""
+        row = int(req.get("row") or 0)
+        picked = str(req.get("input") or "")
+        if not mine.get("arc"):
+            return {"t": "plugin_screen_close", "id": ARC_ID}
+        if do == "cd":
+            # 정본 F4 — 압축 보기 중에도 **실디렉터리**로 cd 하고 닫는다.
+            path = str(mine.get("path") or "")
+            if path:
+                self._send_to_pane(server, sess, _cd_command(path))
+            mine.pop("arc", None)
+            return [{"t": "plugin_screen_close", "id": ARC_ID},
+                    {"t": "plugin_screen_close", "id": "mdir"}]
+        if do == "ro":
+            return self._arc_spec(mine, row, i18n.t("mdir.readonly"))
+        if do == "arc-root":
+            mine["arc_dir"] = ""
+            return self._arc_spec(mine, 0, "")
+        if do == "arc-into":
+            if picked == "..":
+                do = "arc-up"
+            elif picked.startswith("d:"):
+                mine["arc_dir"] = str(mine.get("arc_dir") or "") + picked[2:] + "/"
+                return self._arc_spec(mine, 0, "")
+            else:
+                return self._arc_spec(mine, row, i18n.t("mdir.readonly"))
+        if do == "arc-up":
+            pfx = str(mine.get("arc_dir") or "").rstrip("/")
+            if not pfx:
+                # 최상위에서 한 번 더 = 압축 보기를 나간다(정본 `_arc_up` → `_exit_arc`).
+                return _offload(self._arc_exit, mine)
+            cut = pfx.rfind("/")
+            child = pfx[cut + 1:]
+            mine["arc_dir"] = pfx[:cut + 1] if cut >= 0 else ""
+            spec = self._arc_spec(mine, 0, "")
+            for i, r in enumerate(spec["rows"]):
+                if r["key"] == "d:" + child:
+                    spec["selected"] = i
+                    break
+            return spec
+        return None
+
+    def _arc_exit(self, mine):
+        """압축 보기를 닫고 mdir 판을 그 압축 파일 줄에 커서를 둔 채로 다시 낸다
+        (정본 `_exit_arc` 의 `keep_name`). 회신은 [압축 판 닫기, mdir 판]."""
+        arc = mine.pop("arc", None) or {}
+        mine.pop("arc_dir", None)
+        spec = self._spec(mine, 0, "")
+        keep = str(arc.get("path") or "")
+        for i, r in enumerate(spec["rows"]):
+            if r["key"] == keep:
+                spec["selected"] = i
+                break
+        return [{"t": "plugin_screen_close", "id": ARC_ID}, spec]
+
+    # ---- 덮어쓰기 물음(모두 / 건너뛰기 / 취소 · pytmux-611) ----
+    def _ow_spec(self, conflicts):
+        names = list(conflicts or [])
+        shown = ", ".join(names[:6])
+        if len(names) > 6:
+            shown, _spec = i18n.phrase("mdir.and_more", names=shown, n=len(names) - 6)
+        return {
+            "t": "plugin_screen", "id": OW_ID, "kind": "list",
+            "title": i18n.t("mdir.ow_title"), "hint": i18n.t("mdir.ow_hint"),
+            "rows": [{"key": "all", "label": i18n.t("mdir.ow_all"), "cols": []},
+                     {"key": "skip", "label": i18n.t("mdir.ow_skip"), "cols": []},
+                     {"key": "cancel", "label": i18n.t("mdir.ow_cancel"), "cols": []}],
+            "text": "",
+            # 기본은 '취소'(정본 `MdirConfirm(..., default=2)`).
+            "selected": 2,
+            "keys": {"enter": "ow"},
+            "note": shown,
+        }
+
+    def _overwrite(self, mine, choice, row):
+        """덮어쓰기 물음의 답 — `all`(전부 덮어쓰기)·`skip`(겹치는 것만 거른다)·그 밖(취소).
+
+        회신은 [물음 판 닫기, mdir 판]. 건너뛰기의 실제 거르기는 서버 조작
+        (`mdir_op_msg` 의 `overwrite="skip"`) 한 벌이다 — 정본도 그 값을 그대로 보낸다."""
+        from .server import mdir_op_msg
+        ask = mine.pop("ask", None)
+        closing = {"t": "plugin_screen_close", "id": OW_ID}
+        if not ask or choice not in ("all", "skip"):
+            return [closing, self._spec(mine, row, "")]
+        msg = {"op": ask["op"], "src": ask.get("src") or [], "dst": ask.get("dst"),
+               "overwrite": choice}
+        res = mdir_op_msg(None, None, msg)
+        mine["tags"] = []
+        mine["fails"] = {str(n): str(r) for n, r in (res.get("failed") or [])}
+        return [closing, self._spec(mine, row, _result_note(res))]
 
     # ---- 되돌릴 수 없는 것: 묻고(begin) → 받고(apply) ----
     def _targets(self, mine, picked):
@@ -824,6 +1094,16 @@ class _MdirPlugin:
         shown = ", ".join(names[:6])
         if len(names) > 6:
             shown = i18n.phrase("mdir.and_more", names=shown, n=len(names) - 6)
+        # ★ 디렉터리가 섞여 있으면 **하위까지 지워진다는 경고**를 붙인다(정본 `_op_delete`
+        #   의 `_DEL_WARN` · pytmux-611). 파일 하나 지우는 물음과 트리를 통째로 지우는
+        #   물음이 같은 모양이면 사람은 그 차이를 못 본다.
+        ndirs = sum(1 for t in targets if os.path.isdir(t))
+        if ndirs:
+            # 경고는 **물음 쪽**에 둔다 — 그 판은 재료(`n`·`d`)째 실려 영어 클라도 제 말로
+            # 짓는다. 이름 목록(`shown`)에 이어 붙이면 그 재료가 깨진다.
+            return self._ask("confirm",
+                             i18n.phrase("mdir.ask_delete_dirs", n=len(targets), d=ndirs),
+                             shown)
         return self._ask("confirm",
                          i18n.phrase("mdir.ask_delete", n=len(targets)), shown)
 
@@ -835,6 +1115,21 @@ class _MdirPlugin:
             return self._spec(mine, row, "")
         op = ask["op"]
         answer = (answer or "").strip()
+        if op in ("tagmask", "untagmask"):
+            # 정본 `_tag_mask` — 마스크에 맞는 이름(이 디렉터리의 항목)을 태그에 더하거나 뺀다.
+            import fnmatch
+            import os
+            if not answer:
+                return self._spec(mine, row, "")
+            items = list(mine.get("items") or [])
+            hits = {p for p in items if fnmatch.fnmatch(os.path.basename(p), answer)}
+            tags = list(mine.get("tags") or [])
+            if op == "tagmask":
+                tags += [p for p in items if p in hits and p not in tags]
+            else:
+                tags = [p for p in tags if p not in hits]
+            mine["tags"] = tags
+            return self._spec(mine, row, "")
         if op == "delete":
             msg = {"op": "delete", "src": ask["src"]}
         elif op in ("copy", "move"):
@@ -853,16 +1148,12 @@ class _MdirPlugin:
         # 이 빌더도 server/sess 를 안 읽는다(순수 fs).
         res = mdir_op_msg(None, None, msg)
         if res.get("conflicts"):
-            # **2단계 프로토콜**: 아직 아무것도 안 했다. 겹치는 것을 덮어쓸지 되묻는다.
-            # ⚠ 정본은 [모두 덮어쓰기 / 건너뛰기 / 취소] 셋을 물어보는데 여기는 둘이다 —
-            #    '아니오'는 이 클라에서 **아무 일도 안 일어남**이라야 하고(P5 규약),
-            #    '건너뛰기'를 거기에 얹으면 그 약속이 깨진다. 건너뛰기가 필요하면
-            #    터미널 클라에서 한다(리포트에 적어 둔 빚).
-            mine["ask"] = dict(ask, dst=msg.get("dst"), overwrite="all")
-            names = ", ".join(res["conflicts"][:6])
-            return self._ask(
-                "confirm",
-                i18n.phrase("mdir.ask_overwrite", n=len(res["conflicts"])), names)
+            # **2단계 프로토콜**: 아직 아무것도 안 했다. 겹치는 것을 어떻게 할지 되묻는다 —
+            # 정본과 같은 셋 [모두 덮어쓰기 / 건너뛰기 / 취소](`apply_result` · pytmux-611).
+            # 셋이라 예/아니오 판(`confirm`)이 아니라 **고르는 판**이고, 기본은 정본처럼
+            # '취소'(세 번째)다 — Enter 연타로 덮어써지지 않게. Esc 도 취소다(판만 걷힌다).
+            mine["ask"] = dict(ask, dst=msg.get("dst"))
+            return self._ow_spec(res["conflicts"])
         mine["tags"] = []
         # 안 된 것의 **사유는 그 줄의 칸으로** 내려간다(`_spec`) — 결과 줄은 수만 말한다.
         mine["fails"] = {str(n): str(r) for n, r in (res.get("failed") or [])}

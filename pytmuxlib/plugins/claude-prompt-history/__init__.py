@@ -201,12 +201,32 @@ class _PromptHistoryPlugin:
                 return [{"t": "plugin_screen_close", "id": "prompt-history"},
                         _jump_failed_notice(server, sess)]
             return {"t": "plugin_screen_close", "id": "prompt-history"}
+        if req.get("do") in ("lines+", "lines-"):
+            # 정본 `+`/`=`/`-` — 미리보기 줄 수(1~3)를 바꾸고 **영속**한다(정본 `bump_lines`
+            # → `set_ph_max_lines`). 값을 정하는 것은 같은 서버 옵션 한 벌이고, 바뀐 값은
+            # 모든 클라의 status 로도 나간다(정본 클라가 쥔 `ph_max_lines` 가 같이 따라온다).
+            cur = _clamp_lines(getattr(server, "_ph_max_lines", _DEFAULT_LINES))
+            new = _clamp_lines(cur + (1 if req.get("do") == "lines+" else -1))
+            if new != cur:
+                server._ph_max_lines = new
+                try:
+                    server._save_opts()
+                except Exception:
+                    pass
+                server._broadcast_session(sess)
+            try:
+                row = int(req.get("row") or 0)
+            except (TypeError, ValueError):
+                row = 0
+            return self._open_spec(server, sess, selected=row)
         if req.get("do") == "close":
             return {"t": "plugin_screen_close", "id": "prompt-history"}
         return None
 
-    def _open_spec(self, server, sess):
-        """활성 패널의 프롬프트 목록. **최신이 위**다(정본 팝업과 같은 차례).
+    def _open_spec(self, server, sess, selected=None):
+        """활성 패널의 프롬프트 목록 — **오래된 것이 위, 최신이 아래**이고 처음 커서는
+        최신이다(정본 `_HistView`: `_sel = len - 1` · pytmux-616). 종전 판은 최신을 위로
+        뒤집었고 이 자리 주석이 「정본 팝업과 같은 차례」라고 잘못 적고 있었다.
 
         ⚠ 목록은 **tail 슬라이스**여야 한다 — 점프(`scroll_to_prompt`)의 index 가 그
         슬라이스 기준이고, 정본 클라도 status 로 받는 것이 tail 이다. 전체를 실으면
@@ -215,27 +235,37 @@ class _PromptHistoryPlugin:
         win = sess.active_window if sess else None
         pane = win.active_pane if win else None
         hist = list(getattr(pane, "_ph_history", []) or [])[-_TAIL:]
+        max_lines = _clamp_lines(getattr(server, "_ph_max_lines", _DEFAULT_LINES))
+        mark = i18n.t("ph.truncated_mark")
         rows = []
-        for i in range(len(hist) - 1, -1, -1):
-            text = hist[i]
-            first = (text.splitlines() or [""])[0]
-            more = "" if first == text else " ⏎"
+        for i, text in enumerate(hist):
+            # ★ 여러 줄 프롬프트는 **최대 N 줄**로 펼친다(정본 `_rebuild_rows`) — 넘치면
+            #   마지막 표시 줄 끝에 `…`. 고르는 단위는 프롬프트 하나 그대로다(`more`).
+            plines = text.splitlines() or [""]
+            show = plines[:max_lines]
+            if len(plines) > max_lines:
+                show[-1] = show[-1] + mark
             rows.append({
-                # `key` 는 그 줄의 **뜻**(히스토리 자리)이다 — 목록이 뒤집혀 있어
-                # 화면의 줄 번호로는 못 찾는다.
+                # `key` 는 그 줄의 **뜻**(히스토리 자리)이다 — 점프가 이 번호를 쓴다.
                 "key": str(i),
-                "label": (first + more)[:200],
+                "label": show[0],
+                "more": show[1:],
                 "cols": [str(i + 1)],
             })
+        hint, hint_spec = i18n.phrase("ph.popup_sub", n=max_lines)
+        sel = len(rows) - 1 if selected is None else int(selected)
         return {
             "t": "plugin_screen", "id": "prompt-history", "kind": "list",
             # ⚠ 손으로 적으면 게이트가 못 본다(2026-08-02o) — 카탈로그가 곧 영어 표다.
             "title": i18n.t("ph.popup_title"),
-            "hint": i18n.t("ph.spec_hint"),
+            # 꼬리줄도 정본과 같다(`ph.popup_sub` — `+/− 미리보기 {n}행` 이 들어 있다).
+            "hint": hint,
             "rows": rows,
-            "selected": 0,
-            "keys": {"enter": "jump"},
+            "selected": max(0, min(sel, len(rows) - 1)),
+            # 정본 `_HistView.on_key` — `+`·`=` 는 늘이기, `-` 는 줄이기.
+            "keys": {"enter": "jump", "+": "lines+", "=": "lines+", "-": "lines-"},
             "note": "" if rows else i18n.t("ph.empty"),
+            "i18n": {"hint": hint_spec},
         }
 
     # ---- 클라이언트 ----

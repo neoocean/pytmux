@@ -1,0 +1,605 @@
+{
+ "names": [
+  "",
+  "alpha",
+  "Beta",
+  "xalphab",
+  "gamma",
+  "가나다",
+  "README.md",
+  "",
+  "beta2"
+ ],
+ "cases": [
+  {
+   "start": 0,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 0,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 0,
+   "query": "lph",
+   "answer": 1
+  },
+  {
+   "start": 0,
+   "query": "b",
+   "answer": 2
+  },
+  {
+   "start": 0,
+   "query": "BE",
+   "answer": 2
+  },
+  {
+   "start": 0,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 0,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 0,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 0,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 0,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 0,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 0,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 0,
+   "query": "e",
+   "answer": 2
+  },
+  {
+   "start": 1,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 1,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 1,
+   "query": "lph",
+   "answer": 1
+  },
+  {
+   "start": 1,
+   "query": "b",
+   "answer": 2
+  },
+  {
+   "start": 1,
+   "query": "BE",
+   "answer": 2
+  },
+  {
+   "start": 1,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 1,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 1,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 1,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 1,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 1,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 1,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 1,
+   "query": "e",
+   "answer": 2
+  },
+  {
+   "start": 2,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 2,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 2,
+   "query": "lph",
+   "answer": 3
+  },
+  {
+   "start": 2,
+   "query": "b",
+   "answer": 2
+  },
+  {
+   "start": 2,
+   "query": "BE",
+   "answer": 2
+  },
+  {
+   "start": 2,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 2,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 2,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 2,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 2,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 2,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 2,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 2,
+   "query": "e",
+   "answer": 2
+  },
+  {
+   "start": 3,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 3,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 3,
+   "query": "lph",
+   "answer": 3
+  },
+  {
+   "start": 3,
+   "query": "b",
+   "answer": 8
+  },
+  {
+   "start": 3,
+   "query": "BE",
+   "answer": 8
+  },
+  {
+   "start": 3,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 3,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 3,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 3,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 3,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 3,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 3,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 3,
+   "query": "e",
+   "answer": 6
+  },
+  {
+   "start": 4,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 4,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 4,
+   "query": "lph",
+   "answer": 1
+  },
+  {
+   "start": 4,
+   "query": "b",
+   "answer": 8
+  },
+  {
+   "start": 4,
+   "query": "BE",
+   "answer": 8
+  },
+  {
+   "start": 4,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 4,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 4,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 4,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 4,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 4,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 4,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 4,
+   "query": "e",
+   "answer": 6
+  },
+  {
+   "start": 5,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 5,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 5,
+   "query": "lph",
+   "answer": 1
+  },
+  {
+   "start": 5,
+   "query": "b",
+   "answer": 8
+  },
+  {
+   "start": 5,
+   "query": "BE",
+   "answer": 8
+  },
+  {
+   "start": 5,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 5,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 5,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 5,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 5,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 5,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 5,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 5,
+   "query": "e",
+   "answer": 6
+  },
+  {
+   "start": 6,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 6,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 6,
+   "query": "lph",
+   "answer": 1
+  },
+  {
+   "start": 6,
+   "query": "b",
+   "answer": 8
+  },
+  {
+   "start": 6,
+   "query": "BE",
+   "answer": 8
+  },
+  {
+   "start": 6,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 6,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 6,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 6,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 6,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 6,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 6,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 6,
+   "query": "e",
+   "answer": 6
+  },
+  {
+   "start": 7,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 7,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 7,
+   "query": "lph",
+   "answer": 1
+  },
+  {
+   "start": 7,
+   "query": "b",
+   "answer": 8
+  },
+  {
+   "start": 7,
+   "query": "BE",
+   "answer": 8
+  },
+  {
+   "start": 7,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 7,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 7,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 7,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 7,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 7,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 7,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 7,
+   "query": "e",
+   "answer": 8
+  },
+  {
+   "start": 8,
+   "query": "a",
+   "answer": 1
+  },
+  {
+   "start": 8,
+   "query": "al",
+   "answer": 1
+  },
+  {
+   "start": 8,
+   "query": "lph",
+   "answer": 1
+  },
+  {
+   "start": 8,
+   "query": "b",
+   "answer": 8
+  },
+  {
+   "start": 8,
+   "query": "BE",
+   "answer": 8
+  },
+  {
+   "start": 8,
+   "query": "beta2",
+   "answer": 8
+  },
+  {
+   "start": 8,
+   "query": "가",
+   "answer": 5
+  },
+  {
+   "start": 8,
+   "query": "나",
+   "answer": 5
+  },
+  {
+   "start": 8,
+   "query": "md",
+   "answer": 6
+  },
+  {
+   "start": 8,
+   "query": "zz",
+   "answer": null
+  },
+  {
+   "start": 8,
+   "query": "",
+   "answer": null
+  },
+  {
+   "start": 8,
+   "query": "x",
+   "answer": 3
+  },
+  {
+   "start": 8,
+   "query": "e",
+   "answer": 8
+  },
+  {
+   "start": 1000000,
+   "query": "al",
+   "answer": 1
+  }
+ ]
+}
