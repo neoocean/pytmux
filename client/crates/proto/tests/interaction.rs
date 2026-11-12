@@ -230,8 +230,10 @@ static CONTRACTS: &[Contract] = &[
     c(
         Screen::Layouts,
         Stays,
-        Same("screen_key_conformance — 정본 `ChooseLayoutScreen.on_key` 를 AST 로 읽어 \
-         눌러 봤다: `escape` 만 닫고 그 밖은 흘려보낸다(pytmux-454)"),
+        Same("screen_key_conformance — 정본 프리셋 판은 `CommandOptionsScreen(\"select-layout\")` \
+         이다(pytmux-623 에서 `canon_class` 를 바로잡았다 — 종전엔 저장 슬롯 판 \
+         `ChooseLayoutScreen` 을 적고 있었다). 그 `on_key` 를 AST 로 읽어 눌러 봤다: \
+         `escape`·`enter` 가 닫고 `←→` 는 판을 안 닫으며 그 밖은 흘려보낸다"),
         "레이아웃 프리셋. 제 것 아닌 키를 삼키는 것이 정본과 같다",
     ),
     c(
@@ -263,8 +265,10 @@ static CONTRACTS: &[Contract] = &[
          (이 축이 재는 F5 는 `event.character` 가 없어 그 «그 밖»이다). \
          `press_settings` 의 `_ => close_top()` 을 삼키기로 고쳤다(pytmux-374 ⑵)"),
         "플러그인 켜고끄기. `Enter` 가 안 닫는 것도, **제 것 아닌 키를 무시하는 것도** \
-         이제 정본과 같다 — 종전엔 아무 키나 닫았다. ⚠ 정본의 **글자 치기 = 이름 \
-         필터**(`#plgsearch`)는 아직 없다 — 그 둘은 이 축(닫기 여부) 밖의 기능 공백이다",
+         이제 정본과 같다 — 종전엔 아무 키나 닫았다. **글자 치기 = 이름 검색**(`#plgsearch`)도 \
+         이제 있다(pytmux-591 · `plugin_filter_conformance` 가 정본 `_matches` 와 맞댄다) — \
+         Space 는 토글이지 검색 글자가 아니고 `←→` 는 아무 일도 안 한다(종전엔 설정 판 같은 \
+         번호 줄의 값을 바꿨다). `Home`·`End`·`PgUp`·`PgDn` 은 설정 판처럼 글만 굴린다",
     ),
     c(
         Screen::PluginView,
@@ -324,12 +328,14 @@ static CONTRACTS: &[Contract] = &[
         Same("clientscreens.py SettingsScreen.on_key 직접 대조 — `escape`·`enter`·\
          `left`/`right`·`tab`/`shift+tab` **넷만** `event.stop()` 하고 그 밖의 키는 \
          `ListView` 로 흘러가 판을 안 닫는다. `press_settings` 를 그 규약으로 고쳤다\
-         (pytmux-374 ⑵). ⚠ **한 칸 갈린다** — 정본에서 `Home`·`End`·`PageUp`·`PageDown` \
-         은 `ScrollableContainer` 기본 바인딩이라 **글만 굴리고 커서는 제자리**인데, \
-         우리 판에는 커서와 따로 사는 스크롤이 없어 커서를 옮긴다(그 사유는 \
-         `press_settings` 머리말)"),
+         (pytmux-374 ⑵). `Home`·`End`·`PageUp`·`PageDown` 은 정본 `ScrollableContainer` \
+         기본 바인딩이라 **글만 굴리고 커서는 제자리**다 — 우리도 이제 같다(pytmux-627 ① · \
+         `screens_tests::page_keys_scroll_the_settings_view_not_the_cursor`). 맨 끝 «키» 탭도 \
+         정본과 같은 자리에 섰다(pytmux-592 · `category_conformance`)"),
         "설정. **제 것 아닌 키가 판을 안 닫고**(고쳐졌다 — pytmux-273 이 `press_list` 에 \
-         한 것과 같은 처방) `Home`·`End`·`PageUp`·`PageDown` 이 목록을 옮긴다. \
+         한 것과 같은 처방) 항해 키 넷이 커서를 둔 채 창만 굴린다. «키» 탭 줄은 읽기 \
+         전용이라 Enter·←→ 가 아무 일도 안 한다(정본 `keyref`). 숫자 줄은 끝에서 멈춘다 \
+         (pytmux-622). \
          네이티브 위젯으로 다시 그리는 일은 pytmux-182 다(그것은 이 축이 아니라 그림 축)",
     ),
     c(
@@ -373,10 +379,21 @@ static CONTRACTS: &[Contract] = &[
          title=debug-stats))`) — 아무 키나 닫고 `↑↓`·`PgUp/PgDn`·`Home/End` 가 \
          굴린다. `canon_class` 가 `InfoScreen` 이라 그 시험이 이 판도 눌러 본다 \
          (pytmux-457)"),
-        "런타임 계측 판. **손은 정본과 같고 항목이 갈린다** — 저쪽은 파이썬 힙·GC \
-         세대를 재고 이쪽은 그린 프레임·프레임 시간·글리프 캐시·씬 원소·큐 깊이·RTT 를 \
-         잰다(런타임이 다르다). 그 갈림은 대장 ⓑ 한 줄이고, 이 축이 재는 「같게 구나」는 \
-         갈리지 않는다",
+        "런타임 계측 판. **손은 정본과 같고, 서버 절반은 줄까지 같다** — 정본 \
+         `clientdiag.render_server` 를 직접 부른 픽스처와 `debug_stats_conformance` 가 줄 단위로 \
+         맞댄다(pytmux-627 ②). **클라 절반은 갈린다**(정본은 파이썬 힙·GC 세대, 이쪽은 그린 \
+         프레임·프레임 시간·글리프 캐시·씬 원소·큐 깊이·RTT) — 각자 **제 프로세스를 재는** 판이라 \
+         값이 같을 수 없다. 갈림 대장에 그 축(정본에 있는데 다르게 하는 쪽)이 아직 없어 \
+         여기 적는다 — 대장 줄은 pytmux-598 이 든다. 이 축이 재는 「같게 구나」는 갈리지 않는다",
+    ),
+    c(
+        Screen::SavedLayouts,
+        Stays,
+        Same("screen_key_conformance — 정본 `ChooseLayoutScreen.on_key` 를 AST 로 읽어 \
+         눌러 봤다: `escape` 만 닫고 그 밖은 흘려보낸다. ↑↓ Enter 는 `ListView`(pytmux-623)"),
+        "저장된 레이아웃 슬롯(`layout-load`). 정본과 같은 **목록 판**이다 — 종전엔 이름을 \
+         치는 물음이라 ↑↓ **Tab** Enter 로 한 걸음 갈렸다. 빈 목록이면 「(저장된 레이아웃 \
+         없음)」 한 줄이고 그 줄의 Enter 는 닫기만 한다",
     ),
 ];
 
@@ -390,7 +407,8 @@ static CONTRACTS: &[Contract] = &[
 // 같다 24→23: `Autoresume` 줄이 사라졌다(pytmux-526) — 정본·GUI 둘 다에서 자동재개 판을
 // 걷었다(Claude Code CLI 가 한도 리셋 뒤 스스로 이어 간다).
 // 같다 23→24 · 허용 2→1: `Summary` 가 정본에도 섰다(pytmux-538 · 범용 `InfoScreen`).
-static SCORE: (usize, usize, usize, usize) = (24, 1, 0, 0);
+// 같다 24→25: `SavedLayouts` 판이 섰다(pytmux-623 · 정본 `ChooseLayoutScreen`).
+static SCORE: (usize, usize, usize, usize) = (25, 1, 0, 0);
 
 /// ⛔ **이 수는 올리지 않는다**(규칙 4). **지금은 0 이다**(pytmux-454).
 ///

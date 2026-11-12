@@ -291,7 +291,7 @@ impl PluginScreen {
     /// 띠의 **뷰 탭** 수 — 액션 탭(`시나리오` 같은 초록 배지)은 뺀다. 둘 이상이라야
     /// 순환할 것이 있다(pytmux-516).
     pub fn cyclable_tabs(&self) -> usize {
-        self.tabs.iter().filter(|t| !t.action).count()
+        self.tabs.iter().filter(|t| !t.action && !t.extra).count()
     }
 
     /// 지금 탭의 **이웃 탭** 번호(`forward` = 다음 · 아니면 앞) — 액션 탭은 건너뛰고
@@ -301,10 +301,16 @@ impl PluginScreen {
     /// 다섯을 돈다). 액션 탭을 건너뛰는 이유는 `_HUB_ACTIONS` 머리말이 적어 뒀다 —
     /// 그것은 뷰가 아니라 **겹쳐 뜨는 판**이라 순환의 한 자리가 아니다.
     pub fn tab_neighbor(&self, forward: bool) -> Option<usize> {
-        let views: Vec<usize> =
-            (0..self.tabs.len()).filter(|&i| !self.tabs[i].action).collect();
+        // ★ 정본 띠에 없는 탭(`extra`)도 건너뛴다(pytmux-617) — 정본은 제 탭만 돈다. 그
+        //   탭이 활성이면 정본 띠의 처음(앞으로)·끝(뒤로)으로 들어간다(서버 `_hub_neighbor`).
+        let views: Vec<usize> = (0..self.tabs.len())
+            .filter(|&i| !self.tabs[i].action && !self.tabs[i].extra)
+            .collect();
         if views.len() < 2 {
             return None;
+        }
+        if self.tabs.iter().any(|t| t.active && t.extra) {
+            return Some(if forward { views[0] } else { views[views.len() - 1] });
         }
         let at = views.iter().position(|&i| self.tabs[i].active)?;
         let next = if forward {
@@ -601,6 +607,9 @@ pub struct PluginZone {
     /// 되돌려 보낼 이름도 회신도 없다: 다음 프레임의 패널 화면이 답이다.
     #[serde(default)]
     pub send: String,
+    /// 정본 esc 하단 동선에 드는 자리인가(pytmux-604 — 활성 패널의 권한모드 footer `perm`).
+    #[serde(default)]
+    pub nav: bool,
 }
 
 /// 오버레이가 가져가는 키 하나. 이름은 이 클라의 표기다([`base::keys`] 의 `binding_name`).
@@ -668,6 +677,10 @@ pub struct PluginTab {
     /// 뷰가 아니라 **액션**(정본 띠 끝의 초록 배지 — `시나리오`).
     #[serde(default)]
     pub action: bool,
+    /// 정본 띠에 **없는** 판(pytmux-617 · 서버 `screenspec._HUB_EXTRA` — 모델·일별). 정본 탭
+    /// 뒤에 서고 **순환에서 빠진다** — 정본 순환은 경고 다음이 기간이다(`_cycle_tab`).
+    #[serde(default)]
+    pub extra: bool,
     #[serde(default)]
     pub i18n: I18nMap,
 }
@@ -772,6 +785,10 @@ pub struct PluginBadge {
     /// (`tests/test_plugin_do_wiring.py` 가 잰다).
     #[serde(default, rename = "do")]
     pub open: String,
+    /// 정본 esc 모드 **하단 동선**(`client._status_buttons`)에 드는 배지인가(pytmux-604) —
+    /// 서버가 선언한다(model·usage·rec). 우리는 [`kind`](Self::kind) 로 판단하지 않는다.
+    #[serde(default)]
+    pub nav: bool,
 }
 
 impl PluginBadge {
@@ -1017,9 +1034,16 @@ impl PluginRow {
     /// 떴다 — 카탈로그로 옮겨도 **서버 로케일**로 지어지므로 여기서 다시 짓지 않으면
     /// 그대로다(`title`·`hint`·`note` 만 [`i18n_say`] 를 거치고 있었다).
     pub fn say_cols(&self) -> Vec<String> {
+        // ★ **자리가 있는 칸**은 재료(`i18n["col<i>"]`)로 다시 짓는다(pytmux-618) — `600초 이상`
+        //   처럼 수가 붙은 글은 원문이 키가 못 돼 `t()` 로는 영어가 안 된다(설정 판의 cycle 값 ·
+        //   경고 이력의 배지).
         self.cols
             .iter()
-            .map(|c| base::i18n::t(c).to_owned())
+            .enumerate()
+            .map(|(i, c)| match self.i18n.get(&format!("col{i}")) {
+                Some(p) if !p.fmt.is_empty() => i18n_say(&self.i18n, &format!("col{i}"), c),
+                _ => base::i18n::t(c).to_owned(),
+            })
             .collect()
     }
 }
@@ -1197,6 +1221,20 @@ pub struct TreeRow {
     pub pane: Option<i64>,
     /// 지금 활성 탭인가(표식용).
     pub active: bool,
+}
+
+/// 패널 하위행의 글 — 정본 `ChooseTreeScreen.compose`·`TabSwitcherScreen.add_panes` 와 같다.
+///
+/// `└ {[ssh]|[local]} {앱}{ · 제목}`. 앱은 `cmd` 이고 비면 `shell`(종전 `?`). 제목은 비었거나
+/// `shell` 이면 뺀다. 스위처(`dedupe_app`)는 **제목이 앱 이름과 같아도** 뺀다(`vim · vim` 중복 —
+/// 트리는 정본도 안 뺀다). 들여쓰기는 그리는 쪽이 `depth` 로 준다.
+pub fn pane_row_label(pane: &crate::message::TreePane, dedupe_app: bool) -> String {
+    let app = if pane.cmd.is_empty() { "shell" } else { pane.cmd.as_str() };
+    let badge = if pane.remote { "[ssh]" } else { "[local]" };
+    let title = pane.title.trim();
+    let drop = title.is_empty() || title == "shell" || (dedupe_app && title == app);
+    let tail = if drop { String::new() } else { format!(" · {title}") };
+    format!("└ {badge} {app}{tail}")
 }
 
 /// 마우스 패스스루의 대상 — [`SessionState::mouse_pane_at`] 의 답.
@@ -2148,48 +2186,39 @@ impl SessionState {
     /// 목록 화면은 **줄 번호로 고르므로**, 펴는 순서가 갈리면 GUI 에서 고른 것과 TUI 에서
     /// 고른 것이 달라진다 — 조용한 어긋남이다.
     ///
-    /// 세션 줄은 **접어 넣지 않는다**: 세션이 하나뿐인 것이 보통이고, 그때 세션 줄은
-    /// 고를 수도 없는 줄 하나를 목록 맨 위에 얹을 뿐이다(파이썬 클라도 탭부터 보인다).
+    /// # 정본과 같은 줄 (pytmux-593 · `ChooseTreeScreen.compose`)
+    ///
+    /// - **세션 머리줄이 없다** — 정본은 모든 세션의 창을 평평하게 잇는다(사람 결정
+    ///   2026-11-13: 정본에 맞춘다).
+    /// - 창 줄 = `{* }{index}:{name}  ({N} panes)` — 번호는 **원래 index** 다(정본 그대로).
+    ///   활성 표식(정본 `▾`/`▸`)은 글이 아니라 `active` 칸이고 그리는 쪽이 칠한다(ⓑ).
+    /// - 패널 줄은 **패널이 하나여도** 싣는다 — 종전엔 둘 이상일 때만이라 패널별 명령과
+    ///   로컬/원격을 볼 수 없었다. 글은 [`pane_row_label`].
+    /// 대조 = `proto/tests/tree_row_conformance.rs`(정본 `compose` 를 직접 돌린 픽스처).
     pub fn tree_rows(&self) -> Vec<TreeRow> {
         let Some(tree) = &self.tree else {
             return Vec::new();
         };
-        let many = tree.sessions.len() > 1;
         let mut rows = Vec::new();
         for session in &tree.sessions {
-            if many {
+            for window in &session.windows {
+                let pin = if window.pinned { "* " } else { "" };
                 rows.push(TreeRow {
                     depth: 0,
-                    label: session.name.clone(),
-                    window: None,
-                    pane: None,
-                    active: false,
-                });
-            }
-            for window in &session.windows {
-                let pin = if window.pinned { "*" } else { "" };
-                rows.push(TreeRow {
-                    depth: usize::from(many),
-                    label: format!("{}{pin} {}", window.index, window.name),
+                    label: format!(
+                        "{pin}{}:{}  ({} panes)",
+                        window.index,
+                        window.name,
+                        window.panes.len()
+                    ),
                     window: Some(window.index),
                     pane: None,
                     active: window.active,
                 });
-                // 패널이 하나뿐이면 그 줄은 탭 줄과 같은 말을 한다 — 안 싣는다.
-                if window.panes.len() < 2 {
-                    continue;
-                }
                 for pane in &window.panes {
-                    let what = if pane.cmd.is_empty() { "?" } else { &pane.cmd };
-                    let where_ = if pane.remote { "ssh" } else { "local" };
-                    let title = if pane.title.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" · {}", pane.title)
-                    };
                     rows.push(TreeRow {
-                        depth: usize::from(many) + 1,
-                        label: format!("[{where_}] {what}{title}"),
+                        depth: 1,
+                        label: pane_row_label(pane, false),
                         window: Some(window.index),
                         pane: Some(pane.id),
                         active: false,
@@ -2207,45 +2236,59 @@ impl SessionState {
     /// 끼어든다 — **패널 2개 이상인 로컬 탭** 밑에만(하나뿐이면 탭 줄과 같은 말이고,
     /// 원격 탭의 패널 구성은 업스트림 소유라 여기서 안 편다). 패널 줄에서 고르면
     /// 그 탭 + 그 패널로 간다(뷰의 `picked` 가 트리와 같은 팔로 푼다).
+    ///
+    /// # 정본과 같은 넷 (pytmux-620 · `open_tab_switcher`·`_fill_tab_switcher_panes`·`add_panes`)
+    ///
+    /// 1. **줄 차례 = 시각 순서**(비고정 → 고정 · `_visual_tab_order`) — 번호만 시각 번호로
+    ///    붙이고 줄은 `tabs()` 차례로 돌던 것을 고쳤다(원격이 섞이면 번호와 줄이 어긋났다).
+    /// 2. **내 세션만** — tree 회신은 서버의 전 세션을 담는다. 다른 세션의 같은 index 창
+    ///    패널이 내 탭 밑에 붙지 않게 `status.session` 의 창만 본다(세션 이름을 모르면
+    ///    거르지 않는다 — 정본 `if mine and …`).
+    /// 3. **원격 탭 패널** — 로컬 tree 에 없으므로 status 가 실어 준 `Tab::panes` 로 채운다.
+    /// 4. 글 — 탭 줄 `{* }{번호}:{이름}`(벨·활동·완료 표식은 글에 안 넣는다 — 정본 글과 같게 ·
+    ///    사람 결정 2026-11-13), 패널 줄 [`pane_row_label`](제목이 앱 이름과 같으면 뺀다).
+    ///    활성 표식(정본 `▸`·굵게)은 `active` 칸으로 그리는 쪽이 칠한다(ⓑ).
+    /// 대조 = `proto/tests/tab_switcher_conformance.rs`(정본 세 함수를 직접 돌린 픽스처).
     pub fn switcher_rows(&self) -> Vec<TreeRow> {
         let mut rows = Vec::new();
-        // 스위처는 **고르는 화면**이라 접지 않는다 — 호스트를 접으면 다른 서버의
-        // 같은 이름 탭이 구분되지 않는다(§10-21ⓓ2).
-        let labels = self.tabs().labels(crate::tabs::FULL_TITLE);
-        for (i, tab) in self.tabs().tabs.iter().enumerate() {
+        let tabs = &self.tabs().tabs;
+        let mine = self.session.as_str();
+        for (pos, i) in self.tabs().visual_order().into_iter().enumerate() {
+            let tab = &tabs[i];
+            let pin = if tab.pinned { "* " } else { "" };
             rows.push(TreeRow {
                 depth: 0,
-                label: labels[i].clone(),
+                label: format!("{pin}{}:{}", pos + 1, tab.name),
                 window: Some(tab.index),
                 pane: None,
                 active: tab.active,
             });
-            if tab.remote {
+            // 로컬 = 내 세션의 tree · 원격 = status 의 요약(정본 `panes_by_index` 의 두 채널).
+            let local = self.tree.as_ref().and_then(|tree| {
+                tree.sessions
+                    .iter()
+                    .filter(|s| mine.is_empty() || s.name == mine)
+                    .flat_map(|s| s.windows.iter())
+                    .find(|w| w.index == tab.index)
+                    .map(|w| &w.panes)
+            });
+            let panes = match (tab.remote, local) {
+                (false, Some(panes)) => Some(panes),
+                _ if tab.remote => tab.panes.as_ref(),
+                _ => None,
+            };
+            let Some(panes) = panes else { continue };
+            if panes.len() < 2 {
                 continue;
             }
-            let Some(tree) = &self.tree else { continue };
-            for session in &tree.sessions {
-                for window in &session.windows {
-                    if window.index != tab.index || window.panes.len() < 2 {
-                        continue;
-                    }
-                    for pane in &window.panes {
-                        let what = if pane.cmd.is_empty() { "?" } else { &pane.cmd };
-                        let where_ = if pane.remote { "ssh" } else { "local" };
-                        let title = if pane.title.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" · {}", pane.title)
-                        };
-                        rows.push(TreeRow {
-                            depth: 1,
-                            label: format!("[{where_}] {what}{title}"),
-                            window: Some(window.index),
-                            pane: Some(pane.id),
-                            active: false,
-                        });
-                    }
-                }
+            for pane in panes {
+                rows.push(TreeRow {
+                    depth: 1,
+                    label: pane_row_label(pane, true),
+                    window: Some(tab.index),
+                    pane: Some(pane.id),
+                    active: false,
+                });
             }
         }
         rows
@@ -2441,6 +2484,50 @@ impl SessionState {
             out.push(Badge::Notices);
         }
         out
+    }
+
+    /// 정본 esc 모드 **하단 동선**의 목록 — 정본 `client._status_buttons` 의 차례 그대로다
+    /// (pytmux-604): 서버가 `nav` 로 선언한 표식(model·usage·rec — 서버 차례) → 알림 →
+    /// 우측 구간의 서버·시계·달력(`right` — **그려진 구간 차례** · 같은 것은 한 번) → 활성
+    /// 패널의 권한모드 footer(`zones` 의 `nav` 가 그 패널에 있을 때).
+    ///
+    /// [`badges`](Self::badges) 와 따로 두는 이유: 저것은 **그릴 칩**의 목록이고(알림 하나),
+    /// 이것은 **키가 도는 자리**의 목록이다 — 종전에는 둘이 같아서 서버·시계·달력·Claude
+    /// 배지·권한모드 footer 에 키보드로 닿을 길이 없었다.
+    pub fn nav_badges(&self, right: &[crate::Badge]) -> Vec<crate::Badge> {
+        use crate::Badge;
+        let mut out: Vec<Badge> = self
+            .plugin_badges
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.nav)
+            .filter_map(|(i, _)| u8::try_from(i).ok().map(Badge::Plugin))
+            .collect();
+        if self.notices.len() > 0 {
+            out.push(Badge::Notices);
+        }
+        for b in right {
+            if matches!(b, Badge::Host | Badge::Clock | Badge::Calendar) && !out.contains(b) {
+                out.push(*b);
+            }
+        }
+        if self.perm_nav_zone().is_some() {
+            out.push(Badge::Perm);
+        }
+        out
+    }
+
+    /// 활성 패널의 권한모드 footer 자리(`nav` 인 자리) — 하단 동선의 `perm` 이 여는 곳.
+    /// 팝업이 떠 있으면 없다(뒤에 가려진 자리는 누를 대상이 아니다 — `zone_at` 과 같다).
+    pub fn perm_nav_zone(&self) -> Option<&PluginZone> {
+        if self.popup().is_some() {
+            return None;
+        }
+        let active = self.active_pane()?;
+        self.plugin_cells
+            .zones
+            .iter()
+            .find(|z| z.nav && z.pane == active && !z.opens.is_empty())
     }
 
     /// 창(또는 단말) 제목 — 설정 `set-titles-string` 을 지금 상태로 펼친 것.

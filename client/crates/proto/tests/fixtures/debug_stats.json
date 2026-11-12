@@ -1,0 +1,290 @@
+{
+  "_comment": "python3 scripts/gen_debug_stats_fixture.py 로 생성. 출처 = 정본 clientdiag.render_server 를 직접 부른 줄.",
+  "now": 1700000100.0,
+  "waiting": {
+    "ko": "― 서버 쪽 ― 서버가 아직 답하지 않았다",
+    "en": "― Server ― The server has not answered yet"
+  },
+  "cases": [
+    {
+      "locale": "ko",
+      "stats": {
+        "pid": 4242,
+        "python": "3.13.1",
+        "uptime_s": 93784.0,
+        "rss": 157286400,
+        "fds": 41,
+        "threads": 5,
+        "tasks": 17,
+        "clients": 2,
+        "client_idle_s": [
+          0.4,
+          null
+        ],
+        "sessions": 1,
+        "windows": 3,
+        "panes": 5,
+        "scrollback_rows": 120000,
+        "remote_links": 1,
+        "remote_reconnecting": 0,
+        "objects": 912345,
+        "gc": [
+          {
+            "gen": 0,
+            "collections": 1200,
+            "collected": 34000,
+            "uncollectable": 0
+          },
+          {
+            "gen": 2,
+            "collections": 3,
+            "collected": 1500,
+            "uncollectable": 2
+          }
+        ],
+        "top": [
+          [
+            "dict",
+            120000
+          ],
+          [
+            "Strip",
+            9000
+          ]
+        ],
+        "usage_probe": {
+          "boot": 3.2,
+          "panel": 1.0,
+          "total": 4.25,
+          "ok": true,
+          "at": 1699999975.0
+        },
+        "error_log_bytes": 2048
+      },
+      "lines": [
+        "― 서버 쪽 ―",
+        "  pid 4242 · python 3.13.1 · 기동 뒤 1d 2h",
+        "  상주 메모리 150.0 MB · fd 41 · 스레드 5 · asyncio 태스크 17",
+        "  클라 2 (마지막 수신 0s · ?) · 원격 링크 1 · 재연결 중 0",
+        "  세션 1 · 탭 3 · 패널 5 · 스크롤백 행 120000",
+        "  산 객체 912,345",
+        "    gen0: 수거 1,200 · 거둔 것 34,000 · 못 거둔 것 0",
+        "    gen2: 수거 3 · 거둔 것 1,500 · 못 거둔 것 2",
+        "     120,000  dict",
+        "       9,000  Strip",
+        "  /usage 프로브 마지막 회차: boot 3.2s · panel 1.0s · total 4.2s · 성공 · 2m 05s 전",
+        "  error.log 0.0 MB"
+      ]
+    },
+    {
+      "locale": "ko",
+      "stats": {
+        "pid": 7,
+        "python": "",
+        "uptime_s": null,
+        "rss": null,
+        "fds": null,
+        "threads": null,
+        "tasks": null,
+        "clients": 0,
+        "client_idle_s": [],
+        "sessions": 0,
+        "windows": 0,
+        "panes": 0,
+        "scrollback_rows": null,
+        "remote_links": 0,
+        "remote_reconnecting": 0,
+        "usage_probe": null,
+        "error_log_bytes": null
+      },
+      "lines": [
+        "― 서버 쪽 ―",
+        "  pid 7 · python ? · 기동 뒤 ?",
+        "  상주 메모리 ? · fd ? · 스레드 ? · asyncio 태스크 ?",
+        "  클라 0 · 원격 링크 0 · 재연결 중 0",
+        "  세션 0 · 탭 0 · 패널 0 · 스크롤백 행 ?",
+        "  /usage 프로브가 아직 한 번도 안 돌았다",
+        "  error.log ?"
+      ]
+    },
+    {
+      "locale": "ko",
+      "stats": {
+        "pid": 1,
+        "python": "3.11.9",
+        "uptime_s": 59.0,
+        "rss": 1048576,
+        "fds": 9,
+        "threads": 1,
+        "tasks": 3,
+        "clients": 1,
+        "client_idle_s": [
+          12.0
+        ],
+        "sessions": 2,
+        "windows": 2,
+        "panes": 2,
+        "scrollback_rows": 0,
+        "remote_links": 2,
+        "remote_reconnecting": 1,
+        "usage_probe": {
+          "boot": null,
+          "panel": null,
+          "total": null,
+          "ok": false,
+          "at": null
+        },
+        "error_log_bytes": 0
+      },
+      "lines": [
+        "― 서버 쪽 ―",
+        "  pid 1 · python 3.11.9 · 기동 뒤 0m 59s",
+        "  상주 메모리 1.0 MB · fd 9 · 스레드 1 · asyncio 태스크 3",
+        "  클라 1 (마지막 수신 12s) · 원격 링크 2 · 재연결 중 1",
+        "  세션 2 · 탭 2 · 패널 2 · 스크롤백 행 0",
+        "  /usage 프로브 마지막 회차: boot ? · panel ? · total ? · 실패",
+        "  error.log 0.0 MB"
+      ]
+    },
+    {
+      "locale": "en",
+      "stats": {
+        "pid": 4242,
+        "python": "3.13.1",
+        "uptime_s": 93784.0,
+        "rss": 157286400,
+        "fds": 41,
+        "threads": 5,
+        "tasks": 17,
+        "clients": 2,
+        "client_idle_s": [
+          0.4,
+          null
+        ],
+        "sessions": 1,
+        "windows": 3,
+        "panes": 5,
+        "scrollback_rows": 120000,
+        "remote_links": 1,
+        "remote_reconnecting": 0,
+        "objects": 912345,
+        "gc": [
+          {
+            "gen": 0,
+            "collections": 1200,
+            "collected": 34000,
+            "uncollectable": 0
+          },
+          {
+            "gen": 2,
+            "collections": 3,
+            "collected": 1500,
+            "uncollectable": 2
+          }
+        ],
+        "top": [
+          [
+            "dict",
+            120000
+          ],
+          [
+            "Strip",
+            9000
+          ]
+        ],
+        "usage_probe": {
+          "boot": 3.2,
+          "panel": 1.0,
+          "total": 4.25,
+          "ok": true,
+          "at": 1699999975.0
+        },
+        "error_log_bytes": 2048
+      },
+      "lines": [
+        "― Server ―",
+        "  pid 4242 · python 3.13.1 · up 1d 2h",
+        "  Resident memory 150.0 MB · fd 41 · threads 5 · asyncio tasks 17",
+        "  Clients 2 (last seen 0s · ?) · remote links 1 · reconnecting 0",
+        "  Sessions 1 · Tabs 3 · Panes 5 · scrollback rows 120000",
+        "  Live objects 912,345",
+        "    gen0: collections 1,200 · collected 34,000 · uncollectable 0",
+        "    gen2: collections 3 · collected 1,500 · uncollectable 2",
+        "     120,000  dict",
+        "       9,000  Strip",
+        "  /usage probe last run: boot 3.2s · panel 1.0s · total 4.2s · ok · 2m 05s ago",
+        "  error.log 0.0 MB"
+      ]
+    },
+    {
+      "locale": "en",
+      "stats": {
+        "pid": 7,
+        "python": "",
+        "uptime_s": null,
+        "rss": null,
+        "fds": null,
+        "threads": null,
+        "tasks": null,
+        "clients": 0,
+        "client_idle_s": [],
+        "sessions": 0,
+        "windows": 0,
+        "panes": 0,
+        "scrollback_rows": null,
+        "remote_links": 0,
+        "remote_reconnecting": 0,
+        "usage_probe": null,
+        "error_log_bytes": null
+      },
+      "lines": [
+        "― Server ―",
+        "  pid 7 · python ? · up ?",
+        "  Resident memory ? · fd ? · threads ? · asyncio tasks ?",
+        "  Clients 0 · remote links 0 · reconnecting 0",
+        "  Sessions 0 · Tabs 0 · Panes 0 · scrollback rows ?",
+        "  /usage probe has not run yet",
+        "  error.log ?"
+      ]
+    },
+    {
+      "locale": "en",
+      "stats": {
+        "pid": 1,
+        "python": "3.11.9",
+        "uptime_s": 59.0,
+        "rss": 1048576,
+        "fds": 9,
+        "threads": 1,
+        "tasks": 3,
+        "clients": 1,
+        "client_idle_s": [
+          12.0
+        ],
+        "sessions": 2,
+        "windows": 2,
+        "panes": 2,
+        "scrollback_rows": 0,
+        "remote_links": 2,
+        "remote_reconnecting": 1,
+        "usage_probe": {
+          "boot": null,
+          "panel": null,
+          "total": null,
+          "ok": false,
+          "at": null
+        },
+        "error_log_bytes": 0
+      },
+      "lines": [
+        "― Server ―",
+        "  pid 1 · python 3.11.9 · up 0m 59s",
+        "  Resident memory 1.0 MB · fd 9 · threads 1 · asyncio tasks 3",
+        "  Clients 1 (last seen 12s) · remote links 2 · reconnecting 1",
+        "  Sessions 2 · Tabs 2 · Panes 2 · scrollback rows 0",
+        "  /usage probe last run: boot ? · panel ? · total ? · failed",
+        "  error.log 0.0 MB"
+      ]
+    }
+  ]
+}

@@ -44,8 +44,11 @@ pub enum TabSpot {
 
 /// 하단 배지 한 칸.
 ///
-/// 파이썬 상태줄의 버튼 동선(`_status_buttons`)과 **같은 자리**지만 목록은 우리 것이다 —
-/// 저쪽의 `model`·`usage`·`rec`·`perm` 은 플러그인이 채우는 칸이라 우리에게는 없다.
+/// 파이썬 상태줄의 버튼 동선(`_status_buttons`)과 **같은 자리·같은 차례**다(pytmux-604).
+/// 저쪽의 `model`·`usage`·`rec`·`perm` 은 플러그인이 채우는 칸이라 종전에는 «우리에게는
+/// 없다»고 뺐는데, 이제 서버가 자료로 준다(표식의 `nav` · 권한모드 자리의 `nav`) — 그
+/// 둘이 [`Badge::Plugin`]·[`Badge::Perm`] 이다. 무엇을 여는지는 서버 자료가 말하므로
+/// [`Badge::action`] 이 `None` 이고 뷰가 연다([`ChromeKey::Activate`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Badge {
     /// 지나간 알림 목록.
@@ -60,6 +63,10 @@ pub enum Badge {
     Clock,
     /// 달력 오버레이 토글.
     Calendar,
+    /// 서버가 낸 상태줄 표식 하나(`plugin_badges` 의 자리 — `nav` 인 것: 정본 model·usage·rec).
+    Plugin(u8),
+    /// 활성 패널의 권한모드 footer(정본 `perm` — 서버 자리 `zones` 의 `nav`).
+    Perm,
 }
 
 impl Badge {
@@ -70,12 +77,15 @@ impl Badge {
             Badge::Host => "서버",
             Badge::Clock => "시계",
             Badge::Calendar => "달력",
+            // 글자는 서버 자료다(표식의 글 · 패널의 footer) — 뷰가 그 자리를 강조한다.
+            Badge::Plugin(_) | Badge::Perm => "",
         })
     }
 
-    /// `Enter` 가 일으키는 일.
-    pub fn action(self) -> Action {
-        match self {
+    /// `Enter` 가 일으키는 일. 서버 자료로 서는 칸(`Plugin`·`Perm`)은 `None` — 무엇을
+    /// 여는지는 그 자료가 말하고 뷰가 연다([`ChromeKey::Activate`]).
+    pub fn action(self) -> Option<Action> {
+        Some(match self {
             Badge::Notices => Action::ShowNotices,
             // 파이썬과 **같은 것**을 연다 — 서버 정보 **탭**이다
             // (`show_status_tabs(initial=2)`). 종전에는 그 탭 묶음이 없어 버전 화면으로
@@ -83,7 +93,8 @@ impl Badge {
             Badge::Host => Action::ShowInfoTabs,
             Badge::Clock => Action::ToggleClock,
             Badge::Calendar => Action::ToggleCalendar,
-        }
+            Badge::Plugin(_) | Badge::Perm => return None,
+        })
     }
 }
 
@@ -207,7 +218,7 @@ pub fn click(target: ClickTarget, ctx: &ChromeCtx) -> Option<Action> {
         ClickTarget::Spot(TabSpot::Tab(i)) => Action::SelectTab(*ctx.tabs.get(i)? as u8),
         ClickTarget::Spot(TabSpot::New) => Action::NewTab,
         ClickTarget::Spot(TabSpot::Close) => Action::KillTab,
-        ClickTarget::Badge(badge) => badge.action(),
+        ClickTarget::Badge(badge) => badge.action()?,
         // 표식일 뿐인 것(줌·동기화·프롬프트클리어)은 `None` 이라 여기서 빠진다 —
         // 정본이 클릭존을 둔 것은 자동재개 하나였고, 그것은 pytmux-526 에서 걷었다.
         ClickTarget::SysBadge(badge) => badge.action()?,
@@ -230,6 +241,9 @@ pub enum ChromeKey {
     Done(Action),
     /// 아무것도 실행하지 않고 크롬과 esc 모드에서 나온다(`Esc`).
     Leave,
+    /// 서버 자료로 서는 배지에서 `Enter` — 크롬과 esc 모드에서 나오고 **뷰가 그 자료로**
+    /// 연다(표식 = 그 표식을 누른 것과 같은 길 · 권한모드 = `plugin_open` · pytmux-604).
+    Activate(Badge),
 }
 
 /// 크롬 포커스의 상태. [`ModeState`](crate::keys::ModeState) 와 나란히 뷰가 든다.
@@ -409,7 +423,10 @@ impl Chrome {
             Key::Enter => {
                 let badge = ctx.badges[self.badge];
                 self.focus = ChromeFocus::Pane;
-                ChromeKey::Done(badge.action())
+                match badge.action() {
+                    Some(action) => ChromeKey::Done(action),
+                    None => ChromeKey::Activate(badge),
+                }
             }
             Key::Up => {
                 self.focus = ChromeFocus::Pane;
@@ -575,6 +592,23 @@ impl StatusLines {
             })
             .collect()
     }
+}
+
+// ── 없는 번호의 탭 깜빡임(pytmux-629 · 정본 `TabBar.blink_active`) ───────────────
+
+/// 깜빡임 횟수 — 정본 `blink_active(times=3)`.
+pub const TAB_BLINK_TIMES: u64 = 3;
+/// 한 위상의 길이(ms) — 정본 `period=0.12`.
+pub const TAB_BLINK_PERIOD_MS: u64 = 120;
+
+/// 깜빡임을 시작한 지 `elapsed_ms` 뒤의 위상 — `Some(true)` = 경고색 · `Some(false)` = 평소 ·
+/// `None` = 끝났다.
+///
+/// 정본 그대로다: **켜진 위상으로 시작**해 `period` 마다 뒤집고, 뒤집기 `times × 2` 번째에
+/// 끝난다(켬·끔이 세 번 — 약 0.72초). 위상의 뜻(활성 탭을 경고색으로)은 뷰가 칠한다.
+pub fn tab_blink_phase(elapsed_ms: u64) -> Option<bool> {
+    let step = elapsed_ms / TAB_BLINK_PERIOD_MS;
+    (step < TAB_BLINK_TIMES * 2).then_some(step % 2 == 0)
 }
 
 #[cfg(test)]

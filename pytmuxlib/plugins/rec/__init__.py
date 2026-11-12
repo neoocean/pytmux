@@ -163,7 +163,9 @@ class _RecPlugin:
         if not msg.get("capture"):
             return []
         return [{"text": " REC ", "style": {"bo": 1, "f": "white"},
-                 "theme": {"b": "error"}, "kind": "rec", "do": "status"}]
+                 "theme": {"b": "error"}, "kind": "rec", "do": "status",
+                 # 정본 esc 하단 동선(`_status_buttons`)에 드는 배지다(pytmux-604).
+                 "nav": True}]
 
     def client_status_tabs(self, app, tree):
         """통합 상태 팝업에 '출력 캡처(REC)' 탭(+[c]/[o] 동작)을 기여(코어

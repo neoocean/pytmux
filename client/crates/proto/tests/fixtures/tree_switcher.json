@@ -1,0 +1,288 @@
+{
+  "_comment": "python3 scripts/gen_tree_switcher.py 로 생성. 출처 = 정본 ChooseTreeScreen.compose · open_tab_switcher · _fill_tab_switcher_panes · TabSwitcherScreen.add_panes 를 직접 돌린 값.",
+  "tree_input": {
+    "t": "tree",
+    "sessions": [
+      {
+        "name": "other",
+        "windows": [
+          {
+            "index": 1,
+            "name": "남의 창",
+            "panes": [
+              {
+                "id": 90,
+                "cmd": "python3",
+                "title": ""
+              },
+              {
+                "id": 91,
+                "cmd": "node",
+                "title": ""
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "main",
+        "windows": [
+          {
+            "index": 0,
+            "name": "쉘",
+            "active": true,
+            "panes": [
+              {
+                "id": 1,
+                "cmd": "bash",
+                "title": "shell"
+              }
+            ]
+          },
+          {
+            "index": 1,
+            "name": "일",
+            "pinned": true,
+            "panes": [
+              {
+                "id": 2,
+                "cmd": "vim",
+                "title": "vim"
+              },
+              {
+                "id": 3,
+                "cmd": "ssh",
+                "title": "office",
+                "remote": true
+              },
+              {
+                "id": 4,
+                "cmd": "",
+                "title": ""
+              }
+            ]
+          },
+          {
+            "index": 2,
+            "name": "로그",
+            "panes": [
+              {
+                "id": 5,
+                "cmd": "tail",
+                "title": " 서버 로그 "
+              },
+              {
+                "id": 6,
+                "cmd": "htop",
+                "title": "htop"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "tabs_input": [
+    {
+      "index": 0,
+      "name": "쉘",
+      "active": true
+    },
+    {
+      "index": 1,
+      "name": "일",
+      "pinned": true
+    },
+    {
+      "index": 2,
+      "name": "로그"
+    },
+    {
+      "index": 3,
+      "name": "⇄office:빌드",
+      "remote": true,
+      "panes": [
+        {
+          "id": 7,
+          "cmd": "make",
+          "title": "make",
+          "remote": false
+        },
+        {
+          "id": 8,
+          "cmd": "ssh",
+          "title": "db",
+          "remote": true
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "name": "⇄office:한칸",
+      "remote": true,
+      "panes": null
+    }
+  ],
+  "session": "main",
+  "tree_rows": [
+    {
+      "label": "▸ 1:남의 창  (2 panes)",
+      "kind": "win",
+      "window": 1,
+      "pane": null
+    },
+    {
+      "label": "    └ [local] python3",
+      "kind": "pane",
+      "window": 1,
+      "pane": 90
+    },
+    {
+      "label": "    └ [local] node",
+      "kind": "pane",
+      "window": 1,
+      "pane": 91
+    },
+    {
+      "label": "▾ 0:쉘  (1 panes)",
+      "kind": "win",
+      "window": 0,
+      "pane": null
+    },
+    {
+      "label": "    └ [local] bash",
+      "kind": "pane",
+      "window": 0,
+      "pane": 1
+    },
+    {
+      "label": "▸ * 1:일  (3 panes)",
+      "kind": "win",
+      "window": 1,
+      "pane": null
+    },
+    {
+      "label": "    └ [local] vim · vim",
+      "kind": "pane",
+      "window": 1,
+      "pane": 2
+    },
+    {
+      "label": "    └ [ssh] ssh · office",
+      "kind": "pane",
+      "window": 1,
+      "pane": 3
+    },
+    {
+      "label": "    └ [local] shell",
+      "kind": "pane",
+      "window": 1,
+      "pane": 4
+    },
+    {
+      "label": "▸ 2:로그  (2 panes)",
+      "kind": "win",
+      "window": 2,
+      "pane": null
+    },
+    {
+      "label": "    └ [local] tail · 서버 로그",
+      "kind": "pane",
+      "window": 2,
+      "pane": 5
+    },
+    {
+      "label": "    └ [local] htop · htop",
+      "kind": "pane",
+      "window": 2,
+      "pane": 6
+    }
+  ],
+  "switcher_rows": [
+    {
+      "label": "▸ 1:쉘",
+      "kind": "tab",
+      "window": 0,
+      "pane": null,
+      "active": true
+    },
+    {
+      "label": "  2:로그",
+      "kind": "tab",
+      "window": 2,
+      "pane": null,
+      "active": false
+    },
+    {
+      "label": "     └ [local] tail · 서버 로그",
+      "kind": "pane",
+      "window": 2,
+      "pane": 5,
+      "active": false
+    },
+    {
+      "label": "     └ [local] htop",
+      "kind": "pane",
+      "window": 2,
+      "pane": 6,
+      "active": false
+    },
+    {
+      "label": "  3:⇄office:빌드",
+      "kind": "tab",
+      "window": 3,
+      "pane": null,
+      "active": false
+    },
+    {
+      "label": "     └ [local] make",
+      "kind": "pane",
+      "window": 3,
+      "pane": 7,
+      "active": false
+    },
+    {
+      "label": "     └ [ssh] ssh · db",
+      "kind": "pane",
+      "window": 3,
+      "pane": 8,
+      "active": false
+    },
+    {
+      "label": "  4:⇄office:한칸",
+      "kind": "tab",
+      "window": 4,
+      "pane": null,
+      "active": false
+    },
+    {
+      "label": "  * 5:일",
+      "kind": "tab",
+      "window": 1,
+      "pane": null,
+      "active": false
+    },
+    {
+      "label": "     └ [local] vim",
+      "kind": "pane",
+      "window": 1,
+      "pane": 2,
+      "active": false
+    },
+    {
+      "label": "     └ [ssh] ssh · office",
+      "kind": "pane",
+      "window": 1,
+      "pane": 3,
+      "active": false
+    },
+    {
+      "label": "     └ [local] shell",
+      "kind": "pane",
+      "window": 1,
+      "pane": 4,
+      "active": false
+    }
+  ],
+  "switcher_initial": 1
+}

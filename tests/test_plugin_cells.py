@@ -1210,3 +1210,83 @@ async def test_the_month_the_client_gets_back_is_the_one_the_server_moved():
         assert cal["title"] == f"{yr}-{mo:02d}", cal
     finally:
         await teardown(srv, task, sock)
+
+
+async def test_a_scrolled_claude_pane_gets_the_zones_of_the_rows_canon_sees():
+    """pytmux-603 — 위로 굴린 Claude 패널의 클릭존은 **보이는 행**에서 잰다(정본과 같다).
+
+    종전 서버(GUI 몫)는 `screen_text` 로 **라이브 화면**을 재서, 굴린 동안 GUI 만 화면에
+    안 보이는 footer 자리를 눌러 권한모드 판을 열었다. 정본은 서버가 보낸 행
+    (`pane_content`)을 재므로 그 자리에는 존이 없고, 스크롤백에 보이는 옛 footer 글에
+    존이 선다. 두 클라가 **같은 판정**을 내는지를 정본 함수로 맞댄다.
+
+    ⛔ 그리고 존을 재는 일이 `render` 의 상태(`_last_top`·행 캐시·dirty)를 건드리지
+    않는지 — flush 의 빠른 경로가 그 dirty 를 먹는다."""
+    import importlib
+    import json
+    canon = importlib.import_module("pytmuxlib.plugins.claude-code.clientrender")
+
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        win = sess.active_window
+        p = win.active_pane
+        p._claude = "idle"
+        # 옛 footer 한 벌을 스크롤백으로 밀어 올린 뒤 라이브 화면 맨 아래에 새 footer.
+        old = "  ⏵⏵ accept edits on (shift+tab to cycle)"
+        body = "\x1b[2J\x1b[H" + old + "\r\n" + "\r\n".join(
+            f"line {i}" for i in range(40)) + "\r\n" + "\r\n".join(_FOOTER) + "\r\n" * 4
+        # (끝의 빈 줄: 클라가 아직 크기를 안 알려 화면 24줄 > 내용 영역 22줄이다)
+        p.feed(body.encode("utf-8"))
+
+        class _C:
+            def __init__(self):
+                self.plugin_state = {}
+                self._cells_at = 0.0
+                self._cells_last = ()
+
+        rects = [{"id": q.id, "x": x, "y": y, "w": w, "h": h}
+                 for q, (x, y, w, h) in srv._client_pane_rects(sess, win)]
+
+        def server_zones(at):
+            frame = srv._plugin_cells_frame(_C(), sess, win, at, rects)
+            zs = json.loads(frame[4:]).get("zones") or [] if frame else []
+            return {z["do"]: (z["x"], z["x"] + z["w"], z["y"]) for z in zs}
+
+        def canon_zones():
+            rows, _cur = p.render(True)          # 정본이 받는 그 행 그대로
+            r = next(r for r in rects if r["id"] == p.id)
+
+            class _App:
+                layout = {"panes": [dict(r)]}
+                pane_content = {p.id: (rows, None)}
+                pane_claude = {p.id: {"claude": True}}
+            app = _App()
+            canon._scan_all_footer_zones(app, 200, 200)
+            return {k: getattr(app, f"_{k}_zone").get(p.id)
+                    for k in ("interrupt", "perm", "remote", "tokens")
+                    if getattr(app, f"_{k}_zone").get(p.id)}
+
+        live = server_zones(100.0)
+        assert set(live) == {"perm", "tokens"}, live
+        assert live == {k: tuple(v) for k, v in canon_zones().items()}, live
+
+        # 위로 굴린다 — 라이브 footer 는 화면 밖, 옛 footer 가 보인다.
+        p.scroll_by(30)
+        p.render(True)                           # flush 가 한 번 보낸 상태
+        before = (p._last_top, list(p._last_wrap), p._row_cache,
+                  set(getattr(p.screen, "dirty", ()) or ()))
+        scrolled = server_zones(101.0)
+        after = (p._last_top, list(p._last_wrap), p._row_cache,
+                 set(getattr(p.screen, "dirty", ()) or ()))
+        assert before == after, "존을 재는 일이 render 상태를 건드렸다"
+        want = {k: tuple(v) for k, v in canon_zones().items()}
+        assert scrolled == want, (scrolled, want)
+        assert "tokens" not in scrolled, f"안 보이는 라이브 footer 에 존이 섰다: {scrolled}"
+        assert "perm" in scrolled, f"보이는 옛 footer 에 정본처럼 존이 서야 한다: {scrolled}"
+
+        # 라이브로 돌아오면 다시 선다(양성).
+        p.scroll_to("bottom")
+        assert server_zones(102.0) == live
+    finally:
+        await teardown(srv, task, sock)

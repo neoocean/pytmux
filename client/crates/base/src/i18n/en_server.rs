@@ -318,4 +318,98 @@ pub static EN: &[(&str, &str)] = &[
     ("오류: {err}", "Error: {err}"),
     ("submitted changelists — {port}", "submitted changelists — {port}"),
     ("↑↓ 이동 · Enter 그 위치로 점프 · +/− 미리보기 {n}행 · Esc 닫기", "↑↓ move · Enter jump to position · +/− preview {n} rows · Esc close"),
+    // ── claude-code · 토큰 팝업 띠·경고 탭·한도 창 Σ·설정 값(pytmux-617·618) ──
+    //
+    // 띠 끝의 `/usage` 액션 · 활성 한도·경고 탭 재클릭의 «되돌아가기» · 정본과 같은 트리가 된
+    // 경고 판의 제목·라벨·본문 · 설정 판 cycle 값의 단위(`600초 이상`). 꼬리줄의 `o머신` 은
+    // 뺐다 — 정본 꼬리줄도 안 알리고, 머신이 하나면 그 키가 없다.
+    (
+        "[상황]\n• pytmux 가 Claude Code 화면 형식을 인식하지 못합니다.\n• 토큰/사용량 추적과 자동화(자동 재개·자동 압축·한도 게이트)가 멈춥니다.\n• Claude Code 자체 동작(입력·출력)에는 영향이 없습니다.\n• 보통 Claude Code 버전 업데이트로 화면 구조가 바뀌면 발생합니다.\n\n[할일]\n• 화면이 다시 정상 인식되면 경고는 자동으로 사라집니다(잠시 대기).\n• 계속되면 pytmux 의 Claude 파서(claude.py)를 새 포맷에 맞춰 갱신해야 합니다.\n• REC 캡처가 켜져 있으면 captures/ 로그로 새 포맷을 분석할 수 있습니다.",
+        "[Situation]\n• pytmux cannot recognize the Claude Code screen format.\n• Token/usage tracking and automation (auto-retry·limit gate) stop.\n• Claude Code itself (input·output) is unaffected.\n• Usually happens when a Claude Code version update changes the layout.\n\n[To do]\n• The warning clears automatically once the screen is recognized again (wait a moment).\n• If it persists, pytmux's Claude parser (claude.py) must be updated for the new format.\n• If REC capture is on, the captures/ log can be used to analyze it.",
+    ),
+    (
+        "Claude 포맷 미인식",
+        "Claude format unrecognized",
+    ),
+    (
+        "[상황]\n• 현재 Claude 턴이 임계 시간을 넘겨 오래 진행 중입니다(경고만, 자동 개입 없음).\n\n[할일]\n• 정상적인 긴 작업일 수 있습니다. 멈춘 듯하면 패널에서 Esc 로 중단하세요.\n• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).",
+        "[Situation]\n• The current Claude turn exceeded the threshold and is running long (warning only, no auto-intervention).\n\n[To do]\n• It may be a normal long task. If it seems stuck, press Esc in the panel to interrupt.\n• Threshold is adjustable/disable-able via option claude_long_turn_sec (0=off).",
+    ),
+    (
+        "Claude 장기 턴",
+        "Claude long turn",
+    ),
+    (
+        "[상황]\n• 같은 출력이 여러 번 반복됐습니다 — 루프 의심(경고만, 자동 개입 없음).\n\n[할일]\n• 진행이 없으면 다른 지시를 주거나 /clear 후 다시 시도하세요.\n• 임계는 옵션 claude_repeat_alert 로 조정/끌 수 있습니다(0=끔).",
+        "[Situation]\n• The same output repeated several times — loop suspected (warning only, no auto-intervention).\n\n[To do]\n• If there's no progress, give different instructions or retry after /clear.\n• Threshold is adjustable/disable-able via option claude_repeat_alert (0=off).",
+    ),
+    (
+        "Claude 반복 루프 의심",
+        "Claude repeat-loop suspected",
+    ),
+    (
+        "이전 탭으로 →",
+        "Back to the previous tab →",
+    ),
+    (
+        "/usage 다시 조회",
+        "Refresh /usage",
+    ),
+    (
+        "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
+        "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · s scenario · u /usage",
+    ),
+    (
+        "↑↓ 이동 · Enter 적용(/model 주입) · Tab 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
+        "↑↓ move · Enter apply (injects /model) · Tab tabs · Esc close · p session · l limit · s scenario · u /usage",
+    ),
+    (
+        "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
+        "↑↓ move · Enter/←→ expand·collapse · Tab tabs · Esc close · p session · l limit · s scenario · u /usage",
+    ),
+    (
+        "/usage",
+        "/usage",
+    ),
+    (
+        "Claude 경고",
+        "Claude warning",
+    ),
+    (
+        "현재 표시할 Claude 경고가 없습니다(이미 해소됨).",
+        "No active Claude warning (already cleared).",
+    ),
+    (
+        "Enter/←→ 펼침·접힘 · 다른 탭 이동 · u/usage · Esc닫기",
+        "Enter/←→ expand·collapse · switch tab · u /usage · Esc close",
+    ),
+    (
+        "── 이전 경고 (펼쳐서 보기) ──",
+        "── Past warnings (expand to view) ──",
+    ),
+    (
+        "{v}초 이상",
+        "{v}s or more",
+    ),
+    (
+        "{v}회 이상",
+        "{v}× or more",
+    ),
+    // 경고 본문의 **줄 하나씩**(판은 본문을 줄마다 싣고 줄마다 제 로케일로 다시 짓는다 —
+    // ko/en 본문의 줄 수가 같다. 묶음 원문은 위에 있다: 그것은 정본 카탈로그의 단위다).
+    ("[상황]", "[Situation]"),
+    ("• pytmux 가 Claude Code 화면 형식을 인식하지 못합니다.", "• pytmux cannot recognize the Claude Code screen format."),
+    ("• 토큰/사용량 추적과 자동화(자동 재개·자동 압축·한도 게이트)가 멈춥니다.", "• Token/usage tracking and automation (auto-retry·limit gate) stop."),
+    ("• Claude Code 자체 동작(입력·출력)에는 영향이 없습니다.", "• Claude Code itself (input·output) is unaffected."),
+    ("• 보통 Claude Code 버전 업데이트로 화면 구조가 바뀌면 발생합니다.", "• Usually happens when a Claude Code version update changes the layout."),
+    ("[할일]", "[To do]"),
+    ("• 화면이 다시 정상 인식되면 경고는 자동으로 사라집니다(잠시 대기).", "• The warning clears automatically once the screen is recognized again (wait a moment)."),
+    ("• 계속되면 pytmux 의 Claude 파서(claude.py)를 새 포맷에 맞춰 갱신해야 합니다.", "• If it persists, pytmux's Claude parser (claude.py) must be updated for the new format."),
+    ("• REC 캡처가 켜져 있으면 captures/ 로그로 새 포맷을 분석할 수 있습니다.", "• If REC capture is on, the captures/ log can be used to analyze it."),
+    ("• 같은 출력이 여러 번 반복됐습니다 — 루프 의심(경고만, 자동 개입 없음).", "• The same output repeated several times — loop suspected (warning only, no auto-intervention)."),
+    ("• 진행이 없으면 다른 지시를 주거나 /clear 후 다시 시도하세요.", "• If there's no progress, give different instructions or retry after /clear."),
+    ("• 임계는 옵션 claude_repeat_alert 로 조정/끌 수 있습니다(0=끔).", "• Threshold is adjustable/disable-able via option claude_repeat_alert (0=off)."),
+    ("• 현재 Claude 턴이 임계 시간을 넘겨 오래 진행 중입니다(경고만, 자동 개입 없음).", "• The current Claude turn exceeded the threshold and is running long (warning only, no auto-intervention)."),
+    ("• 정상적인 긴 작업일 수 있습니다. 멈춘 듯하면 패널에서 Esc 로 중단하세요.", "• It may be a normal long task. If it seems stuck, press Esc in the panel to interrupt."),
+    ("• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).", "• Threshold is adjustable/disable-able via option claude_long_turn_sec (0=off)."),
 ];

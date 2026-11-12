@@ -164,8 +164,10 @@ pub struct Config {
     /// 증상은 "휠을 굴려도 스크롤백이 안 열린다"다. `ESC[?1007l` 로 그 모드를 끄면
     /// 단말이 SGR(1006) 휠 이벤트를 그대로 넘긴다.
     ///
-    /// **TUI 만의 설정이다** — GUI 는 호스트 단말이 없고 winit 에서 진짜 휠을 받는다.
-    /// 그래도 설정 파일은 두 클라가 공유하므로(G5 결정 3) 값은 양쪽 다 읽고 보인다.
+    // DIVERGE(alt-scroll): 정본(TUI)만의 설정이다 — GUI 는 호스트 단말이 없고 winit 에서
+    // 진짜 휠을 받는다. 그래도 설정 파일은 두 클라가 공유하므로(G5 결정 3) 값은 양쪽 다
+    // 읽고 보이며, 설정 판은 그 줄에 「이 앱에서는 효과 없음」을 단다(`SETTING_NOTES` ·
+    // pytmux-598·625 · 사람 결정 2026-11-12).
     pub alt_scroll: bool,
     /// 응답성 저하(빨간 외곽선) 판정 임계, 초(파이썬 `net_rtt_threshold`, 기본 0.4).
     ///
@@ -808,10 +810,8 @@ pub enum SettingKind {
     Text(Prompt),
     /// **설정 파일**이 쥔, 값이 정해진 옵션 — `Enter` 가 다음 값으로 넘긴다.
     ConfigEnum(&'static [&'static str]),
-    /// 설정 파일이 쥔 숫자 — `Enter` 가 `step` 만큼 올리고 `hi` 를 넘으면 `lo` 로 돈다.
-    ///
-    /// 올리기만 하는 이유: 화면에 `◀ ▶` 를 그리려면 좌우 키가 필요한데, 그건 이 화면의
-    /// 다른 줄(패널 이동)과 겹친다. 한 바퀴 도는 편이 키 하나로 끝난다.
+    /// 설정 파일이 쥔 숫자 — `Enter`/`→` 가 `step` 만큼 올리고 `←` 가 내린다.
+    /// **양끝에서 멈춘다**(정본 `_cycle` 과 같다 · pytmux-622 · [`number_step`]).
     Number { lo: f32, hi: f32, step: f32 },
     /// 값이 없고 **다른 화면을 여는** 줄(파이썬의 `link` 타입).
     Link(Action),
@@ -1223,9 +1223,14 @@ pub const SETTINGS: &[Setting] = &[
 /// 옮기는 것만으로 **탭이 재배열된다**. 정본에서 탭 순서는 표와 따로 선언된 것이라 여기서도
 /// 따로 못박는다(`category_conformance.rs` 가 정본 순서의 부분수열임을 강제).
 ///
-/// 정본에 있고 우리에겐 없는 둘: `Claude`(플러그인 기여 — 우리는 아직 그 설정을 안 싣는다) ·
-/// `키`(정본은 런타임에 짓는 읽기 전용 레퍼런스 — 우리는 `고급`의 `list-keys` 링크가 그 자리다).
+/// 이 표는 **코어 설정 표의 분류**뿐이다. 판의 사이드바는 그 뒤에 플러그인 분류(`Claude`)와
+/// 맨 끝 [`KEYS_CAT`] 을 잇는다 — 정본 `cat_order` 와 같은 차례(`Screens::settings_cats` ·
+/// `category_conformance` 가 정본과 **같음**을 잰다 · pytmux-592).
 pub static SETTINGS_CATS: &[&str] = &["표시", "입력", "동작", "상태줄", "고급"];
+
+/// 설정 판 맨 끝의 «키» 탭(정본 `SettingsScreen._build_keys_category` — 읽기 전용 키
+/// 레퍼런스). 줄은 `keymap::key_help_lines` 한 벌이다(`Screen::Keys` 와 같은 모델).
+pub const KEYS_CAT: &str = "키";
 
 /// 그 카테고리에 속한 설정들의 **표 안 자리**(`SETTINGS` 의 번호).
 ///
@@ -1418,7 +1423,51 @@ pub enum ValueDisplay {
     Link(&'static str),
 }
 
+/// 설정 줄 끝에 붙는 **흐린 꼬리말** — 정본 `SettingsScreen._row_text` 의
+/// `(재시작 시 발효)` 와 같은 자리(pytmux-625).
+///
+/// `Setting` 에 칸을 더하지 않고 옆 표([`SETTING_NOTES`])로 두는 이유: 표가 40여 줄이라
+/// 칸을 더하면 줄마다 손이 가고, 꼬리말이 붙는 줄은 둘뿐이다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingNote {
+    /// 정본과 같다 — 서버를 다시 띄워야 먹는다(정본 `"restart": True`).
+    Restart,
+    /// 이 앱에서는 효과가 없다 — 값은 읽고 쓰지만(설정 파일을 정본과 공유한다) 이 클라에
+    /// 소비처가 없다. 줄을 막지 않는다: 막으면 GUI 에서 정본의 값을 못 고친다.
+    NoEffectHere,
+}
+
+/// 꼬리말이 붙는 줄. ⛔ `Restart` 집합은 정본 `restart: True` 키 집합과 같아야 한다 —
+/// `setting_label_conformance::restart_notes_match_canon` 이 맞댄다.
+pub static SETTING_NOTES: &[(&str, SettingNote)] = &[
+    ("alt-scroll", SettingNote::NoEffectHere),
+    ("vt-parser", SettingNote::Restart),
+];
+
+impl SettingNote {
+    /// 화면 글(로케일 적용). 정본 `setting.restart` 와 같은 낱말이다.
+    pub fn label(self) -> &'static str {
+        crate::i18n::tc(
+            "setting",
+            match self {
+                SettingNote::Restart => "재시작 시 발효",
+                SettingNote::NoEffectHere => "이 앱에서는 효과 없음",
+            },
+        )
+    }
+}
+
+/// 그 키의 꼬리말(없으면 `None`). 플러그인 줄도 키로 물을 수 있다 — 표에 없으면 `None`.
+pub fn setting_note(key: &str) -> Option<SettingNote> {
+    SETTING_NOTES.iter().find(|(k, _)| *k == key).map(|(_, n)| *n)
+}
+
 impl Setting {
+    /// 이 줄의 꼬리말([`SETTING_NOTES`]).
+    pub fn note(&self) -> Option<SettingNote> {
+        setting_note(self.key)
+    }
+
     /// 화면에 적을 지금 값(파이썬 `setting_current` 와 같은 정규형 — `on`/`off`·`C-a`).
     pub fn value(&self, values: &SettingValues) -> String {
         // 서버가 아직 안 알려 준 값은 `?` — '모르는 것을 안다고 하면' 사용자가 그 값을
@@ -1579,16 +1628,7 @@ pub fn setting_pick_dir(
             // ⛔ 화면 글자를 되읽지 않는다 — 단위가 붙으면 파싱이 죽고 값이 말없이
             //    아래 끝으로 떨어진다(`number_value` 머리말 · pytmux-393).
             let now = number_value(setting.key, values).unwrap_or(lo);
-            let next = if forward { now + step } else { now - step };
-            // 양끝에서 반대쪽으로 감는다 — 0.0 에서 왼쪽이 막히면 "안 먹는다"로 읽힌다.
-            let next = if next > hi + f32::EPSILON {
-                lo
-            } else if next < lo - f32::EPSILON {
-                hi
-            } else {
-                next
-            };
-            SettingPick::SetNumber(setting.key, next)
+            SettingPick::SetNumber(setting.key, number_step(now, lo, hi, step, forward))
         }
         SettingKind::ConfigEnum(choices) => {
             let now = setting.value(values);
@@ -1735,6 +1775,31 @@ pub fn number_text(key: &str, value: f32) -> String {
 /// ⛔ [`set_number`] 와 **같은 표를 든다**(놓는 키 == 읽는 키). 한쪽에만 줄을 더하면
 /// 그 설정은 `←→` 가 아래 끝으로 떨어지므로, `every_number_row_steps_from_its_own_value`
 /// 가 [`SETTINGS`] 의 `Number` 전수에 대해 둘이 맞는지 잰다.
+/// 숫자 줄의 한 걸음(`←`/`→`/`Enter`) — 정본 `SettingsScreen._cycle` 의 `ratio`/`int` 팔.
+///
+/// **끝에서 멈춘다**(`max(lo, min(hi, cur + step*dir))` · pytmux-622). 종전에는 반대쪽 끝으로
+/// 감았는데(「0.0 에서 왼쪽이 막히면 안 먹는다로 읽힌다」) 그것은 허용 갈림 ⓐⓑⓒ 어디에도
+/// 안 드는 UX 판단이었다 — 다르게 하려면 정본에 먼저 들어가야 한다.
+///
+/// 값은 **걸음의 자릿수로 반올림**한다 — 정본은 `ratio` 를 소수 둘째 자리로(`round(v, 2)`),
+/// `int` 를 정수로 접는다. 걸음이 `0.02` 면 둘째 자리, `1` 이면 정수라 같은 규칙이고, 우리에게만
+/// 있는 숫자(`font-scale` 0.1 걸음 등)도 같은 규칙을 탄다. 안 접으면 `0.78 + 0.02` 가
+/// `0.8000001` 이 되어 끝에서 한 번 더 눌러야 멈춘 것으로 보인다.
+///
+/// 이미 끝이면 **같은 값**을 돌려준다 — 정본도 그때 `apply_setting` 을 그대로 부른다.
+pub fn number_step(now: f32, lo: f32, hi: f32, step: f32, forward: bool) -> f32 {
+    let next = if forward { now + step } else { now - step };
+    let next = next.clamp(lo, hi);
+    let mut digits = 0;
+    let mut s = step;
+    while digits < 6 && (s - s.round()).abs() > 1e-4 {
+        s *= 10.0;
+        digits += 1;
+    }
+    let scale = 10f32.powi(digits);
+    ((next * scale).round() / scale).clamp(lo, hi)
+}
+
 pub fn number_value(key: &str, values: &SettingValues) -> Option<f32> {
     Some(match key {
         "inactive-dim-ratio" => values.inactive_dim_ratio,
@@ -1869,6 +1934,35 @@ pub mod mouse_log {
     pub const SCROLL_UP: &str = "scroll_up";
     pub const SCROLL_DOWN: &str = "scroll_down";
     pub const PASS: &str = "pass";
+    /// 끌기 가장자리 자동 스크롤의 델타가 **바뀐** 순간(pytmux-630 · 정본 `_autoscroll_set`).
+    pub const AUTOSCROLL: &str = "autoscroll";
+    /// 정본 `_log_key` 가 남기는 **내비게이션 키** 전수(`clientutil._KEY_DIAG`) — 글자·단축키는
+    /// 안 남긴다(패널 입력 유출 방지). 수정키가 붙은 것도 정본 이름(`shift+up`)이 표 밖이다.
+    pub const KEY_DIAG: &[&str] = &["up", "down", "left", "right", "pageup", "pagedown", "home", "end"];
+
+    /// 그 키의 진단 이름 — [`KEY_DIAG`] 밖이면 `None`(기록하지 않는다).
+    pub fn key_diag_name(key: crate::Key, mods: crate::Mods) -> Option<&'static str> {
+        use crate::Key;
+        if mods != crate::Mods::NONE {
+            return None;
+        }
+        Some(match key {
+            Key::Up => "up",
+            Key::Down => "down",
+            Key::Left => "left",
+            Key::Right => "right",
+            Key::PageUp => "pageup",
+            Key::PageDown => "pagedown",
+            Key::Home => "home",
+            Key::End => "end",
+            _ => return None,
+        })
+    }
+
+    /// 키 진단 한 줄 — 정본 `_log_key` 와 같은 모양(`HH:MM:SS key <이름> mode=<모드>`).
+    pub fn key_log_line(clock: &str, name: &str, mode: &str) -> String {
+        format!("{clock} key {name} mode={mode}\n")
+    }
 }
 
 /// 마우스 진단 로그 한 줄 — 정본 `_log_mouse` 와 같은 모양

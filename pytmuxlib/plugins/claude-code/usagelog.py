@@ -592,3 +592,38 @@ def _model_cell_sequence(models: dict, n: int) -> list:
     if len(seq) < n:                       # 라운딩 여파 보정
         seq += ["unknown"] * (n - len(seq))   # 라운딩 여파도 '?'로(임계색 폴백 제거)
     return seq[:n]
+
+
+def session_id_of_label(label):
+    """'세션 27 (탭1:p1)' → 27. group_key 가 만든 라벨은 로케일 무관하게 항상
+    '세션 N …' 로 시작한다(group_key). '기타 N개' 등은 None."""
+    parts = (label or "").split()
+    if len(parts) >= 2 and parts[0] == "세션":
+        try:
+            return int(parts[1])
+        except ValueError:
+            return None
+    return None
+
+
+def session_table(records: list, full_recs=None, hour_suffix="시") -> dict:
+    """정본 토큰 팝업 `[세션]` 탭의 줄들 — 정본과 GUI 판이 **같은 함수**를 부른다(pytmux-618).
+
+    차례는 **시작 시각 내림차순**(최신 위)이고 접힘 없이 전부다(사용자 결정 2026-06-22).
+    집계 원천은 전체 이력 일자 합성(`full_recs` — 없으면 `records`)이고, 정렬과 시각 칸은
+    원시 `records` 의 실 ts 로 한다(2026-07-01). 원시 창에 없는 옛 세션의 시각은 집계
+    `gtimes`(날짜만)로 내려간다.
+
+    돌려주는 것: `{"groups": [(라벨, 토큰, 비중%)], "times": [시각 라벨], "gmax", "total",
+    "gmodels"}` — `groups` 와 `times` 는 같은 차례다.
+    """
+    src = full_recs if full_recs is not None else records
+    v = agg_view(src, "day", None, "session", "time", top=None,
+                 group_order="time", hour_suffix=hour_suffix,
+                 time_records=records)
+    real_ts = session_time_labels(records)
+    gt = v.get("gtimes") or []
+    times = [real_ts.get(session_id_of_label(lbl)) or (gt[i] if i < len(gt) else "")
+             for i, (lbl, _, _) in enumerate(v["groups"])]
+    return {"groups": v["groups"], "times": times, "gmax": v["gmax"],
+            "total": v["total"], "gmodels": v.get("gmodels")}

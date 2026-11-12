@@ -771,6 +771,13 @@ impl ModeState {
         self.mode = InputMode::Block;
     }
 
+    /// esc 모드로 **되돌린다** — 번호 키가 없는 탭을 골랐을 때(pytmux-629 · 정본은 그때 esc
+    /// 모드를 유지한다: *"다른 번호로 재시도 가능"*). 상태기계는 탭이 있는지 모르므로 키를
+    /// 해석할 때는 종전대로 모드를 풀고, 탭바를 아는 뷰가 없다고 판정하면 여기로 되돌린다.
+    pub fn enter_command(&mut self) {
+        self.mode = InputMode::Command;
+    }
+
     pub fn reset(&mut self) {
         self.mode = InputMode::Normal;
     }
@@ -1235,4 +1242,23 @@ fn named_key(token: &str) -> Option<Vec<u8>> {
     }
     let key = from_name(&lower, false, None)?;
     encode(key, Mods::NONE)
+}
+
+/// 이 키가 **번호로 탭을 고르는 입구**인가 — 정본이 «없는 번호»에서 탭을 깜빡이는 자리들
+/// (pytmux-629): 평소 모드 `Alt+숫자`(`clientio._alt_digit`) · 맥 ⌥숫자열(`MAC_OPT_NUMBER_ROW`
+/// — 번호가 없는 `-`/`=` 자리도 «없는 번호»다) · esc 모드의 숫자(`_handle_esc_mode`).
+///
+/// 돌려주는 것: `Some(Some(n))` = 번호 `n` · `Some(None)` = 번호가 없는 자리 · `None` = 이 입구가
+/// 아니다. ⛔ prefix 숫자와 `:select-tab N` 은 **여기 아니다** — 정본도 거기서는 안 깜빡인다.
+pub fn number_tab_key(mode: InputMode, key: Key, mods: Mods) -> Option<Option<u8>> {
+    let Key::Char(c) = key else { return None };
+    let digit = |c: char| c.to_digit(10).map(|n| n as u8);
+    match mode {
+        InputMode::Normal if mods == Mods::ALT && c.is_ascii_digit() => Some(digit(c)),
+        InputMode::Normal if mods == Mods::NONE => {
+            table(MAC_OPT_NUMBER_ROW, c).map(digit)
+        }
+        InputMode::Command if mods == Mods::NONE && c.is_ascii_digit() => Some(digit(c)),
+        _ => None,
+    }
 }

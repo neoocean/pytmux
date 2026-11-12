@@ -70,13 +70,14 @@
         },
         "backspace": {
           "outcome": "consume"
+        },
+        "<printable>": {
+          "outcome": "consume"
         }
       },
       "nav": [],
       "bindings": [],
-      "unreadable": [
-        "event.character and len(event.character) == 1 and event.character.isprintable()"
-      ],
+      "unreadable": [],
       "on_key": true,
       "head_stops": false,
       "catch_all": "ignore"
@@ -329,13 +330,14 @@
         },
         "backspace": {
           "outcome": "consume"
+        },
+        "<printable>": {
+          "outcome": "consume"
         }
       },
       "nav": [],
       "bindings": [],
-      "unreadable": [
-        "event.character and len(event.character) == 1 and event.character.isprintable()"
-      ],
+      "unreadable": [],
       "on_key": true,
       "head_stops": false,
       "catch_all": "ignore"

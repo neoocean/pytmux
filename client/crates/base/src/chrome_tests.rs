@@ -404,3 +404,44 @@ fn status_rows_put_the_main_line_at_the_bottom_and_line_one_just_above() {
     s.set_status("0");
     assert!(s.rows().is_empty());
 }
+
+// ── pytmux-629 · 없는 번호의 깜빡임 위상(정본 `TabBar.blink_active(times=3, period=0.12)`) ──
+
+#[test]
+fn the_tab_blink_starts_lit_flips_every_period_and_ends_after_three_blinks() {
+    use crate::chrome::{TAB_BLINK_PERIOD_MS as P, tab_blink_phase};
+    // 정본: 켜진 위상으로 시작 → 0.12초마다 뒤집기 → 여섯 번째 뒤집기에 끝(≈0.72초).
+    let want = [true, false, true, false, true, false];
+    for (step, on) in want.iter().enumerate() {
+        let t = step as u64 * P;
+        assert_eq!(tab_blink_phase(t), Some(*on), "step {step}");
+        assert_eq!(tab_blink_phase(t + P - 1), Some(*on), "step {step} 끝자락");
+    }
+    assert_eq!(tab_blink_phase(6 * P), None, "세 번 깜빡인 뒤에도 안 끝난다");
+}
+
+// ── pytmux-604 · 서버 자료로 서는 배지는 뷰가 연다 ──────────────────────────────
+
+#[test]
+fn a_server_backed_badge_hands_enter_back_to_the_view() {
+    use crate::chrome::{Badge, Chrome, ChromeCtx, ChromeKey};
+    let badges = [Badge::Plugin(0), Badge::Notices, Badge::Host, Badge::Perm];
+    let ctx = ChromeCtx { pane_above: false, pane_below: false, tabs: &[1], active: 0,
+                          badges: &badges };
+    let mut c = Chrome::default();
+    assert_eq!(c.press(&ctx, Key::Down, Mods::NONE), Some(ChromeKey::Redraw));
+    assert_eq!(c.badge(&ctx), Some(Badge::Plugin(0)), "정본 차례의 첫 칸에서 시작");
+    assert_eq!(c.press(&ctx, Key::Enter, Mods::NONE),
+               Some(ChromeKey::Activate(Badge::Plugin(0))));
+    // 끝(권한모드)까지 ← 로 감아 돈다 — 정본 `_handle_status_focus` 의 ←→ 순환.
+    c.press(&ctx, Key::Down, Mods::NONE);
+    c.press(&ctx, Key::Left, Mods::NONE);
+    assert_eq!(c.badge(&ctx), Some(Badge::Perm));
+    assert_eq!(c.press(&ctx, Key::Enter, Mods::NONE), Some(ChromeKey::Activate(Badge::Perm)));
+    // 자기 액션이 있는 배지는 종전대로 끝낸다.
+    c.press(&ctx, Key::Down, Mods::NONE);
+    c.press(&ctx, Key::Right, Mods::NONE);
+    c.press(&ctx, Key::Right, Mods::NONE);
+    assert_eq!(c.badge(&ctx), Some(Badge::Host));
+    assert!(matches!(c.press(&ctx, Key::Enter, Mods::NONE), Some(ChromeKey::Done(_))));
+}

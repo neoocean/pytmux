@@ -529,7 +529,7 @@ pub struct TreeWindow {
     pub panes: Vec<TreePane>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct TreePane {
     #[serde(default)]
     pub id: i64,

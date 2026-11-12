@@ -166,13 +166,15 @@ async def test_the_four_popups_become_screen_specs():
         sess = srv.ensure_default_session(80, 24)
         spec_mod = importlib.import_module(
             "pytmuxlib.plugins.claude-code.screenspec")
-        for name, kind in (("claude-settings", "form"),
-                           ("model", "list"),
-                           ("claude-token-log", "table"),
-                           ("prompt-clear-queue", "list")):
+        # `model`·`claude-token-log` 의 첫 판은 정본과 같다 — 한도 판 · 기간 트리(pytmux-617).
+        for name, kind, sid in (("claude-settings", "form", "claude-settings"),
+                                ("model", "table", "claude-usage-panel"),
+                                ("claude-token-log", "table", "claude-token-period"),
+                                ("prompt-clear-queue", "list", "pc-queue")):
             spec = spec_mod.open_spec(srv, sess, name)
             assert isinstance(spec, dict), f"{name}: 스펙이 안 나왔다"
             assert spec["kind"] == kind, f"{name}: {spec['kind']}"
+            assert spec["id"] == sid, f"{name}: {spec['id']}"
             assert spec["title"], f"{name}: 제목이 비었다"
         # 내 이름이 아니면 안 집는다 — 다른 플러그인의 화면을 가로채면 안 된다.
         assert spec_mod.open_spec(srv, sess, "mdir") is None
@@ -221,7 +223,8 @@ async def test_choosing_a_model_types_it_into_the_active_pane():
         written = pane.pty.written
         spec_mod = importlib.import_module(
             "pytmuxlib.plugins.claude-code.screenspec")
-        spec = spec_mod.open_spec(srv, sess, "model")
+        # `model` 명령은 정본처럼 한도 판을 연다(pytmux-617) — 모델 목록 판은 GUI 전용 탭이다.
+        spec = spec_mod._open_sid(srv, sess, "model")
         assert any(r["key"] == "opus" for r in spec["rows"]), spec["rows"][:3]
         out = spec_mod.action(srv, sess, {"id": "model", "do": "apply",
                                           "row": 0, "input": "opus 1m"})

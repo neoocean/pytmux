@@ -696,15 +696,19 @@ fn a_single_session_tree_starts_at_the_tabs() {
         ]}]
     })));
     let rows = state.tree_rows();
-    assert_eq!(rows.len(), 1, "{rows:?}");
+    // 정본 `ChooseTreeScreen` 은 패널이 **하나여도** 패널 줄을 싣는다(pytmux-593).
+    assert_eq!(rows.len(), 2, "{rows:?}");
     assert_eq!(rows[0].depth, 0);
     assert_eq!(rows[0].window, Some(0));
+    assert_eq!(rows[0].label, "0:쉘  (1 panes)");
     assert!(rows[0].active);
+    assert_eq!((rows[1].depth, rows[1].pane), (1, Some(1)));
+    assert_eq!(rows[1].label, "└ [local] bash");
 }
 
 #[test]
-fn panes_are_listed_only_when_the_tab_is_split() {
-    // 패널이 하나면 그 줄은 탭 줄과 같은 말을 한다(파이썬 스위처도 2개 이상만 보인다).
+fn every_pane_gets_its_own_row_like_canon() {
+    // 정본 트리는 탭마다 패널 줄을 **전부** 싣는다(pytmux-593 — 종전엔 둘 이상만).
     let mut state = SessionState::new();
     state.apply(tree_msg(serde_json::json!({
         "t": "tree",
@@ -717,17 +721,16 @@ fn panes_are_listed_only_when_the_tab_is_split() {
         ]}]
     })));
     let rows = state.tree_rows();
-    assert_eq!(rows.len(), 4, "{rows:?}");
-    assert_eq!(rows[1].window, Some(1));
-    assert_eq!(rows[2].pane, Some(2));
-    assert!(rows[2].label.contains("vim") && rows[2].label.contains("메모"));
+    assert_eq!(rows.len(), 5, "{rows:?}");
+    assert_eq!(rows[2].window, Some(1));
+    assert_eq!(rows[3].pane, Some(2));
+    assert_eq!(rows[3].label, "└ [local] vim · 메모");
     // 원격 여부는 **서버 판정**을 그대로 쓴다 — 클라가 이름으로 짐작하지 않는다.
-    assert!(rows[3].label.contains("ssh"));
-    assert!(rows[3].label.contains("[ssh]"), "{:?}", rows[3].label);
+    assert_eq!(rows[4].label, "└ [ssh] ssh");
 }
 
 #[test]
-fn several_sessions_get_a_header_row_that_cannot_be_picked() {
+fn several_sessions_are_flattened_without_header_rows_like_canon() {
     let mut state = SessionState::new();
     state.apply(tree_msg(serde_json::json!({
         "t": "tree",
@@ -737,9 +740,13 @@ fn several_sessions_get_a_header_row_that_cannot_be_picked() {
         ]
     })));
     let rows = state.tree_rows();
-    assert_eq!(rows.len(), 4);
-    assert_eq!(rows[0].window, None, "세션 줄이 고를 수 있게 됐다");
-    assert_eq!(rows[1].depth, 1, "세션이 여럿이면 탭이 한 칸 들여쓴다");
+    // 정본은 세션 머리줄 없이 창을 평평하게 잇는다(pytmux-593 · 사람 결정 2026-11-13).
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    assert!(rows.iter().all(|r| r.window.is_some()), "고를 수 없는 줄이 섞였다");
+    assert_eq!(rows[0].depth, 0);
+    assert_eq!(rows[2].label, "1:b  (1 panes)");
+    // cmd 가 비면 정본처럼 `shell` 이다(종전 `?`).
+    assert_eq!(rows[1].label, "└ [local] shell");
 }
 
 #[test]
@@ -1818,4 +1825,58 @@ fn a_clipboard_write_is_not_a_repaint() {
     // 복사는 화면을 안 바꾼다. `true` 를 내면 앱이 선택할 때마다 전면 재그리기를 한다.
     let mut state = SessionState::new();
     assert!(!state.apply(clipboard_msg(1, "67aZ7J28IOq4gA==")));
+}
+
+// ── pytmux-617·618 — 토큰 팝업 띠의 순환 · 칸의 재료 ────────────────────────────
+
+fn token_strip(active: &str) -> PluginScreen {
+    // 서버 `_hub_tabs` 의 모양 그대로: 정본 탭 · GUI 전용(extra) · 액션.
+    let tab = |key: &str, extra: bool, action: bool| {
+        serde_json::json!({"key": key, "label": key, "active": key == active,
+                           "extra": extra, "action": action})
+    };
+    serde_json::from_value(serde_json::json!({
+        "id": "claude-token-period", "kind": "table",
+        "tabs": [tab("goto:period", false, false), tab("goto:sessions", false, false),
+                 tab("goto:limits", false, false), tab("goto:warns", false, false),
+                 tab("goto:model", true, false), tab("goto:daily", true, false),
+                 tab("goto:usage", false, true), tab("goto:settings", false, true)],
+    }))
+    .unwrap()
+}
+
+#[test]
+fn the_tab_cycle_skips_the_tabs_the_canon_strip_does_not_have() {
+    // 정본 `_cycle_tab` — 경고 다음은 기간(GUI 전용 모델·일별은 건너뛴다).
+    let spec = token_strip("goto:warns");
+    assert_eq!(spec.tab_neighbor(true), Some(0));
+    assert_eq!(spec.tab_neighbor(false), Some(2));
+    assert_eq!(token_strip("goto:period").tab_neighbor(false), Some(3), "앞으로 감겨야");
+    assert_eq!(spec.cyclable_tabs(), 4);
+    // GUI 전용 탭에서는 정본 띠의 처음·끝으로 들어간다(서버 `_hub_neighbor` 와 같다).
+    let extra = token_strip("goto:model");
+    assert_eq!(extra.tab_neighbor(true), Some(0));
+    assert_eq!(extra.tab_neighbor(false), Some(3));
+}
+
+#[test]
+fn a_column_with_material_is_said_in_our_locale() {
+    // 설정 판 cycle 값(`600초 이상`)은 원문이 키가 못 된다 — 재료로 다시 짓는다(pytmux-618 ⑥).
+    let row: PluginRow = serde_json::from_value(serde_json::json!({
+        "key": "long_turn", "label": "장기 턴 경고(초)", "cols": ["600초 이상"],
+        "i18n": {"col0": {"fmt": "{v}초 이상", "args": {"v": "600"}}}
+    }))
+    .unwrap();
+    let said = row.say_cols();
+    assert_eq!(said.len(), 1);
+    // 재료가 오면 그 포맷을 지난다 — 포맷만 바꿔 끼우면 결과가 따라 바뀌어야 한다(재료를
+    // 안 읽고 원문을 그대로 돌려주는 변이를 잡는다).
+    let mut other = row.clone();
+    other.i18n.get_mut("col0").unwrap().fmt = "{v}!".to_owned();
+    assert_eq!(other.say_cols(), vec!["600!".to_owned()]);
+    // 재료가 없는 칸은 종전대로 낱말 번역.
+    let plain: PluginRow =
+        serde_json::from_value(serde_json::json!({"key": "k", "label": "l", "cols": ["x"]}))
+            .unwrap();
+    assert_eq!(plain.say_cols(), vec!["x".to_owned()]);
 }

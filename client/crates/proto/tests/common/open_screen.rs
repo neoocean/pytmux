@@ -35,6 +35,8 @@ pub fn opened(screen: Screen) -> Screens {
         Screen::Compose => screens.open_compose(""),
         // 목록형(`form`·`list`)으로 연다 — pytmux-181 이 신고한 그 판이다.
         Screen::PluginView => screens.open_plugin_view(true),
+        // 저장된 레이아웃 판은 서버 회신의 이름과 함께 선다(pytmux-623) — 둘을 준다.
+        Screen::SavedLayouts => screens.open_saved_layouts(vec!["a".into(), "b".into()], false),
         Screen::Keys
         | Screen::Tree
         | Screen::Buffers

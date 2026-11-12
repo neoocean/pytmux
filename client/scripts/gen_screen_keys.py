@@ -97,6 +97,14 @@ def _test_keys(test, aliases, nav_names):
     돌려주는 것은 `(키들, nav 인가, 남은 조건 글, 못 읽었나)`.
     """
     guard = None
+    # ★ **찍히는 글자 하나** — `event.character and len(event.character) == 1 and
+    #   event.character.isprintable()`(플러그인 관리 판의 이름 검색 · pytmux-591). 특정 키가
+    #   아니라 글자 부류라 의사키 `<printable>` 로 적는다(Rust `key_of` 가 글자 하나로 푼다).
+    #   종전엔 이 꼴이 `unreadable` 로 떨어져 그 판을 「다 쟀다」로 못 셌다.
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        if ast.unparse(test) == ("event.character and len(event.character) == 1 "
+                                 "and event.character.isprintable()"):
+            return ["<printable>"], False, guard, False
     if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
         # `k in (...) and self._cats` — 첫 항이 키 비교이고 나머지는 **상태 조건**이다.
         head, rest = test.values[0], test.values[1:]

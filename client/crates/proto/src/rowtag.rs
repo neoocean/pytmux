@@ -46,6 +46,9 @@ pub fn color(tag: &str) -> Option<Color> {
         "script" => (0xff, 0xff, 0x55),
         // ncd 의 현재 디렉터리 강조 — 같은 어휘의 한 칸(그 화면에만 있다).
         "cwd" => (0xff, 0xff, 0x55),
+        // 토큰 팝업 `[세션]` 의 **지금 활성 세션** — 정본 `_ACTIVE_SESSION_COLOR`(`orange1` =
+        // #ffaf00 · pytmux-618). 정본은 굵게도 칠하지만 굵기는 이 표의 일이 아니다.
+        "active" => (0xff, 0xaf, 0x00),
         _ => return None,
     };
     Some(Color::Rgb { r: rgb.0, g: rgb.1, b: rgb.2 })
@@ -53,7 +56,7 @@ pub fn color(tag: &str) -> Option<Color> {
 
 /// 이 표가 아는 이름 전부 — 픽스처 전수 대조에 쓴다.
 pub const KNOWN: &[&str] = &[
-    "archive", "com", "cwd", "dir", "drive", "exe", "exec", "hidden", "script",
+    "active", "archive", "com", "cwd", "dir", "drive", "exe", "exec", "hidden", "script",
     "tagged", "text", "updir",
 ];
 

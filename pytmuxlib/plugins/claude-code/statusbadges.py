@@ -48,9 +48,13 @@ _WARN = ({"bo": 1, "f": "black"}, {"b": "warning"})
 _ERR = ({"bo": 1, "f": "white"}, {"b": "error"})
 
 
-def _badge(kind, text, st, phrase=None, do=None):
+def _badge(kind, text, st, phrase=None, do=None, nav=False):
     style, theme = st
     out = {"kind": kind, "text": text, "style": dict(style), "theme": dict(theme)}
+    # `nav` = 정본 esc 모드 **하단 동선**(`client._status_buttons`)에 드는 배지인가(pytmux-604).
+    # 정본 동선은 model·usage·rec 만 담는다 — 그 판정을 클라가 `kind` 로 하지 않게 서버가 선언한다.
+    if nav:
+        out["nav"] = True
     if phrase is not None:
         out["i18n"] = {"text": phrase}
     if do is not None:
@@ -114,7 +118,10 @@ def badges(fields) -> list:
             #   `screenspec.MODEL` → `_model_spec`(모델×컨텍스트 목록, 고르면 `/model` 주입).
             #   정본도 이 배지 클릭을 같은 곳으로 보낸다(`open_model_config` → 토큰 팝업의
             #   `[한도]` 탭 = 모델·컨텍스트 섹션. 그 탭의 GUI 대역이 이 스펙이다).
-            out.append(_badge("model", str(model), _SEC, do="model"))
+            # ★ 목적지는 **정본 클릭과 같은 판**이다(pytmux-617·604): 정본 모델 배지는
+            #   `open_model_config` = 토큰 팝업의 **한도 탭**(첫 두 줄이 모델·컨텍스트)을 연다.
+            #   종전 `model`(모델 평면 목록)은 정본에 없는 판이었다.
+            out.append(_badge("model", str(model), _SEC, do="usage-panel", nav=True))
         text, spec = _limit_badge(fields)
         # ★ **누르면 열리는 이름**을 싣는다(pytmux-20). 이 칸을 오래 비워 둔 이유는
         #   "선언은 있고 배선이 없는 칸"을 안 만들려는 것이었다 — 그 화면(Tier C)이
@@ -123,7 +130,9 @@ def badges(fields) -> list:
         #   `do` 와 같은 규약 — 행동은 서버가 정한다).
         #   ⚠ 나머지 둘(pending·warn)에는 아직 안 싣는다. 정본에서 그 클릭이 여는
         #   화면들은 여전히 Tier C 가 없다 — **선언은 있고 배선이 없는 칸**을 안 만든다.
-        out.append(_badge("usage", text, _SEC, spec, do="usage-panel"))
+        # ★ 정본 사용량 배지는 `open_token_log("hour")` = **기간 트리**를 연다(pytmux-617·604)
+        #   — 종전 `usage-panel`(한도 판)은 정본과 다른 곳이었다.
+        out.append(_badge("usage", text, _SEC, spec, do="claude-token-log", nav=True))
     # pytmux-477: **재시도가 도는 중**임을 낸다. 이 배지가 없던 동안 사용자는 「멈춰
     # 있다」와 「1분마다 깨우는 중」을 화면에서 못 갈랐다 — 짝인 자동재개에는 이미
     # 카운트다운이 있는데 이쪽만 안 보였다.

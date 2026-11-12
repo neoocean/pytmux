@@ -3379,8 +3379,8 @@ fn the_bottom_edge_takes_the_focus_to_the_badges_and_enter_runs_one() {
     view.state.note_notice(String::from("무언가 알림"));
     view.handle_key(Key::Escape, Mods::NONE);
     view.handle_key(Key::Down, Mods::NONE);
-    // 첫 칸은 `⇕`(터치 스크롤 · 기본 켜짐) — 한 칸 오른쪽이 알림이다.
-    view.handle_key(Key::Right, Mods::NONE);
+    // ★ 2026-11-13(pytmux-604): 하단 동선이 정본 `_status_buttons` 차례가 됐다 — Claude·REC
+    //   배지가 없으면 **알림이 첫 칸**이고 그 뒤가 우측 구간의 서버·시계·달력이다.
     view.handle_key(Key::Enter, Mods::NONE);
     assert_eq!(
         view.screens.top(),
@@ -5519,6 +5519,16 @@ fn the_status_line_count_is_what_the_grid_gives_up() {
     assert_eq!(view.footer_lines(), 4);
     view.apply_set_line("status off");
     assert_eq!(view.footer_lines(), 1, "`off` 면 상태줄 몫이 없다");
+    // pytmux-630 — 위(`status-position top`)에 선 상태줄은 탭바 위에 쌓이고 캔버스 자리표가
+    // 이미 빼 준다: 아래 몫은 메시지 줄 하나뿐이다(몇 줄이든). 종전에는 바닥에 빈 줄 하나를
+    // 더 버렸다. 정본은 이 조합에서 상태줄이 탭바를 덮는다 — 그 결함은 따르지 않는다.
+    view.config.status_position = "top".to_owned();
+    for n in ["1", "3", "5"] {
+        view.apply_set_line(&format!("status {n}"));
+        assert_eq!(view.footer_lines(), 1, "위 상태줄 {n} 줄이 아래 몫을 먹었다");
+    }
+    view.config.status_position = "bottom".to_owned();
+    assert_eq!(view.footer_lines(), 6, "아래로 돌아오면 다시 N+1");
     // 런타임 값이라 설정 파일을 안 고친다(정본도 안 남긴다).
     assert!(
         !base::Config::path()
@@ -7367,6 +7377,11 @@ fn every_action_does_something_in_this_view() {
 static NOT_OPENED_BY_AN_ACTION: &[(&str, &str)] = &[
     ("MergeRemote", "원격 탭 **목록이 와야** 고를 것이 있다(서버 회신이 연다)"),
     ("PluginView", "플러그인이 준 스펙(`plugin_screen`)이 연다"),
+    (
+        "SavedLayouts",
+        "`Action::LoadTabLayout` 은 `list_layouts` 를 **묻기만** 한다 — 판은 `layouts` 회신이 \
+         오고 그것을 기다리고 있을 때만 연다(pytmux-623 · 정본 `_want_layouts` 와 같은 게이트)",
+    ),
     (
         "SearchResults",
         "`Action::SearchAll` 은 **물음**(`Prompt::SearchAll`)만 연다 — 결과 판은 \
@@ -10800,26 +10815,31 @@ fn settings_view() -> SessionView {
     let (link, _tx, _sent) = ServerLink::detached("/tmp/test.sock");
     let mut view = SessionView::with_font(link, warpui::fonts::FamilyId(0));
     view.pump_headless();
-    view.screens.open(Screen::Settings);
+    // 앱이 여는 길 그대로(«키» 탭 줄을 함께 넣는다 · pytmux-592).
+    view.open_settings();
     view
 }
 
-/// `End` 는 **마지막 줄**에 선다 — core 가 두고 간 상한을 뷰가 접는 그 자리를 잰다.
-///
-/// core 쪽 오라클(`screens_tests`)은 「상한을 두고 간다」까지밖에 못 잰다. 줄 수를 아는
-/// 것은 여기라, **접는 자가 실제로 불리는지**는 이 자리에서만 보인다.
+/// `End` 는 **창을 끝으로 굴리고 커서는 제자리**다(pytmux-627 ① · 정본 `#sets` 는 맨
+/// `ListView` 라 `scroll_end`). 판 높이·줄 수를 core 에 넣는 배선(`sync_list_view`)이 실제로
+/// 불리는지는 이 자리에서만 보인다 — 안 불리면 창이 안 움직인다.
 #[test]
-fn end_lands_on_the_last_settings_row() {
+fn end_scrolls_the_settings_view_and_keeps_the_cursor() {
     let mut view = settings_view();
-    let last = view.screens.plugins().settings_len() - 1;
+    let total = view.screens.settings_total();
+    let budget = view.panel_budget_for_test();
+    view.handle_key(Key::Down, Mods::NONE);
     view.handle_key(Key::End, Mods::NONE);
     assert_eq!(view.screens.top(), Some(Screen::Settings), "End 가 판을 닫았다");
-    assert_eq!(view.screens.selected(), last, "End 가 끝으로 안 갔다");
-    // 끝에서 한 번 더 눌러도 넘어가지 않는다 — 넘기면 그만큼 `↑` 가 헛돈다.
+    assert_eq!(view.screens.selected(), 1, "End 가 커서를 옮겼다");
+    assert_eq!(view.screens.list_top(), total - budget, "End 가 창을 끝으로 안 굴렸다");
+    // 끝에서 한 번 더 눌러도 넘어가지 않는다.
     view.handle_key(Key::PageDown, Mods::NONE);
-    assert_eq!(view.screens.selected(), last);
-    view.handle_key(Key::Up, Mods::NONE);
-    assert_eq!(view.screens.selected(), last - 1, "끝에서 ↑ 한 번이 안 먹었다");
+    assert_eq!(view.screens.list_top(), total - budget);
+    // 커서를 움직이면 창이 커서로 돌아온다(정본 `ListView` 의 강조 줄 끌어오기).
+    view.handle_key(Key::Down, Mods::NONE);
+    assert_eq!(view.screens.selected(), 2);
+    assert_eq!(view.screens.list_top(), 2, "↓ 뒤 창이 커서를 안 따라왔다");
 }
 
 /// ⑴ 오른쪽 막대는 **넘칠 때만** 서고, 커서를 따라 트랙을 걷는다.
@@ -13457,4 +13477,390 @@ fn an_unbound_ctrl_chord_does_not_close_a_plugin_panel() {
     assert_eq!(view.screens.top(), Some(Screen::PluginView), "Ctrl+X 가 판을 닫았다");
     assert!(sent.lock().unwrap().iter().all(|o| !matches!(o, Outgoing::Input(_))),
             "판이 떠 있는데 키가 패널로 샜다");
+}
+
+// ── 코어 판 정본 맞추기(pytmux-591·592·593·620·621·622·623·625·627) ────────────────
+
+/// 판에 **실제로 그려진 글**(`debug_text_content`) — 값을 만드는 함수가 아니라 그림을 잰다.
+fn panel_text(view: &SessionView, screen: Screen) -> String {
+    view.render_screen_panel(screen).debug_text_content().unwrap_or_default()
+}
+
+/// pytmux-625 — `vt-parser` 줄에 정본의 `(재시작 시 발효)`, `alt-scroll` 줄에
+/// `(이 앱에서는 효과 없음)` 이 **그려진다**.
+#[test]
+fn settings_rows_carry_the_restart_and_no_effect_notes() {
+    let mut view = settings_view();
+    let row_of = |key: &str| {
+        base::config::SETTINGS.iter().position(|s| s.key == key).expect("줄")
+    };
+    assert_eq!(view.setting_note_for_test(row_of("vt-parser")), Some("재시작 시 발효"));
+    assert_eq!(view.setting_note_for_test(row_of("alt-scroll")), Some("이 앱에서는 효과 없음"));
+    assert_eq!(view.setting_note_for_test(row_of("inactive-dim")), None);
+    // 그림 — 그 줄이 창 안에 오게 커서를 옮긴 뒤 판 글에 꼬리말이 있어야 한다.
+    for _ in 0..row_of("vt-parser") {
+        view.handle_key(Key::Down, Mods::NONE);
+    }
+    assert!(
+        panel_text(&view, Screen::Settings).contains("(재시작 시 발효)"),
+        "vt-parser 줄의 꼬리말이 판에 안 그려졌다"
+    );
+}
+
+/// pytmux-592 — 설정 판 맨 끝에 «키» 탭이 서고, 그 줄은 `list-keys` 와 같은 글이다.
+#[test]
+fn the_settings_panel_draws_a_keys_tab_at_the_end() {
+    let mut view = settings_view();
+    assert_eq!(view.screens.settings_cats().last(), Some(&base::config::KEYS_CAT));
+    view.handle_key(Key::BackTab, Mods::NONE);
+    assert!(view.screens.is_key_row(view.screens.selected()), "Shift+Tab 이 «키» 탭에 안 닿았다");
+    let text = panel_text(&view, Screen::Settings);
+    let first = &base::keymap::key_help_lines(&view.config.binds)[0].0;
+    assert!(text.contains(first.as_str()), "«키» 탭 첫 줄({first})이 판에 없다");
+    // 키 줄에서 Enter·→ 는 아무것도 안 낸다(정본 `keyref`).
+    let before = view.config.clone();
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.handle_key(Key::Right, Mods::NONE);
+    assert_eq!(format!("{:?}", view.config), format!("{before:?}"), "키 줄이 설정을 바꿨다");
+}
+
+fn status_with_plugins() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({"t": "status", "windows": [
+        {"index": 0, "name": "하나", "active": true}],
+        "plugins": [
+            {"name": "clock", "description": "Big digital clock overlay", "enabled": true},
+            {"name": "mdir", "description": "Mdir III 풍 파일 관리자", "enabled": false},
+            {"name": "p4-show-submitted-changelists", "description": "p4 제출 목록", "enabled": true}
+        ]}))
+    .unwrap()
+}
+
+/// pytmux-591 — 글자를 치면 줄이 걸러지고, 걸러진 줄의 Enter 는 **그 플러그인**을 뒤집는다.
+#[test]
+fn typing_filters_the_plugin_manager_and_enter_toggles_the_filtered_row() {
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), status_with_plugins()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.screens.open(Screen::Plugins);
+    for c in "mdir".chars() {
+        view.handle_key(Key::Char(c), Mods::NONE);
+    }
+    let text = panel_text(&view, Screen::Plugins);
+    assert!(text.contains("mdir") && !text.contains("clock"), "걸러지지 않았다: {text}");
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    let toggled: Vec<String> = sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::Command(Command::SetPluginEnabled { name, .. }) => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(toggled, ["mdir"], "걸러진 줄이 아닌 플러그인을 뒤집었다");
+    // 지우면 돌아온다 · 안 걸리면 정본의 빈 줄 문구.
+    for _ in 0..4 {
+        view.handle_key(Key::Backspace, Mods::NONE);
+    }
+    assert!(panel_text(&view, Screen::Plugins).contains("clock"));
+    view.handle_key(Key::Char('z'), Mods::NONE);
+    view.handle_key(Key::Char('z'), Mods::NONE);
+    assert!(panel_text(&view, Screen::Plugins).contains("(검색 결과 없음)"));
+}
+
+/// 덤으로 찾은 결함 — 플러그인 판의 `←`/`→` 가 **설정 값을 바꾸지 않는다**(종전엔 설정 판
+/// 같은 번호 줄을 뒤집었다).
+#[test]
+fn arrows_on_the_plugin_manager_touch_no_setting() {
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), status_with_plugins()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    let before = format!("{:?}", view.config);
+    view.screens.open(Screen::Plugins);
+    view.handle_key(Key::Right, Mods::NONE);
+    view.handle_key(Key::Left, Mods::NONE);
+    view.pump_headless();
+    assert_eq!(format!("{:?}", view.config), before, "←→ 가 설정을 바꿨다");
+    assert!(sent.lock().unwrap().is_empty(), "←→ 가 서버로 무언가를 냈다");
+}
+
+/// pytmux-623 — 저장 슬롯 회신이 **목록 판**을 열고, ↓ Enter 가 그 이름을 불러온다.
+/// 빈 회신이면 정본의 「(저장된 레이아웃 없음)」 이고 Enter 는 아무것도 안 보낸다.
+#[test]
+fn loading_a_layout_picks_from_the_saved_slots() {
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.apply_action_for_test(base::Action::LoadTabLayout(true));
+    view.pump_headless();
+    assert!(
+        sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Command(Command::ListLayouts))),
+        "불러오기가 list_layouts 를 안 보냈다"
+    );
+    let names: ServerMessage =
+        serde_json::from_value(serde_json::json!({"t": "layouts", "names": ["work", "home"]}))
+            .unwrap();
+    tx.send(LinkEvent::Message(Box::new(names))).unwrap();
+    view.pump_headless();
+    assert_eq!(view.screens.top(), Some(Screen::SavedLayouts));
+    assert!(panel_text(&view, Screen::SavedLayouts).contains("home"));
+    view.handle_key(Key::Down, Mods::NONE);
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    assert!(
+        sent.lock().unwrap().iter().any(|o| matches!(
+            o,
+            Outgoing::Command(Command::LoadTabLayout { name, new: true }) if name == "home"
+        )),
+        "고른 슬롯을 안 불러왔다"
+    );
+    // 빈 회신.
+    sent.lock().unwrap().clear();
+    view.apply_action_for_test(base::Action::LoadTabLayout(false));
+    view.pump_headless();
+    let empty: ServerMessage =
+        serde_json::from_value(serde_json::json!({"t": "layouts", "names": []})).unwrap();
+    tx.send(LinkEvent::Message(Box::new(empty))).unwrap();
+    view.pump_headless();
+    assert!(panel_text(&view, Screen::SavedLayouts).contains("(저장된 레이아웃 없음)"));
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    assert!(
+        !sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Command(Command::LoadTabLayout { .. }))),
+        "빈 목록의 Enter 가 불러오기를 보냈다"
+    );
+}
+
+/// pytmux-621 ② — 이름 바꾸기는 지금 이름을 **흐린 제안**으로 연다(입력값이 아니다).
+#[test]
+fn renaming_a_tab_opens_with_the_name_as_a_ghost() {
+    let (mut view, tx, _sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.apply_action_for_test(base::Action::RenameTab);
+    assert_eq!(view.screens.typed(), "", "지금 이름이 입력값으로 들어갔다(치면 덧붙는다)");
+    assert_eq!(view.prompt_ghost_tail_for_test().as_deref(), Some("하나"));
+    view.handle_key(Key::Char('하'), Mods::NONE);
+    assert_eq!(view.prompt_ghost_tail_for_test().as_deref(), Some("나"));
+    view.handle_key(Key::Tab, Mods::NONE);
+    assert_eq!(view.screens.typed(), "하나");
+}
+
+/// pytmux-621 ① — 팔레트의 인자 자리에 **최근 인자**가 서고(판에 그려지고), Enter 가 그
+/// 줄을 실행하며, 실행한 인자는 이력 앞에 남는다(정본 `_record_arg`).
+#[test]
+fn the_palette_offers_recent_hosts_at_the_argument_spot() {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    // 파일 없는 이력(경로 없음 = 저장 안 함) — 시험이 /tmp 의 공유 이력 파일을 안 건드린다.
+    view.arghist = proto::arghist::ArgHist::default();
+    view.arghist.record("remote-host", "office9-pytmux-621");
+    view.screens.open_palette();
+    for c in "remote-attach ".chars() {
+        view.handle_key(Key::Char(c), Mods::NONE);
+    }
+    assert!(
+        panel_text(&view, Screen::Commands).contains("office9-pytmux-621"),
+        "인자 자리 후보가 판에 안 그려졌다"
+    );
+    view.handle_key(Key::Tab, Mods::NONE);
+    assert_eq!(view.screens.typed(), "remote-attach office9-pytmux-621");
+}
+
+// ── pytmux-604 · esc 하단 동선 = 정본 `_status_buttons` 의 목록·차례 ─────────────────
+
+/// 정본 동선에 드는 것(`nav`)과 안 드는 것(경고)을 섞은 status + 권한모드 footer 자리.
+fn nav_fixture(view_tx: &std::sync::mpsc::Sender<LinkEvent>) {
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "plugin_badges": [
+            {"name": "claude-code", "kind": "model", "text": "opus-5",
+             "theme": {"b": "secondary"}, "do": "usage-panel", "nav": true},
+            {"name": "claude-code", "kind": "usage", "text": "12%/5h 사용",
+             "theme": {"b": "secondary"}, "do": "claude-token-log", "nav": true},
+            {"name": "claude-code", "kind": "warn", "text": "⚠ 1:23", "theme": {"b": "error"}},
+            {"name": "rec", "kind": "rec", "text": " REC ", "theme": {"b": "error"},
+             "do": "status", "nav": true}
+        ]
+    }))
+    .unwrap();
+    let cells: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "plugin_cells", "layer": "overlay", "dim": [], "runs": [],
+        "zones": [{"x": 2, "y": 3, "w": 15, "h": 1, "pane": 1, "name": "claude-code",
+                   "do": "perm", "opens": "claude-perm-mode", "nav": true}],
+        "keys": []
+    }))
+    .unwrap();
+    for msg in [layout_one_pane(), status, cells] {
+        view_tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+}
+
+#[test]
+fn the_bottom_chrome_walks_the_canon_buttons_in_the_canon_order() {
+    // 정본 차례: model · usage · rec · notices · host · clock · date · perm. 경고 배지는
+    // 정본 동선에 없다(`nav` 가 없다). 서버·시계·달력은 우측 구간에 **그려져 있을 때** 든다.
+    let (mut view, tx, _sent) = harness();
+    nav_fixture(&tx);
+    view.pump_headless();
+    view.config.status_right = "#h %H:%M %Y-%m-%d".to_owned();
+    // 알림이 하나 있으면 `알림` 도 정본 자리(rec 뒤 · host 앞)에 선다.
+    view.state.note_notice(String::from("무언가 알림"));
+    let nav = view.nav_badges();
+    assert_eq!(
+        nav,
+        vec![base::Badge::Plugin(0), base::Badge::Plugin(1), base::Badge::Plugin(3),
+             base::Badge::Notices, base::Badge::Host, base::Badge::Clock,
+             base::Badge::Calendar, base::Badge::Perm],
+        "하단 동선이 정본 `_status_buttons` 와 다르다"
+    );
+    // 우측 구간에서 서버·시계·달력 토막을 빼면 그 칸도 빠진다(정본: 그려진 것만).
+    view.config.status_right = "plain".to_owned();
+    assert_eq!(
+        view.nav_badges(),
+        vec![base::Badge::Plugin(0), base::Badge::Plugin(1), base::Badge::Plugin(3),
+             base::Badge::Notices, base::Badge::Perm]
+    );
+}
+
+#[test]
+fn enter_on_the_permission_footer_opens_the_permission_panel_for_that_pane() {
+    // 정본: `perm` 에서 Enter → `open_perm_mode(act)`. 우리는 그 footer 를 누른 것과 같은 길
+    // (`plugin_open claude-perm-mode [패널]`) — **양성** 오라클이다.
+    let (mut view, tx, sent) = harness();
+    nav_fixture(&tx);
+    view.pump_headless();
+    view.config.status_right = "plain".to_owned();
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Down, Mods::NONE);
+    assert_eq!(view.chrome_picked_for_test(), Some(base::Badge::Plugin(0)));
+    view.handle_key(Key::Left, Mods::NONE);
+    assert_eq!(view.chrome_picked_for_test(), Some(base::Badge::Perm));
+    assert!(view.perm_focus_marked_for_test(), "perm 포커스인데 footer 강조가 없다");
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    let frames: Vec<serde_json::Value> =
+        sent.lock().unwrap().iter().map(|o| o.to_frame()).collect();
+    let open = frames
+        .iter()
+        .find(|f| f["action"] == "plugin_open")
+        .unwrap_or_else(|| panic!("perm 에서 Enter 가 아무것도 안 올렸다: {frames:?}"));
+    assert_eq!(open["name"], "claude-perm-mode");
+    assert_eq!(open["args"], serde_json::json!(["1"]));
+    assert_eq!(view.mode.mode(), InputMode::Normal, "Enter 뒤 esc 모드가 남았다");
+    assert!(!view.perm_focus_marked_for_test(), "포커스가 풀렸는데 강조가 남았다");
+}
+
+#[test]
+fn enter_on_a_claude_badge_goes_where_its_click_goes() {
+    // 모델 배지 = 한도 판(정본 `open_model_config`) — 표식이 실어 온 이름 그대로 묻는다.
+    let (mut view, tx, sent) = harness();
+    nav_fixture(&tx);
+    view.pump_headless();
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Down, Mods::NONE);
+    view.handle_key(Key::Enter, Mods::NONE);
+    view.pump_headless();
+    let asked: Vec<String> = sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::Command(Command::PluginOpen { name, .. }) => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, vec!["usage-panel".to_owned()]);
+}
+
+// ── pytmux-629 · 없는 번호의 탭 깜빡임 ────────────────────────────────────────────
+
+#[test]
+fn a_missing_tab_number_blinks_the_active_tab_and_sends_nothing() {
+    let (mut view, tx, sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    sent.lock().unwrap().clear();
+    // 평소 Alt+9 — 없는 번호.
+    view.handle_key(Key::Char('9'), Mods::ALT);
+    view.pump_headless();
+    assert!(sent.lock().unwrap().is_empty(), "없는 번호에 무엇이 나갔다: {:?}", sent.lock().unwrap());
+    assert!(view.tab_blink_on(), "없는 번호인데 탭이 안 깜빡인다");
+    // 정본 위상: 0.12초 뒤 꺼짐 · 0.72초 뒤 끝.
+    view.age_tab_blink_for_test(130);
+    assert!(!view.tab_blink_on(), "둘째 위상이 꺼짐이 아니다");
+    view.age_tab_blink_for_test(600);
+    assert!(!view.tab_blink_active_for_test(), "0.72초가 지나도 안 끝난다");
+    // esc 9 — 없는 번호면 **esc 모드 유지**(정본: 다른 번호로 재시도).
+    view.handle_key(Key::Escape, Mods::NONE);
+    view.handle_key(Key::Char('9'), Mods::NONE);
+    assert!(view.tab_blink_on());
+    assert_eq!(view.mode.mode(), InputMode::Command, "없는 번호에 esc 모드가 풀렸다");
+    view.handle_key(Key::Char('2'), Mods::NONE);
+    view.pump_headless();
+    assert!(
+        sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Command(Command::SelectWindow { index: 1, .. }))),
+        "있는 번호가 안 갔다"
+    );
+    assert_eq!(view.mode.mode(), InputMode::Normal, "있는 번호 뒤 esc 모드가 남았다");
+    assert!(pane_bytes(&sent).is_empty(), "번호 키가 패널로 샜다");
+}
+
+#[test]
+fn a_prefix_number_does_not_blink_like_the_canon() {
+    // ⛔ 대조군 — 정본은 prefix 숫자에서 안 깜빡인다(`_handle_prefix`).
+    let (mut view, tx, _sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.handle_key(Key::Char('b'), Mods::CTRL);
+    view.handle_key(Key::Char('9'), Mods::NONE);
+    assert!(!view.tab_blink_on(), "prefix 숫자에 깜빡였다");
+}
+
+#[test]
+fn the_tab_switcher_with_a_single_tab_blinks_instead_of_opening() {
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    let one: ServerMessage = serde_json::from_value(serde_json::json!(
+        {"t": "status", "windows": [{"index": 0, "name": "하나", "active": true}]})).unwrap();
+    tx.send(LinkEvent::Message(Box::new(one))).unwrap();
+    view.pump_headless();
+    view.apply_action(base::Action::ShowTabs);
+    assert_eq!(view.screens.top(), None);
+    assert!(view.tab_blink_on(), "탭 하나에서 스위처가 깜빡임으로 안 알렸다");
+}
+
+// ── pytmux-630 · mouse-debug 의 줄 종류 = 정본 전수 ────────────────────────────────
+
+#[test]
+fn mouse_debug_logs_navigation_keys_like_the_canon_and_nothing_else() {
+    let dir = std::env::temp_dir().join(format!("pytmux-gui-keylog-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("default.sock.mouse.log");
+    let _ = std::fs::remove_file(&path);
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.set_mouse_log_path_for_test(path.clone());
+    view.apply_set_line("mouse-debug on");
+    view.handle_key(Key::Char('a'), Mods::NONE);     // 글자 — 남기지 않는다(입력 유출 방지)
+    view.handle_key(Key::Up, Mods::NONE);
+    view.handle_key(Key::Up, Mods::ALT);             // 수정키가 붙은 것(`alt+up`)은 표 밖
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "내비게이션 키 하나 = 한 줄: {text:?}");
+    assert!(lines[0].ends_with(" key up mode=normal"), "정본 `_log_key` 모양이 아니다: {text:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

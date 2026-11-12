@@ -57,6 +57,9 @@ fn all_screens() -> Vec<Screen> {
         Screen::RestartCheck,
         Screen::MergeRemote,
         Screen::Layouts,
+        // 정본 `ChooseLayoutScreen` 의 진짜 짝(pytmux-623) — 프리셋 판(`Layouts`)은
+        // `CommandOptionsScreen` 이다.
+        Screen::SavedLayouts,
         Screen::Notices,
         Screen::Menu,
         Screen::Plugins,

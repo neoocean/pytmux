@@ -245,7 +245,11 @@ fn every_setting_carries_the_canon_category() {
     assert!(stale.is_empty(), "설정 표에 없는 줄의 예외가 남아 있다: {stale:?}");
 }
 
-/// 설정 **사이드바 차례**가 정본 차례의 부분수열이고, 모든 설정을 덮나.
+/// **코어 설정 표의 분류**(`SETTINGS_CATS`)가 정본 차례를 따르고 모든 코어 줄을 덮나.
+///
+/// ⚠ 이 시험은 코어 표만 본다(플러그인 분류·«키» 탭은 표가 아니라 판이 잇는다). 판의
+/// 사이드바 전체가 정본과 **같은지**는 `plugin_settings_and_their_category_show_up` 이 잰다
+/// (pytmux-592).
 #[test]
 fn settings_sidebar_follows_the_canon_order() {
     let fx = fixture();
@@ -656,14 +660,20 @@ fn plugin_settings_and_their_category_show_up() {
         assert!(cats.contains(&cat.as_str()), "플러그인 분류가 사이드바에 없다: {cat}");
     }
 
-    // 그리고 그 차례가 정본 차례의 부분수열인가.
-    let want: Vec<&str> = fx
-        .settings_cat_order
-        .iter()
-        .map(String::as_str)
-        .filter(|c| cats.contains(c))
+    // 그리고 **판의 사이드바 전체**(코어 · 플러그인 · 맨 끝 «키»)가 정본 차례와 **같은가**
+    // (pytmux-592 — 종전엔 「부분수열이면 통과」였고, 그래서 «키» 탭이 빠진 채 초록이었다).
+    let mut screens = base::Screens::new();
+    screens.set_plugins(plugins.clone());
+    screens.open(base::Screen::Settings);
+    screens.set_settings_key_rows(base::keymap::key_help_lines(&[]));
+    let want: Vec<&str> = fx.settings_cat_order.iter().map(String::as_str).collect();
+    assert_eq!(screens.settings_cats(), want, "설정 사이드바 차례가 정본과 다르다");
+    // «키» 탭의 줄은 `list-keys`(`Screen::Keys`) 와 같은 모델이다 — 두 벌로 갈리지 않는다.
+    let keys: Vec<&(String, String)> = (0..screens.settings_total())
+        .filter_map(|row| screens.settings_key_row(row))
         .collect();
-    assert_eq!(cats, want, "설정 사이드바 차례가 정본과 다르다");
+    let list_keys = base::keymap::key_help_lines(&[]);
+    assert_eq!(keys, list_keys.iter().collect::<Vec<_>>(), "«키» 탭 줄이 list-keys 와 다르다");
 
     // 줄의 차례도 정본 `settings_order` 그대로다(코어 뒤에 플러그인).
     let ours: Vec<&str> = (0..plugins.settings_len())

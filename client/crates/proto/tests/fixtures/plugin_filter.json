@@ -1,0 +1,219 @@
+{
+  "_comment": "python3 scripts/gen_plugin_filter.py 로 생성. 출처 = 정본 PluginManagerScreen._matches 를 직접 부른 값.",
+  "items": [
+    {
+      "name": "blocks",
+      "desc": "셸 통합(OSC 133)으로 명령 경계를 감지해 블록을 클라에 보낸다"
+    },
+    {
+      "name": "calendar",
+      "desc": "달력 오버레이 — 패널을 이번 달 달력으로 덮음(calendar-mode)"
+    },
+    {
+      "name": "claude-code",
+      "desc": "Claude Code 연동 — 헤더·상태줄 토큰·시작 규칙·자동개입"
+    },
+    {
+      "name": "claude-name-sync",
+      "desc": "디렉토리별 이름 동기화(지정 경로 Claude 실행 시 탭/패널·세션 이름 통일)"
+    },
+    {
+      "name": "claude-prompt-history",
+      "desc": "Claude 프롬프트 히스토리 — 미리보기·팝업·스크롤백 점프"
+    },
+    {
+      "name": "claude-resume",
+      "desc": "Claude Code 세션 리줌 피커(목록→새 탭에서 리줌)"
+    },
+    {
+      "name": "claude-token-usage-view",
+      "desc": "Claude 사용 한도 화면 + 다음 리셋 카운트다운"
+    },
+    {
+      "name": "clock",
+      "desc": "시계 오버레이 — 패널을 큰 시계로 덮음(clock-mode)"
+    },
+    {
+      "name": "ime-indicator",
+      "desc": "IME 한/영 상태 배지(화면 우상단)"
+    },
+    {
+      "name": "mdir",
+      "desc": "Mdir III 풍 파일 관리자 모달(다열 리스트·파일 조작)"
+    },
+    {
+      "name": "ncd",
+      "desc": "디렉토리 트리 이동 모달(Norton Change Directory 풍)"
+    },
+    {
+      "name": "p4-show-submitted-changelists",
+      "desc": "Perforce submitted CL 목록 + p4 describe 상세"
+    },
+    {
+      "name": "rec",
+      "desc": "패널 출력 캡처(REC) — Claude 화면 문구 분석용 무손실 로그"
+    },
+    {
+      "name": "p4-show-submitted-changelists",
+      "desc": "p4 제출된 변경 목록"
+    },
+    {
+      "name": "claude_name_sync",
+      "desc": "Claude 세션 이름을 디렉터리별로 맞춘다"
+    },
+    {
+      "name": "mdir",
+      "desc": "Mdir III 풍 파일 관리자"
+    },
+    {
+      "name": "clock",
+      "desc": "Big digital clock overlay"
+    }
+  ],
+  "cases": [
+    {
+      "query": "",
+      "rows": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ]
+    },
+    {
+      "query": "p4",
+      "rows": [
+        11,
+        13
+      ]
+    },
+    {
+      "query": "P4",
+      "rows": [
+        11,
+        13
+      ]
+    },
+    {
+      "query": "p4 show",
+      "rows": [
+        11,
+        13
+      ]
+    },
+    {
+      "query": "p4_show",
+      "rows": [
+        11,
+        13
+      ]
+    },
+    {
+      "query": "name-sync",
+      "rows": [
+        3,
+        14
+      ]
+    },
+    {
+      "query": "name sync",
+      "rows": [
+        3,
+        14
+      ]
+    },
+    {
+      "query": "ㅔ4",
+      "rows": [
+        11,
+        13
+      ]
+    },
+    {
+      "query": "ㅡㅇㅑㄱ",
+      "rows": [
+        9,
+        15
+      ]
+    },
+    {
+      "query": "파일",
+      "rows": [
+        9,
+        15
+      ]
+    },
+    {
+      "query": "overlay",
+      "rows": [
+        16
+      ]
+    },
+    {
+      "query": "OVERLAY",
+      "rows": [
+        16
+      ]
+    },
+    {
+      "query": "  clock  ",
+      "rows": [
+        7,
+        16
+      ]
+    },
+    {
+      "query": "zz-none",
+      "rows": []
+    },
+    {
+      "query": "-",
+      "rows": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        11,
+        13,
+        14
+      ]
+    },
+    {
+      "query": "c",
+      "rows": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        16
+      ]
+    }
+  ]
+}

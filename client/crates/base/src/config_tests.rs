@@ -531,8 +531,8 @@ fn the_default_path_is_taken_verbatim() {
 // ── 숫자·링크 줄 · 박스드로잉(패리티 G8h) ─────────────────────────────────────
 
 #[test]
-fn a_number_row_wraps_at_the_top() {
-    // 올리기만 하고 한 바퀴 돈다 — 좌우 키를 쓰면 이 화면의 다른 줄(패널 이동)과 겹친다.
+fn a_number_row_stops_at_the_ends() {
+    // 정본 `_cycle` 처럼 **끝에서 멈춘다**(pytmux-622 — 종전엔 반대쪽 끝으로 감았다).
     let mut values = base_values();
     let row = SETTINGS.iter().position(|s| s.key == "inactive-dim-ratio").expect("줄");
     values.inactive_dim_ratio = 0.18;
@@ -544,7 +544,14 @@ fn a_number_row_wraps_at_the_top() {
     }
     values.inactive_dim_ratio = 0.80;
     match setting_pick(row, &values) {
-        Some(SettingPick::SetNumber(_, v)) => assert!(v.abs() < 1e-5, "끝에서 처음으로: {v}"),
+        Some(SettingPick::SetNumber(_, v)) => {
+            assert!((v - 0.80).abs() < 1e-5, "위 끝에서 → 는 그 자리다: {v}")
+        }
+        other => panic!("{other:?}"),
+    }
+    values.inactive_dim_ratio = 0.0;
+    match setting_pick_dir(row, &values, false) {
+        Some(SettingPick::SetNumber(_, v)) => assert!(v.abs() < 1e-5, "아래 끝에서 ← 도 그 자리다: {v}"),
         other => panic!("{other:?}"),
     }
 }
@@ -1309,14 +1316,9 @@ fn every_number_row_steps_from_its_own_value() {
             setting.key
         );
         for forward in [true, false] {
+            // 끝에서 멈춘다(정본 `_cycle` · pytmux-622) — 감지 않는다.
             let step_to = if forward { now + step } else { now - step };
-            let want = if step_to > hi + f32::EPSILON {
-                lo
-            } else if step_to < lo - f32::EPSILON {
-                hi
-            } else {
-                step_to
-            };
+            let want = step_to.clamp(lo, hi);
             match setting_pick_dir(row, &values, forward) {
                 Some(SettingPick::SetNumber(key, got)) => {
                     assert_eq!(key, setting.key, "다른 줄의 키를 냈다");

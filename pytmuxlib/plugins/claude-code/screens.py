@@ -102,8 +102,6 @@ i18n.register({
         "pscreen.tklog_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · p세션 · l한도 u/usage · Esc닫기",
         # (계층 트리의 요일·시각 접미사·구역 구분선·"이 머신" 다섯은 `__init__.py`
         #  로 갔다 — 그 글을 짓는 것은 서버이고, 서버는 이 파일을 안 읽는다.)
-        "pscreen.win_session": "이번 5h창 ~Σ{tok}(리셋 {left} 후)",
-        "pscreen.win_week": "이번 주 ~Σ{tok}(리셋 {left} 후)",
         # 한도 전용 서브뷰(상단 7줄 블록을 표 자리로 이동 — 작은 화면 정리).
         "pscreen.tklog_limit_title": "토큰 사용량 · 모델·컨텍스트 / 한도(/usage)",
         "pscreen.tklog_limit_col": "한도(/usage)",
@@ -112,56 +110,17 @@ i18n.register({
         "pscreen.next_reset": "다음 리셋: {label}",
         "pscreen.reset_session": "세션 5h",
         "pscreen.reset_week": "주 전체",
-        # 경고(장기 턴/반복/포맷) 탭 — 상태줄 ⚠ 배지 클릭이 여는 통합 탭.
-        "pscreen.tklog_warn_col": "Claude 경고",
-        "pscreen.tklog_warn_title": "Claude 경고",
-        "pscreen.tklog_warn_empty": "현재 표시할 Claude 경고가 없습니다(이미 해소됨).",
-        "pscreen.warn_history_label": "── 이전 경고 (펼쳐서 보기) ──",
-        "pscreen.tklog_warn_hint": "Enter/←→ 펼침·접힘 · 다른 탭 이동 · u/usage · Esc닫기",
-        # 상단 1줄 한도 요약(상세는 한도 탭).
-        "pscreen.left_hm": "{h}시간{m}분",
-        "pscreen.left_m": "{m}분",
-        "pscreen.left_d": "{d}일{h}시간",
+        # (경고 탭의 글 — 제목·본문·이력 라벨·꼬리줄 — 은 `warntree` 로, 창 Σ·남은 시간
+        #  넷은 `usagehead` 로 갔다: GUI 판을 짓는 서버도 그 글을 짓고, 서버는 이 파일을
+        #  안 읽는다. pytmux-618)
         # 5h%/1w% 칼럼 제목에 inline 으로 붙는 리셋 잔여시간(요청 2026-06-20,
         # 옛 footer 줄 대체). {left}=_fmt_left_short('87m'·'6d' 등 단일 단위).
         "pscreen.hdr_5h": "5h% ({left} 후)",
         "pscreen.hdr_1w": "1w% ({left} 후)",
-        # [경고] 탭 본문(종류별 상황·할일) — 옛 한글 하드코딩을 i18n 으로(전수조사
-        # 2026-06-19). 본문은 줄바꿈(\n)으로 묶고 _warn_info_text 가 split 한다.
-        "claude.warn_fmt_title": "Claude 포맷 미인식",
-        "claude.warn_fmt_body":
-            "[상황]\n"
-            "• pytmux 가 Claude Code 화면 형식을 인식하지 못합니다.\n"
-            "• 토큰/사용량 추적과 자동화(자동 재개·자동 압축·한도 게이트)가 멈춥니다.\n"
-            "• Claude Code 자체 동작(입력·출력)에는 영향이 없습니다.\n"
-            "• 보통 Claude Code 버전 업데이트로 화면 구조가 바뀌면 발생합니다.\n"
-            "\n"
-            "[할일]\n"
-            "• 화면이 다시 정상 인식되면 경고는 자동으로 사라집니다(잠시 대기).\n"
-            "• 계속되면 pytmux 의 Claude 파서(claude.py)를 새 포맷에 맞춰 갱신해야 합니다.\n"
-            "• REC 캡처가 켜져 있으면 captures/ 로그로 새 포맷을 분석할 수 있습니다.",
-        "claude.warn_repeat_title": "Claude 반복 루프 의심",
-        "claude.warn_repeat_body":
-            "[상황]\n"
-            "• 같은 출력이 여러 번 반복됐습니다 — 루프 의심(경고만, 자동 개입 없음).\n"
-            "\n"
-            "[할일]\n"
-            "• 진행이 없으면 다른 지시를 주거나 /clear 후 다시 시도하세요.\n"
-            "• 임계는 옵션 claude_repeat_alert 로 조정/끌 수 있습니다(0=끔).",
-        "claude.warn_long_title": "Claude 장기 턴",
-        "claude.warn_long_body":
-            "[상황]\n"
-            "• 현재 Claude 턴이 임계 시간을 넘겨 오래 진행 중입니다(경고만, 자동 개입 없음).\n"
-            "\n"
-            "[할일]\n"
-            "• 정상적인 긴 작업일 수 있습니다. 멈춘 듯하면 패널에서 Esc 로 중단하세요.\n"
-            "• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).",
     },
     "en": {
         "pscreen.tklog_title2": "Token usage (est) · by {what}",
         "pscreen.tklog_hint": "↑↓ move · Enter/←→ expand·collapse · Tab tabs · p session · l limit u /usage · Esc close",
-        "pscreen.win_session": "this 5h window ~Σ{tok} (resets in {left})",
-        "pscreen.win_week": "this week ~Σ{tok} (resets in {left})",
         "pscreen.tklog_limit_title": "Token usage · Model/Context · Limit (/usage)",
         "pscreen.tklog_limit_col": "Limit (/usage)",
         "pscreen.tklog_limit_hint": "↑↓ model/context · ←→ value · Enter apply · l totals · u /usage · Esc",
@@ -169,53 +128,8 @@ i18n.register({
         "pscreen.next_reset": "Next reset: {label}",
         "pscreen.reset_session": "Session 5h",
         "pscreen.reset_week": "Week all",
-        "pscreen.tklog_warn_col": "Claude warning",
-        "pscreen.tklog_warn_title": "Claude warning",
-        "pscreen.tklog_warn_empty": "No active Claude warning (already cleared).",
-        "pscreen.warn_history_label": "── Past warnings (expand to view) ──",
-        "pscreen.tklog_warn_hint": "Enter/←→ expand·collapse · switch tab · u /usage · Esc close",
-        "pscreen.left_hm": "{h}h {m}m",
-        "pscreen.left_m": "{m}m",
-        "pscreen.left_d": "{d}d {h}h",
         "pscreen.hdr_5h": "5h% (in {left})",
         "pscreen.hdr_1w": "1w% (in {left})",
-        "claude.warn_fmt_title": "Claude format unrecognized",
-        "claude.warn_fmt_body":
-            "[Situation]\n"
-            "• pytmux cannot recognize the Claude Code screen format.\n"
-            "• Token/usage tracking and automation (auto-retry·"
-            "limit gate) stop.\n"
-            "• Claude Code itself (input·output) is unaffected.\n"
-            "• Usually happens when a Claude Code version update changes the layout.\n"
-            "\n"
-            "[To do]\n"
-            "• The warning clears automatically once the screen is recognized "
-            "again (wait a moment).\n"
-            "• If it persists, pytmux's Claude parser (claude.py) must be updated "
-            "for the new format.\n"
-            "• If REC capture is on, the captures/ log can be used to analyze it.",
-        "claude.warn_repeat_title": "Claude repeat-loop suspected",
-        "claude.warn_repeat_body":
-            "[Situation]\n"
-            "• The same output repeated several times — loop suspected "
-            "(warning only, no auto-intervention).\n"
-            "\n"
-            "[To do]\n"
-            "• If there's no progress, give different instructions or retry "
-            "after /clear.\n"
-            "• Threshold is adjustable/disable-able via option claude_repeat_alert "
-            "(0=off).",
-        "claude.warn_long_title": "Claude long turn",
-        "claude.warn_long_body":
-            "[Situation]\n"
-            "• The current Claude turn exceeded the threshold and is running long "
-            "(warning only, no auto-intervention).\n"
-            "\n"
-            "[To do]\n"
-            "• It may be a normal long task. If it seems stuck, press Esc in the "
-            "panel to interrupt.\n"
-            "• Threshold is adjustable/disable-able via option claude_long_turn_sec "
-            "(0=off).",
     },
 })
 
@@ -457,6 +371,7 @@ from . import usagelog
 # 계층 트리의 산수 — **화면 밖 한 벌**이다(pytmux-371 ①). 그 모듈 머리말이 왜 나갔는지를
 # 쥔다: 여기 두면 정본만 그 트리를 그릴 수 있고 네이티브 클라는 평면 판에 머문다.
 from . import usagetree
+from . import warntree
 from .claude import parse_reset_ts
 from pytmuxlib.clientutil import (_char_cells, bar, bar_floating,
                                   bar_floating_segments,
@@ -552,15 +467,8 @@ def _pct_style(pct):
 
 
 def _session_id_of_label(label):
-    """'세션 27 (탭1:p1)' → 27. group_key 가 만든 라벨은 로케일 무관하게 항상
-    '세션 N …' 로 시작한다(usagelog.group_key). '기타 N개' 등은 None."""
-    parts = (label or "").split()
-    if len(parts) >= 2 and parts[0] == "세션":
-        try:
-            return int(parts[1])
-        except ValueError:
-            return None
-    return None
+    """'세션 27 (탭1:p1)' → 27 — `usagelog.session_id_of_label` 한 벌이다(GUI 판과 공유)."""
+    return usagelog.session_id_of_label(label)
 
 
 class TokenLogScreen(ModalScreen):
@@ -863,44 +771,17 @@ class TokenLogScreen(ModalScreen):
 
     @staticmethod
     def _fmt_left(sec: int) -> str:
-        """남은 시간(초)을 짧은 사람표기로: 90분 미만 'N분', 하루 미만 'N시간M분',
-        그 이상 'N일H시간'."""
-        mins = max(0, int(sec) // 60)
-        if mins < 90:
-            return i18n.t("pscreen.left_m", m=mins)
-        h, m = divmod(mins, 60)
-        if h < 24:
-            return i18n.t("pscreen.left_hm", h=h, m=m)
-        d, h = divmod(h, 24)
-        return i18n.t("pscreen.left_d", d=d, h=h)
+        """남은 시간(초)을 짧은 사람표기로 — `usagehead.fmt_left` 한 벌(GUI 판과 공유)."""
+        return usagehead.fmt_left(sec)
 
     def _window_lines(self):
-        """현재 5h/주간 **창 구간의 스크랩 추정 Σ + 리셋까지 남은 시간** 한 줄(없으면
-        빈 목록). 실측 리셋 표기(parse_reset_ts)로 창 시작(리셋-5h/-7일)을 역산해
-        받은 레코드를 합산한다 — 실측 %(점유)와 별개로 "이번 창에서 얼마나 썼나"를
-        토큰 양으로 보여 준다(요청: 5시간 내·1주 내 사용량과 리셋 시점을 알기 쉽게).
-        리셋 표기가 없거나 과거(stale 실측)면 그 축은 생략한다(지어내지 않음).
-
-        주의: 합산 원천은 받은 최근 레코드(서버 cap N건)라 7일 창은 이력이 cap 을
-        넘으면 과소일 수 있다 — 추정(~) 라벨로 일관 표기."""
-        u = self._usage
-        if not isinstance(u, dict):
-            return []
+        """현재 5h/주간 **창 구간의 스크랩 추정 Σ + 리셋까지 남은 시간** 한 줄(없으면 빈
+        목록). 조각은 `usagehead.window_parts` 한 벌이다(GUI 판과 공유 · pytmux-618) —
+        여기서는 « · » 로 한 줄에 잇는다. 합산 원천은 받은 최근 레코드라 7일 창은 과소일
+        수 있다(추정 ~ 라벨)."""
         import time as _t
-        now = _t.time()
-        parts = []
-        for key, span, name_key in (
-                ("session", 5 * 3600, "pscreen.win_session"),
-                ("week_all", 7 * 86400, "pscreen.win_week")):
-            d = u.get(key)
-            reset = d.get("reset") if isinstance(d, dict) else None
-            ts = parse_reset_ts(reset) if reset else None
-            if ts is None or ts <= now:
-                continue
-            tok = usagelog.window_sum(self._records, ts - span)
-            parts.append(i18n.t(name_key, tok=usagelog._fmt_tokens(tok),
-                                left=self._fmt_left(ts - now)))
-        return [" · ".join(parts)] if parts else []
+        parts = usagehead.window_parts(self._usage, self._records, _t.time())
+        return ([" · ".join(i18n.t(k, **kw) for k, kw in parts)] if parts else [])
 
     @staticmethod
     def _fmt_left_short(sec: int) -> str:
@@ -1247,132 +1128,48 @@ class TokenLogScreen(ModalScreen):
 
     @staticmethod
     def _warn_info_text(kind, warn=""):
-        """경고 **종류(kind)** → (제목, 줄목록). kind 는 서버가 보낸 구조적 신호
-        (status.claude_warn_kind: "fmt_unknown"|"repeat"|"long_turn") — 옛 한글
-        부분문자열 판별을 대체해 en 로케일에서도 정확히 분류한다(i18n 전수조사
-        2026-06-19). 제목·상황·할일 본문은 i18n(ko/en)에서 가져온다. 첫 줄엔 현재
-        경고 배지 문자열(warn)을 그대로 둔다(있으면). kind 미상(구버전 서버)이면 남은
-        한글 문자열로 한 번 폴백 판별하고, 그래도 모르면 장기 턴 안내."""
-        if kind is None and warn:       # 구버전 서버 호환(한글 문자열만 옴) 폴백
-            if "포맷" in warn or "미인식" in warn:
-                kind = "fmt_unknown"
-            elif "반복" in warn or "루프" in warn:
-                kind = "repeat"
-        key = {"fmt_unknown": "fmt", "repeat": "repeat"}.get(kind, "long")
-        title = i18n.t(f"claude.warn_{key}_title")
-        body = i18n.t(f"claude.warn_{key}_body").split("\n")
-        return title, ([warn, ""] + body if warn else body)
+        """경고 **종류(kind)** → (제목, 줄목록) — `warntree.info_text` 한 벌이다(GUI 판과
+        공유 · pytmux-618). kind 미상(구버전 서버)이면 한글 배지 글로 한 번 가린다."""
+        return warntree.info_text(kind, warn)
 
     @staticmethod
     def _warn_badge(kind, warn, n=None):
-        """경고 탭 첫 줄에 보일 **로케일 배지 문자열**. 상태줄(clientstatus)과 같은
-        규칙: 반복/포맷-미인식은 i18n(ko/en), 장기 턴은 언어중립('⚠ M:SS') 서버 문자열
-        유지. kind 미상(구버전 서버)이면 서버 문자열 폴백. en 모드에서 첫 줄이 한글
-        서버 문자열로 새던 것 수정(i18n 전수조사 2026-06-19)."""
-        if kind == "repeat":
-            return i18n.t("claude.warn_repeat_badge", n=n or 0)
-        if kind == "fmt_unknown":
-            return i18n.t("claude.warn_fmt_badge")
-        return warn
+        """경고 탭 머리에 보일 **로케일 배지**(`warntree.badge` 한 벌)."""
+        return warntree.badge(kind, warn, n)
 
     def _refresh_warn(self, table):
-        """[경고] 뷰(항목2 2026-06-22 트리화): 경고를 **펼침 트리**로 보인다 —
-        ⑴ 현재 활성 경고(라이브 status.claude_warn)는 맨 위 노드로 **기본 펼침**(상황·
-        할일 본문을 바로 보임). ⑵ 그 아래 **과거 경고 이력**(서버 warnhist, 시간
-        내림차순)을 **기본 접힘**으로 나열한다(노드를 펼치면 그 경고의 상황·할일).
-        예전엔 현재 경고 1개만 평탄 렌더였고 이력은 저장도 안 했다. 경고가 해소돼도
-        이력이 남아 무엇이 있었는지 돌아볼 수 있다. 노드 토글=Enter/Space/←/→·클릭."""
+        """[경고] 뷰(항목2 2026-06-22 트리화): 활성 경고 노드(기본 펼침) + 과거 이력 노드
+        (기본 접힘). 줄 짓기는 `warntree.build` 한 벌이다(GUI 판과 공유 · pytmux-618) —
+        여기 남는 것은 그 노드를 표에 옮겨 적는 일뿐이다. 노드 토글=Enter/Space/←/→·클릭."""
         table.add_column(i18n.t("pscreen.tklog_warn_col"), key="warn")
-        self._warn_rows = []
         status = getattr(self.app, "status", None)
-        warn = getattr(status, "claude_warn", None)
-        kind = getattr(status, "claude_warn_kind", None)
-        n = getattr(status, "claude_warn_n", None)
-        hist = list(self._warn_history or [])
-        title = i18n.t("pscreen.tklog_warn_title")
-        # ⑴ 활성 경고 노드(맨 위, 기본 펼침). 헤더=로케일 배지, 자식=상황·할일 본문.
-        if warn:
-            # kind 미상(구버전 서버·직접 설정)이면 한글 배지 문자열로 종류를 폴백
-            # 판별한다(_warn_info_text 의 폴백과 동형) — body 를 빈 문자열로 부르면
-            # 그 폴백이 안 먹어 long_turn 으로 잘못 떨어지므로 여기서 미리 결정한다.
-            rk = kind
-            if rk is None and warn:
-                if "포맷" in warn or "미인식" in warn:
-                    rk = "fmt_unknown"
-                elif "반복" in warn or "루프" in warn:
-                    rk = "repeat"
-            atitle, abody = self._warn_info_text(rk, "")     # 본문만(배지는 헤더에)
-            badge = self._warn_badge(rk, warn, n)
-            self._emit_warn_node(table, "active", badge, abody)
-            title = atitle
-            # 활성 경고의 onset 은 이력 맨 위(최신)에도 기록돼 있어 중복이므로 건너뛴다.
-            if hist and hist[0].get("kind") == rk:
-                hist = hist[1:]
-        # ⑵ 과거 경고 이력(시간 내림차순, 기본 접힘).
-        if hist:
-            import time as _t
-            self._warn_rows.append({"type": "label", "key": None})
-            table.add_row(i18n.t("pscreen.warn_history_label"))
-            for rec in hist:
-                ts = rec.get("ts", 0) or 0
-                rk = rec.get("kind")
-                rbadge = self._warn_badge(rk, rec.get("badge", ""), rec.get("n"))
-                _, rbody = self._warn_info_text(rk, "")
-                tlabel = (_t.strftime("%m-%d %H:%M", _t.localtime(ts))
-                          if ts else "?")
-                self._emit_warn_node(table, "h%.3f" % ts,
-                                     tlabel + " · " + rbadge, rbody)
-        # 활성 경고도 이력도 없으면 '경고 없음' 안내.
-        if not warn and not hist:
-            self._warn_rows.append({"type": "label", "key": None})
-            table.add_row(i18n.t("pscreen.tklog_warn_empty"))
+        title, nodes = warntree.build(
+            getattr(status, "claude_warn", None),
+            getattr(status, "claude_warn_kind", None),
+            getattr(status, "claude_warn_n", None),
+            self._warn_history, self._warn_open)
+        self._warn_rows = []
+        for nd in nodes:
+            self._warn_rows.append({"type": nd["type"], "key": nd["key"]})
+            if nd["type"] == "head":
+                table.add_row(("▼ " if nd["open"] else "▶ ") + nd["text"])
+            elif nd["type"] == "body":
+                table.add_row("    " + nd["text"])
+            else:
+                table.add_row(nd["text"])
         self.query_one("#tklogtitle", Label).update(title)
         self.query_one("#tktop", Static).update("")
         self._tktop_text = ""
         self.query_one("#tkhint", Static).update(
             i18n.t("pscreen.tklog_warn_hint"))
 
-    def _emit_warn_node(self, table, key, header, body):
-        """경고 트리 노드 1개 — 헤더 행(▼/▶ + header) + (펼침 시) 상황·할일 자식 행.
-        _warn_open 에 key 가 있으면 펼침. body 의 빈 줄(배지/본문 구분자)은 건너뛴다."""
-        expanded = key in self._warn_open
-        self._warn_rows.append({"type": "head", "key": key})
-        table.add_row(("▼ " if expanded else "▶ ") + header)
-        if expanded:
-            for ln in body:
-                if not ln:
-                    continue
-                self._warn_rows.append({"type": "body", "key": key})
-                table.add_row("    " + ln)
-
     def _warn_toggle_at(self, row, mode="toggle"):
-        """경고 트리 토글(키·클릭 공통). row 가 head/body 면 그 노드 키를 펼치/접고,
-        label 행이면 무동작. mode='toggle'|'expand'|'collapse'. 동작했으면 그 노드
-        key 를 반환(커서 복원용), 아니면 None."""
-        rows = self._warn_rows
-        if not (0 <= row < len(rows)):
-            return None
-        key = rows[row].get("key")
-        if key is None:                       # label 행
-            return None
-        expanded = key in self._warn_open
-        if mode == "expand" and expanded:
-            return None
-        if mode == "collapse" and not expanded:
-            return None
-        if expanded:
-            self._warn_open.discard(key)
-        else:
-            self._warn_open.add(key)
-        return key
+        """경고 트리 토글(키·클릭 공통 · `warntree.toggle` 한 벌). 동작했으면 그 노드 key."""
+        return warntree.toggle(self._warn_rows, self._warn_open, row, mode)
 
     def _warn_head_row(self, key):
-        """그 경고 노드의 head 행 인덱스(접기를 body 행에서 했을 때 커서를 head 로
-        되돌리기 위함). 없으면 0."""
-        for i, r in enumerate(self._warn_rows):
-            if r.get("type") == "head" and r.get("key") == key:
-                return i
-        return 0
+        """그 경고 노드의 head 행 인덱스(`warntree.head_row`). 없으면 0."""
+        return warntree.head_row(self._warn_rows, key)
 
     async def _warn_apply(self, key):
         """경고 토글 반영(다시 그리기) 후 커서를 그 노드 head 로 복원."""
@@ -1408,21 +1205,11 @@ class TokenLogScreen(ModalScreen):
             # time_records=self._records(raw, 실 ts): day/week/month 버킷의 src 는
             # 일자 합성(ts=정오)이라 정렬이 날짜 단위로만 됐다 → raw 실 ts 로 하루 안까지
             # 시각 내림차순 정렬(사용자 요청 2026-07-01). 타임스탬프 열(real_ts)과 동일 소스.
-            v = usagelog.agg_view(src, self._bucket, None, "session",
-                                  "time", top=None, group_order="time",
-                                  hour_suffix=hour_suffix,
-                                  time_records=self._records)
-            # 세션 시작 시각(별도 타임스탬프 열용) — _refresh 가 읽는다. 일/주/월 버킷의
-            # 집계 src(일자 합성 ts=정오 고정)는 시각을 잃어 gtimes 가 '날짜만'이 된다.
-            # 사용자 요청(2026-07-01): 타임스탬프에 날짜+시각을 함께 보이도록, 실제
-            # 세션 시작 '월-일 시:분'을 raw _records(실 ts)에서 뽑아 덮는다. raw 창에
-            # 없는 옛 세션은 집계 gtimes(날짜만)로 폴백한다.
-            real_ts = usagelog.session_time_labels(self._records)
-            gt = v.get("gtimes") or []
-            self._sess_times = [
-                real_ts.get(_session_id_of_label(lbl))
-                or (gt[i] if i < len(gt) else "")
-                for i, (lbl, _, _) in enumerate(v["groups"])]
+            # ⛔ 줄 짓기는 `usagelog.session_table` 한 벌이다(pytmux-618) — GUI 판이 같은
+            #    함수를 부른다. 세션 뷰는 늘 일 입도라 `src` 고르기도 그 함수 안의 것과 같다.
+            v = usagelog.session_table(self._records, self._full_recs,
+                                       hour_suffix=hour_suffix)
+            self._sess_times = list(v["times"])
             return (v["groups"], v["gmax"], v["total"], i18n.t("세션"), None,
                     v.get("gmodels"))
         if self._view == "host":
@@ -1444,7 +1231,7 @@ class TokenLogScreen(ModalScreen):
 
     def _multi_host(self) -> bool:
         """원산지 머신이 둘 이상인가(= 동기화로 남의 머신 몫이 들어왔나)."""
-        return len([1 for v in (self._xc_hosts or {}).values() if v]) >= 2
+        return usagehead.multi_host(self._xc_hosts)   # GUI 판과 같은 술어(pytmux-617)
 
     def _host_rows(self):
         """머신 뷰 표 행 [(라벨, 토큰, 점유%)] — 비중 큰 순. 다른 뷰(_view_rows)와
@@ -1854,25 +1641,9 @@ class TokenLogScreen(ModalScreen):
 
     def _tree_toggle_at(self, row, mode="toggle"):
         """표 커서 행(row)에 대응하는 트리 노드를 펼치/접는다(키·클릭 공통).
-        mode='toggle'|'expand'|'collapse'. 펼침 불가 행(leaf/divider)·범위 밖이면 무동작.
-        토글 후 _refresh 로 다시 그리고 커서를 같은 행에 유지한다. 동작했으면 True."""
-        nodes = self._tree_nodes
-        if not (0 <= row < len(nodes)):
-            return False
-        n = nodes[row]
-        if not n["expandable"] or not n["key"]:
-            return False
-        cur_open = n["expanded"]
-        if mode == "expand" and cur_open:
-            return False
-        if mode == "collapse" and not cur_open:
-            return False
-        # 기본값 대비 토글: key 가 토글집합에 있으면 빼고 없으면 넣어 effective 를 뒤집는다.
-        if n["key"] in self._tree_toggled:
-            self._tree_toggled.discard(n["key"])
-        else:
-            self._tree_toggled.add(n["key"])
-        return True
+        mode='toggle'|'expand'|'collapse'. 동작했으면 True. 규칙은 `usagetree.toggle`
+        한 벌이다(GUI 판과 공유 · pytmux-618)."""
+        return usagetree.toggle(self._tree_nodes, self._tree_toggled, row, mode)
 
     async def _tree_apply(self, row):
         """토글 반영(다시 그리기) 후 커서를 row 에 복원."""
@@ -1886,39 +1657,15 @@ class TokenLogScreen(ModalScreen):
             pass
 
     def _tree_parent_row(self, row):
-        """row 노드의 부모 행 인덱스 — DFS 순서(_build_tree_rows)에서 직전의 더 얕은
-        레벨 행. 최상위(부모 없음)면 None. divider 는 레벨 0 장식 행이라 부모 후보에서
-        건너뛴다(요청 2026-06-22, leaf ← → 부모 접기용)."""
-        nodes = self._tree_nodes
-        if not (0 <= row < len(nodes)):
-            return None
-        lvl = nodes[row]["level"]
-        for i in range(row - 1, -1, -1):
-            if nodes[i]["kind"] == "divider":
-                continue
-            if nodes[i]["level"] < lvl:
-                return i
-        return None
+        """row 노드의 부모 행 인덱스(`usagetree.parent_row` 한 벌). 최상위면 None."""
+        return usagetree.parent_row(self._tree_nodes, row)
 
     async def _tree_collapse_or_parent(self, row):
-        """← 처리(요청 2026-06-22): 펼쳐진 expandable 노드는 **자기 자신을 접는다**(종전
-        동작 보존). leaf 거나 이미 접힌 노드면 **부모 노드로 올라가 그 부모를 접고** 커서를
-        부모로 옮긴다 — leaf 막다른 끝에서 ← 로 더 이상 접을 게 없던 걸 표준 트리처럼
-        상위 입도로 빠져나오게 한다. 최상위 leaf(부모 없음)면 무동작(no-crash)."""
-        nodes = self._tree_nodes
-        if not (0 <= row < len(nodes)):
-            return
-        n = nodes[row]
-        if n["expandable"] and n["key"] and n["expanded"]:
-            if self._tree_toggle_at(row, "collapse"):
-                await self._tree_apply(row)
-            return
-        prow = self._tree_parent_row(row)
-        if prow is None:
-            return
-        # 자식이 보인다는 건 부모가 펼쳐져 있다는 뜻 → 부모를 접고 커서를 부모로.
-        self._tree_toggle_at(prow, "collapse")
-        await self._tree_apply(prow)
+        """← 처리(요청 2026-06-22): 펼쳐진 노드는 자기를, leaf·접힌 노드는 부모를 접고 커서를
+        그 줄로 옮긴다. 규칙은 `usagetree.collapse_or_parent` 한 벌이다(GUI 판과 공유)."""
+        target = usagetree.collapse_or_parent(self._tree_nodes, self._tree_toggled, row)
+        if target is not None:
+            await self._tree_apply(target)
 
     def _exit_body_modes(self):
         """표를 대체하는 뷰(한도/경고)에서 빠져나온다 — 기간/계정/세션/정렬 동작이

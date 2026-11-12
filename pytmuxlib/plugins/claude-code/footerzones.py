@@ -61,13 +61,20 @@ def _span(text, start, end, px, pw):
     return x0, x1
 
 
+def rows_text(rows) -> list:
+    """`[text, style]` 런 목록의 행들 → 줄 문자열들. 정본과 서버가 **같은 함수**로
+    줄을 짓는다(pytmux-603) — 한쪽만 바뀌면 누르는 자리가 갈린다."""
+    return ["".join(seg[0] for seg in row) for row in rows]
+
+
 def scan_pane(lines, px, py, pw, ph) -> dict:
     """패널 하나의 화면 줄에서 footer 클릭존을 찾는다.
 
     `lines` 는 위에서부터의 줄 문자열이고 `px,py,pw,ph` 는 그 패널의 **내용 영역**
-    (테두리 안 · 창 절대 좌표)이다. 정본은 자기 `pane_content` 행을, 서버는
-    `screen_text(pane.screen)` 를 넘긴다 — 둘 다 와이드 문자를 한 번만 담은 같은
-    모양이라(연속 셀은 빈 문자열) 같은 셈이 선다.
+    (테두리 안 · 창 절대 좌표)이다. 두 소비자 다 **보이는 행**을 [`rows_text`] 로 넘긴다 —
+    정본은 자기 `pane_content` 행을, 서버는 같은 창(`Pane.viewport_window` · 스크롤 반영)을
+    (pytmux-603: 종전 서버는 라이브 화면을 넘겨, 위로 굴린 동안 GUI 만 안 보이는 footer
+    자리에 존이 섰다). 와이드 문자는 한 번만 담긴다(연속 셀은 빈 문자열).
 
     돌려주는 것은 **찾은 것만** 담은 `{종류: (x0, x1, y)}` 다. 종류는
     `perm`·`remote`·`interrupt`·`tokens`.

@@ -117,6 +117,20 @@ fn mb(n: Option<u64>) -> String {
     }
 }
 
+/// 세 자리마다 쉼표 — 정본 `f"{n:,}"` 와 같은 모양(pytmux-627 ② 대조가 잡은 갈림 —
+/// 종전엔 맨 숫자라 `912345` 와 `912,345` 로 갈렸다).
+fn grouped(n: impl Into<u64>) -> String {
+    let digits = n.into().to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 fn count(n: Option<usize>) -> String {
     n.map_or_else(|| "?".to_owned(), |v| v.to_string())
 }
@@ -142,6 +156,12 @@ fn uptime(s: f64) -> String {
 }
 
 impl ServerStats {
+    /// 회신이 아직 안 왔을 때 서버 절반 자리에 서는 한 줄(정본 `― diag.server ― diag.waiting`).
+    /// 정본과의 대조 = `proto/tests/debug_stats_conformance.rs`(pytmux-627 ②).
+    pub fn waiting_line() -> String {
+        format!("― {} ― {}", base::i18n::t("서버 쪽"), base::i18n::t("서버가 아직 답하지 않았다"))
+    }
+
     /// 판에 실을 줄들 — `debug-stats` 판의 **서버 절반**. 클라 절반 아래에 붙는다.
     ///
     /// 값 옆에 **무엇을 보는 값인지**를 적는다(`base::diag` · 정본 `clientdiag.render`
@@ -186,7 +206,9 @@ impl ServerStats {
         ));
         out.push(format!(
             "  {} {} · {} {} · {} {} · {} {}",
-            t("세션"),
+            // 정본 `diag.sessions` 은 en 에서 복수형(Sessions)이다 — 평문 「세션」의 en 짝
+            // (Session)과 갈려 문맥 키로 둔다(pytmux-627 ② 대조가 잡았다).
+            base::i18n::tc("diag", "세션"),
             self.sessions,
             t("탭"),
             self.windows,
@@ -196,22 +218,22 @@ impl ServerStats {
             self.scrollback_rows.map_or_else(|| "?".to_owned(), |v| v.to_string())
         ));
         if let Some(n) = self.objects {
-            out.push(format!("  {} {}", t("산 객체"), n));
+            out.push(format!("  {} {}", t("산 객체"), grouped(n)));
         }
         for g in &self.gc {
             out.push(format!(
                 "    gen{}: {} {} · {} {} · {} {}",
                 g.generation,
                 t("수거"),
-                g.collections,
+                grouped(g.collections),
                 t("거둔 것"),
-                g.collected,
+                grouped(g.collected),
                 t("못 거둔 것"),
-                g.uncollectable
+                grouped(g.uncollectable)
             ));
         }
         for (name, n) in self.top.iter().take(6) {
-            out.push(format!("    {n:>8}  {name}"));
+            out.push(format!("    {:>8}  {name}", grouped(*n)));
         }
         match &self.usage_probe {
             Some(p) => {

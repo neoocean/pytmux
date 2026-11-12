@@ -35,6 +35,7 @@ pub mod ime_badge;
 pub mod keymap;
 pub mod options;
 pub mod plugins;
+pub mod promptargs;
 pub mod keys;
 pub mod restart;
 pub mod screens;

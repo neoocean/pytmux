@@ -79,15 +79,15 @@ i18n.register({
         "pscreen.spec_detail_empty": "보여 줄 플랜도 거부도 없다",
         "pscreen.spec_settings_hint": "↑↓ 이동 · Enter 바꾸기 · Esc 닫기",
         "pscreen.spec_model_title": "Claude 모델·컨텍스트",
-        "pscreen.spec_model_hint": "↑↓ 이동 · Enter 적용(/model 주입) · Tab 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_model_hint": "↑↓ 이동 · Enter 적용(/model 주입) · Tab 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
         "pscreen.spec_model_now": "지금",
         # 정본 `[한도]` 탭의 맨 위 두 줄(pytmux-130 · `TokenLogScreen._mc_row_text`).
         "pscreen.spec_mc_model": "모델",
         "pscreen.spec_mc_ctx": "컨텍스트",
         "pscreen.spec_period_title": "토큰 사용량 · 기간별",
-        "pscreen.spec_period_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_period_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
         "pscreen.spec_sessions_title": "토큰 사용량 · 세션별",
-        "pscreen.spec_sessions_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_sessions_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
         "pscreen.spec_bucket_hour": "시간 단위로 보기",
         "pscreen.spec_bucket_day": "일 단위로 보기",
         "pscreen.spec_bucket_week": "주 단위로 보기",
@@ -98,21 +98,21 @@ i18n.register({
         "pscreen.spec_goto_warns": "Claude 경고 이력 →",
         "pscreen.spec_goto_daily": "일별 집계 →",
         "pscreen.spec_warns_title": "Claude 경고 이력",
-        "pscreen.spec_warns_hint": "↑↓ 이동 · Enter 날짜 펼침·접힘 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_warns_hint": "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
         "pscreen.spec_warns_empty": "쌓인 Claude 경고가 없습니다.",
         "pscreen.spec_warns_nodb": "이 서버는 경고 이력을 안 쌓습니다(claude-code 플러그인 필요).",
         "pscreen.spec_goto_model": "모델·컨텍스트 고르기 →",
         "pscreen.spec_goto_limits": "한도(/usage) 보기 →",
         "pscreen.spec_goto_settings": "시나리오 설정 →",
         "pscreen.spec_machines_title": "토큰 사용량 · 머신별 (Σ{tok})",
-        "pscreen.spec_machines_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_machines_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
         "pscreen.spec_machines_empty": "아직 다른 머신에서 온 기록이 없습니다(동기화를 켜면 채워집니다).",
         "pscreen.spec_pcq_title": "프롬프트 단위 클리어 큐",
         "pscreen.spec_pcq_hint": "c 비우기 · Esc 닫기",
         "pscreen.spec_pcq_empty": "(큐가 비어 있습니다 — `:prompt-clear-queue <명령>` 으로 쌓습니다)",
         "pscreen.spec_tklog_title": "토큰 사용량(추정) · 일별",
         "pscreen.spec_tklog_title_sum": "토큰 사용량(추정) · 일별 · Σ{tok}",
-        "pscreen.spec_tklog_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · o머신 · s시나리오 · u/usage",
+        "pscreen.spec_tklog_hint": "↑↓ 이동 · Tab/←→ 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
         "pscreen.spec_tklog_empty": "기록된 토큰 사용량이 없습니다",
         "pscreen.spec_tklog_nodb": "토큰 DB 를 열 수 없습니다",
         "pscreen.spec_tklog_col_tok": "토큰",
@@ -126,6 +126,10 @@ i18n.register({
         "pscreen.tab_machines": "머신", "pscreen.tab_limits": "한도",
         "pscreen.tab_warns": "경고", "pscreen.tab_daily": "일별",
         "pscreen.tab_model": "모델", "pscreen.tab_settings": "시나리오",
+        # 정본 띠 끝의 `/usage` 액션 · 활성 한도·경고 탭 재클릭의 «되돌아가기»(pytmux-617).
+        "pscreen.tab_usage": "/usage",
+        "pscreen.spec_goto_usage": "/usage 다시 조회",
+        "pscreen.spec_goto_back": "이전 탭으로 →",
     },
     "en": {
         "pscreen.spec_settings_title": "Claude settings",
@@ -134,14 +138,14 @@ i18n.register({
         "pscreen.spec_detail_empty": "No plan or denial to show",
         "pscreen.spec_settings_hint": "↑↓ move · Enter change · Esc close",
         "pscreen.spec_model_title": "Claude model/context",
-        "pscreen.spec_model_hint": "↑↓ move · Enter apply (injects /model) · Tab tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_model_hint": "↑↓ move · Enter apply (injects /model) · Tab tabs · Esc close · p session · l limit · s scenario · u /usage",
         "pscreen.spec_model_now": "now",
         "pscreen.spec_mc_model": "Model",
         "pscreen.spec_mc_ctx": "Context",
         "pscreen.spec_period_title": "Token usage · by period",
-        "pscreen.spec_period_hint": "↑↓ move · Enter/←→ expand·collapse · Tab tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_period_hint": "↑↓ move · Enter/←→ expand·collapse · Tab tabs · Esc close · p session · l limit · s scenario · u /usage",
         "pscreen.spec_sessions_title": "Token usage · by session",
-        "pscreen.spec_sessions_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_sessions_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · s scenario · u /usage",
         "pscreen.spec_bucket_hour": "Show by hour",
         "pscreen.spec_bucket_day": "Show by day",
         "pscreen.spec_bucket_week": "Show by week",
@@ -152,21 +156,21 @@ i18n.register({
         "pscreen.spec_goto_warns": "Claude warning history →",
         "pscreen.spec_goto_daily": "Daily totals →",
         "pscreen.spec_warns_title": "Claude warning history",
-        "pscreen.spec_warns_hint": "↑↓ move · Enter expand/collapse a day · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_warns_hint": "↑↓ move · Enter/←→ expand·collapse · Tab tabs · Esc close · p session · l limit · s scenario · u /usage",
         "pscreen.spec_warns_empty": "No Claude warnings recorded.",
         "pscreen.spec_warns_nodb": "This server keeps no warning history (needs the claude-code plugin).",
         "pscreen.spec_goto_model": "Pick model/context →",
         "pscreen.spec_goto_limits": "Show limits (/usage) →",
         "pscreen.spec_goto_settings": "Scenario settings →",
         "pscreen.spec_machines_title": "Token usage · by machine (Σ{tok})",
-        "pscreen.spec_machines_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_machines_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · s scenario · u /usage",
         "pscreen.spec_machines_empty": "No records from other machines yet (turn sync on to fill this).",
         "pscreen.spec_pcq_title": "Per-prompt clear queue",
         "pscreen.spec_pcq_hint": "c clear · Esc close",
         "pscreen.spec_pcq_empty": "(the queue is empty — add with `:prompt-clear-queue <command>`)",
         "pscreen.spec_tklog_title": "Token usage (estimated) · by day",
         "pscreen.spec_tklog_title_sum": "Token usage (estimated) · by day · Σ{tok}",
-        "pscreen.spec_tklog_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · o machine · s scenario · u /usage",
+        "pscreen.spec_tklog_hint": "↑↓ move · Tab/←→ tabs · Esc close · p session · l limit · s scenario · u /usage",
         "pscreen.spec_tklog_empty": "No token usage recorded",
         "pscreen.spec_tklog_nodb": "Cannot open the token DB",
         "pscreen.spec_tklog_col_tok": "tokens",
@@ -179,12 +183,15 @@ i18n.register({
         "pscreen.tab_machines": "Machine", "pscreen.tab_limits": "Limit",
         "pscreen.tab_warns": "Warn", "pscreen.tab_daily": "Daily",
         "pscreen.tab_model": "Model", "pscreen.tab_settings": "Scenario",
+        "pscreen.tab_usage": "/usage",
+        "pscreen.spec_goto_usage": "Refresh /usage",
+        "pscreen.spec_goto_back": "Back to the previous tab →",
     },
 })
 
 
 def _spec(sid, kind, title, hint, rows=(), text="", note="", keys=None, selected=0,
-          carried=None, head="", scroll_hint="", tabs=None):
+          carried=None, head="", scroll_hint="", tabs=None, server=None):
     """스펙 한 판 — 칸을 빠뜨리지 않게 한 곳에서 짓는다.
 
     `rows`·`text` 를 늘 싣는 이유: 클라 파서가 `default` 로 채우긴 하지만, 빠진 칸은
@@ -216,7 +223,7 @@ def _spec(sid, kind, title, hint, rows=(), text="", note="", keys=None, selected
     새 판이 생길 때 어떤 판에서는 띠가 빠진다(잇는 줄이 `_HUB` 한 표에서 나오는 것과 같은
     이유). 띠를 모르는 클라는 이 칸을 버리고 종전처럼 꼬리의 `goto:` 줄을 본다."""
     if tabs is None and any(sid == h[2] for h in _HUB):
-        tabs = _hub_tabs(sid)
+        tabs = _hub_tabs(sid, server)
     return {
         "t": "plugin_screen", "id": sid, "kind": kind,
         "title": title, "hint": hint, "scroll_hint": scroll_hint, "head": head,
@@ -329,11 +336,10 @@ def _saver_value(server, sess, key):
     (정본 `saver_display` 는 같은 값을 클라 `status` 에서 읽는다).
 
     ⚠ 낱말은 정본과 같은 것을 쓴다(`REDRAW_WORDS` — 카탈로그 키가
-    한국어 원문이라 이 클라가 자기 로케일로 다시 읽는다). **수는 그냥 수로 보낸다**:
-    `600초 이상` 처럼 수와 낱말이 붙은 글은 원문이 키가 못 돼 어느 카탈로그도 못 잡고
-    (`PluginRow::say_cols` 는 고정 리터럴만 본다), 단위는 이미 줄 이름에 있다
-    (`장기 턴 경고(초)`). 정본이 붙여 쓰는 것은 그 화면의 관례다 — 스펙은 내용을 정하고
-    표현은 각 클라 관례를 따른다(설계 §6)."""
+    한국어 원문이라 이 클라가 자기 로케일로 다시 읽는다).
+    ★ 수와 낱말이 붙은 글(`600초 이상`)은 정본과 **같은 열쇠**로 짓고(pytmux-618 ⑥ — 종전
+    판은 `600` 만 실어 단위·뜻이 빠졌다), 클라가 제 로케일로 다시 짓도록 `_settings_spec`
+    이 칸의 재료(`i18n.col0`)를 함께 싣는다(`_saver_phrase`)."""
     from . import REDRAW_WORDS, norm_redraw_mode
     pane = _active_pane(sess)
     on = i18n.t("pscreen.spec_on_mark")
@@ -350,17 +356,37 @@ def _saver_value(server, sess, key):
         return i18n.t(REDRAW_WORDS.get(mode, REDRAW_WORDS["off"]))
     if key == "long_turn":
         v = int(getattr(server, "claude_long_turn_sec", 0) or 0)
-        return i18n.t(REDRAW_WORDS["off"]) if v <= 0 else str(v)
+        return (i18n.t(REDRAW_WORDS["off"]) if v <= 0
+                else i18n.phrase("claude.saver_sec_over", v=v)[0])
     if key == "repeat_alert":
         v = int(getattr(server, "claude_repeat_alert", 0) or 0)
-        return i18n.t(REDRAW_WORDS["off"]) if v <= 0 else str(v)
+        return (i18n.t(REDRAW_WORDS["off"]) if v <= 0
+                else i18n.phrase("claude.saver_times_over", v=v)[0])
     return ""
 
 
+def _saver_phrase(server, key):
+    """cycle 줄 값의 **재료**(pytmux-618 ⑥) — 정본 `saver_display` 의 «600초 이상»을 클라가
+    제 로케일로 다시 짓게 한다. 수만 있는 글이 아니면 None(그 칸은 낱말이라 `t()` 로 풀린다)."""
+    if key == "long_turn":
+        v = int(getattr(server, "claude_long_turn_sec", 0) or 0)
+        return None if v <= 0 else i18n.phrase("claude.saver_sec_over", v=v)
+    if key == "repeat_alert":
+        v = int(getattr(server, "claude_repeat_alert", 0) or 0)
+        return None if v <= 0 else i18n.phrase("claude.saver_times_over", v=v)
+    return None
+
+
 def _settings_spec(server, sess, selected=0):
-    rows = [{"key": key, "label": i18n.t(label),
-             "cols": [_saver_value(server, sess, key)]}
-            for key, label, _typ in _saver_rows()]
+    rows = []
+    for key, label, _typ in _saver_rows():
+        row = {"key": key, "label": i18n.t(label),
+               "cols": [_saver_value(server, sess, key)]}
+        ph = _saver_phrase(server, key)
+        if ph is not None:
+            row["cols"] = [ph[0]]
+            row["i18n"] = {"col0": ph[1]}
+        rows.append(row)
     return _spec("claude-settings", "form",
                  i18n.t("pscreen.spec_settings_title"),
                  i18n.t("pscreen.spec_settings_hint"),
@@ -422,12 +448,12 @@ def _model_spec(server, sess, selected=0):
                      "cols": [i18n.t("pscreen.spec_model_now")] if now else []})
     # ★ 정본은 모델·컨텍스트와 한도를 **한 탭**에 담는다(`[한도]` 탭). GUI 는 판을 잇는
     #   줄로 같은 곳에 닿는다 — 정본의 판 구성을 흔들지 않으면서 한 자리에서 셋에 닿는다.
-    rows.extend(_hub_rows("model"))
+    rows.extend(_hub_rows("model", server))
     return _spec("model", "list",
                  i18n.t("pscreen.spec_model_title"),
                  i18n.t("pscreen.spec_model_hint"),
-                 rows=rows, keys=_hub_keys("model", {"enter": "apply"}),
-                 selected=selected)
+                 rows=rows, keys=_hub_keys("model", {"enter": "apply"}, server=server),
+                 selected=selected, server=server)
 
 
 def _model_apply(server, sess, arg):
@@ -543,13 +569,13 @@ def _token_log_spec(server, selected=0):
     total = sum(tok for _d, tok, _p in data)
     # 자리가 있는 글은 **재료까지** 싣는다(로케일 ⓑ) — 원문이 매번 달라 키가 못 된다.
     title, title_spec = i18n.phrase("pscreen.spec_tklog_title_sum", tok=f"{total:,}")
-    rows.extend(_hub_rows("claude-token-log"))
+    rows.extend(_hub_rows("claude-token-log", server))
     return _spec("claude-token-log", "table", title,
                  i18n.t("pscreen.spec_tklog_hint"),
                  rows=rows, note=note, selected=selected,
                  head=_summary_head(server),
-                 keys=_hub_keys("claude-token-log"),
-                 carried={"title": title_spec})
+                 keys=_hub_keys("claude-token-log", server=server),
+                 carried={"title": title_spec}, server=server)
 
 
 # ── machines — 원산지 머신별 총계 (pytmux-371 ③) ──────────────────────────
@@ -595,13 +621,13 @@ def _machines_spec(server, selected=0):
             for label, tok, ratio in data]
     total = sum(tok for _l, tok, _r in data)
     title, title_spec = i18n.phrase("pscreen.spec_machines_title", tok=f"{total:,}")
-    rows.extend(_hub_rows("claude-token-machines"))
+    rows.extend(_hub_rows("claude-token-machines", server))
     return _spec("claude-token-machines", "table", title,
                  i18n.t("pscreen.spec_machines_hint"),
                  rows=rows, note=note, selected=selected,
                  head=_summary_head(server),
-                 keys=_hub_keys("claude-token-machines"),
-                 carried={"title": title_spec})
+                 keys=_hub_keys("claude-token-machines", server=server),
+                 carried={"title": title_spec}, server=server)
 
 
 # ── limits — /usage 한도(pytmux-371 ④) ────────────────────────────────────
@@ -756,12 +782,24 @@ def _limits_spec(server, sess=None, selected=0, state=None):
     for extra in ((vals or {}).get("account"), (vals or {}).get("ago")):
         if extra:
             rows.append({"key": extra, "label": extra, "cols": []})
+    # 창 Σ 줄(pytmux-618 ③) — 정본 `_usage_lines() + _window_lines()` 차례 그대로 막대 뒤.
+    # 조각은 `usagehead.window_parts` 한 벌이고(정본은 « · » 로 한 줄에 잇는다) 글은 재료를
+    # 실어 클라 로케일로 다시 짓는다.
+    if isinstance(getattr(server, "_usage", None), dict):
+        from . import usagehead
+        pl = _payload(server, sess)
+        for k, kw in usagehead.window_parts(server._usage,
+                                            (pl or {}).get("records") or [],
+                                            _t.time()):
+            text, spec = i18n.phrase(k, **kw)
+            rows.append({"key": k, "label": text, "i18n": {"label": spec},
+                         "cols": []})
     # ★ 정본은 모델·컨텍스트를 **같은 탭**에 담는다. GUI 는 판을 잇는 줄로 같은 곳에 닿는다
     #   (사용자 결정 ⓒ — 정본의 판 구성을 흔들지 않고 한 자리에서 셋에 닿는다).
     # ⚠ 사유(`note`)는 **자료 줄**이 있나로 정한다 — 아래 허브 줄은 늘 붙으므로 `rows` 로
     #   재면 «값이 없는데 사유도 없는» 판이 된다(빈 판과 실패를 못 가르는 그 자리다).
     has_data = len(rows) > mc_n
-    rows.extend(_hub_rows("claude-usage-panel"))
+    rows.extend(_hub_rows("claude-usage-panel", server))
     return _spec("claude-usage-panel", "table",
                  i18n.t("ccmsg.usage_title"), i18n.t("cusage.hint_mc"),
                  rows=rows, selected=selected,
@@ -771,7 +809,8 @@ def _limits_spec(server, sess=None, selected=0, state=None):
                  # `←→` 가 값, `Enter` 가 적용이다(pytmux-371 ④).
                  keys=_hub_keys("claude-usage-panel",
                                 {"enter": "apply", "left": "prev",
-                                 "right": "next"}))
+                                 "right": "next"}, server=server),
+                 server=server)
 
 
 # 판을 잇는 줄의 열쇠 — 라벨이 아니라 이 값으로 판정한다(라벨은 번역을 탄다).
@@ -788,15 +827,33 @@ _GOTO_SESSIONS = "goto:sessions"
 #
 # ⛔ 표를 한 곳에 두는 이유: 판마다 손으로 적으면 새 판이 생길 때 **어떤 판에서는 안 보인다**.
 #    그 조용한 갈림이 이 저장소가 반복해 물린 부류다(pytmux-35 의 죽은 줄).
+#
+# ★ **차례는 정본 띠 그대로다**(pytmux-617) — 기간 · 세션 · [머신] · 한도 · 경고
+#   (`TokenLogScreen._tab_names`). 종전 이 표는 GUI 판 목록으로 새로 지어(한도·모델·머신·
+#   경고·일별·기간·세션) 띠도 순환도 정본과 다른 차례로 돌았다. 정본에 없는 두 판(모델·
+#   일별)은 지우지 않고 **뒤에** 붙인다(`_HUB_EXTRA` — 더하기만: 정본의 차례·첫 화면·
+#   순환을 흐트러뜨리지 않는다. 순환에서도 빠진다 — 정본은 경고 다음이 기간이다).
 _HUB = (
-    (_GOTO_LIMITS, "pscreen.spec_goto_limits", "claude-usage-panel"),
-    (_GOTO_MODEL, "pscreen.spec_goto_model", "model"),
-    (_GOTO_MACHINES, "pscreen.spec_goto_machines", "claude-token-machines"),
-    (_GOTO_WARNS, "pscreen.spec_goto_warns", "claude-warn-history"),
-    (_GOTO_DAILY, "pscreen.spec_goto_daily", "claude-token-log"),
     (_GOTO_PERIOD, "pscreen.spec_goto_period", "claude-token-period"),
     (_GOTO_SESSIONS, "pscreen.spec_goto_sessions", "claude-token-sessions"),
+    (_GOTO_MACHINES, "pscreen.spec_goto_machines", "claude-token-machines"),
+    (_GOTO_LIMITS, "pscreen.spec_goto_limits", "claude-usage-panel"),
+    (_GOTO_WARNS, "pscreen.spec_goto_warns", "claude-warn-history"),
+    (_GOTO_MODEL, "pscreen.spec_goto_model", "model"),
+    (_GOTO_DAILY, "pscreen.spec_goto_daily", "claude-token-log"),
 )
+
+#: 정본 띠에 **없는** 판 — 띠 뒤에 서고 순환에서 빠진다(`PluginTab.extra`).
+_HUB_EXTRA = ("model", "claude-token-log")
+
+#: 정본 머신 탭은 **머신이 둘 이상일 때만** 있다(`TokenLogScreen._multi_host`).
+_MACHINES_SID = "claude-token-machines"
+
+#: «되돌아가기» — 한도에서 `l`, 활성 한도·경고 탭을 다시 누름(pytmux-617 · 정본은 그때
+#: 들어오기 전 탭으로 돌아간다: `_limit_mode`/`_warn_mode` 만 뒤집혀 아래의 `_view` 가 보인다).
+_GOTO_BACK = "goto:back"
+#: 정본 띠 끝의 `/usage` 액션 — 누르면 그림자 `/usage` 를 다시 묻고 판은 그대로다.
+_GOTO_USAGE = "goto:usage"
 
 _GOTO_SETTINGS = "goto:settings"
 
@@ -811,6 +868,9 @@ _GOTO_SETTINGS = "goto:settings"
 #    뿐이다 — 탭 전환이 없다. 대칭으로 만들면 정본에 없는 이동을 GUI 가 갖게 되고,
 #    그것은 [[pytmux-185]] 가 결함으로 세는 갈림이다(«있다» 가 아니라 «같게 군다»).
 _HUB_ACTIONS = (
+    # 정본 차례: `/usage` 다음 `시나리오`(pytmux-617). `/usage` 는 판이 아니라 액션이라
+    # 목적지 자리에 판 id 대신 `None` 이다(`_hub_open` 이 액션으로 다룬다).
+    (_GOTO_USAGE, "pscreen.spec_goto_usage", None),
     (_GOTO_SETTINGS, "pscreen.spec_goto_settings", "claude-settings"),
 )
 
@@ -862,10 +922,32 @@ _DO_USAGE = "refresh-usage"
 #:    로 이 줄을 풀기 때문에 이름이 섞이면 못 푼다. 그래서 두 벌이 되는데, 갈리지
 #:    않게 `tests/test_plugin_screen.py` 가 두 표를 맞대 본다.
 _HUB_KEY_DOS = ("goto:sessions", "goto:limits", "goto:machines", "goto:settings",
-                "goto:period", "refresh-usage")
+                "goto:period", "goto:back", "refresh-usage")
 
 
-def _hub_keys(current_sid, extra=None):
+def multi_host(server) -> bool:
+    """원산지 머신이 둘 이상인가 — 정본 `TokenLogScreen._multi_host` 와 같은 술어
+    (`usagehead.multi_host` 한 벌). 모르면(DB 없음) False — 정본도 그때 탭을 안 만든다."""
+    from . import usagedb, usagehead
+    getconn = getattr(server, "_tokens_db_conn", None)
+    conn = getconn() if callable(getconn) else None
+    fn = getattr(usagedb, "xc_totals_by_host", None)
+    if conn is None or fn is None:
+        return False
+    try:
+        return usagehead.multi_host(fn(conn) or {})
+    except Exception:
+        return False
+
+
+def _hub(server):
+    """이 서버에서 띠에 서는 판들(`_HUB` 의 차례) — 머신이 하나면 머신 판을 뺀다."""
+    if server is not None and not multi_host(server):
+        return tuple(h for h in _HUB if h[2] != _MACHINES_SID)
+    return _HUB
+
+
+def _hub_keys(current_sid, extra=None, server=None):
     """이 판이 무는 **글자 키** 표(`_spec(keys=…)`).
 
     스펙의 `keys` 는 「키 → 플러그인 액션」이고 클라는 **표에 있는 글자만** 먹는다
@@ -876,9 +958,18 @@ def _hub_keys(current_sid, extra=None):
     `action()` 이 이미 그 문자열로 판을 여는 표(`_hub_open`)를 갖고 있어, 갈래를
     새로 적을 자리가 없다(적으면 줄과 키가 따로 낡는다)."""
     keys = dict(extra or {})
+    no_machines = server is not None and not multi_host(server)
     for letter, sid in _KEY_TABS.items():
-        # 지금 판이 목적지면 정본처럼 **기간으로 되돌아온다**(위 ⚠).
-        target = _GOTO_PERIOD if sid == current_sid else _goto_of(sid)
+        # 정본 `o` 는 머신이 둘 이상일 때만 뜻이 있다(아니면 예약 무동작 — 이 클라는 표에
+        # 없는 글자에 이미 아무 일도 안 한다).
+        if sid == _MACHINES_SID and no_machines:
+            continue
+        # 지금 판이 목적지면 정본처럼 **되돌아온다**(위 ⚠): 세션·머신은 기간으로, 한도는
+        # **들어오기 전 탭**으로(정본 `l` 은 `_limit_mode` 만 뒤집는다 · pytmux-617).
+        if sid == current_sid:
+            target = _GOTO_BACK if sid == "claude-usage-panel" else _GOTO_PERIOD
+        else:
+            target = _goto_of(sid)
         if target is not None:
             keys[letter] = target
     keys[_KEY_USAGE] = _DO_USAGE
@@ -923,22 +1014,26 @@ def _goto_of(sid):
     return None
 
 
-def _hub_neighbor(current_sid, forward=True):
+def _hub_neighbor(current_sid, forward=True, server=None):
     """띠에서 지금 판의 **이웃 판**으로 가는 열쇠(`goto:*`) — 끝에서 감는다(pytmux-516).
 
     액션 탭(`_HUB_ACTIONS` · 시나리오)은 순환의 한 자리가 아니다 — 그것은 뷰가 아니라
     겹쳐 뜨는 판이다(그 표의 머리말). GUI 의 `PluginScreen::tab_neighbor` 와 **같은
     규칙**이고, 정본 `TokenLogScreen._cycle_tab` 은 제가 가진 뷰 다섯을 같은 차례로 돈다.
     모르는 판이면 `None`."""
-    sids = [sid for _key, _label, sid in _HUB]
+    hub = [h for h in _hub(server) if h[2] not in _HUB_EXTRA]
+    sids = [sid for _key, _label, sid in hub]
+    if current_sid in _HUB_EXTRA:
+        # 정본에 없는 판에서는 정본 띠의 처음·끝으로 들어간다(Rust `tab_neighbor` 와 같다).
+        return hub[0][0] if forward else hub[-1][0]
     if current_sid not in sids:
         return None
     i = sids.index(current_sid)
     j = (i + (1 if forward else -1)) % len(sids)
-    return _HUB[j][0]
+    return hub[j][0]
 
 
-def _hub_rows(current_sid):
+def _hub_rows(current_sid, server=None):
     """지금 판을 뺀 **나머지로 가는 줄들** + 띠 끝의 액션 줄들. 자기 자신으로 가는 줄은
     안 만든다(누르면 아무 일도 안 나는 줄은 거짓말이다)."""
     # 칸을 다 채우는 이유: 트리 판(경고 이력)과 목록 판이 같은 줄 모양을 받아야 소비자가
@@ -950,11 +1045,17 @@ def _hub_rows(current_sid):
     #   말**이다. 재료를 안 실으면 서버 로케일로 굳는다 — 실측(2026-08-26 · Windows
     #   프레임): 영어로 뜬 판인데 잇는 줄만 «한도(/usage) 보기 →» 로 한국어였다.
     rows = []
-    for key, label_key, sid in _HUB + _HUB_ACTIONS:
+    for key, label_key, sid in _hub(server) + _HUB_ACTIONS:
         if sid == current_sid:
             continue
         text, spec = i18n.phrase(label_key)
         rows.append({"key": key, "label": text, "i18n": {"label": spec},
+                     "cols": [], "depth": 0, "expand": ""})
+    # 한도·경고의 **활성 탭을 다시 누르면** 들어오기 전 탭으로 간다(정본 `on_click` 의
+    # 토글) — 띠가 그 탭에 `goto:back` 을 싣고, 그 열쇠의 줄이 여기 있다.
+    if current_sid in ("claude-usage-panel", "claude-warn-history"):
+        text, spec = i18n.phrase("pscreen.spec_goto_back")
+        rows.append({"key": _GOTO_BACK, "label": text, "i18n": {"label": spec},
                      "cols": [], "depth": 0, "expand": ""})
     return rows
 
@@ -970,10 +1071,22 @@ _TAB_LABELS = {
     "claude-token-log": "pscreen.tab_daily",
     "model": "pscreen.tab_model",
     "claude-settings": "pscreen.tab_settings",
+    _GOTO_USAGE: "pscreen.tab_usage",
 }
 
 
-def _hub_tabs(current_sid):
+def _active_tab_key(sid):
+    """활성 탭을 다시 눌렀을 때의 열쇠 — 정본 `on_click` 의 토글(pytmux-617): 세션·머신은
+    기간으로, 한도·경고는 들어오기 전 탭으로. 기간·GUI 전용 판은 제 열쇠(누르면 아무 일
+    없음 — 정본 기간 탭 클릭도 기간 그대로다)."""
+    if sid in ("claude-token-sessions", _MACHINES_SID):
+        return _GOTO_PERIOD
+    if sid in ("claude-usage-panel", "claude-warn-history"):
+        return _GOTO_BACK
+    return _goto_of(sid)
+
+
+def _hub_tabs(current_sid, server=None):
     """정본 토큰 팝업의 **탭 띠**(`#tktabs`)를 자료로 — GUI 가 그린다(pytmux-130 · 사용자
     지시 2026-09-04 가 465 ⑥ 의 「이 계획에서는 안 연다」를 뒤집었다).
 
@@ -990,14 +1103,17 @@ def _hub_tabs(current_sid):
     ★ 글까지 재료로 싣는다(`_hub_rows` 와 같은 이유 — 이 라벨은 자료가 아니라 우리가
     적은 말이라, 재료가 없으면 서버 로케일로 굳는다)."""
     tabs = []
-    for key, label_key, sid in _HUB:
+    for key, label_key, sid in _hub(server):
         text, spec = i18n.phrase(_TAB_LABELS.get(sid, label_key))
-        tabs.append({"key": key, "label": text, "i18n": {"label": spec},
-                     "active": sid == current_sid, "action": False})
+        active = sid == current_sid
+        tabs.append({"key": _active_tab_key(sid) if active else key,
+                     "label": text, "i18n": {"label": spec},
+                     "active": active, "action": False,
+                     "extra": sid in _HUB_EXTRA})
     for key, label_key, sid in _HUB_ACTIONS:
-        text, spec = i18n.phrase(_TAB_LABELS.get(sid, label_key))
+        text, spec = i18n.phrase(_TAB_LABELS.get(sid or key, label_key))
         tabs.append({"key": key, "label": text, "i18n": {"label": spec},
-                     "active": sid == current_sid, "action": True})
+                     "active": sid == current_sid, "action": True, "extra": False})
     return tabs
 
 
@@ -1052,43 +1168,83 @@ def _reset_folds(state):
             state.pop(key, None)
 
 
-def _hub_open(server, sess, picked, state=None):
+#: 정본 `_view` 자리 — 한도·경고가 **위에 겹쳐 뜨는** 바닥 뷰(pytmux-617). 한도에서 `l`·활성
+#: 탭 재클릭이 여기로 돌아온다. `_UNDER_WARN` 은 «경고에서 `l` 로 한도에 왔나»(정본 `l` 은
+#: `_warn_mode` 를 안 지워서, 한 번 더 `l` 하면 경고가 다시 보인다).
+_UNDER = "tk_under"
+_UNDER_WARN = "tk_under_warn"
+_BASE_VIEWS = ("claude-token-period", "claude-token-sessions", _MACHINES_SID)
+
+
+def _note_landing(state, spec, came_from=None, via_l=False):
+    """판을 옮긴 뒤 바닥 뷰 기록을 고친다 — 정본 `_view`·`_warn_mode` 의 움직임 그대로."""
+    if not isinstance(state, dict) or not isinstance(spec, dict):
+        return
+    sid = spec.get("id")
+    if sid in _BASE_VIEWS:
+        state[_UNDER] = sid
+        state[_UNDER_WARN] = False
+    elif sid == "claude-usage-panel":
+        state[_UNDER_WARN] = bool(via_l and came_from == "claude-warn-history")
+    elif sid == "claude-warn-history":
+        state[_UNDER_WARN] = False
+
+
+def _back_target(state, current_sid):
+    """`goto:back` 의 목적지 판 id(정본 `l`/활성 탭 재클릭)."""
+    under = (state or {}).get(_UNDER) if isinstance(state, dict) else None
+    under = under if under in _BASE_VIEWS else "claude-token-period"
+    if current_sid == "claude-usage-panel" and isinstance(state, dict) \
+            and state.get(_UNDER_WARN):
+        return "claude-warn-history"
+    return under
+
+
+def _open_sid(server, sess, sid, state=None):
+    """판 id → 그 판의 첫 스펙(띠의 판들 · 액션 판)."""
+    if sid == "claude-settings":
+        return _settings_spec(server, sess)
+    if sid == "claude-usage-panel":
+        return _limits_spec(server, sess, state=state)
+    if sid == "model":
+        return _model_spec(server, sess)
+    if sid == _MACHINES_SID:
+        return _machines_spec(server)
+    if sid == "claude-warn-history":
+        return _warn_spec(server, sess, opened=_folds_or_none(state, "warn_open"))
+    if sid == "claude-token-log":
+        return _token_log_spec(server)
+    if sid == "claude-token-period":
+        return _period_spec(server, sess, opened=_folds(state, "tree_open"))
+    if sid == "claude-token-sessions":
+        return _sessions_spec(server, sess)
+    return None
+
+
+def _hub_open(server, sess, picked, state=None, current_sid=None):
     """잇는 줄을 눌렀을 때 열 판. 내 줄이 아니면 `None`.
 
     ★ 접힘은 **탭을 옮겨도 산다** — 정본에서 이 판들은 한 팝업의 탭이라 트리를 펴 놓고
     [세션] 에 들렀다 [기간] 으로 돌아오면 편 채로 있다(화면 인스턴스가 그대로다).
     그래서 여는 판에 보관함의 집합을 그대로 건넨다(pytmux-419 ④).
     """
+    if picked == _GOTO_BACK:
+        return _open_sid(server, sess, _back_target(state, current_sid), state)
     for key, _label, sid in _HUB + _HUB_ACTIONS:
         if picked != key:
             continue
-        if sid == "claude-settings":
-            return _settings_spec(server, sess)
-        if sid == "claude-usage-panel":
-            return _limits_spec(server, sess, state=state)
-        if sid == "model":
-            return _model_spec(server, sess)
-        if sid == "claude-token-machines":
-            return _machines_spec(server)
-        if sid == "claude-warn-history":
-            return _warn_spec(server, open_days=_folds_or_none(state, "warn_open"))
-        if sid == "claude-token-log":
-            return _token_log_spec(server)
-        if sid == "claude-token-period":
-            return _period_spec(server, opened=_folds(state, "tree_open"))
-        if sid == "claude-token-sessions":
-            return _sessions_spec(server)
+        if sid is None:
+            return None          # 액션(`/usage`) — 판이 아니다(`action` 이 다룬다)
+        return _open_sid(server, sess, sid, state)
     return None
 
 
-# ── warns — Claude 경고 이력 (pytmux-371 ⑤) ───────────────────────────────
+# ── warns — Claude 경고 (pytmux-371 ⑤ · pytmux-618 ②) ────────────────────────
 def _warn_rows(server):
-    """`(날짜, [경고 …])` 목록(최신 날짜 먼저)과 안내 한 줄.
+    """`(날짜, [경고 …])` 목록(최신 날짜 먼저)과 안내 한 줄 — 옛 날짜 묶음 판의 자료.
 
-    이력의 주인은 서버다(`_read_warn_history` — onset 을 JSONL 로 쌓는다). 여기서 파일을
-    다시 읽지 않는 이유는 그 함수가 정렬·상한·깨진 줄 건너뛰기를 이미 정해 두었기
-    때문이다 — 두 벌이 되면 두 화면이 다른 이력을 보인다.
-    """
+    ⚠ 판은 이제 이것을 안 쓴다(`_warn_spec` = 정본 트리). 시험·도구가 이력의 날짜 묶음을
+    보는 자리로 남긴다."""
     reader = getattr(server, "_read_warn_history", None)
     if not callable(reader):
         return [], i18n.t("pscreen.spec_warns_nodb")
@@ -1103,60 +1259,104 @@ def _warn_rows(server):
     return [(d, by_day[d]) for d in days], ("" if days else i18n.t("pscreen.spec_warns_empty"))
 
 
-def _warn_spec(server, selected=0, open_days=None):
-    """날짜별로 **접었다 펴는** 트리. 자리는 `depth`·`expand` 로 싣는다(스펙 계약).
+#: 정본 경고 트리의 기본 펼침 — 활성 노드만(`TokenLogScreen._warn_open = {"active"}`).
+_WARN_OPEN_DEFAULT = ("active",)
 
-    ★ 첫 날(최신)은 펴 둔다 — 판을 열자마자 «방금 무슨 경고가 있었나»가 보여야 하고,
-    전부 접혀 있으면 한 번 더 눌러야 그것을 안다.
+
+def _warn_nodes(server, sess, opened):
+    """정본 `[경고]` 탭과 **같은 트리**(`warntree.build`) — `(제목, 노드, 사유)`.
+
+    활성 경고는 활성 패널의 것이다(정본은 status 의 `claude_warn*` 를 보고, status 는
+    서버가 활성 패널에서 채운다). 이력은 정본 회신과 같은 50건(`token_log_payload`)."""
+    from . import warntree
+    reader = getattr(server, "_read_warn_history", None)
+    if not callable(reader):
+        return i18n.t("pscreen.tklog_warn_title"), [], i18n.t("pscreen.spec_warns_nodb")
+    hist = reader(50) or []
+    ap = _active_pane(sess)
+    title, nodes = warntree.build(
+        getattr(ap, "_claude_warn", None) if ap is not None else None,
+        getattr(ap, "_claude_warn_kind", None) if ap is not None else None,
+        getattr(ap, "_claude_warn_n", None) if ap is not None else None,
+        hist, opened)
+    return title, nodes, ""
+
+
+def _warn_spec(server, sess=None, selected=0, opened=None):
+    """정본 `[경고]` 탭의 트리를 자료로 — 활성 노드(기본 펼침) · 이력 라벨 · 이력 노드(기본
+    접힘) · 상황·할 일 본문(pytmux-618 ②). 종전 판은 날짜 묶음에 `HH:MM 배지 ×n` 만
+    있어 «무엇을 하라는가»가 없었다.
+
+    로케일: 배지·본문은 **재료를 실어** 클라가 자기 말로 다시 짓는다. 본문 줄은 카탈로그
+    본문의 줄 번호로 한국어 원문 줄을 골라 싣는다(ko/en 본문의 줄 수가 같다 — 시험이 잰다).
     """
-    import time as _t
-    data, note = _warn_rows(server)
-    opened = set(open_days if open_days is not None else ([data[0][0]] if data else []))
+    from . import warntree
+    opened = set(_WARN_OPEN_DEFAULT if opened is None else opened)
+    title, nodes, note = _warn_nodes(server, sess, opened)
     rows = []
-    for day, recs in data:
-        rows.append({"key": day, "label": day, "depth": 0,
-                     "expand": "open" if day in opened else "shut",
-                     # ⚠ 칸은 클라가 `t()` 로 다시 읽는다(`PluginRow::say_cols`) — 그래서
-                     #   **서버가 포맷한 글**(`"{n}건"` → `"3건"`)은 영어 UI 에서 한국어로
-                     #   뜬다(게이트 `the_number_of_strings_we_cannot_translate…` 가 그 수를
-                     #   센다). 숫자는 로케일 중립이라 그대로 싣고, 뜻은 그 줄이 날짜라는
-                     #   자리로 이미 말한다.
-                     "cols": [str(len(recs))]})
-        if day not in opened:
-            continue
-        for r in recs:
-            ts = float(r.get("ts") or 0)
-            when = _t.strftime("%H:%M", _t.localtime(ts)) if ts else "--:--"
-            badge = str(r.get("badge") or r.get("kind") or "?")
-            n = r.get("n")
-            cols = [] if not n else [f"×{n}"]
-            rows.append({"key": f"{day}/{ts}", "label": f"{when}  {badge}",
-                         "depth": 1, "expand": "", "cols": cols})
-    rows.extend(_hub_rows("claude-warn-history"))
-    return _spec("claude-warn-history", "list",
-                 i18n.t("pscreen.spec_warns_title"),
+    for nd in nodes:
+        if nd["type"] == "head":
+            phrase = warntree.badge_phrase(nd["kind"], nd.get("n"))
+            row = {"key": nd["key"], "depth": 0,
+                   "expand": "open" if nd["open"] else "shut"}
+            if nd["when"]:
+                # 이력 노드 — 정본 «MM-DD HH:MM · 배지» 를 이름(시각)과 칸(배지)으로 가른다:
+                # 시각은 자료, 배지는 말이라 칸의 재료로 클라 로케일에 다시 짓는다.
+                badge = nd["text"][len(nd["when"]) + 3:]
+                row.update({"label": nd["when"], "cols": [badge]})
+                if phrase is not None:
+                    row["i18n"] = {"col0": phrase}
+            else:
+                row.update({"label": nd["text"], "cols": []})
+                if phrase is not None:
+                    row["i18n"] = {"label": phrase}
+            rows.append(row)
+        elif nd["type"] == "body":
+            src = i18n.phrase(f"claude.warn_{warntree.body_key(nd['kind'])}_body")[1]
+            lines = (src.get("fmt") or "").split("\n")
+            ko = lines[nd["line"]] if nd["line"] < len(lines) else nd["text"]
+            rows.append({"key": nd["key"], "label": nd["text"], "cols": [],
+                         "depth": 1, "expand": "",
+                         "i18n": {"label": {"fmt": ko, "args": {}}}})
+        else:
+            text, spec = i18n.phrase(nd["msg"])
+            rows.append({"key": "", "label": text, "i18n": {"label": spec},
+                         "cols": [], "depth": 0, "expand": ""})
+    rows.extend(_hub_rows("claude-warn-history", server))
+    ap = _active_pane(sess)
+    _title, title_spec = i18n.phrase(warntree.title_key(
+        getattr(ap, "_claude_warn", None) if ap is not None else None,
+        getattr(ap, "_claude_warn_kind", None) if ap is not None else None))
+    return _spec("claude-warn-history", "list", title,
                  i18n.t("pscreen.spec_warns_hint"),
                  rows=rows, note=note, selected=selected,
+                 carried={"title": title_spec},
                  head=_summary_head(server),
-                 keys=_hub_keys("claude-warn-history", {"enter": "toggle"}))
+                 keys=_hub_keys("claude-warn-history",
+                                {"enter": "toggle", "space": "toggle",
+                                 "left": "collapse", "right": "expand"}, server=server),
+                 server=server)
 
 
 # ── period·sessions — 기간별·세션별 (pytmux-371 ①②) ──────────────────────
-def _usage_records(server, limit=4000):
-    """토큰 기록 목록 — 정본 팝업이 받는 것과 **같은 질의**다.
+def _payload(server, sess=None):
+    """정본 토큰 팝업이 받는 **그 회신**(`token_log_payload` · limit 5000) — 판들이 같은 질의를
+    본다(pytmux-618). DB 를 못 열면 `None`(판은 «DB 를 열 수 없습니다» 를 말한다).
 
-    트랜스크립트 권위(`usage_xc`)가 있으면 그것을, 없으면 스크랩 집계로 우아하게 내려간다
-    (정본 `server_command`(token_log)의 그 차례 그대로). 여기서 다른 것을 고르면 두 화면의
-    수가 갈린다.
-    """
-    from . import usagedb
+    ⛔ 종전에는 판이 따로 4000 건만 읽었고, 기간 트리는 일·시각 **전체 이력**(`daily`·
+    `hourly`)을 못 받았다 — `server._hourly_index` 를 읽었는데 그 속성은 아무도 안 세운다.
+    그래서 GUI 트리는 최근 원시 기록 창 밖의 날을 못 폈다(정본은 편다)."""
     getconn = getattr(server, "_tokens_db_conn", None)
-    conn = getconn() if callable(getconn) else None
-    if conn is None:
+    if not callable(getconn) or getconn() is None:
         return None
-    if hasattr(usagedb, "xc_count") and usagedb.xc_count(conn) > 0             and hasattr(usagedb, "xc_query_records"):
-        return usagedb.xc_query_records(conn, limit=limit)
-    return usagedb.query_records(conn, limit=limit)
+    from . import token_log_payload
+    return token_log_payload(server, sess)
+
+
+def _usage_records(server, limit=5000):
+    """토큰 기록 목록 — 정본 팝업이 받는 것과 **같은 질의**다(`_payload` 의 `records`)."""
+    pl = _payload(server)
+    return None if pl is None else (pl.get("records") or [])
 
 
 def _agg_rows(server, bucket="day", dim="account", order="time"):
@@ -1289,7 +1489,22 @@ def _limit_cols(node, pct5h, pct1w):
             [usagehead.pct_level(a), usagehead.pct_level(b)])
 
 
-def _tree_rows(server, opened=()):
+def _tree_nodes(server, opened=(), sess=None):
+    """정본과 같은 입력으로 지은 트리 노드 — `(nodes, 사유, payload)`. DB 없음 = `(None, 사유, None)`."""
+    pl = _payload(server, sess)
+    if pl is None:
+        return None, i18n.t("pscreen.spec_tklog_nodb"), None
+    recs = pl.get("records") or []
+    if not recs:
+        return [], i18n.t("pscreen.spec_tklog_empty"), pl
+    from . import usagelog, usagetree
+    daily = pl.get("daily")
+    full = usagelog.daily_to_records(daily) if daily else None
+    nodes, _total = usagetree.build(recs, full, pl.get("hourly"), opened)
+    return nodes, "", pl
+
+
+def _tree_rows(server, opened=(), sess=None):
     """정본과 **같은 산수**로 만든 계층 트리 줄들(pytmux-371 ①).
 
     ⛔ 여기서 트리를 다시 짜지 않는다 — `usagetree.build` 한 벌을 부른다. 구역을 가르는
@@ -1300,15 +1515,11 @@ def _tree_rows(server, opened=()):
     지배하고, 그러면 아래 행들의 막대가 무의미하게 짧아진다(정본 `_refresh_tree` 가 같은
     이유로 월·연 합계에 막대를 안 그린다).
     """
-    recs = _usage_records(server)
-    if recs is None:
-        return None, i18n.t("pscreen.spec_tklog_nodb")
-    if not recs:
-        return [], i18n.t("pscreen.spec_tklog_empty")
-    from . import usagetree
-    hourly = getattr(server, "_hourly_index", None)
-    nodes, _total = usagetree.build(recs, None, hourly, opened)
-    pct5h, pct1w = _limit_pcts(server)
+    nodes, note, pl = _tree_nodes(server, opened, sess)
+    if not nodes:
+        return nodes, note
+    pct5h = (pl or {}).get("hourly_pct") or {}
+    pct1w = (pl or {}).get("hourly_week_pct") or {}
     leaf = [n["tokens"] for n in nodes if n["kind"] in ("day", "hour")]
     top = max(leaf, default=0)
     rows = []
@@ -1339,35 +1550,66 @@ def _tree_rows(server, opened=()):
     return rows, ""
 
 
-def _period_spec(server, selected=0, opened=None):
+def _period_spec(server, sess=None, selected=0, opened=None):
     """기간 판 — 정본과 같은 **계층 트리**(pytmux-371 ①).
 
     펼침 상태(`opened`)는 **클라가 든다** — 경고 판(`_warn_spec`)과 같은 처방이다.
     서버가 들면 같은 서버를 보는 클라 둘이 서로의 펼침을 흔든다.
     """
-    rows, note = _tree_rows(server, opened or ())
+    rows, note = _tree_rows(server, opened or (), sess)
     rows = list(rows or [])
-    rows.extend(_hub_rows("claude-token-period"))
+    rows.extend(_hub_rows("claude-token-period", server))
     return _spec("claude-token-period", "table",
                  i18n.t("pscreen.spec_period_title"),
                  i18n.t("pscreen.spec_period_hint"),
                  rows=rows, note=note, selected=selected,
                  head=_summary_head(server),
                  keys=_hub_keys("claude-token-period",
-                                {"enter": "toggle", "right": "expand",
-                                 "left": "collapse"}))
+                                {"enter": "toggle", "space": "toggle",
+                                 "right": "expand", "left": "collapse"}, server=server),
+                 server=server)
 
 
-def _sessions_spec(server, selected=0):
-    items, note = _agg_rows(server, bucket="day", dim="session", order="tokens")
-    rows = _bar_rows(items or [])
-    rows.extend(_hub_rows("claude-token-sessions"))
+def _sessions_spec(server, sess=None, selected=0):
+    """정본 `[세션]` 탭과 같은 줄(pytmux-618 ①) — **시작 시각 내림차순** · 세션 | 시각 |
+    토큰 | 막대 · 지금 활성 세션 강조(`tag="active"`). 줄 짓기는 `usagelog.session_table`
+    한 벌이고 입력은 정본 회신 그대로다(`_payload`).
+
+    종전 판은 토큰 많은 순 · 시각 칸 없음 · 정본에 없는 비중% 칸이었다."""
+    from . import hour_suffix, usagelog
+    pl = _payload(server, sess)
+    rows = []
+    note = ""
+    if pl is None:
+        note = i18n.t("pscreen.spec_tklog_nodb")
+    else:
+        recs = pl.get("records") or []
+        daily = pl.get("daily")
+        full = usagelog.daily_to_records(daily) if daily else None
+        st = usagelog.session_table(recs, full, hour_suffix=hour_suffix())
+        top = st["gmax"] or 0
+        act = pl.get("active_session")
+        for i, (label, tok, _share) in enumerate(st["groups"]):
+            row = {"key": str(label), "label": str(label),
+                   "cols": [st["times"][i] if i < len(st["times"]) else "",
+                            f"{int(tok):,}"],
+                   "depth": 0, "expand": "",
+                   "bar": (max(0, min(1000, int(round(tok / top * 1000))))
+                           if top else 0)}
+            if act is not None and usagelog.session_id_of_label(label) == act:
+                row["tag"] = "active"
+            rows.append(row)
+        if not st["total"]:
+            rows = []
+            note = i18n.t("pscreen.spec_tklog_empty")
+    rows.extend(_hub_rows("claude-token-sessions", server))
     return _spec("claude-token-sessions", "table",
                  i18n.t("pscreen.spec_sessions_title"),
                  i18n.t("pscreen.spec_sessions_hint"),
                  rows=rows, note=note, selected=selected,
                  head=_summary_head(server),
-                 keys=_hub_keys("claude-token-sessions", {"enter": "apply"}))
+                 keys=_hub_keys("claude-token-sessions", {"enter": "apply"}, server=server),
+                 server=server)
 
 
 # ── 진입점 ────────────────────────────────────────────────────────────────
@@ -1385,22 +1627,31 @@ def open_spec(server, sess, name, args=(), state=None):
         return _settings_spec(server, sess)
     if name in DETAIL:
         return _detail_spec(server, sess)
+    if name in MODEL + TOKEN_LOG + MACHINES + LIMITS + WARNS + PERIOD + SESSIONS:
+        # 토큰 팝업을 **새로 연다** — 정본은 새 화면 인스턴스라 바닥 뷰가 기간이고 겹친
+        # 모드가 없다(pytmux-617). 펼침도 기본으로(`_reset_folds`).
+        _reset_folds(state)
+        if isinstance(state, dict):
+            state[_UNDER] = "claude-token-period"
+            state[_UNDER_WARN] = False
     if name in MODEL:
-        return _model_spec(server, sess)
+        # 정본 `model` = `open_model_config` = 토큰 팝업의 **한도 탭**(첫 두 줄이 모델·
+        # 컨텍스트 고르개). 모델 평면 목록은 GUI 전용 탭으로만 남는다(pytmux-617).
+        return _limits_spec(server, sess, state=state)
     if name in TOKEN_LOG:
-        return _token_log_spec(server)
+        # 정본 `claude-token-log` 의 첫 화면 = **기간 트리**(`_view == "time"` · pytmux-617).
+        # 일별 평면 목록은 정본에 없는 판이라 띠 뒤의 «일별» 탭으로만 남는다.
+        return _period_spec(server, sess)
     if name in MACHINES:
         return _machines_spec(server)
     if name in LIMITS:
         return _limits_spec(server, sess, state=state)
     if name in WARNS:
-        _reset_folds(state)
-        return _warn_spec(server)
+        return _warn_spec(server, sess)
     if name in PERIOD:
-        _reset_folds(state)
-        return _period_spec(server)
+        return _period_spec(server, sess)
     if name in SESSIONS:
-        return _sessions_spec(server)
+        return _sessions_spec(server, sess)
     if name in PERM:
         pane_id = _as_pane_id(args[0] if args else None)
         if isinstance(state, dict):
@@ -1461,19 +1712,26 @@ def action(server, sess, req):
         #    (`tests/test_plugin_do_wiring.py`)가 «이 이름들을 여기서 받는다»를
         #    **읽어서** 알 수 있다 — 그 자는 부르지 않고 읽으므로, 여기서 이름이
         #    글자로 안 보이면 이 판의 키가 통째로 그 게이트 밖으로 나간다.
+        state = req.get("state")
         if do in _HUB_KEY_DOS:
             # 정본 `k == "u"` — 그림자 `/usage` 갱신. 판은 그대로 두고 결과는 status 로
             # 온다(정본도 제목만 "조회 중…" 으로 바꾸고 표를 안 닫는다).
             if do == _DO_USAGE:
                 _refresh_usage(server)
                 return None
-            jumped = _hub_open(server, sess, do)
+            jumped = _hub_open(server, sess, do, state, sid)
             if jumped is not None:
+                _note_landing(state, jumped, sid, via_l=(do == _GOTO_LIMITS))
                 return jumped
         # ⑵ 줄을 눌러 잇는 길(마우스·Enter). GUI 의 문법은 «누를 자리가 보이는 것»이라
         #    글자 키와 **둘 다** 둔다 — 정본도 탭 버튼과 글자 키를 함께 갖는다.
-        jumped = _hub_open(server, sess, str(picked or ""), req.get("state"))
+        if str(picked or "") == _GOTO_USAGE:
+            # 정본 띠 끝의 `/usage` 단추(pytmux-617) — 판은 그대로다.
+            _refresh_usage(server)
+            return None
+        jumped = _hub_open(server, sess, str(picked or ""), state, sid)
         if jumped is not None:
+            _note_landing(state, jumped, sid)
             return jumped
     if sid == "model":
         if do == "apply":
@@ -1481,48 +1739,46 @@ def action(server, sess, req):
             return _close(sid)
         return None
     if sid == "claude-warn-history":
-        if do == "toggle":
-            # 어느 날짜가 펴져 있나는 **클라가 든다**(스펙의 `expand`) — 서버가 그 상태를
-            # 들면 클라마다 다른 판을 봐야 할 때 갈린다. 클라가 지금 펴진 날짜 목록을
-            # 실어 보내고 우리는 그 목록으로 다시 짓는다.
+        # 정본 경고 트리의 손 — Enter/Space 토글 · → 펼침 · ← 접힘(본문 줄에서도 그 노드) ·
+        # 커서는 그 노드의 머리로(`_warn_apply`). 펼침 집합은 연결 보관함이 든다.
+        if do in ("toggle", "expand", "collapse"):
+            from . import warntree
             state = req.get("state")
             opened = _folds_or_none(state, "warn_open")
             if opened is None:
-                # 판이 처음 선 모양(최신 날짜만 펴짐)이 곧 출발점이다 — 그것을 안 담고
-                # 빈 집합에서 출발하면 첫 누름이 «최신 날짜를 접는다» 가 아니라 «두
-                # 번째 날짜만 편다» 가 되어 판이 눈앞에서 튄다.
-                data, _n = _warn_rows(server)
-                opened = {data[0][0]} if data else set()
-            picked_day = str(picked or "").split("/")[0]
-            if picked_day:
-                opened.symmetric_difference_update({picked_day})
+                opened = set(_WARN_OPEN_DEFAULT)
+            _title, nodes, _note = _warn_nodes(server, sess, opened)
+            key = warntree.toggle(nodes, opened, row, do)
             _remember_folds(state, "warn_open", opened)
-            return _warn_spec(server, row, open_days=opened)
+            if key is None:
+                return _warn_spec(server, sess, row, opened)
+            _t2, after, _n2 = _warn_nodes(server, sess, opened)
+            return _warn_spec(server, sess, warntree.head_row(after, key), opened)
         return None
     if sid == "claude-token-period":
-        # 정본 트리의 손 그대로다 — `Enter`/`space` 토글 · `→` 펼침 · `←` 접힘
-        # (`screens.TokenLogScreen.on_key` 의 `tree_active` 갈래).
+        # 정본 트리의 손 그대로다 — `Enter`/`space` 토글 · `→` 펼침 · `←` 접힘(잎·접힌
+        # 노드면 **부모**를 접고 커서를 부모로 · `screens.TokenLogScreen.on_key`).
+        # ⛔ 집합은 «뒤집은 집합»이다(`usagetree.build`) — «지금 펴져 있나»는 키가 아니라
+        #    **지은 노드**에서 읽는다(pytmux-618 ④⑤: 종전에는 add/discard 라 기본 펼침 노드에서
+        #    → 가 접고 ← 가 아무 일도 안 했다). 잎은 열쇠가 비어 있어 줄 번호로 찾는다.
         if do in ("toggle", "expand", "collapse"):
-            # 어느 노드가 펴져 있나는 **클라가 든다**(경고 판과 같은 처방 — 서버가 들면
-            # 같은 서버를 보는 클라 둘이 서로의 펼침을 흔든다).
+            from . import usagetree
             state = req.get("state")
             opened = _folds(state, "tree_open")
-            key = str(picked or "")
-            if key:
-                # 정본 `_tree_open` 은 `기본값 ^ 토글`이라 «펼침 집합»이 아니라
-                # **«뒤집은 집합»**이다 — 그래서 대칭차다(`_warn_spec` 과 같은 자리).
-                if do == "toggle":
-                    opened.symmetric_difference_update({key})
-                elif do == "expand":
-                    opened.add(key)
+            nodes, _note, _pl = _tree_nodes(server, opened, sess)
+            target = row
+            if nodes:
+                if do == "collapse":
+                    got = usagetree.collapse_or_parent(nodes, opened, row)
+                    target = row if got is None else got
                 else:
-                    opened.discard(key)
+                    usagetree.toggle(nodes, opened, row, do)
             _remember_folds(state, "tree_open", opened)
-            return _period_spec(server, selected=row, opened=opened)
+            return _period_spec(server, sess, selected=target, opened=opened)
         return None
     if sid == "claude-token-sessions":
         if do == "apply":
-            return _sessions_spec(server, selected=row)
+            return _sessions_spec(server, sess, selected=row)
         return None
     if sid == "claude-usage-panel":
         state = req.get("state")
@@ -1535,8 +1791,12 @@ def action(server, sess, req):
                         1 if do == "next" else -1):
                 return _limits_spec(server, sess, row, state)
             jumped = _hub_open(server, sess,
-                               _hub_neighbor("claude-usage-panel", do == "next"), state)
-            return jumped if jumped is not None else _limits_spec(server, sess, row, state)
+                               _hub_neighbor("claude-usage-panel", do == "next", server),
+                               state, sid)
+            if jumped is not None:
+                _note_landing(state, jumped, sid)
+                return jumped
+            return _limits_spec(server, sess, row, state)
         if do == "apply":
             # 고르개 줄에서의 `Enter` = **적용**(정본 `_mc_apply` 와 같은 길 — 활성
             # 패널에 `/model <인자>` 를 친다). 정본은 팝업을 **안 닫는다**: 연속 조정을

@@ -1103,3 +1103,20 @@ fn the_esc_table_can_reach_the_block_mode() {
         Some(crate::Action::SelectBlocks)
     );
 }
+
+// ── pytmux-629 · 번호로 탭을 고르는 입구 전수(정본이 «없는 번호»에서 깜빡이는 자리) ──
+
+#[test]
+fn the_number_tab_entries_are_exactly_the_ones_the_canon_blinks_on() {
+    use crate::keys::number_tab_key;
+    // 평소 Alt+숫자 · 맥 ⌥숫자열(번호 없는 `-`/`=` 도 입구) · esc 모드 숫자.
+    assert_eq!(number_tab_key(InputMode::Normal, Key::Char('9'), Mods::ALT), Some(Some(9)));
+    let opt_minus = crate::keys::MAC_OPT_NUMBER_ROW.iter().find(|(_, k)| *k == '-').unwrap().0;
+    assert_eq!(number_tab_key(InputMode::Normal, Key::Char(opt_minus), Mods::NONE), Some(None));
+    let opt_three = crate::keys::MAC_OPT_NUMBER_ROW.iter().find(|(_, k)| *k == '3').unwrap().0;
+    assert_eq!(number_tab_key(InputMode::Normal, Key::Char(opt_three), Mods::NONE), Some(Some(3)));
+    assert_eq!(number_tab_key(InputMode::Command, Key::Char('9'), Mods::NONE), Some(Some(9)));
+    // ⛔ 대조군 — prefix 숫자 · 평소 맨 숫자는 입구가 아니다(정본도 거기서는 안 깜빡인다).
+    assert_eq!(number_tab_key(InputMode::Prefix, Key::Char('9'), Mods::NONE), None);
+    assert_eq!(number_tab_key(InputMode::Normal, Key::Char('9'), Mods::NONE), None);
+}

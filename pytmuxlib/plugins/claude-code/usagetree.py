@@ -161,3 +161,60 @@ def build(records, full_recs=None, hourly=None, opened=(), *, today=None):
 
     total = sum(e["tokens"] for e in day_idx.values())
     return nodes, total
+
+
+# ── 펼침·접힘의 손(pytmux-618 ④⑤) — 정본 화면과 GUI 판이 같은 함수를 부른다 ────────
+#
+# ⛔ 펼침 상태는 «펼친 집합»이 아니라 **«뒤집은 집합»**이다(`build` 의 `default ^ toggled`).
+#    종전 GUI 액션은 그것을 «펼친 집합»으로 읽어(`expand`=add · `collapse`=discard) 기본
+#    펼침 노드(오늘)에서 → 가 **접고** ← 가 아무 일도 안 했다. 그래서 «지금 펴져 있나»는
+#    키 집합이 아니라 **지은 노드**(`expanded`)에서 읽는다.
+
+def toggle(nodes, toggled, row, mode="toggle"):
+    """`row` 노드를 펴거나 접는다 — `toggled`(뒤집은 키 집합)를 **제자리에서** 고친다.
+    mode='toggle'|'expand'|'collapse'. 펼 수 없는 줄(잎·구분줄)·범위 밖·이미 그 상태면
+    무동작. 바뀌었으면 True."""
+    if not (0 <= row < len(nodes)):
+        return False
+    n = nodes[row]
+    if not n.get("expandable") or not n.get("key"):
+        return False
+    cur_open = n.get("expanded")
+    if mode == "expand" and cur_open:
+        return False
+    if mode == "collapse" and not cur_open:
+        return False
+    key = n["key"]
+    if key in toggled:
+        toggled.discard(key)
+    else:
+        toggled.add(key)
+    return True
+
+
+def parent_row(nodes, row):
+    """`row` 노드의 부모 줄 — 앞쪽에서 가장 가까운 더 얕은 줄(구분줄은 건너뛴다). 없으면 None."""
+    if not (0 <= row < len(nodes)):
+        return None
+    lvl = nodes[row]["level"]
+    for i in range(row - 1, -1, -1):
+        if nodes[i]["kind"] == "divider":
+            continue
+        if nodes[i]["level"] < lvl:
+            return i
+    return None
+
+
+def collapse_or_parent(nodes, toggled, row):
+    """`←` 의 뜻(정본 2026-06-22) — 펴진 노드면 **자기를** 접고, 잎이거나 이미 접힌 노드면
+    **부모를** 접는다. 돌려주는 것 = 커서가 갈 줄(자기·부모). 할 일이 없으면 None."""
+    if not (0 <= row < len(nodes)):
+        return None
+    n = nodes[row]
+    if n.get("expandable") and n.get("key") and n.get("expanded"):
+        return row if toggle(nodes, toggled, row, "collapse") else None
+    prow = parent_row(nodes, row)
+    if prow is None:
+        return None
+    toggle(nodes, toggled, prow, "collapse")
+    return prow

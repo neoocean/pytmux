@@ -95,6 +95,10 @@ def main():
         # 설정 표가 화면에 내보내는 값 전부. 여기 있는데 `setval_ko` 에 없으면 정본은
         # **원값 그대로** 보인다(`vi`·`pyte` 같은 기술적 값 — `_vlabel` 의 default).
         "used_values": sorted(used_values),
+        # 줄 끝에 `(재시작 시 발효)` 를 다는 줄들(정본 `_row_text` 의 `desc.get("restart")` ·
+        # pytmux-625). GUI `SETTING_NOTES` 의 `Restart` 집합과 맞댄다.
+        "restart_keys": sorted(s["key"] for s in list(cu.SETTINGS) + list(plugin_settings)
+                               if s.get("restart")),
     }
 
     # 빈 결과는 통과가 아니라 고장이다(카탈로그 이름이 바뀌면 조용히 빈 표가 나온다).

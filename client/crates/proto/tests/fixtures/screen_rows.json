@@ -3,6 +3,7 @@
     "confirm": [],
     "form": [
       "cols",
+      "i18n",
       "key",
       "label"
     ],
@@ -34,6 +35,7 @@
       "i18n",
       "key",
       "label",
+      "tag",
       "until",
       "w"
     ],

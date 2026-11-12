@@ -1,5 +1,6 @@
 {
   "tags": {
+    "active": "#ffaf00",
     "archive": "#ff55ff",
     "com": "#55ffff",
     "cwd": "#ffff55",

@@ -132,5 +132,8 @@
     "top",
     "vi",
     "wide"
+  ],
+  "restart_keys": [
+    "vt-parser"
   ]
 }

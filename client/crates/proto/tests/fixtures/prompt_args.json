@@ -1,0 +1,335 @@
+{
+  "_comment": "python3 scripts/gen_prompt_args.py 로 생성. 출처 = 정본 PromptScreen._arg_candidates 를 직접 부른 값 + clientutil 의 두 표.",
+  "command_arghist": {
+    "remote-attach": "remote-host",
+    "remote-new-tab": "remote-host",
+    "remote-new-window": "remote-host",
+    "remote-detach": "remote-host",
+    "layout-save": "layout-name",
+    "layout-load": "layout-name",
+    "layout-load-new": "layout-name",
+    "run-shell": "run-shell",
+    "send-keys": "send-keys"
+  },
+  "set_option_choices": {
+    "ambiguous-width": [
+      "auto",
+      "narrow",
+      "wide"
+    ],
+    "alt-scroll": [
+      "on",
+      "off"
+    ],
+    "mouse": [
+      "on",
+      "off"
+    ],
+    "mouse-drag-copy": [
+      "on",
+      "off",
+      "shift"
+    ],
+    "mouse-drag-threshold": [
+      "1",
+      "2",
+      "3",
+      "5",
+      "8"
+    ],
+    "copy-unwrap": [
+      "on",
+      "off"
+    ],
+    "set-clipboard": [
+      "on",
+      "off"
+    ],
+    "mouse-debug": [
+      "on",
+      "off"
+    ],
+    "mode-keys": [
+      "vi",
+      "emacs"
+    ],
+    "tab-bar": [
+      "always",
+      "auto"
+    ],
+    "status-position": [
+      "bottom",
+      "top"
+    ],
+    "remote-title": [
+      "full",
+      "host",
+      "name"
+    ],
+    "status": [
+      "on",
+      "off"
+    ],
+    "set-titles": [
+      "on",
+      "off"
+    ],
+    "strip-box-drawing": [
+      "on",
+      "off"
+    ]
+  },
+  "history": {
+    "remote-host": [
+      "office1",
+      "Office2",
+      "build@ci",
+      "NATGAMES\\user@host"
+    ],
+    "layout-name": [
+      "work",
+      "home"
+    ],
+    "run-shell": [
+      "make test"
+    ]
+  },
+  "cases": [
+    {
+      "raw": "",
+      "arg_spot": false,
+      "cmd": null,
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "remote-attach",
+      "arg_spot": false,
+      "cmd": null,
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "remote-attach ",
+      "arg_spot": true,
+      "cmd": "remote-attach",
+      "items": [
+        "office1",
+        "Office2",
+        "build@ci",
+        "NATGAMES\\user@host"
+      ],
+      "kinds": [
+        "recent",
+        "recent",
+        "recent",
+        "recent"
+      ]
+    },
+    {
+      "raw": "remote-attach o",
+      "arg_spot": true,
+      "cmd": "remote-attach",
+      "items": [
+        "office1",
+        "Office2"
+      ],
+      "kinds": [
+        "recent",
+        "recent"
+      ]
+    },
+    {
+      "raw": "remote-attach O",
+      "arg_spot": true,
+      "cmd": "remote-attach",
+      "items": [
+        "office1",
+        "Office2"
+      ],
+      "kinds": [
+        "recent",
+        "recent"
+      ]
+    },
+    {
+      "raw": "Remote_Attach ",
+      "arg_spot": true,
+      "cmd": "Remote_Attach",
+      "items": [
+        "office1",
+        "Office2",
+        "build@ci",
+        "NATGAMES\\user@host"
+      ],
+      "kinds": [
+        "recent",
+        "recent",
+        "recent",
+        "recent"
+      ]
+    },
+    {
+      "raw": "remote attach ",
+      "arg_spot": false,
+      "cmd": null,
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "remote-attach office1",
+      "arg_spot": true,
+      "cmd": "remote-attach",
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "remote-attach zz",
+      "arg_spot": true,
+      "cmd": "remote-attach",
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "  layout-load ",
+      "arg_spot": true,
+      "cmd": "layout-load",
+      "items": [
+        "work",
+        "home"
+      ],
+      "kinds": [
+        "recent",
+        "recent"
+      ]
+    },
+    {
+      "raw": "layout-load h",
+      "arg_spot": true,
+      "cmd": "layout-load",
+      "items": [
+        "home"
+      ],
+      "kinds": [
+        "recent"
+      ]
+    },
+    {
+      "raw": "run-shell ",
+      "arg_spot": true,
+      "cmd": "run-shell",
+      "items": [
+        "make test"
+      ],
+      "kinds": [
+        "recent"
+      ]
+    },
+    {
+      "raw": "send-keys ",
+      "arg_spot": true,
+      "cmd": "send-keys",
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "rename-tab ",
+      "arg_spot": false,
+      "cmd": null,
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "set ",
+      "arg_spot": false,
+      "cmd": null,
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "set ambiguous-width",
+      "arg_spot": false,
+      "cmd": null,
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "set ambiguous-width ",
+      "arg_spot": true,
+      "cmd": "set ambiguous-width",
+      "items": [
+        "auto",
+        "narrow",
+        "wide"
+      ],
+      "kinds": [
+        "choice",
+        "choice",
+        "choice"
+      ]
+    },
+    {
+      "raw": "set ambiguous-width n",
+      "arg_spot": true,
+      "cmd": "set ambiguous-width",
+      "items": [
+        "narrow"
+      ],
+      "kinds": [
+        "choice"
+      ]
+    },
+    {
+      "raw": "set ambiguous-width narrow",
+      "arg_spot": true,
+      "cmd": "set ambiguous-width",
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "set-option mouse ",
+      "arg_spot": true,
+      "cmd": "set-option mouse",
+      "items": [
+        "on",
+        "off"
+      ],
+      "kinds": [
+        "choice",
+        "choice"
+      ]
+    },
+    {
+      "raw": "set mouse_drag_copy s",
+      "arg_spot": true,
+      "cmd": "set mouse_drag_copy",
+      "items": [
+        "shift"
+      ],
+      "kinds": [
+        "choice"
+      ]
+    },
+    {
+      "raw": "set status-left ",
+      "arg_spot": false,
+      "cmd": null,
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "set ambiguous-width narrow x",
+      "arg_spot": true,
+      "cmd": "set ambiguous-width",
+      "items": [],
+      "kinds": []
+    },
+    {
+      "raw": "kill-pane",
+      "arg_spot": false,
+      "cmd": null,
+      "items": [],
+      "kinds": []
+    }
+  ]
+}

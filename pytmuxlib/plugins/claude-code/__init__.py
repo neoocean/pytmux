@@ -263,6 +263,129 @@ i18n.register({
 })
 
 
+# 토큰 팝업 [경고] 탭의 글(pytmux-618 ② — 종전 `screens.py`). 정본 화면과 GUI 판(서버)이
+# 함께 짓는다 — 줄 짓기는 `warntree` 한 벌.
+i18n.register({
+    "ko": {
+        "pscreen.tklog_warn_col": 'Claude 경고',
+        "pscreen.tklog_warn_title": 'Claude 경고',
+        "pscreen.tklog_warn_empty": '현재 표시할 Claude 경고가 없습니다(이미 해소됨).',
+        "pscreen.warn_history_label": '── 이전 경고 (펼쳐서 보기) ──',
+        "pscreen.tklog_warn_hint": 'Enter/←→ 펼침·접힘 · 다른 탭 이동 · u/usage · Esc닫기',
+        "claude.warn_fmt_title": 'Claude 포맷 미인식',
+        "claude.warn_fmt_body": (
+            '[상황]\n'
+            '• pytmux 가 Claude Code 화면 형식을 인식하지 못합니다.\n'
+            '• 토큰/사용량 추적과 자동화(자동 재개·자동 압축·한도 게이트)가 멈춥니다.\n'
+            '• Claude Code 자체 동작(입력·출력)에는 영향이 없습니다.\n'
+            '• 보통 Claude Code 버전 업데이트로 화면 구조가 바뀌면 발생합니다.\n'
+            '\n'
+            '[할일]\n'
+            '• 화면이 다시 정상 인식되면 경고는 자동으로 사라집니다(잠시 대기).\n'
+            '• 계속되면 pytmux 의 Claude 파서(claude.py)를 새 포맷에 맞춰 갱신해야 합니다.\n'
+            '• REC 캡처가 켜져 있으면 captures/ 로그로 새 포맷을 분석할 수 있습니다.'
+        ),
+        "claude.warn_repeat_title": 'Claude 반복 루프 의심',
+        "claude.warn_repeat_body": (
+            '[상황]\n'
+            '• 같은 출력이 여러 번 반복됐습니다 — 루프 의심(경고만, 자동 개입 없음).\n'
+            '\n'
+            '[할일]\n'
+            '• 진행이 없으면 다른 지시를 주거나 /clear 후 다시 시도하세요.\n'
+            '• 임계는 옵션 claude_repeat_alert 로 조정/끌 수 있습니다(0=끔).'
+        ),
+        "claude.warn_long_title": 'Claude 장기 턴',
+        "claude.warn_long_body": (
+            '[상황]\n'
+            '• 현재 Claude 턴이 임계 시간을 넘겨 오래 진행 중입니다(경고만, 자동 개입 없음).\n'
+            '\n'
+            '[할일]\n'
+            '• 정상적인 긴 작업일 수 있습니다. 멈춘 듯하면 패널에서 Esc 로 중단하세요.\n'
+            '• 임계는 옵션 claude_long_turn_sec 로 조정/끌 수 있습니다(0=끔).'
+        ),
+    },
+    "en": {
+        "pscreen.tklog_warn_col": 'Claude warning',
+        "pscreen.tklog_warn_title": 'Claude warning',
+        "pscreen.tklog_warn_empty": 'No active Claude warning (already cleared).',
+        "pscreen.warn_history_label": '── Past warnings (expand to view) ──',
+        "pscreen.tklog_warn_hint": 'Enter/←→ expand·collapse · switch tab · u /usage · Esc close',
+        "claude.warn_fmt_title": 'Claude format unrecognized',
+        "claude.warn_fmt_body": (
+            '[Situation]\n'
+            '• pytmux cannot recognize the Claude Code screen format.\n'
+            '• Token/usage tracking and automation (auto-retry·limit gate) stop.\n'
+            '• Claude Code itself (input·output) is unaffected.\n'
+            '• Usually happens when a Claude Code version update changes the layout.\n'
+            '\n'
+            '[To do]\n'
+            '• The warning clears automatically once the screen is recognized again (wait a moment).\n'
+            "• If it persists, pytmux's Claude parser (claude.py) must be updated for the new format.\n"
+            '• If REC capture is on, the captures/ log can be used to analyze it.'
+        ),
+        "claude.warn_repeat_title": 'Claude repeat-loop suspected',
+        "claude.warn_repeat_body": (
+            '[Situation]\n'
+            '• The same output repeated several times — loop suspected (warning only, no auto-intervention).\n'
+            '\n'
+            '[To do]\n'
+            "• If there's no progress, give different instructions or retry after /clear.\n"
+            '• Threshold is adjustable/disable-able via option claude_repeat_alert (0=off).'
+        ),
+        "claude.warn_long_title": 'Claude long turn',
+        "claude.warn_long_body": (
+            '[Situation]\n'
+            '• The current Claude turn exceeded the threshold and is running long (warning only, no auto-intervention).\n'
+            '\n'
+            '[To do]\n'
+            '• It may be a normal long task. If it seems stuck, press Esc in the panel to interrupt.\n'
+            '• Threshold is adjustable/disable-able via option claude_long_turn_sec (0=off).'
+        ),
+    },
+})
+
+
+# 토큰 팝업 [한도] 탭의 창 Σ 줄(pytmux-618 ③ — 종전 `screens.py`). 짓는 것은 `usagehead`.
+_WIN_CAT = {
+    "ko": {
+        "pscreen.win_session": '이번 5h창 ~Σ{tok}(리셋 {left} 후)',
+        "pscreen.win_week": '이번 주 ~Σ{tok}(리셋 {left} 후)',
+        "pscreen.left_hm": '{h}시간{m}분',
+        "pscreen.left_m": '{m}분',
+        "pscreen.left_d": '{d}일{h}시간',
+    },
+    "en": {
+        "pscreen.win_session": 'this 5h window ~Σ{tok} (resets in {left})',
+        "pscreen.win_week": 'this week ~Σ{tok} (resets in {left})',
+        "pscreen.left_hm": '{h}h {m}m',
+        "pscreen.left_m": '{m}m',
+        "pscreen.left_d": '{d}d {h}h',
+    },
+}
+i18n.register(_WIN_CAT)
+
+# ★ 클라가 자기 로케일로 다시 지을 **평탄한** 포맷 — `{left}` 자리에 남은 시간 포맷을 미리
+#   끼운 것이다(`<창 열쇠>_<단위>` · 단위 표는 `usagehead._LEFT_UNITS`). `left` 를 서버 로케일
+#   글로 인자에 실으면 영어 클라에 `리셋 5분 후` 가 섞인다(`i18n.phrase` 의 ⚠).
+i18n.register({
+    loc: {f"{win}_{unit}": cat[win].replace("{left}", cat[lkey])
+          for win in ("pscreen.win_session", "pscreen.win_week")
+          for unit, lkey in (("m", "pscreen.left_m"), ("hm", "pscreen.left_hm"),
+                             ("d", "pscreen.left_d"))}
+    for loc, cat in _WIN_CAT.items()})
+
+
+
+# 설정 판 cycle 줄의 값 글자(pytmux-618 ⑥) — 정본은 `f"{v}초 이상"` 을 카탈로그 없이 썼다
+# (en 에서도 한국어). 이제 정본과 GUI 판이 같은 열쇠로 짓고, GUI 판은 재료를 실어 보낸다.
+i18n.register({
+    "ko": {"claude.saver_sec_over": "{v}초 이상",
+           "claude.saver_times_over": "{v}회 이상"},
+    "en": {"claude.saver_sec_over": "{v}s or more",
+           "claude.saver_times_over": "{v}× or more"},
+})
+
+
 # 토큰 동기화 서버발 알림 — 서버는 로케일을 모르므로 키+인자만 실어 보내고 클라가
 # 번역한다([[server-pushed-surface-cannot-call-t]]).
 i18n.register({
@@ -502,6 +625,117 @@ def _cycle_next(key, cur):
     return vals[(i + 1) % len(vals)]
 
 
+def token_log_payload(server, sess, limit=5000):
+    """`request_token_log` 회신 한 벌 — 정본 토큰 팝업과 GUI 판(screenspec)이 **같은 질의**를
+    본다(pytmux-618). 종전 GUI 판은 따로 4000 건을 읽고 일·시각 전체 이력(`daily`·
+    `hourly`)을 안 받아, 기간 트리가 최근 원시 기록 창에 갇혀 있었다."""
+    from . import usagedb   # S5 T5: 플러그인 소속(물리 이전)
+    conn = server._tokens_db_conn()
+    lim = int(limit)
+    # §10-D 표시층 캐시포함: usage_xc(트랜스크립트, cache_read/creation 포함)가
+    # 차 있으면 팝업 상세표(기간/세션/계정/모델 버킷)의 1차 데이터로 쓴다 —
+    # 스크랩 usage(↑/↓ footer, 실제의 ~0.4%)는 cache 를 못 봐 구조적 과소집계라
+    # 'activity~' 보조신호(total_all)로만 남긴다. usage_xc 가 비었으면(구버전
+    # 서버/백필 전) 종전 스크랩 집계로 폴백(graceful degrade).
+    xc_n = (usagedb.xc_count(conn)
+            if conn is not None and hasattr(usagedb, "xc_count") else 0)
+    xc_breakdown = (conn is not None and xc_n > 0
+                    and hasattr(usagedb, "xc_daily_breakdown"))
+    # hourly=시각별 합성 행(이력 전체). 팝업 트리의 시각 행이 최근 N 건 raw
+    # 창에 갇히지 않게 한다(제보 2026-07-27) — daily 와 같은 이유·같은 모양의
+    # 집계다. 구버전 usagedb(함수 부재)면 None → 클라가 종전 raw 폴백.
+    _hb = getattr(usagedb, "xc_hourly_breakdown" if xc_breakdown
+                  else "hourly_breakdown", None)
+    if xc_breakdown:
+        recs = usagedb.xc_query_records(conn, limit=lim)
+        daily = usagedb.xc_daily_breakdown(conn)
+    else:
+        recs = (usagedb.query_records(conn, limit=lim)
+                if conn is not None else [])
+        daily = usagedb.daily_breakdown(conn) if conn is not None else []
+    hourly = _hb(conn) if (conn is not None and _hb) else None
+    # 활동신호 lifetime Σ(스크랩) — 팝업 'activity~' 줄이 소비.
+    total_all = usagedb.total_all(conn) if conn is not None else 0
+    # §10-D: 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를 과소반영
+    # 하므로 사용량 뷰가 '얼마나 썼나'를 이 값으로 보인다. daily=일자별(레거시
+    # 조인용 유지), hourly=시각별(5h 비율은 시간 단위 뷰에 둔다 — 사용자 결정
+    # 2026-06-17). day 뷰는 더는 5h% 열을 안 보이고 hour 뷰가 hourly_pct 로 보인다.
+    daily_pct = usagedb.daily_limit_pct(conn) if conn is not None else {}
+    hourly_pct = usagedb.hourly_limit_pct(conn) if conn is not None else {}
+    # 1w%(주간 전체모델 한도) 시각별 — 5h% 옆 열(사용자 요청 2026-06-17).
+    hourly_week = usagedb.hourly_week_pct(conn) if conn is not None else {}
+    # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id 를 함께 보내, [세션] 뷰가
+    # 지금 보고 있는 세션 행을 하이라이트하게 한다. 0(=세션 없음)/예외는 None.
+    active_sid = None
+    try:
+        win = sess.active_window
+        ap = win.active_pane if win else None
+        active_sid = getattr(ap, "_claude_session_id", None) or None
+    except Exception:
+        active_sid = None
+    # 항목2: 경고 이력(시간 내림차순 최근 N건) — [경고] 탭이 과거 경고를
+    # 트리로 펼쳐 보이도록 함께 싣는다(없으면 빈 리스트). 믹스인 메서드라
+    # 항상 있지만, 최소 _FakeServer(계약 테스트) 대비 getattr 폴백.
+    _rwh = getattr(server, "_read_warn_history", None)
+    warn_hist = _rwh(50) if callable(_rwh) else []
+    # §10-D P6: 트랜스크립트 권위 회계(usage_xc) 전체 합 — footer 스크랩
+    # (records/total_all)은 cache_read/creation 을 못 봐 실제의 ~0.4%만 잡는
+    # 라이브 활동신호이고, cache 까지 담은 정확 4항목 누계는 이 xc_totals 가
+    # 담는다(full/footer/cache_read/cache_create/ratio). 팝업이 이걸 1차값으로
+    # 보인다. v7(usage_xc) 미보유 구버전/계약 _FakeServer → 빈 dict(폴백).
+    xc_totals = (usagedb.xc_totals(conn)
+                 if conn is not None and hasattr(usagedb, "xc_totals")
+                 else {})
+    # 동기화 P5 §7.3: 원산지 머신별 분해. 동기화를 켜면 위 xc_totals 가 계정
+    # **전역**(다른 머신 포함)으로 뛰는데, 그게 어디서 온 값인지 확인할 길이
+    # 없으면 "왜 갑자기 늘었나" 를 사람이 못 푼다. 머신이 하나뿐이면 로컬
+    # 한 항목뿐이라 팝업이 뷰 자체를 감춘다(잡음 0).
+    _xbh = getattr(usagedb, "xc_totals_by_host", None)
+    xc_hosts = _xbh(conn) if (conn is not None and _xbh) else {}
+    # 그 머신들의 **이름**(pytmux-517) — 동기화가 받아 둔 라벨. 없으면 빈 dict 이고
+    # 표시층이 축약 id 를 보인다(`usagedb.host_label`).
+    _xhl = getattr(usagedb, "host_labels", None)
+    xc_host_labels = _xhl(conn) if (conn is not None and _xhl) else {}
+    # 사용자 결정 2026-07-25(설계 §10.2-4): 계정 미상 행은 **별항 분리**다.
+    # 분리만 하고 숨기면 "계정 합 < 총합" 이 미궁이 되고 P3 백필 커버리지 저하도
+    # 안 보이므로, 미상 비중을 팝업 Σ 줄에 노출한다(`_unknown_text`).
+    _xac = getattr(usagedb, "xc_account_coverage", None)
+    xc_cov = _xac(conn) if (conn is not None and _xac) else {}
+    return {"t": "token_log", "records": recs,
+            "total_all": total_all,
+            "daily": daily,
+            "hourly": hourly,
+            "daily_pct": daily_pct, "hourly_pct": hourly_pct,
+            "hourly_week_pct": hourly_week,
+            "active_session": active_sid,
+            "xc_totals": xc_totals,
+            "xc_hosts": xc_hosts,
+            "xc_host_labels": xc_host_labels,
+            "xc_cov": xc_cov,
+            "warn_history": warn_hist}
+
+
+def visible_lines(server, pane) -> list:
+    """패널의 **보이는 행** 글 — 정본 클라가 받는 `pane_content` 와 같은 창(pytmux-603).
+
+    정본은 서버가 보낸 행(= `Pane.render` 의 뷰포트 · 스크롤 반영 · `server_filter_rows`
+    를 지난 것)에서 footer 클릭존을 잰다. 종전 서버(GUI 몫)는 `screen_text` 로 **라이브
+    화면**을 재서, 위로 굴린 동안 GUI 만 안 보이는 footer 자리에 존이 섰다.
+
+    ⛔ `render` 를 부르지 않는다 — 그 함수는 `_last_top`·행 캐시·`screen.dirty` 를 바꾼다
+    (flush 의 빠른 경로가 그 dirty 를 먹는다). 창은 부수효과 없는 `viewport_window` 로
+    고르고, 행 필터는 소비자가 있을 때만 런으로 지어 지난다(행 런을 짓는 값이 크다)."""
+    from .footerzones import rows_text
+    window, _start = pane.viewport_window()
+    cols = pane.screen.columns
+    reg = getattr(server, "plugins", None)
+    if reg is not None and any(getattr(p, "server_filter_rows", None) is not None
+                               for p in getattr(reg, "plugins", ())):
+        rows = [pane._serialize_row(line, cols) for line in window]
+        return rows_text(reg.server_filter_rows(server, pane, rows))
+    return ["".join(line[x].data for x in range(cols)) for line in window]
+
+
 def saver_display(app, key):
     """설정 팝업의 한 행이 보일 현재값 문자열(토글 ●/○ 또는 cycle 값)."""
     st = app.status
@@ -519,10 +753,12 @@ def saver_display(app, key):
             norm_redraw_mode(st.claude_auto_redraw), REDRAW_WORDS["off"]))
     if key == "long_turn":
         v = int(st.claude_long_turn_sec)
-        return i18n.t(REDRAW_WORDS["off"]) if v <= 0 else f"{v}초 이상"
+        return (i18n.t(REDRAW_WORDS["off"]) if v <= 0
+                else i18n.t("claude.saver_sec_over", v=v))
     if key == "repeat_alert":
         v = int(st.claude_repeat_alert)
-        return i18n.t(REDRAW_WORDS["off"]) if v <= 0 else f"{v}회 이상"
+        return (i18n.t(REDRAW_WORDS["off"]) if v <= 0
+                else i18n.t("claude.saver_times_over", v=v))
     return ""
 
 
@@ -1547,90 +1783,7 @@ class _ClaudeCodePlugin:
             # 전환). Phase B: 버킷 전환용 N 건과 별개로, 정확한 **전체 이력 합**
             # (total_all)을 서버가 SQL 로 함께 보내, 이력이 N 을 넘어도 lifetime Σ 가
             # 과소표시되지 않게 한다. (계정별 합은 머신-로컬 표시로 전환돼 제거 — 2026-06-19.)
-            from . import usagedb   # S5 T5: 플러그인 소속(물리 이전)
-            conn = server._tokens_db_conn()
-            lim = int(msg.get("limit", 5000))
-            # §10-D 표시층 캐시포함: usage_xc(트랜스크립트, cache_read/creation 포함)가
-            # 차 있으면 팝업 상세표(기간/세션/계정/모델 버킷)의 1차 데이터로 쓴다 —
-            # 스크랩 usage(↑/↓ footer, 실제의 ~0.4%)는 cache 를 못 봐 구조적 과소집계라
-            # 'activity~' 보조신호(total_all)로만 남긴다. usage_xc 가 비었으면(구버전
-            # 서버/백필 전) 종전 스크랩 집계로 폴백(graceful degrade).
-            xc_n = (usagedb.xc_count(conn)
-                    if conn is not None and hasattr(usagedb, "xc_count") else 0)
-            xc_breakdown = (conn is not None and xc_n > 0
-                            and hasattr(usagedb, "xc_daily_breakdown"))
-            # hourly=시각별 합성 행(이력 전체). 팝업 트리의 시각 행이 최근 N 건 raw
-            # 창에 갇히지 않게 한다(제보 2026-07-27) — daily 와 같은 이유·같은 모양의
-            # 집계다. 구버전 usagedb(함수 부재)면 None → 클라가 종전 raw 폴백.
-            _hb = getattr(usagedb, "xc_hourly_breakdown" if xc_breakdown
-                          else "hourly_breakdown", None)
-            if xc_breakdown:
-                recs = usagedb.xc_query_records(conn, limit=lim)
-                daily = usagedb.xc_daily_breakdown(conn)
-            else:
-                recs = (usagedb.query_records(conn, limit=lim)
-                        if conn is not None else [])
-                daily = usagedb.daily_breakdown(conn) if conn is not None else []
-            hourly = _hb(conn) if (conn is not None and _hb) else None
-            # 활동신호 lifetime Σ(스크랩) — 팝업 'activity~' 줄이 소비.
-            total_all = usagedb.total_all(conn) if conn is not None else 0
-            # §10-D: 세션 5h 한도 최대%(권위 /usage). 스크랩 Σ 가 5h 소비를 과소반영
-            # 하므로 사용량 뷰가 '얼마나 썼나'를 이 값으로 보인다. daily=일자별(레거시
-            # 조인용 유지), hourly=시각별(5h 비율은 시간 단위 뷰에 둔다 — 사용자 결정
-            # 2026-06-17). day 뷰는 더는 5h% 열을 안 보이고 hour 뷰가 hourly_pct 로 보인다.
-            daily_pct = usagedb.daily_limit_pct(conn) if conn is not None else {}
-            hourly_pct = usagedb.hourly_limit_pct(conn) if conn is not None else {}
-            # 1w%(주간 전체모델 한도) 시각별 — 5h% 옆 열(사용자 요청 2026-06-17).
-            hourly_week = usagedb.hourly_week_pct(conn) if conn is not None else {}
-            # 요청 2026-06-21: 현재 활성 패널의 claude 세션 id 를 함께 보내, [세션] 뷰가
-            # 지금 보고 있는 세션 행을 하이라이트하게 한다. 0(=세션 없음)/예외는 None.
-            active_sid = None
-            try:
-                win = sess.active_window
-                ap = win.active_pane if win else None
-                active_sid = getattr(ap, "_claude_session_id", None) or None
-            except Exception:
-                active_sid = None
-            # 항목2: 경고 이력(시간 내림차순 최근 N건) — [경고] 탭이 과거 경고를
-            # 트리로 펼쳐 보이도록 함께 싣는다(없으면 빈 리스트). 믹스인 메서드라
-            # 항상 있지만, 최소 _FakeServer(계약 테스트) 대비 getattr 폴백.
-            _rwh = getattr(server, "_read_warn_history", None)
-            warn_hist = _rwh(50) if callable(_rwh) else []
-            # §10-D P6: 트랜스크립트 권위 회계(usage_xc) 전체 합 — footer 스크랩
-            # (records/total_all)은 cache_read/creation 을 못 봐 실제의 ~0.4%만 잡는
-            # 라이브 활동신호이고, cache 까지 담은 정확 4항목 누계는 이 xc_totals 가
-            # 담는다(full/footer/cache_read/cache_create/ratio). 팝업이 이걸 1차값으로
-            # 보인다. v7(usage_xc) 미보유 구버전/계약 _FakeServer → 빈 dict(폴백).
-            xc_totals = (usagedb.xc_totals(conn)
-                         if conn is not None and hasattr(usagedb, "xc_totals")
-                         else {})
-            # 동기화 P5 §7.3: 원산지 머신별 분해. 동기화를 켜면 위 xc_totals 가 계정
-            # **전역**(다른 머신 포함)으로 뛰는데, 그게 어디서 온 값인지 확인할 길이
-            # 없으면 "왜 갑자기 늘었나" 를 사람이 못 푼다. 머신이 하나뿐이면 로컬
-            # 한 항목뿐이라 팝업이 뷰 자체를 감춘다(잡음 0).
-            _xbh = getattr(usagedb, "xc_totals_by_host", None)
-            xc_hosts = _xbh(conn) if (conn is not None and _xbh) else {}
-            # 그 머신들의 **이름**(pytmux-517) — 동기화가 받아 둔 라벨. 없으면 빈 dict 이고
-            # 표시층이 축약 id 를 보인다(`usagedb.host_label`).
-            _xhl = getattr(usagedb, "host_labels", None)
-            xc_host_labels = _xhl(conn) if (conn is not None and _xhl) else {}
-            # 사용자 결정 2026-07-25(설계 §10.2-4): 계정 미상 행은 **별항 분리**다.
-            # 분리만 하고 숨기면 "계정 합 < 총합" 이 미궁이 되고 P3 백필 커버리지 저하도
-            # 안 보이므로, 미상 비중을 팝업 Σ 줄에 노출한다(`_unknown_text`).
-            _xac = getattr(usagedb, "xc_account_coverage", None)
-            xc_cov = _xac(conn) if (conn is not None and _xac) else {}
-            return {"t": "token_log", "records": recs,
-                    "total_all": total_all,
-                    "daily": daily,
-                    "hourly": hourly,
-                    "daily_pct": daily_pct, "hourly_pct": hourly_pct,
-                    "hourly_week_pct": hourly_week,
-                    "active_session": active_sid,
-                    "xc_totals": xc_totals,
-                    "xc_hosts": xc_hosts,
-                    "xc_host_labels": xc_host_labels,
-                    "xc_cov": xc_cov,
-                    "warn_history": warn_hist}
+            return token_log_payload(server, sess, int(msg.get("limit", 5000)))
         return None
 
     def client_prompt_text(self, app, pane_id):
@@ -1779,7 +1932,6 @@ class _ClaudeCodePlugin:
         `footerzones.PRIORITY` 한 벌로 옮겨 여기서도 같은 차례로 싣는다.
         """
         from .footerzones import OPENS, PRIORITY, SENDS, scan_pane
-        from .servermixin import screen_text
         win = getattr(sess, "active_window", None) if sess is not None else None
         if win is None:
             return {}
@@ -1789,7 +1941,7 @@ class _ClaudeCodePlugin:
             if p is None or not getattr(p, "_claude", None):
                 continue
             try:
-                lines = screen_text(p.screen).split("\n")
+                lines = visible_lines(server, p)
             except Exception:
                 continue
             found = scan_pane(lines[:r["h"]], r["x"], r["y"], r["w"], r["h"])
@@ -1803,9 +1955,14 @@ class _ClaudeCodePlugin:
                 # 칸이 그 순간 생긴다(pytmux-20 의 규율).
                 if x1 <= x0 or not (opens or send):
                     continue
-                zones.append({"x": x0, "y": y, "w": x1 - x0, "h": 1,
-                              "pane": r["id"], "do": kind,
-                              "opens": opens, "send": send})
+                zone = {"x": x0, "y": y, "w": x1 - x0, "h": 1,
+                        "pane": r["id"], "do": kind,
+                        "opens": opens, "send": send}
+                # 정본 esc 하단 동선은 활성 패널의 **권한모드 footer** 만 담는다
+                # (`client._status_buttons` 의 `perm` · pytmux-604) — 그 판정을 서버가 선언한다.
+                if kind == "perm":
+                    zone["nav"] = True
+                zones.append(zone)
         return {"zones": zones}
 
     # 이 이름들이 한도 팝업을 연다 — 정본의 `handle_command` 갈래와 **같은 표**다

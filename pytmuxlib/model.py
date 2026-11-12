@@ -1067,6 +1067,30 @@ class Pane:
             segs.append(["".join(cur_text), _key_to_style(cur_key)])
         return _boost_claude_prompt_bar(_fill_flanked_gaps(segs))
 
+    def viewport_window(self):
+        """지금 **보이는 행**(스크롤 반영)과 그 첫 행의 절대 인덱스 — `(window, start)`.
+
+        ⛔ 상태를 안 바꾼다(`_last_top`·행 캐시·`screen.dirty` 를 안 건드린다). `render` 가
+        이것을 부르고, 서버의 Claude footer 클릭존(pytmux-603)도 이것으로 «보이는 행»을
+        잰다 — 정본 클라가 받는 행과 같은 창이어야 두 클라의 누르는 자리가 같다."""
+        screen = self.screen
+        lines = screen.lines
+        h = getattr(screen, "history", None)
+        if self.scroll == 0:
+            # 라이브 뷰(P3): 스크롤백 deque 전체 복사+concat 을 하지 않는다 —
+            # 뷰포트 = 화면 버퍼 행 그대로. start(절대 인덱스 기준)는 스크롤백 길이로,
+            # len(h.top) 은 O(1) 이라 복사 없이 구한다(검색 매치 절대인덱스 보존).
+            return ([screen.buffer[y] for y in range(lines)],
+                    len(h.top) if h is not None else 0)
+        hist = list(h.top) if h is not None else []  # 대체 화면은 스크롤백 없음
+        full = hist + [screen.buffer[y] for y in range(lines)]
+        total = len(full)
+        end = total - self.scroll
+        start = end - lines
+        if start < 0:
+            start, end = 0, lines
+        return full[start:end], start
+
     def render(self, with_cursor: bool):
         """현재 뷰포트를 [rows, cursor] 로 직렬화. rows = 행마다 [text, style] 런 목록.
 
@@ -1076,22 +1100,7 @@ class Pane:
         낭비 제거). 스크롤/검색/리사이즈/alt전환/콜드캐시는 전체 경로로 폴백한다."""
         screen = self.screen
         cols, lines = screen.columns, screen.lines
-        h = getattr(screen, "history", None)
-        if self.scroll == 0:
-            # 라이브 뷰(P3): 스크롤백 deque 전체 복사+concat 을 하지 않는다 —
-            # 뷰포트 = 화면 버퍼 행 그대로. start(절대 인덱스 기준)는 스크롤백 길이로,
-            # len(h.top) 은 O(1) 이라 복사 없이 구한다(검색 매치 절대인덱스 보존).
-            window = [screen.buffer[y] for y in range(lines)]
-            start = len(h.top) if h is not None else 0
-        else:
-            hist = list(h.top) if h is not None else []  # 대체 화면은 스크롤백 없음
-            full = hist + [screen.buffer[y] for y in range(lines)]
-            total = len(full)
-            end = total - self.scroll
-            start = end - lines
-            if start < 0:
-                start, end = 0, lines
-            window = full[start:end]
+        window, start = self.viewport_window()
 
         # 자동 줄바꿈(soft-wrap) 연속원 행을 프레임 상대 인덱스로 모은다(복사 시 한 줄
         # 잇기, serverio 가 screen 메시지 "wrap" 으로 클라에 그대로 전달). draw 가

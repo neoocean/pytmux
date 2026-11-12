@@ -892,50 +892,274 @@ fn a_stray_key_does_not_close_the_settings_panel() {
     }
 }
 
-/// ⑶ `Home`·`End`·`PageUp`·`PageDown` 이 **살아 있다**(pytmux-374).
+/// ⑶ `Home`·`End`·`PageUp`·`PageDown` 이 **살아 있다** — 그리고 정본처럼 **창만 굴린다**
+/// (pytmux-374 ⑶ → pytmux-627 ①).
 ///
-/// 양성 오라클이다 — 「안 닫힌다」만 재면 넷을 그냥 삼켜 버려도 통과하고, 제보가 신고한
-/// 상태(`PageUp`/`PageDown` 이 안 먹는다)가 그대로 남는다. 그래서 **어디로 갔는지**를 잰다.
+/// 정본 설정 판은 맨 `ListView` 라 이 넷이 `ScrollableContainer` 의 `scroll_home`·
+/// `scroll_end`·`page_up`·`page_down` 이다 — **커서(`index`)는 제자리**. 양성 오라클이다:
+/// 「안 닫힌다」만 재면 넷을 삼켜도 통과하므로 **창이 어디로 갔는지**와 **커서가 그대로인지**를
+/// 둘 다 잰다.
 #[test]
-fn page_keys_move_the_settings_cursor() {
+fn page_keys_scroll_the_settings_view_not_the_cursor() {
     let mut screens = Screens::new();
     screens.open(Screen::Settings);
-    assert_eq!(screens.selected(), 0);
+    // 판 높이 10 · 줄 40 — 뷰가 키 직전에 넣는 값(`set_list_view`).
+    screens.set_list_view(10, 40);
+    screens.press(Key::Down, Mods::NONE);
+    screens.press(Key::Down, Mods::NONE);
+    screens.press(Key::Down, Mods::NONE);
+    assert_eq!((screens.selected(), screens.list_top()), (3, 0));
 
-    assert_eq!(screens.press(Key::PageDown, Mods::NONE), Some(ScreenKey::Consumed));
-    let after = screens.selected();
-    assert!(after > 0, "PageDown 이 아무 데도 안 갔다");
-    assert!(after > 1, "PageDown 이 한 줄만 갔다 — 그건 ↓ 다");
-    assert_eq!(screens.top(), Some(Screen::Settings), "PageDown 이 판을 닫았다");
+    assert_eq!(screens.press(Key::End, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.selected(), 3, "End 가 커서를 옮겼다 — 정본은 글만 굴린다");
+    assert_eq!(screens.list_top(), 30, "End 가 창을 끝으로 안 굴렸다");
+    assert_eq!(screens.top(), Some(Screen::Settings), "End 가 판을 닫았다");
 
     assert_eq!(screens.press(Key::PageUp, Mods::NONE), Some(ScreenKey::Consumed));
-    assert_eq!(screens.selected(), 0, "PageUp 이 제자리로 안 돌아왔다");
-
-    // `Home` 은 맨 위. 아무 데서나 눌러도 0 이다.
-    screens.press(Key::PageDown, Mods::NONE);
+    assert_eq!((screens.selected(), screens.list_top()), (3, 20), "PageUp 은 한 판만큼 위로");
     assert_eq!(screens.press(Key::Home, Mods::NONE), Some(ScreenKey::Consumed));
-    assert_eq!(screens.selected(), 0);
+    assert_eq!((screens.selected(), screens.list_top()), (3, 0));
+    assert_eq!(screens.press(Key::PageDown, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!((screens.selected(), screens.list_top()), (3, 10), "PageDown 은 한 판만큼 아래로");
 
-    // `End` 는 **뷰가 자른다**(줄 수를 아는 것은 그리는 쪽) — core 는 상한을 두고 간다.
-    assert_eq!(screens.press(Key::End, Mods::NONE), Some(ScreenKey::Consumed));
-    assert_eq!(screens.top(), Some(Screen::Settings), "End 가 판을 닫았다");
-    screens.clamp_selection(crate::config::SETTINGS.len());
-    assert_eq!(screens.selected(), crate::config::SETTINGS.len() - 1, "End 가 끝으로 안 갔다");
+    // 커서를 움직이면 창이 **커서를 보이게** 최소로 따라온다(정본 `ListView` 의 강조 줄 끌어오기).
+    screens.press(Key::Down, Mods::NONE);
+    assert_eq!((screens.selected(), screens.list_top()), (4, 4), "↓ 뒤 커서가 창 밖이다");
 }
 
-/// `End` 뒤에 `↓`·`PageDown` 을 더 눌러도 **넘치지 않는다**(뷰가 자르기 전에도).
-///
-/// core 가 `usize::MAX` 를 두고 가는 규약이라, 그 위에서 `+= 1` 을 하면 디버그 빌드가
-/// 그 자리에서 죽는다. 자르는 것은 뷰의 일이고 **안 죽는 것은 여기 일**이다.
+/// 끝에서 더 눌러도 **넘치지 않는다** — 창은 `전체 - 높이` 에서, 커서는 마지막 줄에서 멈춘다.
 #[test]
-fn the_settings_cursor_does_not_overflow_past_the_end() {
+fn the_settings_view_and_cursor_do_not_overflow_past_the_end() {
     let mut screens = Screens::new();
     screens.open(Screen::Settings);
+    screens.set_list_view(10, 40);
     screens.press(Key::End, Mods::NONE);
-    screens.press(Key::Down, Mods::NONE);
     screens.press(Key::PageDown, Mods::NONE);
-    assert_eq!(screens.selected(), usize::MAX);
+    assert_eq!(screens.list_top(), 30);
+    for _ in 0..50 {
+        screens.press(Key::Down, Mods::NONE);
+    }
+    assert_eq!(screens.selected(), 39);
+    assert_eq!(screens.list_top(), 30);
     assert_eq!(screens.top(), Some(Screen::Settings));
+}
+
+// ── 설정 판 «키» 탭(pytmux-592) ──────────────────────────────────────────────
+
+fn settings_with_keys() -> Screens {
+    let mut screens = Screens::new();
+    screens.open(Screen::Settings);
+    screens.set_settings_key_rows(crate::keymap::key_help_lines(&[]));
+    let total = screens.settings_total();
+    screens.set_list_view(10, total);
+    screens
+}
+
+/// «키» 탭은 사이드바의 **맨 끝**이고 `Tab` 으로 닿는다 — `Shift+Tab` 은 그 앞 분류로.
+#[test]
+fn the_keys_tab_sits_last_and_tab_reaches_it() {
+    let mut screens = settings_with_keys();
+    let cats: Vec<String> = screens.settings_cats().iter().map(|c| c.to_string()).collect();
+    assert_eq!(cats.last().map(String::as_str), Some(crate::config::KEYS_CAT));
+    let core = screens.plugins().settings_len();
+    // 맨 앞에서 Shift+Tab = 한 바퀴 돌아 끝(키) 탭.
+    screens.press(Key::BackTab, Mods::NONE);
+    assert_eq!(screens.selected(), core, "Shift+Tab 이 «키» 탭 첫 줄로 안 갔다");
+    assert!(screens.is_key_row(screens.selected()));
+    assert_eq!(screens.settings_cat_of(screens.selected()), Some(cats.len() - 1));
+    // 정본 `_jump_to_cat` 처럼 그 첫 줄이 창의 맨 위다(넘치면 끝까지만).
+    assert_eq!(screens.list_top(), core.min(screens.settings_total() - 10));
+    // 그 줄의 키 = `key_help_lines` 첫 줄(`Screen::Keys` 와 같은 모델).
+    assert_eq!(
+        screens.settings_key_row(screens.selected()),
+        crate::keymap::key_help_lines(&[]).first()
+    );
+}
+
+/// «키» 탭의 줄은 **읽기 전용**이다 — Enter·Space·←→ 가 아무 일도 안 한다(정본 `keyref`).
+#[test]
+fn a_keys_row_does_nothing_on_enter_or_arrows() {
+    let mut screens = settings_with_keys();
+    screens.press(Key::BackTab, Mods::NONE);
+    for key in [Key::Enter, Key::Char(' '), Key::Left, Key::Right] {
+        assert_eq!(screens.press(key, Mods::NONE), Some(ScreenKey::Consumed), "{key:?}");
+        assert_eq!(screens.top(), Some(Screen::Settings));
+    }
+    // 대조군 — 코어 줄에서는 Enter 가 여전히 값을 바꾼다.
+    let mut screens = settings_with_keys();
+    assert_eq!(screens.press(Key::Enter, Mods::NONE), Some(ScreenKey::Applied(0)));
+}
+
+// ── 플러그인 관리 판 이름 검색(pytmux-591) ──────────────────────────────────────
+
+#[test]
+fn typing_in_the_plugin_manager_builds_the_query() {
+    let mut screens = Screens::new();
+    screens.open(Screen::Plugins);
+    screens.set_list_view(10, 20);
+    screens.press(Key::Down, Mods::NONE);
+    screens.press(Key::Down, Mods::NONE);
+    assert_eq!(screens.press(Key::Char('p'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.press(Key::Char('4'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.plugin_query(), "p4");
+    assert_eq!(screens.selected(), 0, "검색어가 바뀌면 커서는 맨 위(정본 `_rebuild`)");
+    assert_eq!(screens.press(Key::Backspace, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.plugin_query(), "p");
+    // Space 는 토글이지 검색 글자가 아니다(정본 `space` 팔이 먼저다).
+    assert_eq!(screens.press(Key::Char(' '), Mods::NONE), Some(ScreenKey::Applied(0)));
+    assert_eq!(screens.plugin_query(), "p");
+    assert_eq!(screens.top(), Some(Screen::Plugins));
+    // 다시 열면 비어서 시작한다.
+    screens.close_top();
+    screens.open(Screen::Plugins);
+    assert_eq!(screens.plugin_query(), "");
+}
+
+/// `←`/`→` 는 플러그인 판에서 **아무 일도 안 한다** — 종전엔 `AppliedDir` 를 내 설정 판
+/// 같은 번호 줄의 값을 바꿨다(덤으로 찾은 결함 · 정본은 무동작).
+#[test]
+fn arrows_in_the_plugin_manager_apply_nothing() {
+    let mut screens = Screens::new();
+    screens.open(Screen::Plugins);
+    for key in [Key::Left, Key::Right] {
+        assert_eq!(screens.press(key, Mods::NONE), Some(ScreenKey::Consumed), "{key:?}");
+    }
+}
+
+// ── 저장된 레이아웃 판(pytmux-623) ───────────────────────────────────────────
+
+#[test]
+fn the_saved_layouts_screen_picks_by_arrows_and_enter() {
+    let mut screens = Screens::new();
+    screens.open_saved_layouts(vec!["work".into(), "home".into()], true);
+    assert_eq!(screens.top(), Some(Screen::SavedLayouts));
+    assert_eq!(screens.press(Key::Down, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.press(Key::Enter, Mods::NONE), Some(ScreenKey::Chosen(1)));
+    assert_eq!(screens.top(), None);
+    assert_eq!(screens.saved_layout_pick(1), Some(("home".into(), true)));
+    // 빈 목록이면 안내 줄뿐이라 고를 것이 없다 — 정본은 닫기만 한다.
+    screens.open_saved_layouts(Vec::new(), false);
+    assert_eq!(screens.press(Key::Enter, Mods::NONE), Some(ScreenKey::Chosen(0)));
+    assert_eq!(screens.saved_layout_pick(0), None);
+    // 제 것 아닌 키(글자)는 삼킨다 — 정본 `ChooseLayoutScreen.on_key` 는 `escape` 만 먹는다.
+    screens.open_saved_layouts(vec!["a".into()], false);
+    assert_eq!(screens.press(Key::Char('x'), Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.top(), Some(Screen::SavedLayouts));
+}
+
+// ── 명령 프롬프트·입력 판(pytmux-621) ─────────────────────────────────────────
+
+fn type_str(screens: &mut Screens, text: &str) {
+    for c in text.chars() {
+        screens.press(Key::Char(c), Mods::NONE);
+    }
+}
+
+fn palette_with_hosts() -> Screens {
+    let mut screens = Screens::new();
+    screens.open_palette();
+    screens.set_palette_arghist(vec![(
+        "remote-host".into(),
+        vec!["office1".into(), "Office2".into(), "build@ci".into()],
+    )]);
+    screens
+}
+
+/// `remote-attach ` 를 치면 최근 호스트가 후보로 서고, ↑↓ 가 **돌고** Tab 이 `명령 후보` 로
+/// 채운다(정본 `_arg_candidates`·`_accept_cand`).
+#[test]
+fn the_palette_offers_recent_args_and_tab_fills_them() {
+    let mut screens = palette_with_hosts();
+    type_str(&mut screens, "remote-attach ");
+    let args = screens.palette_args().expect("인자 자리다");
+    assert_eq!(args.items.len(), 3);
+    assert_eq!(screens.palette_arg_pick(), 0);
+    screens.press(Key::Up, Mods::NONE);
+    assert_eq!(screens.palette_arg_pick(), 2, "↑ 는 맨 위에서 맨 아래로 돈다(정본 `% len`)");
+    screens.press(Key::Down, Mods::NONE);
+    screens.press(Key::Down, Mods::NONE);
+    assert_eq!(screens.press(Key::Tab, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.typed(), "remote-attach Office2");
+    assert_eq!(screens.top(), Some(Screen::Commands), "Tab 은 채우기만 한다");
+}
+
+/// Enter — 부분 인자가 **없으면** 강조 후보로, **있으면** 친 그대로 실행한다.
+#[test]
+fn enter_on_the_arg_spot_runs_the_line_like_canon() {
+    let mut screens = palette_with_hosts();
+    type_str(&mut screens, "remote-attach ");
+    screens.press(Key::Down, Mods::NONE);
+    assert_eq!(
+        screens.press(Key::Enter, Mods::NONE),
+        Some(ScreenKey::RunLine("remote-attach Office2".into()))
+    );
+    assert_eq!(screens.top(), None);
+    // 부분 인자 `o` — 후보(office1·Office2)가 떠 있어도 친 그대로 간다(오선택 방지).
+    let mut screens = palette_with_hosts();
+    type_str(&mut screens, "remote-attach o");
+    assert_eq!(screens.palette_args().map(|a| a.items.len()), Some(2));
+    assert_eq!(
+        screens.press(Key::Enter, Mods::NONE),
+        Some(ScreenKey::RunLine("remote-attach o".into()))
+    );
+}
+
+/// `set <옵션> ` 값 자리에는 그 옵션의 선택지가 선다(정본 `_set_value_candidates`).
+#[test]
+fn set_offers_the_value_choices() {
+    let mut screens = palette_with_hosts();
+    type_str(&mut screens, "set ambiguous-width ");
+    let args = screens.palette_args().expect("값 자리다");
+    let words: Vec<&str> = args.items.iter().map(|(s, _)| s.as_str()).collect();
+    assert_eq!(words, ["auto", "narrow", "wide"]);
+    screens.press(Key::Down, Mods::NONE);
+    screens.press(Key::Tab, Mods::NONE);
+    assert_eq!(screens.typed(), "set ambiguous-width narrow");
+}
+
+/// 끝에 친 `?` 는 필터에 안 붙는다 — 정본은 그것을 떼고 명령 목록을 연다(우리 팔레트는 이미
+/// 그 목록이다). 붙이면 「맞는 명령이 없다」가 됐다.
+#[test]
+fn a_question_mark_is_not_typed_into_the_palette() {
+    let mut screens = palette_with_hosts();
+    type_str(&mut screens, "rem?");
+    assert_eq!(screens.typed(), "rem");
+    assert_eq!(screens.top(), Some(Screen::Commands));
+}
+
+/// 이름 바꾸기는 지금 이름을 **흐린 제안**으로 연다 — 치면 덮어쓰고, Tab·→ 가 채운다.
+#[test]
+fn rename_opens_with_a_ghost_not_a_value() {
+    let mut screens = Screens::new();
+    screens.ask_with_ghost(Prompt::RenameTab, "build");
+    assert_eq!(screens.typed(), "", "입력 칸은 비어서 연다");
+    assert_eq!(screens.prompt_ghost(), Some("build"));
+    assert_eq!(screens.prompt_suggestion(), None, "빈 칸에는 제안이 안 붙는다(자리표시만)");
+    // 빈 칸에서 Tab 은 아무것도 안 채운다(Textual 제안은 값이 있어야 선다).
+    screens.press(Key::Tab, Mods::NONE);
+    assert_eq!(screens.typed(), "");
+    // 글자를 치면 **덮어쓴다**(덧붙지 않는다).
+    screens.press(Key::Char('x'), Mods::NONE);
+    assert_eq!(screens.typed(), "x");
+    assert_eq!(screens.prompt_suggestion(), None, "접두가 아니면 제안이 없다");
+    screens.press(Key::Backspace, Mods::NONE);
+    screens.press(Key::Char('B'), Mods::NONE);
+    assert_eq!(screens.prompt_suggestion(), Some("build"), "대소문자를 안 가린다");
+    assert_eq!(screens.press(Key::Tab, Mods::NONE), Some(ScreenKey::Consumed));
+    assert_eq!(screens.typed(), "build");
+    // → 도 끝에서 받아들인다.
+    let mut screens = Screens::new();
+    screens.ask_with_ghost(Prompt::RenamePane, "로그");
+    screens.press(Key::Char('로'), Mods::NONE);
+    screens.press(Key::Right, Mods::NONE);
+    assert_eq!(screens.typed(), "로그");
+    // 빈 채로 Enter 는 빈 대답이다(이름 바꾸기는 뷰가 무시하고, 패널 제목은 지운다 — 정본).
+    let mut screens = Screens::new();
+    screens.ask_with_ghost(Prompt::RenameTab, "build");
+    assert_eq!(
+        screens.press(Key::Enter, Mods::NONE),
+        Some(ScreenKey::Answered(Prompt::RenameTab, String::new()))
+    );
 }
 
 #[test]
@@ -1248,9 +1472,10 @@ fn a_config_enum_setting_steps_backwards_too() {
     assert_eq!(picked(false), "auto", "이전");
 }
 
-/// 숫자 줄은 **양끝에서 반대쪽으로 감는다** — 0.0 에서 왼쪽이 막히면 "안 먹는다"로 읽힌다.
+/// 숫자 줄은 **양끝에서 멈춘다** — 정본 `SettingsScreen._cycle` 의 `max(lo, min(hi, …))`
+/// (pytmux-622 · 종전엔 반대쪽 끝으로 감았다). 정본 대조는 `setting_cycle_conformance`.
 #[test]
-fn a_number_setting_wraps_at_both_ends() {
+fn a_number_setting_stops_at_both_ends() {
     use crate::config::{SETTINGS, SettingPick, SettingValues, setting_pick_dir};
     let row = SETTINGS
         .iter()
@@ -1259,7 +1484,7 @@ fn a_number_setting_wraps_at_both_ends() {
     let values = SettingValues { inactive_dim_ratio: 0.0, ..Default::default() };
     match setting_pick_dir(row, &values, false) {
         Some(SettingPick::SetNumber(_, value)) => {
-            assert!(value > 0.7, "0 에서 왼쪽이 위로 안 감겼다: {value}")
+            assert!(value.abs() < 1e-5, "0 에서 왼쪽은 0 에 멈춘다: {value}")
         }
         other => panic!("{other:?}"),
     }

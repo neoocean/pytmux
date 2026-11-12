@@ -318,6 +318,10 @@ pub fn key_of(name: &str) -> Option<(Key, Mods)> {
         "end" => plain(Key::End),
         "home" => plain(Key::Home),
         "slash" => plain(Key::Char('/')),
+        // 정본의 「찍히는 글자 하나」 갈래(`event.character … isprintable()` — 생성기가 의사키로
+        // 적는다 · pytmux-591). 대표 글자 하나로 누른다 — 어느 판의 키 표에도 없는 글자라야
+        // 그 판의 다른 팔에 안 걸린다(`q`·`h`·`v`·`c`·`d`·`x` 는 판마다 뜻이 있다).
+        "<printable>" => plain(Key::Char('k')),
         // `mode-keys`(vi·emacs)가 스크롤 모드에 더 거는 키들.
         "ctrl+u" => Some((Key::Char('u'), Mods::CTRL)),
         "ctrl+d" => Some((Key::Char('d'), Mods::CTRL)),

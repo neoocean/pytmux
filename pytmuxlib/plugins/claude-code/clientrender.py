@@ -14,7 +14,7 @@
 이 모듈은 매 프레임 호출되는 client_render 훅이 지연 import 한다(첫 호출 후 캐시)."""
 from __future__ import annotations
 
-from .footerzones import PRIORITY, scan_pane
+from .footerzones import PRIORITY, rows_text, scan_pane
 
 
 def render(app, cells, W, H):
@@ -39,7 +39,7 @@ def _scan_all_footer_zones(app, W, H):
         # 창 밖으로 밀린 행은 존이 될 수 없다 — 종전에는 행마다 `0 <= gy < H` 를
         # 봤고, 그 판정을 여기(줄을 고르는 자리)로 옮겼다. 규칙 쪽은 화면 높이를
         # 모르는 편이 낫다(서버는 그 클라의 H 를 모른다).
-        lines = ["".join(seg[0] for seg in row) for row in rows]
+        lines = rows_text(rows)
         top = max(0, -p["y"])                    # 위로 잘린 행 수
         end = max(top, min(p["h"], H - p["y"]))  # 아래로 잘리는 자리
         for kind, zone in scan_pane(lines[top:end], p["x"], p["y"] + top,

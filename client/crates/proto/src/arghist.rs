@@ -44,6 +44,14 @@ impl ArgHist {
     }
 
     /// 인자 하나를 기록하고 영속한다 — 같은 값은 맨 앞으로 올라온다(MRU).
+    /// 버킷 전부(팔레트 인자 자리 후보가 본다 · pytmux-621). 차례는 버킷 이름순.
+    pub fn all(&self) -> Vec<(String, Vec<String>)> {
+        let mut out: Vec<(String, Vec<String>)> =
+            self.map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        out.sort();
+        out
+    }
+
     pub fn record(&mut self, bucket: &str, value: &str) {
         let value = value.trim();
         if value.is_empty() {

@@ -1,0 +1,365 @@
+{
+  "_comment": "python3 scripts/gen_setting_cycle.py 로 생성. 출처 = 정본 pytmuxlib/clientscreens.py SettingsScreen._cycle 을 직접 부른 값.",
+  "cases": [
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": null,
+      "forward": true,
+      "got": 0.02
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": null,
+      "forward": false,
+      "got": 0.0
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.0,
+      "forward": true,
+      "got": 0.02
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.0,
+      "forward": false,
+      "got": 0.0
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.8,
+      "forward": true,
+      "got": 0.8
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.8,
+      "forward": false,
+      "got": 0.78
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.02,
+      "forward": true,
+      "got": 0.04
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.02,
+      "forward": false,
+      "got": 0.0
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.78,
+      "forward": true,
+      "got": 0.8
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.78,
+      "forward": false,
+      "got": 0.76
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.4,
+      "forward": true,
+      "got": 0.42
+    },
+    {
+      "key": "inactive-dim-ratio",
+      "type": "ratio",
+      "lo": 0.0,
+      "hi": 0.8,
+      "step": 0.02,
+      "start": 0.4,
+      "forward": false,
+      "got": 0.38
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": null,
+      "forward": true,
+      "got": 2.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": null,
+      "forward": false,
+      "got": 1.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 1,
+      "forward": true,
+      "got": 2.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 1,
+      "forward": false,
+      "got": 1.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 20,
+      "forward": true,
+      "got": 20.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 20,
+      "forward": false,
+      "got": 19.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 2,
+      "forward": true,
+      "got": 3.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 2,
+      "forward": false,
+      "got": 1.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 19,
+      "forward": true,
+      "got": 20.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 19,
+      "forward": false,
+      "got": 18.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 10,
+      "forward": true,
+      "got": 11.0
+    },
+    {
+      "key": "mouse-drag-threshold",
+      "type": "int",
+      "lo": 1,
+      "hi": 20,
+      "step": 1,
+      "start": 10,
+      "forward": false,
+      "got": 9.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": null,
+      "forward": true,
+      "got": 2.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": null,
+      "forward": false,
+      "got": 1.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 1,
+      "forward": true,
+      "got": 2.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 1,
+      "forward": false,
+      "got": 1.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 60,
+      "forward": true,
+      "got": 60.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 60,
+      "forward": false,
+      "got": 59.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 2,
+      "forward": true,
+      "got": 3.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 2,
+      "forward": false,
+      "got": 1.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 59,
+      "forward": true,
+      "got": 60.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 59,
+      "forward": false,
+      "got": 58.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 30,
+      "forward": true,
+      "got": 31.0
+    },
+    {
+      "key": "status-interval",
+      "type": "int",
+      "lo": 1,
+      "hi": 60,
+      "step": 1,
+      "start": 30,
+      "forward": false,
+      "got": 29.0
+    }
+  ]
+}

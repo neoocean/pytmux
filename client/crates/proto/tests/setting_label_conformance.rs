@@ -27,6 +27,8 @@ struct Fx {
     setval_ko: BTreeMap<String, String>,
     setval_en: BTreeMap<String, String>,
     used_values: Vec<String>,
+    /// 정본 `restart: True` 인 설정 키(pytmux-625).
+    restart_keys: Vec<String>,
 }
 
 fn fixture() -> Fx {
@@ -192,4 +194,82 @@ fn the_english_side_matches_canon_too() {
 
     drop(_en);   // 실패 메시지는 **한국어로** 짓는다 — 재는 구간은 여기서 끝이다.
     assert!(wrong.is_empty(), "영어 표기가 정본과 다르다:\n  {}", wrong.join("\n  "));
+}
+
+// ── 줄 끝 꼬리말(pytmux-625) ─────────────────────────────────────────────────
+
+/// `(재시작 시 발효)` 가 붙는 줄 == 정본 `restart: True` 줄.
+///
+/// 정본에 그런 줄을 하나 더하면(그리고 우리 표에도 그 줄이 있으면) 여기서 운다 — 꼬리말
+/// 하나가 조용히 빠지는 것이 이 이슈가 잡은 그 모양이다.
+#[test]
+fn restart_notes_match_canon() {
+    use base::config::{SETTING_NOTES, SettingNote};
+    let fx = fixture();
+    assert!(!fx.restart_keys.is_empty(), "정본 restart 키가 비었다 — 통과가 아니라 고장이다");
+    let ours: std::collections::BTreeSet<&str> = SETTING_NOTES
+        .iter()
+        .filter(|(_, n)| *n == SettingNote::Restart)
+        .map(|(k, _)| *k)
+        .collect();
+    let want: std::collections::BTreeSet<&str> = fx
+        .restart_keys
+        .iter()
+        .map(String::as_str)
+        .filter(|k| SETTINGS.iter().any(|s| s.key == *k))
+        .collect();
+    assert_eq!(ours, want, "재시작 꼬리말을 다는 줄이 정본과 다르다");
+    // 정본 restart 줄이 우리 표에 아예 없으면 그 꼬리말은 갈 데가 없다 — 이름으로 드러낸다.
+    let missing: Vec<&str> = fx
+        .restart_keys
+        .iter()
+        .map(String::as_str)
+        .filter(|k| !SETTINGS.iter().any(|s| s.key == *k))
+        .collect();
+    assert!(missing.is_empty(), "정본 restart 줄이 우리 설정 표에 없다: {missing:?}");
+}
+
+/// 「이 앱에서는 효과 없음」은 **선언한 줄에만** 붙는다 — 지금은 `alt-scroll` 하나다
+/// (사람 결정 2026-11-12 · 대장의 새 축은 pytmux-598 이 들 때까지 이 고정이 대신한다).
+#[test]
+fn the_no_effect_note_is_only_on_alt_scroll() {
+    use base::config::{SETTING_NOTES, SettingNote};
+    let keys: Vec<&str> = SETTING_NOTES
+        .iter()
+        .filter(|(_, n)| *n == SettingNote::NoEffectHere)
+        .map(|(k, _)| *k)
+        .collect();
+    assert_eq!(keys, ["alt-scroll"]);
+}
+
+/// 꼬리말 글이 정본 낱말과 같다(ko·en).
+#[test]
+fn the_restart_note_reads_like_canon() {
+    use base::config::SettingNote;
+    let fx = fixture();
+    let row = SETTINGS.iter().find(|s| s.key == "vt-parser").expect("vt-parser 줄");
+    let ko = i18n::with_locale("ko", || row.note().map(SettingNote::label));
+    assert_eq!(ko, Some(fx.setting_ko["restart"].as_str()));
+    let en = i18n::with_locale("en", || row.note().map(SettingNote::label));
+    assert_eq!(en, Some(fx.setting_en["restart"].as_str()));
+    let alt = SETTINGS.iter().find(|s| s.key == "alt-scroll").expect("alt-scroll 줄");
+    assert_eq!(
+        i18n::with_locale("en", || alt.note().map(SettingNote::label)),
+        Some("no effect in this app")
+    );
+}
+
+/// 그리는 자리가 꼬리말을 **실제로 붙이나**(배선) — GUI 는 그린 글을 되읽을 수 없어
+/// `screen_row_conformance` 와 같은 방편으로 원문을 읽는다. 값을 만드는 함수만 재면
+/// 붙이는 호출을 지워도 초록이다(CLAUDE.md 「표시 기능은 호출부까지 단언」).
+#[test]
+fn render_settings_attaches_the_note() {
+    const GUI_SRC: &str = include_str!("../../gui/src/session_view.rs");
+    let start = GUI_SRC.find("fn render_settings(").expect("render_settings 가 없다");
+    let body = &GUI_SRC[start..];
+    let end = body[1..].find("\n    fn ").map_or(body.len(), |i| i + 1);
+    assert!(
+        body[..end].contains("Self::setting_note_text("),
+        "render_settings 가 꼬리말을 안 붙인다"
+    );
 }

@@ -384,6 +384,9 @@ register({
         "setcat.동작": "동작",
         "setcat.상태줄": "상태줄",
         "setcat.고급": "고급/플러그인",
+        # '키' 탭(읽기 전용 키 레퍼런스 — `_build_keys_category`). 종전엔 이 줄이 없어
+        # en 로케일에서도 '키'가 그대로 샜다(pytmux-592 에서 짝을 채웠다).
+        "setcat.키": "키",
         # 설정 라벨(setting.<key>)
         "setting.inactive-dim": "비활성 패널 흐리게",
         "setting.inactive-dim-ratio": "흐리게 세기",
@@ -490,6 +493,7 @@ register({
         "setcat.동작": "Behavior",
         "setcat.상태줄": "Status bar",
         "setcat.고급": "Advanced/Plugins",
+        "setcat.키": "Keys",
         "setting.inactive-dim": "Dim inactive panes",
         "setting.inactive-dim-ratio": "Dim strength",
         "setting.tab-bar": "Tab bar",

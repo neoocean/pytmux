@@ -288,7 +288,9 @@ def _resolve_keys(node, fn, consts):
             return (set(), [], [f"키 표 공장 {_call_name(node)}() 의 전수 {roster} 를 못 찾는다"])
         got = _names_of(val)
         # 공장에 **함께 넘긴 리터럴 표**(`{"enter": "apply"}`)도 이 판의 do 다.
-        for arg in list(node.args[1:]) + [kw.value for kw in node.keywords]:
+        # ⚠ `server=` 는 표가 아니라 공장의 **문맥**이다(머신 탭 조건 · pytmux-617) — 안 읽는다.
+        for arg in list(node.args[1:]) + [kw.value for kw in node.keywords
+                                          if kw.arg != "server"]:
             sub, subp, subu = _resolve_keys(arg, fn, consts)
             got |= sub
             if subp or subu:
@@ -804,7 +806,9 @@ def test_every_clickable_badge_names_something_that_takes_it():
     assert not unread, "글자로 못 읽은 배지 do:\n  " + "\n  ".join(unread)
     assert not dead, "죽은 배지:\n  " + "\n  ".join(dead)
     # 공허 통과가 아니다 — 지금 실리는 세 이름을 실제로 셌다.
-    assert {"status", "model", "usage-panel"} <= seen, seen
+    # 모델 배지 = 한도 판(정본 `open_model_config`) · 사용량 배지 = 기간 트리(정본
+    # `open_token_log("hour")`) — pytmux-617·604.
+    assert {"status", "usage-panel", "claude-token-log"} <= seen, seen
 
 
 def test_the_rec_badge_opens_the_status_panel_in_the_native_client():

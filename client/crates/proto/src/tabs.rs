@@ -59,6 +59,15 @@ pub struct Tab {
     pub claude: Option<String>,
     #[serde(default)]
     pub pinned: bool,
+    /// 탭 스위처 하위행용 **경량 패널 요약**(서버 `_switcher_panes` — 패널 둘 이상인 탭만 ·
+    /// 원격 탭은 상류 status 가 실어 준 값을 다운스트림이 그대로 잇는다).
+    ///
+    /// 정본은 **원격 탭**의 패널 줄을 이 칸으로 채운다(`_fill_tab_switcher_panes` — 원격 탭
+    /// 패널은 로컬 tree 에 없다). 로컬 탭은 정본도 이 칸을 무시하고 tree 회신을 쓴다
+    /// (pytmux-620). 서버가 이미 싣던 칸이라 서버 변경은 없다. `null` 도 온다(구상류 ·
+    /// 패널 하나) — 그때 `None`.
+    #[serde(default)]
+    pub panes: Option<Vec<crate::message::TreePane>>,
 }
 
 impl Tab {
@@ -236,13 +245,21 @@ impl TabBar {
     /// 로컬 정규화 상태(서버가 [비고정][고정]으로 정렬해 보낸 경우)에서는 `index+1` 과
     /// 같은 값이 나온다 — 어긋나는 것은 원격 탭이 섞이거나 정규화 전일 때다.
     pub fn visual_numbers(&self) -> Vec<usize> {
-        let mut order: Vec<usize> = (0..self.tabs.len()).filter(|&i| !self.tabs[i].pinned).collect();
-        order.extend((0..self.tabs.len()).filter(|&i| self.tabs[i].pinned));
+        let order = self.visual_order();
         let mut out = vec![0usize; self.tabs.len()];
         for (n, i) in order.into_iter().enumerate() {
             out[i] = n + 1;
         }
         out
+    }
+
+    /// `tabs` 안 자리를 **시각 순서**(비고정 → 고정)로 — 정본 `_visual_tab_order` 와 같은
+    /// 규칙(`visual_numbers` 의 역). 탭 스위처가 이 차례로 줄을 세운다(pytmux-620).
+    pub fn visual_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> =
+            (0..self.tabs.len()).filter(|&i| !self.tabs[i].pinned).collect();
+        order.extend((0..self.tabs.len()).filter(|&i| self.tabs[i].pinned));
+        order
     }
 
     /// **표시 번호**(1-based, 시각 순서) → 그 탭. 없으면 `None`.

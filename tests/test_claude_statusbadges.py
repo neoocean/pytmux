@@ -159,10 +159,13 @@ def test_only_the_badge_with_a_screen_is_clickable():
                          "tok5h_pct": 12,
                          "claude_warn": "⚠ x"})
     opens = {b["kind"]: b.get("do") for b in got}
-    assert opens["usage"] == "usage-panel", opens
-    # ★ 모델도 눌린다(pytmux-379) — 규칙은 그대로고 **사실이 바뀌었다**: 그 화면이
-    #   Tier C 에 생겼다(`screenspec.MODEL`). 규칙을 지키는지는 아래 대조군이 잰다.
-    assert opens["model"] == "model", opens
+    # ★ 목적지는 **정본 클릭과 같은 판**이다(pytmux-617·604): 사용량 배지 = 기간 트리
+    #   (`open_token_log("hour")`) · 모델 배지 = 한도 탭(`open_model_config`).
+    assert opens["usage"] == "claude-token-log", opens
+    assert opens["model"] == "usage-panel", opens
+    # 정본 하단 동선(`_status_buttons`)에 드는 배지만 `nav` 다 — 경고 배지는 아니다.
+    navs = {b["kind"] for b in got if b.get("nav")}
+    assert navs == {"model", "usage"}, navs
     for kind in ("warn",):
         assert opens[kind] is None, f"{kind} 에 화면이 없는데 누를 자리를 만들었다: {opens}"
 
@@ -177,12 +180,12 @@ def test_the_name_it_carries_is_one_the_plugin_actually_opens():
     plug = importlib.import_module("pytmuxlib.plugins.claude-code").PLUGIN
     got = _mod().badges({"claude_active": True, "tok5h_pct": 12})
     name = next(b["do"] for b in got if b["kind"] == "usage")
-    assert name in plug._USAGE_PANEL, (name, plug._USAGE_PANEL)
+    spec = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
+    assert name in spec.TOKEN_LOG, (name, spec.TOKEN_LOG)
     # 모델 배지도 같은 관문을 지난다 — 이름이 **그 플러그인이 여는 이름**이라야 한다.
     got_model = _mod().badges({"claude_active": True, "claude_model": "opus-5"})
     mname = next(b["do"] for b in got_model if b["kind"] == "model")
-    spec = importlib.import_module("pytmuxlib.plugins.claude-code").screenspec
-    assert mname in spec.MODEL, (mname, spec.MODEL)
+    assert mname in plug._USAGE_PANEL, (mname, plug._USAGE_PANEL)
     # 정본의 명령 갈래도 같은 이름을 받는다(팔레트에서 되는 것이 여기서도 돼야 한다).
     assert name in importlib.import_module('pytmuxlib.plugins.claude-code').NOARG, name
 

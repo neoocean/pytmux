@@ -106,6 +106,16 @@ def collect(pytmux_root: pathlib.Path) -> dict:
     if not cwd:
         raise SystemExit("ncd/screen.py 에서 _CWD 를 못 찾았다")
     tags["cwd"] = cwd.group(1)
+    # 토큰 팝업 `[세션]` 의 지금 활성 세션(pytmux-618) — 정본은 Rich 색 **이름**을 쓴다
+    # (`_ACTIVE_SESSION_COLOR = "orange1"`). 값은 Rich 가 푼다(Textual 은 안 문다).
+    cc = (pytmux_root / "pytmuxlib" / "plugins" / "claude-code" / "screens.py").read_text(
+        encoding="utf-8")
+    act = re.search(r'^_ACTIVE_SESSION_COLOR = "([a-z0-9_]+)"', cc, re.M)
+    if not act:
+        raise SystemExit("claude-code/screens.py 에서 _ACTIVE_SESSION_COLOR 를 못 찾았다")
+    from rich.color import Color as _RichColor
+    r, g, b = _RichColor.parse(act.group(1)).get_truecolor()
+    tags["active"] = f"#{r:02x}{g:02x}{b:02x}"
 
     if len(tags) < 10:
         raise SystemExit(f"뽑힌 태그가 너무 적다({len(tags)}) — 정규식이 헛돌았다")

@@ -24,6 +24,9 @@ pub static EN: &[(&str, &str)] = &[
     ("개요를 기다리는 중…", "Waiting for the overview…"),
     ("첫 화면을 기다리는 중…", "Waiting for the first frame…"),
     ("맞는 명령이 없다", "No matching command"),
+    // 플러그인 관리 판의 검색 칸(pytmux-591) — 정본 `ui.search`·`screen.no_search_results`.
+    ("검색…", "Search…"),
+    ("(검색 결과 없음)", "(no results)"),
     ("아직 알림이 없다", "No notices yet"),
     ("버퍼가 없다", "No buffers"),
     ("(탭 없음)", "(no tabs)"),

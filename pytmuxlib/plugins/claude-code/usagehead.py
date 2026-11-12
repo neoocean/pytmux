@@ -146,3 +146,58 @@ def summary_line(usage, total_all, win, xc, xc_hosts, xc_cov, labels=None):
     return limit_summary(usage) + i18n.t(
         "pscreen.tklog_scope",
         sigma=sigma_text(total_all, win, xc, xc_hosts, xc_cov, labels))
+
+
+# ── 창 Σ 줄(pytmux-618 ③) — 정본 `[한도]` 탭의 «이번 5h창 ~Σ… · 이번 주 ~Σ…» 한 줄 ──
+#
+# 글은 여기 산다(종전 `screens.py` — 서버가 GUI 판을 지을 때 못 읽었다).
+# (글 — 창 Σ 둘 · 남은 시간 셋 · 그 둘을 미리 끼운 평탄 포맷 여섯 — 은 플러그인 `__init__.py`
+#  의 카탈로그에 있다: 서버가 읽는 자리여야 한다. 평탄 포맷 열쇠 = `<창 열쇠>_<단위>`.)
+_LEFT_UNITS = (("m", "pscreen.left_m"), ("hm", "pscreen.left_hm"), ("d", "pscreen.left_d"))
+
+
+def left_parts(sec):
+    """남은 초 → `(단위, 인자)` — 90분 미만 분 · 하루 미만 시+분 · 그 이상 일+시(정본 그대로)."""
+    mins = max(0, int(sec) // 60)
+    if mins < 90:
+        return "m", {"m": mins}
+    h, m = divmod(mins, 60)
+    if h < 24:
+        return "hm", {"h": h, "m": m}
+    d, h = divmod(h, 24)
+    return "d", {"d": d, "h": h}
+
+
+def fmt_left(sec):
+    """남은 시간 짧은 사람표기(정본 `TokenLogScreen._fmt_left` 의 본체)."""
+    unit, kw = left_parts(sec)
+    return i18n.t(dict(_LEFT_UNITS)[unit], **kw)
+
+
+def window_parts(usage, records, now):
+    """현재 5h/주간 **창의 추정 Σ + 리셋까지** 조각들 — `[(평탄 열쇠, 인자)]`.
+
+    실측 리셋 표기로 창 시작(리셋−5h/−7일)을 역산해 받은 레코드를 합한다. 리셋 표기가
+    없거나 지났으면(낡은 실측) 그 축은 뺀다(지어내지 않는다). 정본은 조각을 « · » 로
+    한 줄에 잇고, GUI 판은 조각마다 한 줄이다(같은 정보 · 같은 차례)."""
+    if not isinstance(usage, dict):
+        return []
+    from .claude import parse_reset_ts
+    out = []
+    for key, span, name in (("session", 5 * 3600, "pscreen.win_session"),
+                            ("week_all", 7 * 86400, "pscreen.win_week")):
+        d = usage.get(key)
+        reset = d.get("reset") if isinstance(d, dict) else None
+        ts = parse_reset_ts(reset) if reset else None
+        if ts is None or ts <= now:
+            continue
+        tok = usagelog.window_sum(records or [], ts - span)
+        unit, kw = left_parts(ts - now)
+        out.append((f"{name}_{unit}", dict(kw, tok=usagelog._fmt_tokens(tok))))
+    return out
+
+
+def multi_host(xc_hosts) -> bool:
+    """원산지 머신이 둘 이상인가(= 동기화로 남의 머신 몫이 들어왔나). 정본 토큰 팝업의
+    `[머신]` 탭·`o` 키와 GUI 판의 머신 탭이 **같은 술어**를 본다(pytmux-617)."""
+    return len([1 for v in (xc_hosts or {}).values() if v]) >= 2

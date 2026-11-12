@@ -96,6 +96,13 @@ pub enum Screen {
     MergeRemote,
     /// 레이아웃 프리셋 목록(`select-layout`). 고르면 바로 적용된다.
     Layouts,
+    /// **저장된** 레이아웃 슬롯 목록(`layout-load`·`layout-load-new` · 정본
+    /// `ChooseLayoutScreen` · pytmux-623).
+    ///
+    /// 서버에 `list_layouts` 를 묻고 `layouts` 회신의 이름을 줄로 세운다. 비었으면 정본처럼
+    /// 「(저장된 레이아웃 없음)」 한 줄이고, 그 줄의 `Enter` 는 닫기만 한다. 종전 GUI 는 이름을
+    /// **치는** 물음(후보 단 입력)이라 손이 한 걸음 갈렸다(↑↓ **Tab** Enter).
+    SavedLayouts,
     /// 지나간 알림들(`:notice-history`). 읽는 화면이지만 **`InfoScreen` 이 아니다** —
     /// 정본 `NoticeHistoryScreen` 은 `escape` 만 닫고 그 밖의 키는 삼킨다(pytmux-273 ②).
     ///
@@ -230,6 +237,7 @@ impl Screen {
                 Screen::SearchResults => 22,
                 Screen::Cursor => 23,
                 Screen::DebugStats => 24,
+                Screen::SavedLayouts => 25,
             }
         }
         const ALL: &[Screen] = &[
@@ -258,6 +266,7 @@ impl Screen {
             Screen::SearchResults,
             Screen::Cursor,
             Screen::DebugStats,
+            Screen::SavedLayouts,
         ];
         // 중복·자리 어긋남은 여기서 잡는다(빠짐은 위 match 가 이미 막았다).
         debug_assert!(
@@ -287,6 +296,9 @@ impl Screen {
             Screen::Hooks => "훅",
             Screen::Options => "인자",
             Screen::Layouts => "레이아웃",
+            // 정본 `screen.layout_load` — 고른 쪽(새 탭/덮어쓰기)에 맞는 제목은 뷰가
+            // `Screens::saved_layouts_title` 로 덮어 그린다(정본 `_open_choose_layout`).
+            Screen::SavedLayouts => "레이아웃 불러오기",
             Screen::Version => "버전",
             Screen::RestartCheck => "재시작 점검",
             // GUI 전용 판(pytmux-375) — 정본에 짝이 없어 옮겨 올 문구도 없다.
@@ -366,6 +378,7 @@ impl Screen {
             | Screen::Confirm
             | Screen::MergeRemote
             | Screen::Layouts
+            | Screen::SavedLayouts
             | Screen::Notices
             | Screen::Menu
             | Screen::Plugins
@@ -490,7 +503,12 @@ impl Screen {
             Screen::Confirm => "ConfirmScreen",
             Screen::Commands => "CommandListScreen",
             Screen::MergeRemote => "MergeRemoteTabScreen",
-            Screen::Layouts => "ChooseLayoutScreen",
+            // ⚠ 프리셋(`select-layout`)의 정본 짝은 `ChooseLayoutScreen` 이 **아니다** —
+            //   정본은 `CommandOptionsScreen("select-layout", …)` 으로 고른다(client.py
+            //   `layout_preset` 갈래). 종전 이 줄은 저장 슬롯 판의 클래스를 적고 있었다
+            //   (pytmux-623 에서 진짜 짝 `SavedLayouts` 가 생기며 바로잡았다).
+            Screen::Layouts => "CommandOptionsScreen",
+            Screen::SavedLayouts => "ChooseLayoutScreen",
             Screen::Notices => "NoticeHistoryScreen",
             Screen::Menu => "MenuScreen",
             Screen::Plugins => "PluginManagerScreen",
@@ -537,6 +555,7 @@ impl Screen {
             Screen::Notices => "(↑↓ 이동 · Enter 펼치기 · c 복사 · Esc 닫기)",
             Screen::Hooks => "(아무 키나 닫기 · ↑↓ 스크롤)",
             Screen::Layouts => "(↑↓ 고르기 · Enter 적용 · Esc 취소)",
+            Screen::SavedLayouts => "(↑↓ 고르기 · Enter 불러오기 · Esc 취소)",
             Screen::Options => "(↑↓ 줄 · ←→ 값 · Enter 실행 · Esc 취소)",
             Screen::Version => "(아무 키나 닫기)",
             Screen::RestartCheck => "(아무 키나 닫기 · ↑↓ 스크롤)",
@@ -625,6 +644,12 @@ pub enum ScreenKey {
     /// 타이핑 찾기가 **이 판 안에서 못 찾았다** — 이 질의를 서버에 물어라(정본 ncd
     /// `request_nc_find` · pytmux-612). 판은 그대로다. 누구에게 묻는지는 뷰가 안다(스펙).
     FindMiss(String),
+    /// **이 명령 줄을 그대로 돌려라** — 판은 닫혔다(팔레트의 인자 자리 후보 · pytmux-621).
+    ///
+    /// 정본 `PromptScreen.on_input_submitted` 의 인자 모드는 고른 줄이 아니라 **줄 글**을
+    /// 돌려준다(`dismiss(f"{cmd} {후보}")` 또는 친 그대로). 그 줄이 무엇을 뜻하는지는 명령 줄
+    /// 실행기(`cmdline`)가 안다 — 뷰가 그 길로 넘긴다.
+    RunLine(String),
 }
 
 /// 플러그인 판의 **타이핑 찾기** 선언(pytmux-611·612) — 스펙의 `typeahead` 를 core 말로.
@@ -667,6 +692,37 @@ pub fn typeahead_jump(names: &[String], start: usize, query: &str) -> Option<usi
         }
     }
     None
+}
+
+/// 플러그인 관리 판의 **이름 검색** — 정본 `PluginManagerScreen._matches` 와 같은 규칙
+/// (pytmux-591). `items` 는 `(이름, 설명)` 이고 돌려주는 것은 걸린 줄의 **원래 번호**다.
+///
+/// - 검색어는 앞뒤 공백을 떼고 소문자로 본다. 비면 전부.
+/// - 한글이 섞였으면 QWERTY 로 되돌려 이름과 맞댄다(IME 를 켠 채 친 `ㅔ4` = `p4`).
+/// - 이름은 구분자(공백·`_`·`-`)를 무시하고 부분 일치, **또는** 설명이 (원래 검색어를)
+///   부분 일치로 품으면 걸린다.
+///
+/// 정본과의 대조는 `proto/tests/plugin_filter_conformance.rs`(정본 `_matches` 를 직접 부른 픽스처).
+pub fn plugin_filter(items: &[(&str, &str)], query: &str) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return (0..items.len()).collect();
+    }
+    let has_hangul = q.chars().any(|c| {
+        let o = c as u32;
+        (0x1100..=0x11FF).contains(&o) || (0x3130..=0x318F).contains(&o) || (0xAC00..=0xD7A3).contains(&o)
+    });
+    let qn = if has_hangul { hangul_to_qwerty(&q).to_lowercase() } else { q.clone() };
+    let sep = |s: &str| s.replace([' ', '_'], "-");
+    let qs = sep(&qn);
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, (name, desc))| {
+            sep(&name.to_lowercase()).contains(&qs) || desc.to_lowercase().contains(&q)
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// 무엇을 묻고 있나. **대답을 어디에 쓸지**가 이 값에 달렸다.
@@ -1066,6 +1122,35 @@ pub struct Screens {
     /// 패널에 안 넣겠다"이지 "쓴 것을 버리겠다"가 아니다. 안 남기면 길게 쓰다가 습관적으로
     /// `Esc` 를 두 번 누른 사람이 전부 잃는다.
     compose_draft: String,
+    /// 설정·플러그인·커서 판의 **보이는 줄 수**와 **전체 줄 수**(pytmux-627 ①).
+    ///
+    /// 정본 설정 판(`#sets`)은 맨 `ListView` 라 `Home`·`End`·`PgUp`·`PgDn` 이
+    /// `ScrollableContainer` 기본 바인딩 — **글만 굴리고 커서는 제자리**다. 그 손을 하려면
+    /// 커서(`selected`)와 따로 사는 보기 자리(`scroll`)가 필요하고, 그 자리를 옮기려면
+    /// 판의 높이와 길이를 알아야 한다. 둘 다 뷰만 안다 — `set_plugin_grid` 처럼 뷰가 키를
+    /// 먹기 **직전에** 넣는다([`Screens::set_list_view`]).
+    list_rows: usize,
+    list_total: usize,
+    /// 설정 판 «키» 탭의 줄들 — `(키, 하는 일)`(pytmux-592). 모델은
+    /// [`crate::keymap::key_help_lines`] 한 벌이고(`Screen::Keys` 와 같은 줄) 뷰가 판을
+    /// 열 때 사용자 바인딩과 함께 넣는다(core 에 IO 가 없다는 계약).
+    key_rows: Vec<(String, String)>,
+    /// 플러그인 관리 판의 **이름 검색**(정본 `PluginManagerScreen._query` · pytmux-591).
+    plugin_query: String,
+    /// 저장된 레이아웃 판의 이름들과 **어디로** 불러오나(참 = 새 탭 · pytmux-623).
+    saved_layouts: Vec<String>,
+    saved_layouts_new: bool,
+    /// 팔레트 **인자 자리**가 볼 이력 — `(버킷, 최근-우선 목록)`(pytmux-621). 뷰가 팔레트를
+    /// 열 때 자기 arghist 에서 채운다(core 에 IO 가 없다).
+    palette_arghist: Vec<(String, Vec<String>)>,
+    /// 인자 자리 후보에서 고른 줄(정본 `_sel` — 글이 바뀌면 0).
+    palette_arg_pick: usize,
+    /// 물음의 **흐린 제안**(정본 `SuggestFromList([지금 이름])` — 이름 바꾸기 · pytmux-621).
+    ///
+    /// 입력값이 아니다: 빈 칸이면 자리표시로 흐리게 보이고, 친 글이 그 접두면 나머지가 흐리게
+    /// 따라붙으며, `Tab`/`→` 가 채운다. 치면 **덮어쓴다**(종전엔 지금 이름을 입력값으로 넣어
+    /// 치면 덧붙었다).
+    prompt_ghost: Option<String>,
 }
 
 impl Screens {
@@ -1169,6 +1254,7 @@ impl Screens {
     pub fn open_palette(&mut self) {
         self.open(Screen::Commands);
         self.palette_tab = 0;
+        self.palette_arg_pick = 0;
     }
 
     /// 팔레트에서 펴 있는 카테고리 탭(0 = `전체`).
@@ -1323,6 +1409,31 @@ impl Screens {
         // (`asking_unfilled` 문서). 그래서 40여 개의 ask 호출부가 그대로다.
         self.prompt_history = None;
         self.prompt_pick = None;
+        self.prompt_ghost = None;
+    }
+
+    /// 지금 값을 **흐린 제안**으로 띄우는 물음(정본 `open_prompt(..., suggest=cur)` · pytmux-621).
+    ///
+    /// 입력 칸은 **빈 채로** 연다 — 치면 덮어쓰고, `Tab`/`→` 가 제안을 채운다. 정본이 이렇게
+    /// 바꾼 까닭은 「initial 로 미리 채우면 타이핑이 덧붙던 문제」다(`clientcmd.open_prompt`).
+    pub fn ask_with_ghost(&mut self, prompt: Prompt, ghost: &str) {
+        self.ask(prompt, "");
+        self.prompt_ghost = (!ghost.is_empty()).then(|| ghost.to_owned());
+    }
+
+    /// 물음의 흐린 제안 전체(없으면 `None`). 그리는 쪽: 빈 칸이면 이 글이 자리표시다.
+    pub fn prompt_ghost(&self) -> Option<&str> {
+        self.prompt_ghost.as_deref()
+    }
+
+    /// 지금 친 글에 붙는 **제안**(Textual `SuggestFromList` 와 같은 규칙) — 친 글이 비지 않고
+    /// 제안이 그 글로 시작하면(대소문자 무시) 제안 전체, 아니면 `None`.
+    pub fn prompt_suggestion(&self) -> Option<&str> {
+        let ghost = self.prompt_ghost.as_deref()?;
+        if self.typed.is_empty() {
+            return None;
+        }
+        ghost.to_lowercase().starts_with(&self.typed.to_lowercase()).then_some(ghost)
     }
 
     /// 물음 위에 **플러그인이 준 글**을 함께 세운다(설계 Tier C).
@@ -1348,6 +1459,7 @@ impl Screens {
         self.prompt_sel_anchor = None;
         self.prompt_history = Some(history);
         self.prompt_pick = None;
+        self.prompt_ghost = None;
     }
 
     /// 이력을 **아직 안 채운** 열린 물음. 뷰의 키 처리 진입점이 이걸 보고 한 번 채운다.
@@ -1505,6 +1617,7 @@ impl Screens {
                 | Screen::Plugins
                 | Screen::Menu
                 | Screen::Layouts
+                | Screen::SavedLayouts
                 | Screen::MergeRemote
                 | Screen::SearchResults
         )
@@ -1523,6 +1636,8 @@ impl Screens {
         self.menu_group = None;
         // 지난 확인의 상세가 남으면 **다음 물음 위에 엉뚱한 글**이 붙는다.
         self.detail.clear();
+        // 플러그인 검색도 판을 열 때마다 비어서 시작한다(정본 `compose` 의 `_query = ""`).
+        self.plugin_query.clear();
         if self.top() == Some(screen) {
             self.stack.pop();
             return;
@@ -1771,6 +1886,31 @@ impl Screens {
                 // 조용히 사라지면 사용자가 무엇을 잃었는지 모른다.
                 _ => ScreenKey::Consumed,
             });
+        }
+        // 플러그인 관리 판은 **글자가 이름 검색**이다(정본 `PluginManagerScreen.on_key` ·
+        // pytmux-591): `space` 는 토글(검색에 안 붙는다) · `backspace` 는 한 글자 지우기 ·
+        // 찍히는 글자 하나는 검색에 붙이고 커서를 맨 위로(정본 `_rebuild` 의 `index = 0`).
+        // `←`/`→` 는 정본에서 아무 일도 안 한다 — 종전에는 `press_settings` 를 타고
+        // `AppliedDir` 를 내 **설정 판 같은 번호 줄의 값**을 바꿨다(덤으로 찾은 결함).
+        if matches!(self.top(), Some(Screen::Plugins)) {
+            match key {
+                Key::Char(' ') => return Some(ScreenKey::Applied(self.selected)),
+                Key::Char(c) if !c.is_control() => {
+                    self.plugin_query.push(c);
+                    self.selected = 0;
+                    self.scroll = 0;
+                    return Some(ScreenKey::Consumed);
+                }
+                Key::Backspace => {
+                    if self.plugin_query.pop().is_some() {
+                        self.selected = 0;
+                        self.scroll = 0;
+                    }
+                    return Some(ScreenKey::Consumed);
+                }
+                Key::Left | Key::Right => return Some(ScreenKey::Consumed),
+                _ => {}
+            }
         }
         // 설정·플러그인·커서 판은 목록형이지만 `Enter` 가 화면을 안 닫는다(위 참조).
         if matches!(
@@ -2198,12 +2338,15 @@ impl Screens {
             PanelTarget::SettingsCat(i) => {
                 // 사이드바는 코어 분류 **뒤에 플러그인 분류**가 이어진 목록이다(정본과
                 // 같은 차례) — 정적 표만 보면 `Claude` 탭 클릭이 조용히 무시된다.
-                let cats = self.plugins.setting_cats();
+                // 맨 끝 «키» 탭도 같은 목록에 든다(pytmux-592).
+                let cats = self.settings_cats();
                 let Some(cat) = cats.get(i) else {
                     return PanelEffect::Moved;
                 };
-                if let Some(row) = self.plugins.setting_cat_first(cat) {
+                if let Some(row) = self.settings_cat_first(cat) {
                     self.selected = row;
+                    // 정본 `_jump_to_cat` 은 그 분류의 첫 줄을 창의 맨 위로 굴린다.
+                    self.scroll = row.min(self.max_list_top());
                 }
                 PanelEffect::Moved
             }
@@ -2446,6 +2589,123 @@ impl Screens {
         &self.plugins
     }
 
+    // ── 설정 판의 줄 전체(코어 · 플러그인 · «키» 탭 — pytmux-592) ────────────────
+
+    /// «키» 탭의 줄을 넣는다(뷰가 설정 판을 열 때 `keymap::key_help_lines(binds)`).
+    pub fn set_settings_key_rows(&mut self, rows: Vec<(String, String)>) {
+        self.key_rows = rows;
+    }
+
+    /// 설정 판의 **전체 줄 수** — 코어 + 플러그인 + «키» 탭.
+    pub fn settings_total(&self) -> usize {
+        self.plugins.settings_len() + self.key_rows.len()
+    }
+
+    /// 그 줄이 «키» 탭의 줄이면 `(키, 하는 일)`.
+    pub fn settings_key_row(&self, row: usize) -> Option<&(String, String)> {
+        self.key_rows.get(row.checked_sub(self.plugins.settings_len())?)
+    }
+
+    /// «키» 탭의 줄인가.
+    pub fn is_key_row(&self, row: usize) -> bool {
+        self.settings_key_row(row).is_some()
+    }
+
+    /// 설정 **사이드바 차례** — 정본 `cat_order` 그대로(코어 · 플러그인 분류 · 맨 끝 `키`).
+    pub fn settings_cats(&self) -> Vec<&str> {
+        let mut cats = self.plugins.setting_cats();
+        if !self.key_rows.is_empty() {
+            cats.push(crate::config::KEYS_CAT);
+        }
+        cats
+    }
+
+    /// `row` 번째 줄이 속한 분류의 사이드바 번호.
+    pub fn settings_cat_of(&self, row: usize) -> Option<usize> {
+        if self.is_key_row(row) {
+            return Some(self.settings_cats().len() - 1);
+        }
+        self.plugins.setting_cat_of(row)
+    }
+
+    /// 그 분류의 첫 줄(사이드바 클릭·`Tab` 이 뛸 곳 — 정본 `_cat_first`).
+    pub fn settings_cat_first(&self, cat: &str) -> Option<usize> {
+        if cat == crate::config::KEYS_CAT && !self.key_rows.is_empty() {
+            return Some(self.plugins.settings_len());
+        }
+        self.plugins.setting_cat_first(cat)
+    }
+
+    /// `Tab`/`Shift+Tab` 으로 분류를 넘길 때 갈 줄. 끝에서 돈다(정본 `% len`).
+    pub fn settings_cat_step(&self, row: usize, forward: bool) -> usize {
+        let cats = self.settings_cats();
+        if cats.is_empty() {
+            return row;
+        }
+        let now = self.settings_cat_of(row).unwrap_or(0);
+        let len = cats.len();
+        let next = if forward { (now + 1) % len } else { (now + len - 1) % len };
+        self.settings_cat_first(cats[next]).unwrap_or(row)
+    }
+
+    // ── 저장된 레이아웃 판(pytmux-623 · 정본 `ChooseLayoutScreen`) ───────────────
+
+    /// 서버가 준 저장 슬롯 이름으로 판을 연다. `new` 면 새 탭으로, 아니면 지금 탭을 덮어쓴다.
+    pub fn open_saved_layouts(&mut self, names: Vec<String>, new: bool) {
+        self.open(Screen::SavedLayouts);
+        self.saved_layouts = names;
+        self.saved_layouts_new = new;
+    }
+
+    /// 판의 줄들(비었으면 뷰가 정본의 「(저장된 레이아웃 없음)」 한 줄을 그린다).
+    pub fn saved_layouts(&self) -> &[String] {
+        &self.saved_layouts
+    }
+
+    /// 판 제목 — 정본 `screen.layout_to_new` / `screen.layout_to_over`.
+    pub fn saved_layouts_title(&self) -> &'static str {
+        crate::i18n::t(if self.saved_layouts_new {
+            "레이아웃 → 새 탭"
+        } else {
+            "레이아웃 → 현재 탭 덮어쓰기"
+        })
+    }
+
+    /// 고른 줄 → `(이름, 새 탭인가)`. 빈 목록의 안내 줄이면 `None`(정본: 닫기만 한다).
+    pub fn saved_layout_pick(&self, row: usize) -> Option<(String, bool)> {
+        self.saved_layouts.get(row).map(|n| (n.clone(), self.saved_layouts_new))
+    }
+
+    // ── 팔레트 인자 자리 후보(pytmux-621 · 정본 `_arg_candidates`) ───────────────
+
+    /// 팔레트가 볼 인자 이력을 넣는다 — `(버킷, 최근-우선 목록)`.
+    pub fn set_palette_arghist(&mut self, hist: Vec<(String, Vec<String>)>) {
+        self.palette_arghist = hist;
+    }
+
+    /// 지금 친 줄이 **인자 자리**면 그 후보(정본 `_arg_candidates`). 아니면 `None`.
+    pub fn palette_args(&self) -> Option<crate::promptargs::ArgCands> {
+        crate::promptargs::arg_candidates(&self.typed, |bucket| {
+            self.palette_arghist
+                .iter()
+                .find(|(b, _)| b == bucket)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        })
+    }
+
+    /// 인자 후보에서 고른 줄.
+    pub fn palette_arg_pick(&self) -> usize {
+        self.palette_arg_pick
+    }
+
+    // ── 플러그인 관리 판의 이름 검색(pytmux-591) ────────────────────────────────
+
+    /// 지금까지 친 검색 글자(정본 `#plgsearch` 의 값).
+    pub fn plugin_query(&self) -> &str {
+        &self.plugin_query
+    }
+
     /// `from` 에서 한 칸 움직인 뒤 **고를 수 있는** 줄. 구분선은 건너뛴다.
     ///
     /// 구분선에 커서가 서면 `Enter` 가 아무 일도 안 하고, 그건 "메뉴가 먹통"으로 읽힌다.
@@ -2570,26 +2830,29 @@ impl Screens {
     /// 바인딩이고, 거기서는 **커서가 아니라 글이** 움직인다(`scroll_home`·`scroll_end`·
     /// `page_up`·`page_down` — 목록 커서 `index` 는 제자리다).
     ///
-    /// ⚠ **여기서는 커서를 옮긴다 — 정본과 한 칸 다르고, 그것이 이 화면에서 가능한
-    /// 유일한 «같은 그림»이다.** 우리 판에는 커서와 따로 사는 스크롤이 없다: 보이는
-    /// 창은 `selected` 에서 파생된다(`render_settings` 의 `start`). 굳이 스크롤 값을
-    /// 하나 더 만들면 「`End` 로 끝까지 갔는데 `←→` 는 화면 밖 옛 줄의 값을 바꾼다」가
-    /// 되고, 그건 정본의 손을 베낀 대가로 이 화면을 못 쓰게 만드는 쪽이다.
-    ///
-    /// ⛔ **위쪽 상한은 여기서 안 건다** — 줄 수를 아는 것은 그리는 쪽이다
-    /// (`Screen::Plugins` 의 목록은 서버가 나르고 core 는 안 든다). `press_info_tabs`
-    /// 와 같은 규약으로 `End` 는 `usize::MAX` 를 두고 가고, 뷰가 `clamp_selection` 으로
-    /// 접는다(GUI `settle_settings_cursor`).
+    /// ★ **이제 정본과 같다 — 커서는 제자리, 창만 굴린다**(pytmux-627 ①). 종전에는
+    /// 「커서와 따로 사는 스크롤이 없다」며 커서를 옮겼는데, 그 사유는 허용 부류(ⓐⓑⓒ)가
+    /// 아니었다. 보기 자리는 `scroll` 이 들고, 그 상한은 뷰가 [`Screens::set_list_view`]
+    /// 로 알려 준 판 높이·줄 수로 잰다. `End` 로 끝을 본 뒤의 `←→` 는 정본처럼 **커서
+    /// 줄**의 값을 바꾼다(그 줄이 창 밖이어도 — 정본 `ListView.index` 와 같다).
     fn press_settings(&mut self, key: Key) -> ScreenKey {
+        // «키» 탭의 줄은 **읽기 전용 레퍼런스**다(정본 `keyref` — `_activate`·`_cycle` 이
+        // 그 줄에 아무 일도 안 한다 · pytmux-592). 값을 고르는 키는 거기서 삼킨다.
+        let on_key_row = self.top() == Some(Screen::Settings) && self.is_key_row(self.selected);
         match key {
             Key::Down => {
-                // `End` 가 두고 간 `usize::MAX` 위에서 또 눌릴 수 있다 — 접는 것은 뷰라
-                // 여기서는 넘치지만 않으면 된다.
+                // 줄 수를 아직 못 받았으면(뷰가 `set_list_view` 를 안 불렀다) 넘치지만
+                // 않게 둔다 — 접는 것은 그때 뷰다(`clamp_selection`).
                 self.selected = self.selected.saturating_add(1);
+                if self.list_total > 0 {
+                    self.selected = self.selected.min(self.list_total - 1);
+                }
+                self.follow_cursor();
                 ScreenKey::Consumed
             }
             Key::Up => {
                 self.selected = self.selected.saturating_sub(1);
+                self.follow_cursor();
                 ScreenKey::Consumed
             }
             // ★ 커서 판에는 **분류가 없다**(다섯 줄이 한 무리다 · pytmux-375).
@@ -2597,17 +2860,18 @@ impl Screens {
             //   이 판의 `selected` 는 0~4 (판 안 줄 번호)라 그대로 태우면 커서와 아무
             //   상관 없는 설정으로 선택이 튄다. 안내에도 `Tab` 이 없으므로 **삼킨다**
             //   (닫지 않는다 — 머리말 ⑵).
-            Key::Tab | Key::BackTab if self.top() == Some(Screen::Cursor) => {
+            Key::Tab | Key::BackTab if self.top() != Some(Screen::Settings) => {
                 ScreenKey::Consumed
             }
-            // 분류 이동은 **플러그인 줄까지 포함한** 목록 위에서 돈다 — 안 그러면
-            // `Claude` 탭이 사이드바에 보이는데 Tab 으로는 못 간다.
-            Key::Tab => {
-                self.selected = self.plugins.setting_cat_step(self.selected, true);
+            // 분류 이동은 **플러그인 줄과 «키» 탭까지 포함한** 목록 위에서 돈다 — 안 그러면
+            // `Claude`·`키` 탭이 사이드바에 보이는데 Tab 으로는 못 간다. 정본
+            // `_jump_to_cat` 은 그 분류의 첫 줄을 **창의 맨 위로** 굴린다(`top=True`).
+            Key::Tab | Key::BackTab => {
+                self.selected = self.settings_cat_step(self.selected, key == Key::Tab);
+                self.scroll = self.selected.min(self.max_list_top());
                 ScreenKey::Consumed
             }
-            Key::BackTab => {
-                self.selected = self.plugins.setting_cat_step(self.selected, false);
+            Key::Right | Key::Left | Key::Enter | Key::Char(' ') if on_key_row => {
                 ScreenKey::Consumed
             }
             // ←→ 는 **값 변경**이다(정본 힌트의 셋째 칸). `Enter` 와 갈라 두는 이유는
@@ -2618,21 +2882,40 @@ impl Screens {
             // Space 는 체크박스 목록의 손버릇이다(파이썬 플러그인 화면과 같다). 설정
             // 화면에서도 같은 뜻이라 갈라 두지 않는다.
             Key::Enter | Key::Char(' ') => ScreenKey::Applied(self.selected),
+            // ★ 항해 키 넷은 **글만 굴린다 — 커서는 제자리**다(pytmux-627 ①). 정본 `#sets`·
+            //   `#plglist` 는 맨 `ListView` 라(그 BINDINGS 는 enter/up/down 뿐 — Textual 8.2.5
+            //   실측) 이 넷이 `ScrollableContainer` 의 `scroll_home`/`scroll_end`/`page_up`/
+            //   `page_down` 으로 간다. 종전 우리는 커서를 옮겼다(「커서와 따로 사는 스크롤이
+            //   없다」는 사유는 허용 부류가 아니었다). 커서를 둔 채 아래를 훑어보는 손이
+            //   정본 사용자의 것이다.
+            //   ⚠ **커서 판은 예외다** — 정본에 짝이 없는 GUI 판(pytmux-375)이고 줄이 다섯뿐이라
+            //   굴릴 것이 없다. 정본 손을 그 판에 얹으면 네 키가 아무 일도 안 하는 판이 된다 —
+            //   그 판은 종전대로 커서를 옮긴다(`Allowed(NativeOnly)` · interaction.rs).
+            Key::Home | Key::End | Key::PageUp | Key::PageDown
+                if self.top() == Some(Screen::Cursor) =>
+            {
+                self.selected = match key {
+                    Key::Home => 0,
+                    Key::End => usize::MAX,
+                    Key::PageUp => self.selected.saturating_sub(PAGE),
+                    _ => self.selected.saturating_add(PAGE),
+                };
+                ScreenKey::Consumed
+            }
             Key::Home => {
-                self.selected = 0;
+                self.scroll = 0;
                 ScreenKey::Consumed
             }
             Key::End => {
-                // 끝이 몇 번째인지는 뷰가 안다(위 머리말 · `press_info_tabs` 와 같다).
-                self.selected = usize::MAX;
+                self.scroll = self.max_list_top();
                 ScreenKey::Consumed
             }
             Key::PageUp => {
-                self.selected = self.selected.saturating_sub(PAGE);
+                self.scroll = self.scroll.saturating_sub(self.list_rows.max(1));
                 ScreenKey::Consumed
             }
             Key::PageDown => {
-                self.selected = self.selected.saturating_add(PAGE);
+                self.scroll = self.scroll.saturating_add(self.list_rows.max(1)).min(self.max_list_top());
                 ScreenKey::Consumed
             }
             Key::Escape => {
@@ -2644,6 +2927,38 @@ impl Screens {
             // 목록형이 `press_list` 에서 하는 것과 같은 팔이다.
             _ => ScreenKey::Consumed,
         }
+    }
+
+    /// 판의 보이는 줄 수와 전체 줄 수를 넣는다(뷰가 키를 먹기 **직전에** — pytmux-627 ①).
+    ///
+    /// 커서도 전체 줄 수로 접는다 — 목록이 줄었으면(플러그인 검색으로 걸렀거나) 옛 자리가
+    /// 목록 밖을 가리킨다.
+    pub fn set_list_view(&mut self, rows: usize, total: usize) {
+        self.list_rows = rows;
+        self.list_total = total;
+        self.selected = self.selected.min(total.saturating_sub(1));
+        self.scroll = self.scroll.min(self.max_list_top());
+    }
+
+    /// 보기 자리(창의 첫 줄)의 상한.
+    fn max_list_top(&self) -> usize {
+        self.list_total.saturating_sub(self.list_rows.max(1))
+    }
+
+    /// 커서가 움직였으면 **보이게 최소로** 굴린다 — 정본 `ListView` 가 강조 줄을
+    /// `scroll_to_widget` 으로 끌어오는 것과 같다(위로 넘으면 맨 위에, 아래로 넘으면 맨 아래에).
+    pub fn follow_cursor(&mut self) {
+        let rows = self.list_rows.max(1);
+        if self.selected < self.scroll {
+            self.scroll = self.selected;
+        } else if self.selected >= self.scroll + rows {
+            self.scroll = self.selected + 1 - rows;
+        }
+    }
+
+    /// 설정·플러그인 판의 창 첫 줄(`scroll` 을 그 판의 보기 자리로 쓴다).
+    pub fn list_top(&self) -> usize {
+        self.scroll
     }
 }
 
@@ -2730,6 +3045,23 @@ pub(crate) fn hangul_to_qwerty(text: &str) -> String {
 impl Screens {
     /// 한 줄 입력의 키. 글자는 쌓고, `Enter` 는 확정, `Esc` 는 취소다.
     fn press_prompt(&mut self, key: Key) -> ScreenKey {
+        // ★ 흐린 제안(이름 바꾸기 · pytmux-621) — 정본 `PromptScreen.on_key` 의 `tab` 팔
+        //   (제안이 있고 값과 다르면 채운다)과 Textual `Input.action_cursor_right`(커서가 끝이고
+        //   제안이 있으면 받아들인다). 제안이 없으면 두 키는 아래 평소 팔로 간다.
+        if let Some(sug) = self.prompt_suggestion().map(str::to_owned) {
+            let at_end = self.prompt_cursor >= self.prompt_chars().len();
+            let take = match key {
+                Key::Tab => sug != self.typed,
+                Key::Right => at_end && self.prompt_selection().is_none(),
+                _ => false,
+            };
+            if take {
+                self.typed = sug;
+                self.prompt_cursor = self.typed.chars().count();
+                self.prompt_sel_anchor = None;
+                return ScreenKey::Consumed;
+            }
+        }
         // 이력 후보가 떠 있으면 ↑↓ 는 고르기, Tab/→ 는 채우기다(파이썬 arghist 의
         // 손 — 후보가 없으면 이 키들은 아래 기본 팔로 떨어져 종전과 같다).
         let matches = self.prompt_matches().len();
@@ -2860,8 +3192,46 @@ impl Screens {
         // 탭 수 = `전체` + 카테고리들. 순환한다(정본 CommandListScreen 과 같다 — 탭이
         // 여덟이라 끝에서 막히면 어느 화살표가 살아 있는지 매번 시험해야 한다).
         let tabs = self.plugins.palette_cats().len() + 1;
+        // ★ **인자 자리 후보**(pytmux-621 · 정본 `PromptScreen` 의 인자 모드). 후보가 떠 있으면
+        //   ↑↓ 는 후보를 **돌고**(정본 `% len`) Tab 은 `명령 후보` 로 채우고 Enter 는 줄을
+        //   실행한다 — 부분 인자가 없으면 강조 후보로, 있으면 친 그대로(정본
+        //   `on_input_submitted` 의 두 갈래 · 후보는 Tab 으로만 채운다).
+        if let Some(args) = self.palette_args().filter(|a| !a.items.is_empty()) {
+            let n = args.items.len();
+            let pick = self.palette_arg_pick.min(n - 1);
+            match key {
+                Key::Down => {
+                    self.palette_arg_pick = (pick + 1) % n;
+                    return ScreenKey::Consumed;
+                }
+                Key::Up => {
+                    self.palette_arg_pick = (pick + n - 1) % n;
+                    return ScreenKey::Consumed;
+                }
+                Key::Tab => {
+                    self.typed = format!("{} {}", args.cmd, args.items[pick].0);
+                    self.palette_arg_pick = 0;
+                    return ScreenKey::Consumed;
+                }
+                Key::Enter => {
+                    let line = if crate::promptargs::has_partial_arg(&self.typed) {
+                        self.typed.clone()
+                    } else {
+                        format!("{} {}", args.cmd, args.items[pick].0)
+                    };
+                    self.close_top();
+                    return ScreenKey::RunLine(line);
+                }
+                _ => {}
+            }
+        }
         match key {
+            // 끝에 친 `?` 는 **명령 목록을 연다**(정본 `on_input_changed` — `?` 를 떼고
+            // `CommandListScreen` 을 띄운다). 우리 팔레트는 그 목록을 **이미** 보이고 있으므로
+            // `?` 를 필터에 붙이지 않는 것이 같은 결과다 — 붙이면 「맞는 명령이 없다」가 된다.
+            Key::Char('?') => ScreenKey::Consumed,
             Key::Char(c) => {
+                self.palette_arg_pick = 0;
                 self.typed.push(c);
                 // 팔레트는 이미 고정 ':' 프리픽스를 화면에 그리고 있다(정본
                 // `on_input_changed`, pytmux-175) — 맨 앞에서부터 이어지는 ':' 는
@@ -2881,6 +3251,7 @@ impl Screens {
             }
             Key::Backspace => {
                 self.typed.pop();
+                self.palette_arg_pick = 0;
                 self.selected = 0;
                 self.rehome_palette_tab();
                 ScreenKey::Consumed

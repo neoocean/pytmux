@@ -318,6 +318,7 @@ pub static EN: &[(&str, &str)] = &[
     ("setting\u{0004}미설정", "unset"),
     ("setting\u{0004}미상(서버)", "unknown (server)"),
     ("setting\u{0004}재시작 시 발효", "takes effect on restart"),
+    ("setting\u{0004}이 앱에서는 효과 없음", "no effect in this app"),
     ("예", "Yes"),
     ("아니오", "No"),
     // 확인 판의 **상황별 제목·동사**(정본 `dialog.kill_*` 과 같은 낱말).
@@ -389,6 +390,17 @@ pub static EN: &[(&str, &str)] = &[
         "(↑↓ choose · → submenu · ← back · Enter run · Esc cancel)",
     ),
     ("(↑↓ 고르기 · Enter 적용 · Esc 취소)", "(↑↓ choose · Enter apply · Esc cancel)"),
+    // 저장된 레이아웃 판(pytmux-623) — 정본 `screen.layout_load`·`layout_to_*`·`no_layouts`.
+    ("(↑↓ 고르기 · Enter 불러오기 · Esc 취소)", "(↑↓ choose · Enter load · Esc cancel)"),
+    ("레이아웃 불러오기", "Load layout"),
+    ("레이아웃 → 새 탭", "Layout → new tab"),
+    ("레이아웃 → 현재 탭 덮어쓰기", "Layout → overwrite current tab"),
+    ("(저장된 레이아웃 없음)", "(no saved layouts)"),
+    // 팔레트 인자 자리 후보의 부류(pytmux-621) — 정본 `screen.arg_recent`·`screen.arg_choice`.
+    ("arg\u{0004}이전 입력", "recent"),
+    ("arg\u{0004}선택지", "choice"),
+    // `debug-stats` 서버 절반의 「세션」 — 정본 `diag.sessions` 는 복수형이다(pytmux-627 ②).
+    ("diag\u{0004}세션", "Sessions"),
     ("(↑↓ 줄 · ←→ 값 · Enter 실행 · Esc 취소)", "(↑↓ row · ←→ value · Enter run · Esc cancel)"),
     ("(아무 키나 닫기)", "(any key closes)"),
     (
@@ -498,6 +510,8 @@ pub static EN: &[(&str, &str)] = &[
     // 이미 같은 값인 「표시」는 폴백으로 충분해 줄을 두지 않는다.
     ("setcat\u{0004}상태줄", "Status bar"),
     ("setcat\u{0004}고급/플러그인", "Advanced/Plugins"),
+    // «키» 탭(pytmux-592) — 정본 `setcat.키` 와 같은 낱말.
+    ("setcat\u{0004}키", "Keys"),
     // ── keymap.rs — 팔레트 탭(파이썬 `cat.<name>`) ──
     ("cat\u{0004}전체", "All"),
     ("cat\u{0004}패널", "Pane"),
