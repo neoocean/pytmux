@@ -631,7 +631,9 @@ const fn b(key: &'static str, action: Action, show_in_help: bool) -> Binding {
 /// ```
 ///
 /// 몸통이 이름을 **다시 보고** 서로 다른 일을 한다 — 접으면 `unpin` 이 pin 을 한다.
-/// 그래서 픽스처가 갈래마다 `dispatches_on_name` 을 함께 싣고, 그런 갈래는 **여기 없다**.
+/// 그래서 픽스처가 갈래마다 `dispatches_on_name` 을 함께 싣고, 그런 갈래는 **통째로는 안
+/// 접는다**. 몸통 안의 **작은 갈래**(`c in ("pin-tab", "pin")`)가 다시 동의어를 묶으면 그
+/// 작은 갈래로 접는다 — `pin` → `pin-tab` · `unpin` → `unpin-tab`(pytmux-576).
 pub static COMMAND_ALIASES: &[(&str, &str)] = &[
     ("?", "commands"),
     ("about", "version"),
@@ -684,6 +686,7 @@ pub static COMMAND_ALIASES: &[(&str, &str)] = &[
     ("paste-image", "paste-clipboard"),
     ("pasteb", "paste-buffer"),
     ("pasteb-clip", "paste-clipboard"),
+    ("pin", "pin-tab"),
     ("pipep", "pipe-pane"),
     ("popup", "display-popup"),
     ("preferences", "settings"),
@@ -728,7 +731,12 @@ pub static COMMAND_ALIASES: &[(&str, &str)] = &[
     ("tree", "choose-tree"),
     ("unbind", "unbind-key"),
     ("unbindkey", "unbind-key"),
+    ("unpin", "unpin-tab"),
     ("winsize", "window-size"),
+    // 정본 `zoom` 은 갈래에 팔레트 이름이 없다 — 같은 이름의 정본 메뉴 항목(`zoom`)과 같은
+    // 일이고, 우리 팔레트에서 그 일을 하는 줄이 `resize-pane -Z` 다(pytmux-576 ·
+    // `command_alias_conformance.rs` 가 메뉴·팔레트 액션이 같은지 잰다).
+    ("zoom", "resize-pane -Z"),
     ("옵션", "settings"),
 ];
 

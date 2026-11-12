@@ -678,3 +678,124 @@ def test_the_survey_is_not_vacuous():
         f"스펙을 내는데 조사에 안 잡힌 꾸러미: {sorted(declared - set(emits))}")
     assert any(dos for rows in emits.values() for _sid, dos, _w in rows), \
         "키 표를 하나도 못 읽었다 — 조사가 공허하다"
+
+
+# ── ④ 상태줄 표식의 `do` — 눌리는 배지가 **받는 자리**를 갖나 (pytmux-589) ─────────
+#
+# 상태줄 표식(`plugin_badges`)도 `do` 를 싣는다 — 이쪽은 화면 안 키가 아니라 **누르면 돌
+# 명령 이름**이다. 네이티브 클라는 그 이름을 `:` 줄과 같은 해석기(`base::hooks::resolve`)에
+# 먼저 넣어 **자기 명령**이면 거기서 돌리고(REC 의 `status` = 정보 팝업), 아니면
+# `plugin_open` 으로 서버에 화면을 묻는다(claude-code 의 `model`·`usage-panel`).
+# 어느 쪽에도 받는 자리가 없으면 «눌리는 것처럼 보이는데 아무 일도 안 나는» 칸이다.
+#
+# 받는 쪽 판정은 둘이다 — 둘 다 **소스를 읽는다**(위 ①~③ 과 같은 까닭):
+#  · GUI 명령 — `client/crates/base/src/keymap.rs` 의 `PALETTE` 표에 `pe("이름", …)` 로 있다.
+#  · 플러그인 — 그 꾸러미 안에서 그 이름을 **견주는 자리**가 있다
+#    (`name == "x"` · `name in ("x", …)` · `name in MODEL` · `name in self._USAGE_PANEL`).
+#    ⚠ 이 판정은 «어딘가에서 견준다»까지다 — 그 견줌이 화면을 여는 갈래인지는 안 가린다
+#      (그 깊이는 ①~③ 이 화면 키에 대해 하는 일이고, 배지는 아직 셋뿐이다).
+
+KEYMAP_RS = os.path.join(ROOT, "client", "crates", "base", "src", "keymap.rs")
+
+
+def _gui_commands():
+    """네이티브 클라가 스스로 도는 명령 이름 → 그 액션 글자(`Action::…`)."""
+    import re
+    with open(KEYMAP_RS, encoding="utf-8") as fp:
+        src = fp.read()
+    start = src.index("pub static PALETTE")
+    end = src.index("];", start)
+    return dict(re.findall(r'pe\("([^"]+)",\s*"[^"]*",\s*(Action::[A-Za-z]+)', src[start:end]))
+
+
+def _is_badge_dict(node):
+    """배지 모양의 dict 리터럴 — `text` 와 `theme` 를 함께 든다(화면 스펙은 `t`, 클릭존은
+    `x/y/w/h`, 키는 `key` 를 든다 — 배지만 이 둘을 같이 든다)."""
+    return (isinstance(node, ast.Dict) and _dget(node, "text") is not None
+            and _dget(node, "theme") is not None)
+
+
+def _badge_dos(trees):
+    """`(do 이름, 자리)` — 배지 dict 의 `"do"` 와 배지 공장 `_badge(…, do=…)` 의 인자.
+
+    글자로 못 읽은 `do` 는 `(None, 자리)` 로 남긴다(못 푼 것을 초록으로 위장하지 않는다)."""
+    out = []
+    for rel, tree, _consts in trees:
+        for node in ast.walk(tree):
+            if _is_badge_dict(node):
+                v = _dget(node, "do")
+                if v is not None:
+                    out.append((_lit(v), f"{rel}:{node.lineno}"))
+            elif isinstance(node, ast.Call) and _call_name(node) == "_badge":
+                for kw in node.keywords:
+                    if kw.arg == "do":
+                        out.append((_lit(kw.value), f"{rel}:{node.lineno}"))
+    return out
+
+
+def _compared_names(trees):
+    """그 꾸러미 안에서 **견주어지는** 글자 전부 — 모듈 상수와 클래스 속성까지 푼다."""
+    names = set()
+    for _rel, tree, consts in trees:
+        attrs = {}
+        for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+            attrs.update(_module_consts(cls))     # 클래스 몸통의 `NAME = <상수>`
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
+            for comp in [node.left] + list(node.comparators):
+                if isinstance(comp, ast.Name) and comp.id in consts:
+                    names |= _names_of(consts[comp.id])
+                elif isinstance(comp, ast.Attribute) and comp.attr in attrs:
+                    names |= _names_of(attrs[comp.attr])
+                else:
+                    val = _const_value(comp)
+                    if val is not None:
+                        names |= _names_of(val)
+    return names
+
+
+def test_every_clickable_badge_names_something_that_takes_it():
+    """**죽은 배지가 없다** — 배지가 싣는 `do` 를 GUI 명령이나 그 플러그인이 받는다."""
+    if not os.path.exists(KEYMAP_RS):
+        from run import skip
+        skip("client/ 가 없는 트리(python-tui 미러) — GUI 명령표를 못 읽는다")
+        return
+    gui = _gui_commands()
+    assert gui, "GUI 명령표를 하나도 못 읽었다 — PALETTE 표기가 바뀌었나"
+    dead, unread, seen = [], [], set()
+    for pkg, trees in sorted(_packages().items()):
+        dos = _badge_dos(trees)
+        if not dos:
+            continue
+        taken = _compared_names(trees)
+        for do, where in dos:
+            if do is None:
+                unread.append(where)
+                continue
+            seen.add(do)
+            if do not in gui and do not in taken:
+                dead.append(f"{where} — {pkg} 의 배지 do {do!r} 를 받는 자리가 없다")
+    assert not unread, "글자로 못 읽은 배지 do:\n  " + "\n  ".join(unread)
+    assert not dead, "죽은 배지:\n  " + "\n  ".join(dead)
+    # 공허 통과가 아니다 — 지금 실리는 세 이름을 실제로 셌다.
+    assert {"status", "model", "usage-panel"} <= seen, seen
+
+
+def test_the_rec_badge_opens_the_status_panel_in_the_native_client():
+    """REC 배지는 정본처럼 **상태 팝업**을 연다 — 이름이 GUI 의 `ShowInfoTabs` 로 풀린다.
+
+    정본: REC 클릭 → `show_capture_info` → `_status_tab_initial = 0`(캡처 탭). GUI 는
+    `status` → `ShowInfoTabs` 가 탭 0 에서 열고, 캡처 칸이 있으면 REC 탭이 0번이다
+    (`proto::info::rec_tab`). 화면 쪽은 `session_view_tests.rs`
+    `clicking_the_rec_badge_opens_the_info_panel_on_the_capture_tab` 이 잰다."""
+    if not os.path.exists(KEYMAP_RS):
+        from run import skip
+        skip("client/ 가 없는 트리(python-tui 미러) — GUI 명령표를 못 읽는다")
+        return
+    rec = _packages().get("rec")
+    assert rec, "rec 꾸러미가 안 잡혔다"
+    dos = {do for do, _w in _badge_dos(rec)}
+    assert dos == {"status"}, f"REC 배지가 싣는 do 가 다르다: {dos}"
+    assert _gui_commands().get("status") == "Action::ShowInfoTabs", \
+        "GUI 의 `status` 가 상태 팝업이 아니다 — REC 를 누르면 엉뚱한 것이 열린다"

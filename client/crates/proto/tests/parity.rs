@@ -786,14 +786,16 @@ static MEASURED_SCORE: &[(&str, usize, usize)] = &[
     // 188 → 190: `layout-list`(+별칭 `list-layouts`)가 정본 COMMANDS 와 팔레트에 같이
     // 줄을 얻었다(pytmux-537 ②).
     //
-    // 남는 다섯은 **별칭 문제가 아니다**(그래서 이 표에 남는다):
-    //   · `zoom` — 그 갈래에 팔레트 이름이 하나도 없다(별칭이 아니라 **팔레트에 줄이
-    //     없는 명령**이다).
-    //   · `monitor-bell` · `pin` · `unpin` · `setw` — 정본이 그 이름으로 **다시 가르는**
-    //     갈래다. 접으면 `unpin` 이 pin 을 한다 — `command_alias_conformance.rs` 의
-    //     `a_name_that_dispatches_on_itself_is_never_folded` 가 그 위험을 못박는다.
-    // 그 다섯은 각자 팔레트 줄이 필요하다(작다 · 뒤 CL).
-    ("client_cmds", 190, 195),
+    // 190 → 193: `pin` → `pin-tab` · `unpin` → `unpin-tab`(가르는 갈래 안의 작은 동의어
+    // 갈래로 접는다) · `zoom` → `resize-pane -Z`(같은 이름의 정본 메뉴 항목과 같은 일)
+    // ([[pytmux-576]] · 규칙과 액션 단언은 `command_alias_conformance.rs`).
+    //
+    // 남는 둘은 **이름 하나 → 이름 하나**로는 못 받는다(그래서 이 표에 남는다):
+    //   · `monitor-bell` — 정본이 `"bell" in c` 로 다시 가르는 이름이고, 우리 팔레트는
+    //     그 줄을 사용자 결정으로 **감췄다**(`base::HIDDEN_SURFACES`).
+    //   · `setw` — 이름이 아니라 **인자**로 가른다(`setw monitor-bell on`). 줄째로 푸는
+    //     해석기가 필요하다([[pytmux-572]]).
+    ("client_cmds", 193, 195),
     // ★ **첫 회차에 여덟이 공백으로 보였는데 오라클이 틀린 것이었다**(pytmux-455).
     //   `j`/`k`·`ctrl+u`·`ctrl+v` 류는 정본에서도 `mode-keys`(vi·emacs) 에 딸린 키인데
     //   기본값만 물었다 — 셋 다 물으니 전수다. 「없다」로 적었으면 있는 것을 다시
@@ -887,7 +889,7 @@ fn print_the_score() {
         );
     }
     println!(
-        "\n  ⚠ `client_cmds` 의 남음은 **정본 별칭·축약**이다(팔레트에 뜨는 이름은 \n\
+        "\n  ⚠ `client_cmds` 의 남음은 **이름 하나로 못 받는 정본 이름**이다(`setw`·`monitor-bell` · 팔레트에 뜨는 이름은 \n\
            하나도 안 빠진다 — `the_measured_axes_cover_every_name_canon_shows_in_its_palette`).\n\
            세는 단위가 「보여 주는 목록」에서 「받는 이름」으로 넓어진 것이 이 축의 뜻이다.\n"
     );

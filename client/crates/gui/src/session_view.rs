@@ -2848,7 +2848,8 @@ impl SessionView {
     }
 
     /// 휠 한 칸. **모드와 무관하게** 굴러간다 — 손이 마우스에 있는 사람에게 모드를
-    /// 요구하면 그건 스크롤이 안 되는 것과 같다.
+    /// 요구하면 그건 스크롤이 안 되는 것과 같다. 단 `set mouse off` 면 캔버스 휠은
+    /// 죽는다(정본과 같다 · pytmux-582).
     ///
     /// `at` 은 커서 아래 셀(캔버스 밖이거나 아직 못 재면 `None`).
     /// **커서 아래 앱이 휠을 원하면 그 앱에게 넘긴다.** less·htop 에서 휠이 pytmux 의
@@ -2861,6 +2862,15 @@ impl SessionView {
         if self.screens.top().is_some() {
             let key = if up { Key::Up } else { Key::Down };
             return self.handle_key(key, Mods::default());
+        }
+        // ★ `set mouse off` 는 **휠까지** 끈다(pytmux-582 · 정본 `on_mouse_scroll_up/down`
+        //   의 첫 줄 `if not self.app.mouse_enabled: return`). 클릭·끌기·우클릭은 이미
+        //   `config.mouse` 를 보는데 이 자리만 빠져 있어 마우스를 꺼도 휠이 돌았다 —
+        //   앱 전달(less·htop)도 우리 스크롤백도 둘 다 안 나간다.
+        //   ⚠ 위의 **팝업 목록** 굴리기는 그대로 둔다 — 정본도 그 관문은 캔버스(PaneView)
+        //   에만 있고, 팝업 화면의 목록은 Textual 위젯이 제 휠로 굴린다.
+        if !self.config.mouse {
+            return false;
         }
         if self.selection.is_none()
             && let Some((x, y)) = at
@@ -3245,6 +3255,17 @@ impl SessionView {
         }
     }
 
+    /// 누른 자리에서 지금 자리까지가 **끌기로 확정할 만큼** 멀어졌나(pytmux-577).
+    ///
+    /// 정본 식 그대로다 — `max(abs(x - psx), abs(y - psy)) >= max(1, thr)`
+    /// (`clientwidgets.py` `on_mouse_move`). 거리는 칸 단위 **체비셰프**: 대각선 한 칸도
+    /// 한 칸이다. 임계 0 은 1 로 본다(정본의 `max(1, …)` — 0 이면 누르기만 해도 끌기다).
+    pub(crate) fn drag_passes_threshold(press: (u16, u16), at: (u16, u16), threshold: u16) -> bool {
+        let dx = press.0.abs_diff(at.0);
+        let dy = press.1.abs_diff(at.1);
+        dx.max(dy) >= threshold.max(1)
+    }
+
     /// 끌고 있다. 경계선이면 비율을, 패널 위면 선택을 늘린다.
     pub fn handle_mouse_drag(&mut self, at: Option<(u16, u16)>) -> bool {
         // 썸을 끄는 중(pytmux-521) — 움직인 칸수를 core 의 산수에 넣어 Δ 를 보낸다.
@@ -3318,8 +3339,13 @@ impl SessionView {
         // 앵커는 **누른 자리**다(지금 자리가 아니다) — 첫 칸을 놓치면 사용자가 고른
         // 시작 글자가 복사본에서 빠진다.
         if self.selection.is_none() {
-            if (x, y) == (px, py) {
-                return false; // 아직 안 움직였다. 클릭일 수도 있다.
+            // ★ **임계 이상** 움직여야 끌기다(pytmux-577 · 정본 `on_mouse_move` 의
+            //   `_sel_pending` 판정). 종전에는 «누른 자리와 같은가»만 봐서 한 칸 밀린
+            //   클릭이 선택 → 자동 복사가 되어 클립보드를 덮었다(정본이 2026-07-28 에
+            //   고친 그 제보). 미만이면 미결로 두고 — 떼면 `handle_mouse_up` 이 클릭으로
+            //   간다(선택이 없으니까).
+            if !Self::drag_passes_threshold((px, py), (x, y), self.config.mouse_drag_threshold) {
+                return false; // 아직 덜 움직였다. 클릭일 수도 있다.
             }
             let Some(anchor) = self.abs_in_pane(pane, px, py) else {
                 return false; // 화면을 아직 못 받은 패널 — 절대 좌표의 기준점이 없다
@@ -4986,6 +5012,20 @@ impl SessionView {
             else {
                 return false;
             };
+            // ★ 그 이름이 **이 클라의 명령**이면 여기서 돈다(pytmux-589) — `:` 줄과 같은
+            //   해석기(`base::hooks::resolve`)이고, 차례도 정본 `:` 줄과 같다(클라 명령
+            //   먼저, 아니면 서버). REC 배지가 그렇다: 정본은 누르면 통합 상태 팝업을
+            //   **캡처 탭**으로 여는데(`rec/clientside.py` `show_capture_info`) 그 판은
+            //   서버 화면이 아니라 클라 판이다(`proto::info`). 서버가 `do: "status"` 를
+            //   실으면 우리 `ShowInfoTabs` 가 되고, 캡처 칸이 있으면 REC 탭이 0번이라
+            //   정본의 `_status_tab_initial = 0` 과 같은 자리에서 열린다.
+            //   ⚠ **인자를 받는 명령**(`HookRun::Answer`)은 안 받는다 — 표식은 이름만
+            //   싣는다. 그런 이름은 종전대로 서버에 묻는다.
+            if let Some(base::hooks::HookRun::Act(action)) = base::hooks::resolve(&name) {
+                log::info!("플러그인 표식 {name:?} → 클라 명령 {action:?}");
+                self.apply_action(action);
+                return true;
+            }
             self.pending.push(Outgoing::Command(Command::PluginOpen {
                 name,
                 args: Vec::new(),

@@ -52,7 +52,11 @@ _PLAT = re.compile(r"^\s*if\s+(?:ipc\.IS_WINDOWS|not\s+ipc\.IS_WINDOWS"
 # 않았다»는 부정 단언의 정착(0.2)이다 — 폴링하면 조건이 처음부터 참이라 공허해진다.
 # test_transcript_wiring 의 하나는 완료 콜백이 예약한 꼬리 테일까지 **한 바퀴** 양보하는
 # `sleep(0)` 이다(조건 폴링 부분은 wait_for 로 옮겼다).
-TOTALS = {"pause": 252, "sleep": 87, "silent_skip": 17}
+# 2026-11-12(pytmux-566 뒤처리): sleep 87→88. CL 82800 이 test_server 에
+# `test_feed_drain_exit_never_collects` 를 더하면서 드레인 태스크가 **시작하도록 한 바퀴**
+# 양보하는 `sleep(0)` 하나를 썼는데 상한을 안 옮겨 이 게이트가 그때부터 붉었다. 조건 대기가
+# 아니라 루프 양보다(옆의 `_gc_drain_enter` 시험들이 쓰는 것과 같은 모양) — 폴링으로 옮길 것이 없다.
+TOTALS = {"pause": 252, "sleep": 88, "silent_skip": 17}
 
 # 모듈별 상한 [고정 pause, 고정 sleep, 조용한 플랫폼 return]. 목록에 없으면 전부 0.
 CEILINGS = {
@@ -106,7 +110,8 @@ CEILINGS = {
     "test_restart": [7, 8, 0],
     "test_robustness": [0, 8, 0],
     "test_security_nest_redteam": [0, 1, 2],
-    "test_server": [0, 7, 3],
+    # 2026-11-12: sleep 7→8 — 위 TOTALS 주석의 그 하나(pytmux-566 · 드레인 시작 양보 `sleep(0)`).
+    "test_server": [0, 8, 3],
     # 2026-07-27f 이주(46→15): 남은 15는 run_test 직후 앱 마운트 대기
     "test_token_log_screen": [15, 0, 0],
     "test_token_saver": [0, 3, 0],

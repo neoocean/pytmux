@@ -310,6 +310,14 @@ def steps():
             needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
         ),
         Step(
+            "설정 문법 적합성",
+            ["cargo", "test", "-p", "proto", "--test", "config_grammar_conformance"], CLIENT,
+            "정본 설정 파서가 받는 지시어·옵션 전수를 GUI `Config::parse` 에 먹여 같은 값이"
+            " 읽히나(pytmux-567 — 못 받는 줄은 이슈와 상한이 있어야 선다)",
+            check=cargo_verdict,
+            needs=lambda: None if have_cargo else "cargo 를 못 찾았다(PATH·~/.cargo/bin 둘 다)",
+        ),
+        Step(
             "네이티브 등록표",
             ["cargo", "test", "-p", "proto", "--test", "native_escape_ledger"], CLIENT,
             "「이 오버레이는 내가 그린다」가 등록표·광고에서 같은 말을 하나(pytmux-458 —"

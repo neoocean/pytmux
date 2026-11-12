@@ -39,6 +39,9 @@ struct Group {
 struct Fx {
     client_cmds: Vec<String>,
     client_cmd_groups: Vec<Group>,
+    /// 정본 메뉴(`clientutil` 의 메뉴 표)의 항목 키 — 팔레트 짝이 없는 갈래의 짝을 찾는 데
+    /// 쓴다(아래 [`menu_twin`]).
+    menu_items: Vec<String>,
 }
 
 fn fixture() -> Fx {
@@ -54,40 +57,102 @@ fn in_palette(name: &str) -> bool {
         .any(|e| e.name == name || e.name.split(' ').next() == Some(name))
 }
 
+/// 팔레트 이름 하나가 **실제로 하는 일**(이름 그대로 든 줄의 액션).
+fn palette_action(name: &str) -> Option<base::Action> {
+    base::PALETTE.iter().find(|e| e.name == name).map(|e| e.action)
+}
+
+/// 팔레트 짝이 없는 갈래(`zoom`)의 짝 — **같은 이름의 정본 메뉴 항목**이 있을 때만.
+///
+/// 정본에서 명령 `zoom` 과 메뉴 항목 `zoom` 은 같은 일(`send_cmd("zoom")`)이다. 우리 메뉴가
+/// 그 키에 거는 액션을 팔레트에서 하는 줄이 **정확히 하나**면 그 줄이 짝이다. 둘 이상이면
+/// 고를 근거가 없으므로 짝이 없다(손으로 정하지 않는다).
+fn menu_twin(fx: &Fx, name: &str) -> Option<&'static str> {
+    if !fx.menu_items.iter().any(|m| m == name) {
+        return None;
+    }
+    let action = base::MENU.iter().find(|m| m.key == name)?.action;
+    let mut hits = base::PALETTE.iter().filter(|e| e.action == action);
+    let first = hits.next()?;
+    hits.next().is_none().then_some(first.name)
+}
+
+/// 갈래 하나의 이름 집합.
+fn set_of(g: &Group) -> BTreeSet<&str> {
+    g.names.iter().map(String::as_str).collect()
+}
+
 /// 정본 픽스처가 말하는 **기대 별칭 표**와, 접을 수 없어 남는 이름들.
 ///
 /// ⚠ 「어느 것이 팔레트 이름인가」는 **여기서** 정한다(픽스처는 정본만 안다). 그 경계가
 /// 생성기 머리말이 적어 둔 것이다 — 픽스처가 우리 쪽 표를 알게 되면 자가 대상을 안다.
+///
+/// # 접는 규칙 (pytmux-576 에서 다듬었다)
+///
+/// - **이름으로 다시 가르는 갈래**(`dispatches_on_name`)는 그 갈래째로는 안 접는다.
+/// - 그런데 그 몸통 안의 작은 갈래가 `c in ("pin-tab", "pin")` 처럼 다시 동의어를 묶으면
+///   픽스처에 **가르지 않는 작은 갈래**로 따로 실린다. 큰 갈래에 낀 이름은 그런 작은 갈래가
+///   **그 큰 갈래의 부분집합으로** 있을 때만 접는다(`pin` → `pin-tab`).
+///   ☠ `setw` 는 `(automatic-rename, setw)` 같은 작은 갈래가 있지만 그것은 가르는 갈래
+///   `(monitor-activity, monitor-bell, setw)` 의 부분집합이 아니다 — 인자로 가르는 이름이라
+///   접으면 `setw monitor-bell on` 이 엉뚱한 일을 한다(첫 회차에 잡은 바로 그것).
+/// - 한 이름이 **서로 다른 짝**으로 접히려 하면 못 접는다(고를 근거가 없다).
+/// - 팔레트 짝이 없는 갈래는 [`menu_twin`] 이 짝을 찾을 때만 접는다(`zoom`).
 fn expected() -> (BTreeMap<String, String>, BTreeSet<String>) {
     let fx = fixture();
-    // ☠ **한 이름이 여러 갈래에 걸친다.** `setw` 는 `("set-option", "set", "setw")` 에도
-    //    있고 `("monitor-activity", "monitor-bell", "setw")` 에도 있다 — 앞엣것만 보고
-    //    접으면 `setw monitor-bell on` 이 엉뚱한 일을 한다. 그래서 **가르는 갈래에 한 번
-    //    이라도 낀 이름은 통째로 못 접는 것**으로 먼저 걸러 낸다(첫 회차에 이 오라클이
-    //    잡은 것이 정확히 그 셋이다: `setw` · `pin` · `unpin`).
-    let dispatched: BTreeSet<&str> = fx
-        .client_cmd_groups
-        .iter()
-        .filter(|g| g.dispatches_on_name)
-        .flat_map(|g| g.names.iter().map(String::as_str))
-        .collect();
-    let mut alias = BTreeMap::new();
+    // 가르는 갈래에 낀 이름 중 **덮어 주는 작은 갈래가 없는 것** — 통째로 못 접는다.
+    let mut unfoldable: BTreeSet<&str> = BTreeSet::new();
+    for big in fx.client_cmd_groups.iter().filter(|g| g.dispatches_on_name) {
+        let big_set = set_of(big);
+        for name in &big.names {
+            let covered = fx.client_cmd_groups.iter().any(|small| {
+                let small_set = set_of(small);
+                !small.dispatches_on_name
+                    && small_set.contains(name.as_str())
+                    && small_set.len() < big_set.len()
+                    && small_set.is_subset(&big_set)
+            });
+            if !covered {
+                unfoldable.insert(name.as_str());
+            }
+        }
+    }
+    let mut alias: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflict: BTreeSet<String> = BTreeSet::new();
     let mut left = BTreeSet::new();
     for group in &fx.client_cmd_groups {
-        let anchor = group.names.iter().find(|n| in_palette(n));
+        let anchor = group.names.iter().find(|n| in_palette(n)).map(String::as_str);
         for name in &group.names {
             if in_palette(name) {
                 continue;
             }
-            match anchor {
-                Some(anchor) if !dispatched.contains(name.as_str()) => {
-                    alias.insert(name.clone(), anchor.clone());
-                }
-                _ => {
+            if group.dispatches_on_name || unfoldable.contains(name.as_str()) {
+                left.insert(name.clone());
+                continue;
+            }
+            let target = anchor.or_else(|| {
+                // 짝 없는 **홑 갈래**만 메뉴에서 짝을 찾는다(여럿이 묶인 갈래는 이미
+                // 팔레트 이름이 있거나, 없으면 고를 근거가 없다).
+                (group.names.len() == 1).then(|| menu_twin(&fx, name)).flatten()
+            });
+            match target {
+                Some(target) => match alias.get(name) {
+                    Some(prev) if prev != target => {
+                        conflict.insert(name.clone());
+                    }
+                    _ => {
+                        alias.insert(name.clone(), target.to_owned());
+                    }
+                },
+                None => {
                     left.insert(name.clone());
                 }
             }
         }
+    }
+    for name in &conflict {
+        alias.remove(name);
+        left.insert(name.clone());
     }
     // 접을 수 있는 것으로 한 번이라도 잡혔으면 「남는 것」에서 뺀다(같은 이름이 갈래
     // 둘에 걸치되 **둘 다 안전한** 경우 — 앞 갈래에 팔레트 짝이 없었을 뿐이다).
@@ -131,24 +196,61 @@ fn the_alias_table_says_exactly_what_canon_says() {
 #[test]
 fn a_name_that_dispatches_on_itself_is_never_folded() {
     // ☠ 이 시험이 없으면 표를 「갈래를 그대로 뽑아」 다시 채우는 순간 `unpin` 이 pin 을
-    //    한다. 그 위험을 **이름으로** 못박는다 — 픽스처가 그 갈래를 그렇게 말하는 한
-    //    그 이름들은 어느 팔레트 이름으로도 접히면 안 된다.
+    //    한다. 그 위험을 **이름으로** 못박는다 — 가르는 갈래에 낀 이름이 접혀 있으면 그
+    //    짝은 반드시 **그 이름과 함께 묶인 작은 동의어 갈래**의 팔레트 이름이라야 한다.
     let fx = fixture();
-    let mut folded = Vec::new();
+    let mut wrong = Vec::new();
     for group in fx.client_cmd_groups.iter().filter(|g| g.dispatches_on_name) {
         for name in &group.names {
-            if let Some((_, canonical)) =
-                base::COMMAND_ALIASES.iter().find(|(a, _)| a == name)
-            {
-                folded.push(format!("{name} → {canonical} (갈래: {:?})", group.names));
+            let Some((_, canonical)) = base::COMMAND_ALIASES.iter().find(|(a, _)| a == name)
+            else {
+                continue;
+            };
+            let ok = fx.client_cmd_groups.iter().any(|small| {
+                !small.dispatches_on_name
+                    && small.names.len() < group.names.len()
+                    && small.names.iter().all(|n| group.names.contains(n))
+                    && small.names.contains(name)
+                    && small.names.iter().any(|n| n == canonical)
+            });
+            if !ok {
+                wrong.push(format!("{name} → {canonical} (갈래: {:?})", group.names));
             }
         }
     }
     assert!(
-        folded.is_empty(),
-        "이름으로 다시 가르는 갈래를 접었다 — 뜻이 바뀐다:\n  {}",
-        folded.join("\n  ")
+        wrong.is_empty(),
+        "이름으로 다시 가르는 갈래를 엉뚱한 짝으로 접었다 — 뜻이 바뀐다:\n  {}",
+        wrong.join("\n  ")
     );
+}
+
+#[test]
+fn the_names_closed_by_576_do_what_canon_does() {
+    // ★ 이름만 받고 엉뚱한 일을 하면 래칫은 초록인데 사용자는 틀린 결과를 본다. 그래서
+    //   pytmux-576 이 닫은 셋은 **액션으로** 단언한다 — 명령 프롬프트(팔레트 맨 윗줄)와
+    //   설정 파일 `bind` 두 길 다.
+    //   정본: `pin` → `set_pinned(value=True)` · `unpin` → `set_pinned(value=False)` ·
+    //   `zoom` → `send_cmd("zoom")`(clientcmd.py `_run_command`).
+    for (name, want) in [
+        ("pin", base::Action::SetPinned(true)),
+        ("unpin", base::Action::SetPinned(false)),
+        ("zoom", base::Action::Zoom),
+    ] {
+        // 명령 프롬프트 — 그 이름을 치면 맨 윗줄이 고른 줄이다.
+        let top = base::palette_matches(name)
+            .first()
+            .map(|i| base::PALETTE[*i].action);
+        assert_eq!(top, Some(want), "`:{name}` 의 맨 윗줄이 다른 일을 한다");
+        // 설정 파일 `bind`.
+        let bind = base::config::Bind::parse(&format!("bind x {name}"))
+            .expect("bind 줄로 못 읽었다");
+        assert_eq!(bind.action(), Some(want), "`bind x {name}` 이 다른 일을 한다");
+        assert_eq!(palette_action(base::resolve_command_name(name)), Some(want));
+    }
+    // `zoom` 의 짝은 메뉴가 정한다 — 우리 메뉴의 `zoom` 과 팔레트의 짝이 같은 일이어야 한다.
+    let menu = base::MENU.iter().find(|m| m.key == "zoom").map(|m| m.action);
+    assert_eq!(menu, Some(base::Action::Zoom));
 }
 
 #[test]
@@ -183,13 +285,15 @@ fn what_we_still_cannot_take_is_named_with_a_reason() {
     //   · 이름으로 다시 가르는 갈래인데 그 이름이 팔레트에 없다 → 마찬가지다.
     let (_, left) = expected();
     let want: BTreeSet<String> = [
-        // 팔레트에 그 줄이 없다(별칭이 아니라 **없는 명령**이다).
-        "zoom",
         // 이름으로 다시 가르는 갈래 — 접으면 다른 일을 한다.
+        //   · `monitor-bell` — 정본은 `"bell" in c` 로 다시 가른다. 우리 팔레트는 이
+        //     이름을 **사용자 결정으로 감췄다**(`base::HIDDEN_SURFACES` · §10-21ⓜ) —
+        //     받으려면 「감춘 줄」을 팔레트 밖에서 찾는 길이 따로 있어야 한다.
+        //   · `setw` — 이름이 아니라 **인자**로 가른다(`setw monitor-bell on`). 이름
+        //     하나를 이름 하나로 옮기는 이 표로는 못 받는다 — 줄째로 푸는 해석기가 필요하다
+        //     (pytmux-572 의 «명령 줄 실행기»).
         "monitor-bell",
-        "pin",
         "setw",
-        "unpin",
     ]
     .iter()
     .map(|s| (*s).to_owned())

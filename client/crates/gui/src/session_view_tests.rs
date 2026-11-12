@@ -3749,6 +3749,38 @@ fn the_wheel_reaches_the_popup_app_in_the_gui_too() {
 }
 
 #[test]
+fn mouse_off_kills_the_wheel_on_the_canvas_too() {
+    // ★ pytmux-582 — 정본 휠 핸들러의 첫 줄이 `if not self.app.mouse_enabled: return` 이다.
+    //   두 갈래(앱 전달 · 우리 스크롤백)를 **둘 다** 잰다: 왼쪽은 마우스 앱(휠 리포트가
+    //   나갈 자리), 오른쪽은 셸(스크롤 프레임이 나갈 자리).
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 24, "active": 1,
+        "panes": [
+            {"id": 1, "x": 0, "y": 0, "w": 40, "h": 24, "active": true,
+             "mouse": 1, "mouse_sgr": true},
+            {"id": 2, "x": 40, "y": 0, "w": 40, "h": 24},
+        ]
+    }))
+    .unwrap();
+    let wheel = |mouse: bool| {
+        let (mut view, tx, sent) = harness();
+        tx.send(LinkEvent::Message(Box::new(layout.clone()))).unwrap();
+        view.pump_headless();
+        view.config.mouse = mouse;
+        view.handle_wheel(true, Some((10, 5)));
+        view.handle_wheel(false, Some((60, 5)));
+        view.pump_headless();
+        let out = sent.lock().unwrap().clone();
+        let reports = out.iter().filter(|o| matches!(o, Outgoing::Mouse { .. })).count();
+        let scrolls = out.iter().filter(|o| matches!(o, Outgoing::Scroll(_))).count();
+        (reports, scrolls)
+    };
+    // 양성 먼저 — 켜져 있으면 둘 다 나간다(아니면 아래 부정 단언은 «늘 0» 으로도 통과한다).
+    assert_eq!(wheel(true), (1, 1), "마우스가 켜져 있는데 휠이 안 나갔다");
+    assert_eq!(wheel(false), (0, 0), "`set mouse off` 인데 휠이 나갔다");
+}
+
+#[test]
 fn a_click_on_a_mouse_app_sends_press_and_release_from_where_it_was_pressed() {
     // ★ pytmux-19 의 **호출부** 오라클. 위 순수 판정만 재면 "판정은 맞는데 아무 데서도
     //   안 부른다"가 통과한다 — 그게 정확히 종전 상태였다(뗄 때 포커스만 옮겼다).
@@ -3794,6 +3826,119 @@ fn a_click_where_no_app_listens_sends_nothing_to_the_pane() {
         !sent.lock().unwrap().iter().any(|o| matches!(o, Outgoing::Mouse { .. })),
         "안 켠 앱에 마우스 리포트를 보냈다"
     );
+}
+
+// ── 끌기 임계 `mouse-drag-threshold` · pytmux-577 ─────────────────────────────
+//
+// 정본은 누른 자리에서 **임계(기본 3칸) 이상** 움직여야 끌기로 확정하고, 미만이면 클릭이다
+// (`clientwidgets.py` `on_mouse_move` 의 `_sel_pending`). 종전 GUI 는 «좌표가 같은가»만 봐서
+// 한 칸 밀린 클릭이 선택 → 자동 복사가 되어 클립보드를 덮었다.
+
+/// 마우스를 켠 앱(SGR)이 도는 패널 하나 + 그 화면. 클릭이면 앱에 리포트가, 끌기면
+/// `CopyRange` 가 나가므로 **두 길이 서로 다른 프레임**으로 갈린다 — 큐 하나로 갈래를 잰다.
+fn mouse_app_view(threshold: u16) -> (SessionView, Sent) {
+    let (mut view, tx, sent) = harness();
+    let layout: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "layout", "cols": 80, "rows": 24, "active": 1,
+        "panes": [{"id": 1, "x": 0, "y": 0, "w": 80, "h": 24, "title": "claude",
+                   "active": true, "mouse": 1, "mouse_sgr": true}]
+    }))
+    .unwrap();
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["0123456789abcdef", {}]], [["0123456789abcdef", {}]],
+                 [["0123456789abcdef", {}]], [["0123456789abcdef", {}]]],
+        "cursor": null, "wrap": [], "top": 0
+    }))
+    .unwrap();
+    for msg in [layout, screen] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    // 이 상자의 설정 파일과 무관하게 — 재는 값은 손으로 세운다.
+    view.config.mouse = true;
+    view.config.mouse_drag_copy = base::config::DragCopy::On;
+    view.config.mouse_drag_threshold = threshold;
+    (view, sent)
+}
+
+/// 누르고(`from`) → `to` 로 끌고 → 거기서 뗀다. 끌기 도중 선택이 섰는지와 **나간 것**을 준다.
+fn press_drag_release(
+    view: &mut SessionView,
+    sent: &Sent,
+    from: (u16, u16),
+    to: (u16, u16),
+) -> (bool, Vec<Outgoing>) {
+    view.handle_mouse_down(from, false);
+    view.handle_mouse_drag(Some(to));
+    let selecting = view.selection.is_some();
+    view.handle_mouse_up(Some(to));
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    (selecting, out)
+}
+
+fn mouse_reports(out: &[Outgoing]) -> Vec<String> {
+    out.iter()
+        .filter_map(|o| match o {
+            Outgoing::Mouse { data, .. } => Some(String::from_utf8_lossy(data).into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn copied(out: &[Outgoing]) -> bool {
+    out.iter().any(|o| matches!(o, Outgoing::Command(Command::CopyRange { .. })))
+}
+
+#[test]
+fn the_drag_threshold_measures_cells_like_the_canon() {
+    // 정본 식: `max(abs(dx), abs(dy)) >= max(1, thr)` — 칸 단위 체비셰프.
+    let at = |p, q, t| SessionView::drag_passes_threshold(p, q, t);
+    assert!(!at((7, 3), (9, 3), 3), "가로 2칸은 3 미만이다");
+    assert!(at((7, 3), (10, 3), 3), "가로 3칸이면 끌기다");
+    assert!(at((7, 3), (7, 0), 3), "세로도 같은 자다");
+    assert!(!at((7, 3), (9, 5), 3), "대각선 2칸은 2칸이다(맨해튼 4 가 아니다)");
+    assert!(at((10, 3), (7, 3), 3), "거꾸로 끌어도 같다");
+    assert!(at((7, 3), (8, 3), 1), "임계 1 = 종전처럼 한 칸");
+    assert!(at((7, 3), (8, 3), 0), "임계 0 은 1 로 본다(정본 `max(1, …)`)");
+    assert!(!at((7, 3), (7, 3), 0), "안 움직였으면 어떤 임계에서도 끌기가 아니다");
+}
+
+#[test]
+fn a_two_cell_wobble_under_the_default_threshold_is_still_a_click() {
+    // ★ 호출부 오라클(관문 ①) — 판정 함수만이 아니라 **끌기 핸들러가 그 판정을 보나**.
+    //   기본값으로 잰다: 그 값이 1 로 되돌아가도 이 시험이 운다.
+    let default = base::Config::default().mouse_drag_threshold;
+    assert_eq!(default, 3, "GUI 기본 임계가 정본(3)과 다르다");
+    let (mut view, sent) = mouse_app_view(default);
+    let (selecting, out) = press_drag_release(&mut view, &sent, (7, 3), (9, 3));
+    assert!(!selecting, "2칸 흔들렸는데 선택이 섰다 — 클립보드를 덮는 그 결함이다");
+    assert!(!copied(&out), "임계 미만인데 복사 요청이 나갔다: {out:?}");
+    // 클릭으로 갔다 — 누른 자리에서 누름+뗌(정본 `_sel_pending` 의 up 갈래).
+    assert_eq!(
+        mouse_reports(&out),
+        vec!["\u{1b}[<0;8;4M".to_owned(), "\u{1b}[<0;8;4m".to_owned()],
+        "임계 미만에서 뗐는데 클릭이 앱에 안 갔다"
+    );
+}
+
+#[test]
+fn three_cells_start_a_selection_and_copy_it() {
+    let (mut view, sent) = mouse_app_view(3);
+    let (selecting, out) = press_drag_release(&mut view, &sent, (7, 3), (10, 3));
+    assert!(selecting, "3칸 끌었는데 선택이 안 섰다");
+    assert!(copied(&out), "끌고 뗐는데 복사 요청이 안 나갔다: {out:?}");
+    assert!(mouse_reports(&out).is_empty(), "끌기가 클릭으로도 샜다: {out:?}");
+}
+
+#[test]
+fn threshold_one_starts_on_the_first_cell_as_before() {
+    // `set mouse-drag-threshold 1` — 종전 손맛을 원하는 사람의 길(관문 ③).
+    let (mut view, sent) = mouse_app_view(1);
+    let (selecting, out) = press_drag_release(&mut view, &sent, (7, 3), (8, 3));
+    assert!(selecting, "임계 1 인데 한 칸 끌기가 선택이 아니다");
+    assert!(copied(&out));
 }
 
 // ── run-shell 버퍼 · if-shell else (파이썬 `_run_shell`/`_if_shell` 동형) ───────
@@ -8861,7 +9006,8 @@ fn clicking_a_plugin_badge_asks_the_server_for_the_screen_it_named() {
 
 #[test]
 fn a_badge_without_a_screen_is_not_a_button() {
-    // ⚠ `do` 가 없는 표식(REC·모델·경고)을 눌러도 아무 일이 없어야 한다 — 눌리는
+    // ⚠ `do` 가 없는 표식(경고 등 — 이 자료의 REC 는 `do` 를 뺀 합성값이다. 실제 rec 은
+    //   pytmux-589 부터 `do: "status"` 를 싣는다)을 눌러도 아무 일이 없어야 한다 — 눌리는
     //   것처럼 보이고 아무 일도 안 나는 칸을 안 만드는 것이 이 규약의 절반이다.
     let (mut view, tx, sent) = harness();
     for msg in [layout_one_pane(), status_with_plugin_badges()] {
@@ -8898,6 +9044,58 @@ fn a_stale_badge_index_does_nothing_instead_of_opening_the_wrong_thing() {
             .iter()
             .any(|o| matches!(o, Outgoing::Command(Command::PluginOpen { .. }))),
         "없는 자리를 눌렀는데 무언가를 열었다"
+    );
+}
+
+#[test]
+fn clicking_the_rec_badge_opens_the_info_panel_on_the_capture_tab() {
+    // ★ pytmux-589 — 정본은 REC 를 누르면 통합 상태 팝업을 **캡처 탭**(0번)으로 연다
+    //   (`rec/clientside.py` `show_capture_info` · `_status_tab_initial = 0`). 서버 rec 이
+    //   싣는 `do` 는 `status` 이고, 그 이름은 우리 명령이라 **서버에 묻지 않고** 여기서 돈다.
+    //   배지 자료는 서버가 실제로 내는 모양 그대로다(`rec.plugin_badges` + 레지스트리 `name`).
+    let status: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "capture": true, "capture_path": "/tmp/rec/pane-1.log", "capture_size": 2048,
+        "plugin_badges": [
+            {"name": "rec", "kind": "rec", "text": " REC ",
+             "style": {"bo": 1, "f": "white"}, "theme": {"b": "error"}, "do": "status"}
+        ]
+    }))
+    .unwrap();
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), status] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.config.mouse = true;
+    assert_eq!(view.state.plugin_badges().len(), 1, "표식이 안 들어왔다(전제 실패)");
+    assert!(
+        view.chrome_click(base::chrome::ClickTarget::PluginBadge(0)),
+        "REC 를 눌렀는데 아무 일도 없다 — 제보 그대로다"
+    );
+    view.pump_headless();
+    assert_eq!(view.screens.top(), Some(Screen::InfoTabs), "정보 판이 안 열렸다");
+    // 펴진 탭이 **캡처 탭**인가 — 차례 번호가 아니라 그 탭의 제목과 동작으로 잰다.
+    let tabs = proto::info::tabs(&view.state, "", 0.0);
+    let picked = view.screens.info_tab();
+    assert_eq!(
+        tabs.get(picked).map(|(title, _)| *title),
+        Some(base::i18n::t("출력 캡처(REC)")),
+        "캡처 탭이 아닌 자리에서 열렸다: {picked} / {:?}",
+        tabs.iter().map(|(t, _)| *t).collect::<Vec<_>>()
+    );
+    assert!(
+        proto::info::tab_actions(&view.state, picked).iter().any(|a| a.key == 'c'),
+        "펴진 탭에 캡처 토글이 없다 — 캡처 탭이 아니다"
+    );
+    // 서버 화면을 묻지 않았다 — 그 이름의 화면은 서버에 없다(물으면 «화면 없음» 알림이 뜬다).
+    assert!(
+        !sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|o| matches!(o, Outgoing::Command(Command::PluginOpen { .. }))),
+        "클라 판인데 서버에 화면을 물었다"
     );
 }
 

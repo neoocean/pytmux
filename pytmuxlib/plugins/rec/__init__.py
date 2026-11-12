@@ -150,11 +150,20 @@ class _RecPlugin:
         색은 **의미 이름**이다(`error` 바탕 = 녹화 중). 정본이 쓰는
         `theme_color(status,"error")` 와 같은 이름이라 두 클라가 각자의 테마에서 푼다.
         포커스가 왔을 때의 노랑(`warning`)은 안 싣는다 — 크롬 포커스는 **그 클라만
-        아는 상태**라 서버가 정할 것이 아니다(정본은 자기 것을 계속 쓴다)."""
+        아는 상태**라 서버가 정할 것이 아니다(정본은 자기 것을 계속 쓴다).
+
+        `do` 는 **누르면 돌 명령 이름**이다(다른 배지와 같은 어휘 — claude-code 의
+        `model`·`usage-panel`). 정본은 REC 를 누르면 통합 상태 팝업을 캡처 탭으로 연다
+        (`clientside.show_capture_info` · `_status_tab_initial = 0`). 그 판은 서버
+        화면이 아니라 **클라 판**이라, 이름도 네이티브 클라가 스스로 도는 명령
+        `status`(= 상태 팝업)를 싣는다 — 클라는 `:` 줄과 같은 해석기로 그 이름을 먼저
+        자기 명령에서 찾고, 캡처 칸이 있으면 REC 탭이 0번이다(pytmux-589).
+        정본 TUI 는 이 자료를 안 읽는다(위 `client_statusbar_badges` 가 제 클릭존을
+        그린다) — 그래서 이 칸은 정본의 동작을 바꾸지 않는다."""
         if not msg.get("capture"):
             return []
         return [{"text": " REC ", "style": {"bo": 1, "f": "white"},
-                 "theme": {"b": "error"}}]
+                 "theme": {"b": "error"}, "kind": "rec", "do": "status"}]
 
     def client_status_tabs(self, app, tree):
         """통합 상태 팝업에 '출력 캡처(REC)' 탭(+[c]/[o] 동작)을 기여(코어

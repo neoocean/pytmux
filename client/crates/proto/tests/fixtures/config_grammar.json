@@ -1,0 +1,518 @@
+{
+  "_comment": "python3 scripts/gen_config_grammar_fixture.py 로 생성. 출처 = pytmuxlib/keymap.py::load_config(호출) + pytmuxlib/client.py::apply_option(AST). pytmux-567.",
+  "directives": [
+    "alias",
+    "bind",
+    "hook",
+    "set",
+    "set-hook"
+  ],
+  "bind_flags": [
+    "-n"
+  ],
+  "load_options": [
+    "alt-scroll",
+    "alt_scroll",
+    "ambiguous-width",
+    "ambiguous_width",
+    "claude-command",
+    "claude_command",
+    "copy-unwrap",
+    "copy_unwrap",
+    "default-path",
+    "default_path",
+    "inactive-dim",
+    "inactive-dim-ratio",
+    "inactive_dim",
+    "inactive_dim_ratio",
+    "lang",
+    "language",
+    "mode-keys",
+    "mouse",
+    "mouse-drag-copy",
+    "mouse-drag-threshold",
+    "mouse_drag_copy",
+    "mouse_drag_threshold",
+    "net-rtt-threshold",
+    "net_rtt_threshold",
+    "prefix",
+    "remote-title",
+    "set-clipboard",
+    "set-titles",
+    "set-titles-string",
+    "set_clipboard",
+    "status-bg",
+    "status-fg",
+    "status-interval",
+    "status-left",
+    "status-position",
+    "status-right",
+    "strip-box-drawing",
+    "strip_box_drawing",
+    "tab-bar",
+    "tabbar"
+  ],
+  "apply_options": [
+    "alt-scroll",
+    "ambiguous-width",
+    "ambiguous_width",
+    "claude-command",
+    "claude_command",
+    "copy-unwrap",
+    "copy_unwrap",
+    "default-path",
+    "default_path",
+    "mode-keys",
+    "mouse",
+    "mouse-debug",
+    "mouse-drag-copy",
+    "mouse-drag-threshold",
+    "mouse-log",
+    "mouse_drag_copy",
+    "mouse_drag_threshold",
+    "prefix",
+    "remote-title",
+    "set-clipboard",
+    "set-titles",
+    "set-titles-string",
+    "set_clipboard",
+    "status",
+    "status-bg",
+    "status-fg",
+    "status-format",
+    "status-interval",
+    "status-left",
+    "status-position",
+    "status-right",
+    "strip-box-drawing",
+    "strip_box_drawing",
+    "tab-bar",
+    "tabbar"
+  ],
+  "cases": [
+    {
+      "key": "bind",
+      "line": "bind r source-file",
+      "why": "prefix 뒤 키 — 팔레트 이름 그대로인 명령",
+      "read": {
+        "bindings": {
+          "r": "source-file"
+        }
+      }
+    },
+    {
+      "key": "bind ctrl",
+      "line": "bind C-x split-window -h",
+      "why": "tmux 표기 키(`C-x`)를 정규화해 읽나",
+      "read": {
+        "bindings": {
+          "ctrl+x": "split-window -h"
+        }
+      }
+    },
+    {
+      "key": "bind args",
+      "line": "bind y select-tab 3",
+      "why": "인자 있는 명령 — 정본은 아무 명령 줄이나 돌린다",
+      "read": {
+        "bindings": {
+          "y": "select-tab 3"
+        }
+      }
+    },
+    {
+      "key": "bind -n",
+      "line": "bind -n F5 next-tab",
+      "why": "prefix 없이 바로(root table)",
+      "read": {
+        "root_bindings": {
+          "f5": "next-tab"
+        }
+      }
+    },
+    {
+      "key": "bind -n args",
+      "line": "bind -n M-z resize-pane -Z",
+      "why": "root table + 플래그를 품은 이름",
+      "read": {
+        "root_bindings": {
+          "alt+z": "resize-pane -Z"
+        }
+      }
+    },
+    {
+      "key": "alias",
+      "line": "alias sp split-window -h",
+      "why": "사용자 명령 별칭",
+      "read": {
+        "aliases": {
+          "sp": "split-window -h"
+        }
+      }
+    },
+    {
+      "key": "hook",
+      "line": "hook after-new-window display-message made",
+      "why": "`hook` 철자",
+      "read": {
+        "hooks": {
+          "after-new-window": "display-message made"
+        }
+      }
+    },
+    {
+      "key": "set-hook",
+      "line": "set-hook client-attached display-message hi",
+      "why": "`set-hook` 철자",
+      "read": {
+        "hooks": {
+          "client-attached": "display-message hi"
+        }
+      }
+    },
+    {
+      "key": "set alt-scroll",
+      "line": "set alt-scroll off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "disable_alt_scroll": false
+      }
+    },
+    {
+      "key": "set alt_scroll",
+      "line": "set alt_scroll off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "disable_alt_scroll": false
+      }
+    },
+    {
+      "key": "set ambiguous-width",
+      "line": "set ambiguous-width wide",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "ambiguous_width": "wide"
+      }
+    },
+    {
+      "key": "set ambiguous_width",
+      "line": "set ambiguous_width wide",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "ambiguous_width": "wide"
+      }
+    },
+    {
+      "key": "set claude-command",
+      "line": "set claude-command claude --verbose",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "claude_command": "claude --verbose"
+      }
+    },
+    {
+      "key": "set claude_command",
+      "line": "set claude_command claude --verbose",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "claude_command": "claude --verbose"
+      }
+    },
+    {
+      "key": "set copy-unwrap",
+      "line": "set copy-unwrap off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "copy_unwrap": false
+      }
+    },
+    {
+      "key": "set copy_unwrap",
+      "line": "set copy_unwrap off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "copy_unwrap": false
+      }
+    },
+    {
+      "key": "set default-path",
+      "line": "set default-path home",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "default_path": "home"
+      }
+    },
+    {
+      "key": "set default_path",
+      "line": "set default_path home",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "default_path": "home"
+      }
+    },
+    {
+      "key": "set inactive-dim",
+      "line": "set inactive-dim off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "inactive_dim": false
+      }
+    },
+    {
+      "key": "set inactive-dim-ratio",
+      "line": "set inactive-dim-ratio 0.5",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "inactive_dim_ratio": 0.5
+      }
+    },
+    {
+      "key": "set inactive_dim",
+      "line": "set inactive_dim off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "inactive_dim": false
+      }
+    },
+    {
+      "key": "set inactive_dim_ratio",
+      "line": "set inactive_dim_ratio 0.5",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "inactive_dim_ratio": 0.5
+      }
+    },
+    {
+      "key": "set lang",
+      "line": "set lang en",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "lang": "en"
+      }
+    },
+    {
+      "key": "set language",
+      "line": "set language en",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "lang": "en"
+      }
+    },
+    {
+      "key": "set mode-keys",
+      "line": "set mode-keys emacs",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "mode_keys": "emacs"
+      }
+    },
+    {
+      "key": "set mouse",
+      "line": "set mouse off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "mouse": false
+      }
+    },
+    {
+      "key": "set mouse-drag-copy",
+      "line": "set mouse-drag-copy shift",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "mouse_drag_copy": "shift"
+      }
+    },
+    {
+      "key": "set mouse-drag-threshold",
+      "line": "set mouse-drag-threshold 7",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "mouse_drag_threshold": 7
+      }
+    },
+    {
+      "key": "set mouse_drag_copy",
+      "line": "set mouse_drag_copy shift",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "mouse_drag_copy": "shift"
+      }
+    },
+    {
+      "key": "set mouse_drag_threshold",
+      "line": "set mouse_drag_threshold 7",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "mouse_drag_threshold": 7
+      }
+    },
+    {
+      "key": "set net-rtt-threshold",
+      "line": "set net-rtt-threshold 2.5",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "net_rtt_threshold": 2.5
+      }
+    },
+    {
+      "key": "set net_rtt_threshold",
+      "line": "set net_rtt_threshold 2.5",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "net_rtt_threshold": 2.5
+      }
+    },
+    {
+      "key": "set prefix",
+      "line": "set prefix C-a",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "prefix": "ctrl+a"
+      }
+    },
+    {
+      "key": "set remote-title",
+      "line": "set remote-title host",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "remote_title": "host"
+      }
+    },
+    {
+      "key": "set set-clipboard",
+      "line": "set set-clipboard off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "set_clipboard": false
+      }
+    },
+    {
+      "key": "set set-titles",
+      "line": "set set-titles on",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "set_titles": true
+      }
+    },
+    {
+      "key": "set set-titles-string",
+      "line": "set set-titles-string #S:#W title",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "title_fmt": "#S:#W title"
+      }
+    },
+    {
+      "key": "set set_clipboard",
+      "line": "set set_clipboard off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "set_clipboard": false
+      }
+    },
+    {
+      "key": "set status-bg",
+      "line": "set status-bg red",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "status_bg": "red"
+      }
+    },
+    {
+      "key": "set status-fg",
+      "line": "set status-fg blue",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "status_fg": "blue"
+      }
+    },
+    {
+      "key": "set status-interval",
+      "line": "set status-interval 5",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "status_interval": 5
+      }
+    },
+    {
+      "key": "set status-left",
+      "line": "set status-left #S left side",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "status_left": "#S left side"
+      }
+    },
+    {
+      "key": "set status-position",
+      "line": "set status-position top",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "status_position": "top"
+      }
+    },
+    {
+      "key": "set status-right",
+      "line": "set status-right #H right side",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "status_right": "#H right side"
+      }
+    },
+    {
+      "key": "set strip-box-drawing",
+      "line": "set strip-box-drawing off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "strip_box_drawing": false
+      }
+    },
+    {
+      "key": "set strip_box_drawing",
+      "line": "set strip_box_drawing off",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "strip_box_drawing": false
+      }
+    },
+    {
+      "key": "set tab-bar",
+      "line": "set tab-bar auto",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "tab_bar_always": false
+      }
+    },
+    {
+      "key": "set tabbar",
+      "line": "set tabbar auto",
+      "why": "정본 파일 파서가 받는 옵션",
+      "read": {
+        "tab_bar_always": false
+      }
+    },
+    {
+      "key": "set mouse-debug",
+      "line": "set mouse-debug on",
+      "runtime": true,
+      "why": "런타임 `set` 만 받는 옵션(정본 `apply_option`)"
+    },
+    {
+      "key": "set mouse-log",
+      "line": "set mouse-log on",
+      "runtime": true,
+      "why": "런타임 `set` 만 받는 옵션(정본 `apply_option`)"
+    },
+    {
+      "key": "set status",
+      "line": "set status 2",
+      "runtime": true,
+      "why": "런타임 `set` 만 받는 옵션(정본 `apply_option`)"
+    },
+    {
+      "key": "set status-format",
+      "line": "set status-format 1 #S extra",
+      "runtime": true,
+      "why": "런타임 `set` 만 받는 옵션(정본 `apply_option`)"
+    }
+  ]
+}

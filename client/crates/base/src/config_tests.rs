@@ -688,7 +688,9 @@ fn the_drag_threshold_is_clamped_to_a_usable_range() {
     assert_eq!(Config::parse("set mouse-drag-threshold 3").mouse_drag_threshold, 3);
     assert_eq!(Config::parse("set mouse-drag-threshold 0").mouse_drag_threshold, 1);
     assert_eq!(Config::parse("set mouse-drag-threshold 99").mouse_drag_threshold, 20);
-    assert_eq!(Config::default().mouse_drag_threshold, 1, "파이썬 기본값");
+    assert_eq!(Config::default().mouse_drag_threshold, 3, "파이썬 기본값(`client.py` 의 3 · pytmux-577)");
+    // 설정 판의 값 칸도 같은 기본값을 본다 — 둘이 갈리면 판에는 1 이 보이는데 3 으로 군다.
+    assert_eq!(SettingValues::default().mouse_drag_threshold, 3);
 }
 
 #[test]

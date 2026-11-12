@@ -117,7 +117,9 @@ pub struct Config {
     /// 그냥 셸 탭이 열린다 — 그 탭은 **언제나** 지금 패널의 디렉토리에서 뜬다
     /// (`default_path` 를 안 따른다 · pytmux-137).
     pub claude_command: String,
-    /// 선택이 시작되기까지 움직여야 하는 칸 수(1~20, 파이썬 기본값 1).
+    /// 선택이 시작되기까지 움직여야 하는 칸 수(1~20, 파이썬 기본값 **3** —
+    /// `pytmuxlib/client.py` · pytmux-577). 누른 자리에서의 거리는 정본처럼 **체비셰프**
+    /// (`max(|dx|, |dy|)`)로 잰다(`SessionView::handle_mouse_drag`).
     ///
     /// 손이 떨려 한 칸 밀린 클릭이 선택으로 읽히는 것을 막는 값이다.
     pub mouse_drag_threshold: u16,
@@ -429,7 +431,7 @@ impl Default for Config {
             status_position: "bottom".to_owned(),
             remote_title: REMOTE_TITLES[0].to_owned(),
             status_interval: 15,
-            mouse_drag_threshold: 1,
+            mouse_drag_threshold: 3,
             ambiguous_width: "auto".to_owned(),
             hooks: crate::hooks::Hooks::default(),
             lang: String::new(),
@@ -889,7 +891,7 @@ impl Default for SettingValues {
             cursor_blink_ms: 500,
             cursor_thickness: 2.,
             mode_keys: String::new(),
-            mouse_drag_threshold: 1,
+            mouse_drag_threshold: 3,
             ambiguous_width: String::new(),
             status_left: String::new(),
             status_right: String::new(),
