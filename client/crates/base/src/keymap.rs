@@ -1347,8 +1347,10 @@ const fn pe(name: &'static str, cat: &'static str, action: Action) -> PaletteEnt
 ///
 /// 거르는 자리는 **화면을 만드는 곳 전부**여야 한다 — 하나라도 빠지면 그 입구로 다시
 /// 보인다(팔레트·설정 화면·상태줄 표식). 그래서 목록을 한 곳에 두고 각자 물어본다.
-// DIVERGE(monitor-bell): 정본 설정 판·팔레트에는 그 줄이 선다 — 원칙 2 와 부딪쳐 사람 결정 대기(pytmux-642).
-pub static HIDDEN_SURFACES: &[&str] = &["monitor-bell"];
+///
+/// ★ **지금 비었다**(사람 결정 2026-11-13 · pytmux-642): `monitor-bell` 을 정본처럼 다시 보인다 — 정본 설정 판·
+/// 팔레트에 서는 줄을 GUI 만 감추는 것은 원칙 2(«빼지 않는다»)와 부딪쳤다. 장치는 남긴다(다음 감춤도 같은 자리).
+pub static HIDDEN_SURFACES: &[&str] = &[];
 
 /// 그 이름이 화면에서 감춰졌나.
 pub fn is_hidden(name: &str) -> bool {
@@ -1397,6 +1399,8 @@ pub static PALETTE: &[PaletteEntry] = &[
     pe("paste-buffer", "복사/버퍼", Action::PasteBuffer),
     pe("synchronize-panes", "패널", Action::ShowCommandOptions("synchronize-panes")),
     pe("monitor-activity", "모니터", Action::ShowCommandOptions("monitor-activity")),
+    // 정본 `COMMANDS` 차례 그대로 activity 뒤 — 다시 보인다(pytmux-642).
+    pe("monitor-bell", "모니터", Action::ShowCommandOptions("monitor-bell")),
     pe("automatic-rename", "탭", Action::ShowCommandOptions("automatic-rename")),
     pe("pane-border-status", "패널", Action::ToggleBorderStatus),
     pe("inactive-dim", "설정/기타", Action::ShowCommandOptions("inactive-dim")),
@@ -1826,6 +1830,84 @@ pub fn key_help_lines(binds: &[crate::config::Bind]) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+/// 키 도움말의 **절**(pytmux-656). [`key_help_lines`] 가 내는 차례 그대로다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeySection {
+    Prefix,
+    Esc,
+    Scroll,
+    Block,
+    Mouse,
+    User,
+}
+
+impl KeySection {
+    /// 판 내용 자가 정본 절과 맞대는 이름.
+    pub fn name(self) -> &'static str {
+        match self {
+            KeySection::Prefix => "prefix",
+            KeySection::Esc => "esc",
+            KeySection::Scroll => "scroll",
+            KeySection::Block => "block",
+            KeySection::Mouse => "mouse",
+            KeySection::User => "user",
+        }
+    }
+}
+
+const HELP_ORDER: [KeySection; 6] = [
+    KeySection::Prefix,
+    KeySection::Esc,
+    KeySection::Scroll,
+    KeySection::Block,
+    KeySection::Mouse,
+    KeySection::User,
+];
+
+/// [`key_help_lines`] 를 절로 나눈다 — 소제목(`── … ──`, 설명 칸 빈 줄)이 절의 첫 줄이다.
+pub fn key_help_sections(binds: &[crate::config::Bind]) -> Vec<(KeySection, Vec<(String, String)>)> {
+    let mut out: Vec<(KeySection, Vec<(String, String)>)> = Vec::new();
+    let mut order = HELP_ORDER.iter();
+    for line in key_help_lines(binds) {
+        let header = line.1.is_empty() && line.0.starts_with("──");
+        if header && let Some(section) = order.next() {
+            out.push((*section, Vec::new()));
+        }
+        if let Some((_, rows)) = out.last_mut() {
+            rows.push(line);
+        }
+    }
+    out
+}
+
+fn compose_sections(binds: &[crate::config::Bind], order: &[KeySection]) -> Vec<(String, String)> {
+    let mut sections = key_help_sections(binds);
+    let mut out = Vec::new();
+    for want in order {
+        if let Some(at) = sections.iter().position(|(s, _)| s == want) {
+            out.extend(sections.remove(at).1);
+        }
+    }
+    for (_, rows) in sections {
+        out.extend(rows); // 차례표에 없는 절이 생기면 버리지 않고 뒤에 붙인다
+    }
+    out
+}
+
+/// `list-keys` 판(`Screen::Keys`)의 줄 — 정본 `list-keys` 와 **같은 차례**: 마우스 제스처 → 사용자 바인딩.
+/// GUI 가 더 싣는 키 표(prefix · esc · 스크롤 · 블록)는 그 **뒤**다(더하기만 · pytmux-656).
+pub fn list_keys_lines(binds: &[crate::config::Bind]) -> Vec<(String, String)> {
+    use KeySection::*;
+    compose_sections(binds, &[Mouse, User, Prefix, Esc, Scroll, Block])
+}
+
+/// 설정 판 «키» 탭의 줄 — 정본 `SettingsScreen._build_keys_category` 와 **같은 차례**: ESC 모드 → prefix →
+/// 사용자 바인딩. GUI 가 더 싣는 절(스크롤 · 블록 · 마우스)은 그 **뒤**다(pytmux-656).
+pub fn settings_key_lines(binds: &[crate::config::Bind]) -> Vec<(String, String)> {
+    use KeySection::*;
+    compose_sections(binds, &[Esc, Prefix, User, Scroll, Block, Mouse])
 }
 
 /// 마우스 제스처 한 줄들 — 정본 `i18n` 의 `keys.g_*` 와 **같은 일곱**이다.
@@ -2428,9 +2510,14 @@ mod tests {
     }
 
     #[test]
-    fn the_hidden_list_is_not_empty_and_names_the_reported_one() {
-        // 빈 목록이면 위 단언이 **아무것도 안 재고** 통과한다(공허 방지).
-        assert!(HIDDEN_SURFACES.contains(&"monitor-bell"), "제보가 지목한 이름이 없다");
+    fn monitor_bell_is_visible_again_on_every_screen_table() {
+        // 사람 결정(2026-11-13 · pytmux-642) — 감췄던 `monitor-bell` 이 정본처럼 **보인다**. 양성으로 잰다:
+        // 팔레트·설정 줄·설정 라벨 셋 다에 있어야 한다(감춤 목록이 비어 위 시험이 공허해진 자리를 이것이 메운다).
+        use crate::config::{SETTINGS, SETTING_LABELS};
+        assert!(!HIDDEN_SURFACES.contains(&"monitor-bell"));
+        assert!(PALETTE.iter().any(|e| e.name == "monitor-bell"), "팔레트에 monitor-bell 이 없다");
+        assert!(SETTINGS.iter().any(|s| s.key == "monitor-bell"), "설정 판에 monitor-bell 이 없다");
+        assert!(SETTING_LABELS.iter().any(|(k, _)| *k == "monitor-bell"), "설정 라벨이 없다");
     }
 
     #[test]

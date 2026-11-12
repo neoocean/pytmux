@@ -5207,6 +5207,27 @@ async def test_notice_history_popup_expands_full_text():
     await _with_app(body)
 
 
+async def test_notice_history_title_sits_on_the_bordered_box():
+    """pytmux-660: 알림 이력 판의 제목(`screen.notice_history_title`)이 **그려져야** 한다.
+    종전에는 제목을 테두리 없는 목록(#nhlist)에 달아 border_title 이 한 번도 안 그려졌다 —
+    테두리가 있는 상자(#nhbox)가 제목의 자리다. 대조군: 그 상자에는 실제로 테두리가 있다."""
+    from pytmuxlib import clientnotices, i18n
+    from pytmuxlib.clientscreens import NoticeHistoryScreen
+
+    async def body(app, pilot, srv):
+        h = clientnotices.NoticeHistory()
+        ents = [h.add("첫 알림", "info", "local"), h.add("둘째 알림", "info", "local")]
+        scr = NoticeHistoryScreen(ents)
+        app.push_screen(scr)
+        await wait_until(pilot, lambda: scr.query_one("#nhbox").size.height > 1)
+        box = scr.query_one("#nhbox")
+        want = i18n.t("screen.notice_history_title", n=2)
+        assert str(box.border_title) == want, (box.border_title, want)
+        assert box.styles.border_top[0] not in ("", "none", "hidden"), box.styles.border_top
+        assert not scr.query_one("#nhlist").border_title, "제목이 테두리 없는 목록에 남았다"
+    await _with_app(body)
+
+
 async def test_notice_history_box_has_no_empty_space_below():
     """제보(2026-07-25): 알림 이력 팝업 **하단에 빈 공간**이 남았다.
 

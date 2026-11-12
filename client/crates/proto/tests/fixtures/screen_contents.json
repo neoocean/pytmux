@@ -755,6 +755,15 @@
         "사용자 키 바인딩",
         "prefix x → split-window -h"
       ],
+      "keys_sections": [
+        "mouse",
+        "user"
+      ],
+      "settings_key_sections": [
+        "esc",
+        "prefix",
+        "user"
+      ],
       "info_tab_names": [
         "출력 캡처(REC)",
         "서버"
@@ -1019,6 +1028,15 @@
         "",
         "User key bindings",
         "prefix x → split-window -h"
+      ],
+      "keys_sections": [
+        "mouse",
+        "user"
+      ],
+      "settings_key_sections": [
+        "esc",
+        "prefix",
+        "user"
       ],
       "info_tab_names": [
         "Output capture (REC)",

@@ -1133,6 +1133,13 @@ pub const SETTINGS: &[Setting] = &[
         cat: "동작",
         kind: SettingKind::Toggle(Action::ToggleMonitorActivity),
     },
+    // 정본 차례 그대로 `monitor-activity` 뒤 — §10-21ⓜ 의 예전 결정으로 감췄다가 사람 결정(2026-11-13 ·
+    // pytmux-642)으로 다시 보인다.
+    Setting {
+        key: "monitor-bell",
+        cat: "동작",
+        kind: SettingKind::Toggle(Action::ToggleMonitorBell),
+    },
     Setting {
         key: "synchronize-panes",
         cat: "동작",
@@ -1332,6 +1339,7 @@ pub static SETTING_LABELS: &[(&str, &str)] = &[
     ("window-size", "창 크기 규칙"),
     ("synchronize-panes", "입력 동기화"),
     ("monitor-activity", "활동 모니터"),
+    ("monitor-bell", "벨 모니터"),
     ("automatic-rename", "탭 자동 이름"),
     ("status-left", "상태줄 왼쪽 포맷"),
     ("status-right", "상태줄 오른쪽 포맷"),

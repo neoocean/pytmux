@@ -171,6 +171,7 @@ impl InputMode {
     /// `[block]` 은 정본 blocks 플러그인의 `ui.block_mode_badge`(`"[block] "`)와 같은 낱말이다
     /// (pytmux-605 — 꼬리 공백은 칩 패딩이 낸다). 남은 `[scroll]` 은 아직 정본에 대응하는
     /// 문구가 없어 종전 표기를 그대로 둔다 — 지어낸 문구를 정본 문구인 척 둘 수는 없다.
+    // DIVERGE([scroll]): 정본 상태줄에는 스크롤 모드 표식이 없다 — GUI 에만 있는 칩(갈림 대장 GuiOnly · pytmux-659).
     pub fn badge(self) -> Option<&'static str> {
         match self {
             InputMode::Normal => None,

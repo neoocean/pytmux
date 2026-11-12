@@ -62,6 +62,10 @@ fn plugin_setting_keys() -> Vec<String> {
 /// 우리는 이름을 지어 보인다 — 그쪽이 이 화면의 취지에 맞아 그대로 두되, 근거를 여기
 /// 바로잡아 적는다. 교훈은 ⑫ 때와 같다: **"정본에 없다"를 적기 전에 정본을 본다.**
 ///
+/// ★ 2026-11-13(pytmux-660): 그 셋(`ambiguous-width`·`win-mouse-motion`·`window-size`)은 **정본
+/// 카탈로그에 실렸다**(`pytmuxlib/i18n.py` `setting.*` — GUI 가 쓰던 글 그대로). 그래서 이 목록에서
+/// 뺐다 — 이제 정본 라벨과 글자까지 같은지를 위 시험이 잰다.
+///
 /// 목록으로 **박아 두는** 이유: 새 설정을 넣으면서 이름을 안 지으면 조용히 여기로
 /// 떨어져 "정본에 없으니 통과"가 된다. 늘려야 통과하게 두면 그때 한 번 멈춘다.
 ///
@@ -72,12 +76,9 @@ fn plugin_setting_keys() -> Vec<String> {
 /// 정본 클라의 커서는 **호스트 단말의 하드웨어 커서**라(파이썬은 `app.cursor_position`
 /// 으로 자리만 옮긴다) 모양·색·깜빡임을 저쪽이 가질 수가 없다(`pytmux/pytmux-161`).
 const NO_CANON_LABEL: &[&str] = &[
-    "ambiguous-width",
     // 고정폭 글꼴도 같은 부류다(pytmux-408) — 정본은 호스트 단말의 글꼴로 그린다.
     "font-family",
     "font-scale",
-    "win-mouse-motion",
-    "window-size",
     "cursor-style",
     "cursor-color",
     "cursor-blink",

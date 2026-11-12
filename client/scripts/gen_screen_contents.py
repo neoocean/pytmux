@@ -176,6 +176,28 @@ def canon_rows(scratch):
     app.root_bindings = {}
     app._run_command("list-keys")
     out["keys"] = list(pushed[-1]._lines) if pushed else None
+    # 절의 차례(pytmux-656) — `list-keys` 판의 머리줄과 설정 판 «키» 탭의 소제목을 정본 열쇠로 이름 짓는다.
+    heads = {i18n.t("keys.mouse_header", default="마우스 제스처"): "mouse",
+             i18n.t("keys.user_header", default="사용자 키 바인딩"): "user"}
+    out["keys_sections"] = [heads[ln] for ln in (out["keys"] or []) if ln in heads]
+    scr = cs.SettingsScreen.__new__(cs.SettingsScreen)
+    scr._cats, scr._cat_first, scr._flat = [], {}, []
+    scr._prefix_key = "ctrl+b"
+    scr._user_bindings = dict(INPUTS["binds"])
+    scr._root_bindings = {}
+    scr._build_keys_category()
+    subs = [d["sub"] for d, _ in scr._flat if d.get("type") == "keyref" and "sub" in d]
+    named = []
+    for sub in subs:
+        if sub == i18n.t("klist.sub_esc"):
+            named.append("esc")
+        elif sub == i18n.t("klist.sub_user"):
+            named.append("user")
+        elif sub == i18n.t("klist.sub_user_root"):
+            named.append("user")          # GUI 는 root 바인딩을 사용자 절 안에 싣는다
+        else:
+            named.append("prefix")        # `klist.sub_prefix` 는 prefix 키 이름을 품는다
+    out["settings_key_sections"] = named
 
     pushed.clear()
     app._open_status_tabs({"t": "tree", "sessions": []})

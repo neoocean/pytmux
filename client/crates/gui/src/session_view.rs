@@ -3540,8 +3540,11 @@ impl SessionView {
 
     /// 미룬 hello 를 **이 크기로** 보낸다(pytmux-639 G6) — 모호폭은 지금 판정값이다(pytmux-578).
     ///
-    /// 크기 보고기도 그 크기에서 다시 시작한다 — 서버는 hello 의 크기를 이미 알므로 같은 크기의
-    /// Resize 를 또 보낼 까닭이 없다(정본도 hello 뒤 첫 resize 는 크기가 바뀔 때다).
+    /// ★ **hello 바로 뒤에 같은 크기의 resize 를 한 번 보낸다**(pytmux-658 · 정본과 같다). 정본
+    ///   클라는 붙은 뒤 Textual 의 첫 `Resize` 이벤트에서 `{"t":"resize"}` 를 보내고(`clientio.on_resize`),
+    ///   서버는 resize 를 **조작**으로 센다(`last_active` — `window-size latest` 의 주인). 종전 GUI 는
+    ///   hello 가 크기를 이미 실었다며 resize 를 안 보냈고, 그래서 앞 클라(조작한 적 있는 — 아직
+    ///   회수 전인 연결 포함)가 «latest» 로 남아 GUI 혼자 붙어도 격자가 그 크기에 묶였다(레터박스).
     fn send_deferred_hello(&mut self, cols: u16, rows: u16) {
         self.size = SizeReporter::new(cols, rows);
         let (cols, rows) = self.size.reported();
@@ -3550,7 +3553,9 @@ impl SessionView {
             for happening in self.supervisor.send_failed(&mut self.link, (cols, rows)) {
                 self.apply_lifecycle(happening);
             }
+            return;
         }
+        self.pending.push(Outgoing::Resize(proto::command::Resize::new(cols, rows)));
     }
 
     /// 그 패널이 아직 활성이 아니면 포커스를 옮긴다.
@@ -9810,7 +9815,7 @@ impl SessionView {
     fn open_settings(&mut self) {
         self.screens.open(Screen::Settings);
         self.screens
-            .set_settings_key_rows(base::keymap::key_help_lines(&self.config.binds));
+            .set_settings_key_rows(base::keymap::settings_key_lines(&self.config.binds));
     }
 
     /// 플러그인 관리 판에 **보이는 줄** — 검색어로 거른 원래 번호(pytmux-591 · 정본 `_matches`).
@@ -11729,6 +11734,20 @@ impl SessionView {
         column
     }
 
+    /// 탭 스위처 한 줄의 글 — 활성 표식 · 들여쓰기 · 라벨.
+    ///
+    /// 패널 하위행의 `└ ` 는 라벨이 이미 쥐고 있다(`proto::session::pane_row_label` — 정본
+    /// `add_panes` 와 같은 글). 여기서 또 붙이면 `└ └ [local] zsh` 로 두 번 선다(5차 대조
+    /// 2026-11-13 · pytmux-599 에서 찍혀 나왔다 — 줄 글을 재는 자는 라벨까지만 봤다).
+    fn switcher_row_text(item: &proto::session::TreeRow) -> String {
+        format!(
+            "{} {}{}",
+            if item.active { "•" } else { " " },
+            "    ".repeat(item.depth),
+            item.label
+        )
+    }
+
     /// 탭 스위처(패리티 G3a).
     ///
     /// 라벨은 탭바와 **같은 정본**(`Tab::label`)을 쓴다 — 목록과 탭바가 다른 이름을 보이면
@@ -11758,16 +11777,7 @@ impl SessionView {
             } else {
                 palette::FG
             };
-            let text = format!(
-                "{} {}{}",
-                if item.active { "•" } else { " " },
-                "    ".repeat(item.depth),
-                if item.pane.is_some() {
-                    format!("└ {}", item.label)
-                } else {
-                    item.label.clone()
-                }
-            );
+            let text = Self::switcher_row_text(item);
             // 지금 고른 줄은 **배경**으로 가른다(탭바의 활성 탭과 같은 방법).
             let label = self.text(text, 13., fg);
             column = column.with_child(if row == selected {
@@ -11791,7 +11801,8 @@ impl SessionView {
     /// 여기서 정하는 것은 색과 **높이 예산**뿐이다. 캔버스가 쓰던 높이를 넘으면 아래
     /// 요약 구역이 화면 밖으로 밀린다(플랜 화면과 같은 규칙).
     fn render_keys(&self, column: Flex) -> Flex {
-        let lines = base::keymap::key_help_lines(&self.config.binds);
+        // 정본 `list-keys` 차례(마우스 → 사용자 바인딩 → GUI 가 더 싣는 키 표 · pytmux-656).
+        let lines = base::keymap::list_keys_lines(&self.config.binds);
         let budget = self.panel_budget();
         let start = self.screens.scroll().min(lines.len().saturating_sub(1));
         let mut column = column;

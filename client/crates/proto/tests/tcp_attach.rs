@@ -228,3 +228,36 @@ fn a_message_survives_the_tcp_round_trip() {
         }
     }
 }
+
+// DIVERGE(nonloopback-tcp): 비루프백 `tcp:` 에는 이 상자의 토큰을 안 보낸다 — 정본은 보낸다(평문 TCP).
+// 사람 결정(2026-11-13 · pytmux-651)으로 지금대로 둔다. 거절 자리는 `proto::client::Connection::connect_endpoint`
+// (토큰을 **읽기 전에** 호스트를 본다) — 갈림 대장 `Class::Decided`.
+#[test]
+fn a_non_loopback_tcp_endpoint_is_refused_before_the_token_is_read() {
+    if std::env::var(proto::client::ALLOW_REMOTE_TOKEN_ENV).as_deref() == Ok("1") {
+        return; // 이 상자가 일부러 허용해 둔 환경이면 이 규칙은 꺼져 있다
+    }
+    let scratch = Scratch::new("nonloopback");
+    std::fs::write(scratch.path("default.token"), "SECRET-TOKEN").unwrap();
+    // TEST-NET-1 — 닿을 수 없는 주소다. 거절이 **연결 전**이 아니면 connect 상한까지 매달린다.
+    let remote = Endpoint::Tcp {
+        host: "192.0.2.1".into(),
+        port: 5000,
+        portfile: scratch.path("default.port"),
+        token: scratch.path("default.token"),
+    };
+    let started = std::time::Instant::now();
+    let err = Connection::attach_to_endpoint(&remote, 80, 24).err().expect("비루프백인데 붙었다");
+    assert!(
+        matches!(err, proto::AttachError::NonLoopback(ref h) if h == "192.0.2.1"),
+        "비루프백 거절이 아니다: {err:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "거절 전에 연결을 시도했다");
+    // 대조군 — 같은 토큰 · 루프백이면 같은 규칙이 막지 않는다(포트가 없어 연결 실패로 끝나도 거절 사유는 다르다).
+    let local = endpoint_for(&scratch, 1);
+    let err = Connection::attach_to_endpoint(&local, 80, 24).err();
+    assert!(
+        !matches!(err, Some(proto::AttachError::NonLoopback(_))),
+        "루프백까지 비루프백으로 거절했다: {err:?}"
+    );
+}

@@ -64,8 +64,8 @@ pub static EN: &[(&str, &str)] = &[
          o machine · s scenario · u /usage",
     ),
     // ── claude-code · 기간별·세션별 판(pytmux-371 ①②) ──
-    ("토큰 사용량 · 기간별", "Token usage · by period"),
-    ("토큰 사용량 · 세션별", "Token usage · by session"),
+    ("토큰 사용량(추정) · 기간별", "Token usage (est) · by Period"),
+    ("토큰 사용량(추정) · 세션별", "Token usage (est) · by Session"),
     (
         "↑↓ 이동 · Enter 로 기간 단위 고르기 · Esc 닫기",
         "↑↓ move · Enter to pick the period unit · Esc close",
@@ -364,8 +364,8 @@ pub static EN: &[(&str, &str)] = &[
         "↑↓ move · Enter apply (injects /model) · Tab tabs · Esc close · p session · l limit · s scenario · u /usage",
     ),
     (
-        "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · Esc 닫기 · p세션 · l한도 · s시나리오 · u/usage",
-        "↑↓ move · Enter/←→ expand·collapse · Tab tabs · Esc close · p session · l limit · s scenario · u /usage",
+        "↑↓ 이동 · Enter/←→ 펼침·접힘 · Tab 탭 · p세션 · l한도 u/usage · Esc닫기",
+        "↑↓ move · Enter/←→ expand·collapse · Tab tabs · p session · l limit u /usage · Esc close",
     ),
     (
         "/usage",

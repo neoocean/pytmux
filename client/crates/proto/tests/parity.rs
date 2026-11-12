@@ -536,15 +536,22 @@ static POPULATION: &[(&str, &str)] = &[
 static NOT_SCORED: &[(&str, &str)] = &[
     (
         "menu_items",
-        "명령의 **다른 입구**다 — 같은 일을 두 번 세면 진행률이 부풀고, F10 메뉴가          덮는지는 `MENU_ITEMS` 를 그대로 쓰는 `keymap::menu_rows` 가 이미 강제한다",
+        "명령의 **다른 입구**다 — 같은 일을 두 번 세면 진행률이 부풀고, F10 메뉴가 \
+         덮는지는 `MENU_ITEMS` 를 그대로 쓰는 `keymap::menu_rows` 위에서 \
+         `category_conformance`(항목·계층·차례)와 `divergence_ledger`(정본에 없는 항목 0)가 잰다",
     ),
     (
         "set_options",
-        "`set` 명령의 **인자**다(표면이 아니라 그 표면이 받는 값). 인자 표는          `base::config::SETTINGS` 와 `options.rs` 가 따로 지킨다",
+        "`set` 명령의 **인자**다(표면이 아니라 그 표면이 받는 값). 그 옵션 전부를 \
+         정본 파서(`load_config`·`apply_option`)가 읽는 대로 GUI 가 읽나는 \
+         `config_grammar_conformance` 가 잰다(pytmux-567 — 이 칸 25개가 그 픽스처에 다 있다)",
     ),
     (
         "mouse_gestures",
-        "`list-keys` 가 보여 주는 **도움말 문구**다 — 같은 제스처를 우리는 다르게 묶어          적기도 해서(클릭을 휠 줄에) 글자 대조가 거짓 실패를 낳는다. 제스처 자체는          `mouse_conformance`·`mouse_gesture_conformance` 가 잰다",
+        "`list-keys` 가 보여 주는 **도움말 문구**다 — 같은 제스처를 우리는 다르게 묶어 \
+         적기도 해서(클릭을 휠 줄에) 글자 대조가 거짓 실패를 낳는다. 문구는 \
+         `mouse_gesture_conformance` 가 **개수**로 재고, 제스처의 동작(서버로 나가는 것)은 \
+         `session_view_mouse_conformance_tests` 가 정본 시나리오 전수로 잰다(pytmux-569)",
     ),
     (
         "command_help",
@@ -552,7 +559,7 @@ static NOT_SCORED: &[(&str, &str)] = &[
     ),
     (
         "command_help_en",
-        "위의 영어 짝 — 같은 이유",
+        "위의 영어 짝 — 같은 이유(`help_i18n` 이 ko 원문과 영어 번역을 한 번에 잰다)",
     ),
     (
         "esc_key_modes",
@@ -560,7 +567,7 @@ static NOT_SCORED: &[(&str, &str)] = &[
     ),
     (
         "prefix_key_modes",
-        "위의 prefix 짝 — 같은 이유",
+        "위의 prefix 짝 — 같은 이유(`mode_transition_conformance` 가 prefix 모드도 눌러서 잰다)",
     ),
     (
         "client_cmd_groups",
@@ -590,7 +597,7 @@ static NOT_SCORED: &[(&str, &str)] = &[
 /// ⛔ 이름을 여기 넣는 것은 **재는 것을 멈추는 일**이다. 사유가 「뷰별 능력」이나
 /// 「사용자가 입구를 닫았다」가 아니면 넣지 않는다(아래 ★ 가 그 조건을 못박는다).
 const NOT_IN_PALETTE: &[&str] = &[
-        "monitor-bell",
+        // ★ `monitor-bell` 은 **2026-11-13 에 이 목록에서 나갔다**(pytmux-642 · 사람 결정 — 정본처럼 보인다).
         // ★ `debug-stats` 는 **2026-09-03 에 이 목록에서 나갔다**(pytmux-457).
         //   여기 적혀 있던 사유는 *"이 명령이 내는 표는 파이썬 클라 프로세스의 것이라
         //   GUI 에는 그 힙이 아예 없다 — 같은 이름을 실으면 누르면 아무것도 못 재는
@@ -696,6 +703,34 @@ fn the_fixture_keeps_the_surfaces_we_do_not_score_yet() {
     let fx = fixture();
     assert!(!fx.menu_items.is_empty(), "메뉴 항목이 비었다");
     assert!(!fx.set_options.is_empty(), "set 옵션이 비었다");
+}
+
+/// 사유문이 「누가 잰다」고 이름 댄 자 — 백틱 안의 `…_conformance…`·`…_ledger`·`help_i18n`·
+/// `…_tests` 꼴 이름 — 가 **실제 시험 파일**로 있나.
+///
+/// ⛔ 사유가 가리키는 자가 지워지거나 이름이 바뀌면, 그 칸은 «다른 자가 잰다»는 말만 남고
+///    아무도 안 잰다(pytmux-599 재심에서 `options.rs`·`mouse_conformance` 만 대던 사유 둘이
+///    그렇게 낡아 있었다). 칸마다 자가 **하나 이상** 이름으로 서야 한다.
+#[test]
+fn every_not_scored_reason_names_a_ruler_that_exists() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let places = [root.join("tests"), root.join("../gui/src")];
+    let is_ruler = |t: &str| {
+        !t.is_empty()
+            && t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            && (t.contains("conformance")
+                || t.ends_with("_ledger")
+                || t.ends_with("_tests")
+                || t == "help_i18n")
+    };
+    for (name, why) in NOT_SCORED {
+        let rulers: Vec<&str> = why.split('`').skip(1).step_by(2).filter(|t| is_ruler(t)).collect();
+        assert!(!rulers.is_empty(), "{name}: 사유가 재는 자를 이름으로 안 댄다 — {why}");
+        for ruler in rulers {
+            let found = places.iter().any(|dir| dir.join(format!("{ruler}.rs")).is_file());
+            assert!(found, "{name}: 사유가 댄 자 `{ruler}` 가 시험 파일로 없다(proto/tests · gui/src)");
+        }
+    }
 }
 
 #[test]

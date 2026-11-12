@@ -3641,11 +3641,12 @@ class NoticeHistoryScreen(ModalScreen):
         return w
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="nhbox"):
-            lv = _NoticeList(*self._rows(), id="nhlist")
-            lv.border_title = i18n.t("screen.notice_history_title",
-                                     n=len(self._entries))
-            yield lv
+        # ★ 제목은 **테두리가 있는 상자**(#nhbox)에 단다(pytmux-660). 종전에는 목록(#nhlist)에
+        #   달았는데 목록에는 테두리가 없어 border_title 이 **한 번도 안 그려졌다**.
+        with Vertical(id="nhbox") as box:
+            box.border_title = i18n.t("screen.notice_history_title",
+                                      n=len(self._entries))
+            yield _NoticeList(*self._rows(), id="nhlist")
             yield Label(i18n.t("screen.notice_history_hint"), id="nhhint")
 
     def on_mount(self):

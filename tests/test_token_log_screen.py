@@ -891,6 +891,70 @@ async def test_tab_cycles_views_in_strip_order_and_wraps():
         await teardown(srv, task, sock)
 
 
+def test_the_gui_spec_titles_and_hints_are_the_canon_panels_words():
+    """pytmux-657: GUI 판(서버 스펙 `screenspec.py`)의 기간·세션 제목과 네 보기의 꼬리줄이 정본 판
+    (`screens.py` `pscreen.tklog_title2`·`pscreen.tklog_hint`)의 글과 **글자까지** 같다(두 로케일).
+    종전에는 «(추정)» 이 빠졌고 꼬리줄의 차례(Esc 자리)가 갈렸다."""
+    from pytmuxlib import i18n
+    importlib.import_module("pytmuxlib.plugins.claude-code.screenspec")   # 스펙 글 등록
+    before = i18n.get_locale()
+    wrong = []
+    try:
+        for loc in ("ko", "en"):
+            i18n.set_locale(loc)
+            for key, canon in _canon_spec_pairs():
+                ours, want = i18n.t(key), canon()
+                if ours != want:
+                    wrong.append(f"[{loc}] {key}: 정본 {want!r} · 스펙 {ours!r}")
+    finally:
+        i18n.set_locale(before)
+    assert not wrong, "\n".join(wrong)
+    # 양성 짝 — 뜻을 싣는 낱말이 실제로 있다(정본 글이 바뀌어 둘 다 빠지는 공허 통과를 막는다).
+    i18n.set_locale("ko")
+    try:
+        assert "(추정)" in i18n.t("pscreen.spec_period_title")
+    finally:
+        i18n.set_locale(before)
+
+
+def _canon_spec_pairs():
+    from pytmuxlib import i18n
+    return [
+        ("pscreen.spec_period_title", lambda: i18n.t("pscreen.tklog_title2", what=i18n.t("기간"))),
+        ("pscreen.spec_sessions_title", lambda: i18n.t("pscreen.tklog_title2", what=i18n.t("세션"))),
+        ("pscreen.spec_period_hint", lambda: i18n.t("pscreen.tklog_hint")),
+        ("pscreen.spec_sessions_hint", lambda: i18n.t("pscreen.tklog_hint")),
+        ("pscreen.spec_warns_hint", lambda: i18n.t("pscreen.tklog_hint")),
+        ("pscreen.spec_machines_hint", lambda: i18n.t("pscreen.tklog_hint")),
+    ]
+
+
+async def test_a_letter_not_in_the_table_does_not_close_the_panel():
+    """pytmux-650 · 사람 결정(2026-11-13 «둘 다 닫지 않는다»): 표에 없는 글자는 판을 **안 닫는다**
+    (무시). 종전에는 「그 외 키=닫기」 폴백이라 오타 하나로 판이 닫혔다. 닫는 키는 `Esc` 그대로다.
+    양성 짝: 같은 판에서 `Esc` 는 실제로 닫는다(키가 판에 닿고 있다는 증거)."""
+    from harness import make_app, server_only, teardown
+
+    srv, task, sock = await server_only()
+    try:
+        app = make_app(sock, None, None)
+        async with app.run_test(size=(100, 36)) as pilot:
+            scr = await _open_tklog(app, pilot, _hour_records())
+            for ch in ("z", "x", "q", "f5"):
+                await pilot.press(ch)
+                await pilot.press("tab")   # 판이 살아 키를 먹는지 — 탭이 돈다
+                await wait_until(pilot, lambda: scr._current_tab() != "time"
+                                 or app.screen_stack[-1] is not scr)
+                assert app.screen_stack[-1] is scr, f"표에 없는 키 {ch!r} 가 판을 닫았다"
+                await pilot.press("shift+tab")
+                await wait_until(pilot, lambda: scr._current_tab() == "time")
+            await pilot.press("escape")
+            await wait_until(pilot, lambda: app.screen_stack[-1] is not scr)
+            assert app.screen_stack[-1] is not scr, "Esc 가 판을 안 닫았다"
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_arrows_cycle_views_where_they_have_no_other_meaning():
     """세션 뷰의 →/← 는 이웃 탭이다(종전엔 판을 닫았다). 한도 모드에서 고르개(모델·
     컨텍스트) 밖의 줄에서 누른 → 도 이웃 탭(경고)이고, 고르개 줄의 → 는 종전대로 값을

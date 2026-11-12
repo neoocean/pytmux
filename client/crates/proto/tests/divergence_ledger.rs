@@ -236,6 +236,19 @@ fn every_todo_row_names_an_issue_and_every_row_says_why() {
         {
             wrong.push(format!("{}: 할 일인데 이슈를 안 댔다 ({issue:?})", row.name));
         }
+        // 사람 결정으로 둔 갈림은 **그 결정이 적힌 이슈**를 대야 한다(pytmux-651) — 「정했다」 는 산문이 아니라
+        // 찾아갈 수 있는 자리라야 한다. 그리고 그 줄은 정본과 다른 쪽(CanonDiffers)이라야 뜻이 있다.
+        if let Class::Decided(issue) = row.class {
+            let numbered = issue
+                .strip_prefix("pytmux-")
+                .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+            if !numbered {
+                wrong.push(format!("{}: 사람 결정인데 결정이 적힌 이슈 번호가 없다 ({issue:?})", row.name));
+            }
+            if row.dir != Dir::CanonDiffers {
+                wrong.push(format!("{}: 사람 결정 부류는 CanonDiffers 줄에만 쓴다", row.name));
+            }
+        }
         if row.axis == Axis::Palette && row.cat.is_empty() {
             wrong.push(format!("{}: 팔레트 줄인데 분류 칸이 비었다", row.name));
         }
@@ -262,8 +275,9 @@ fn the_ledger_is_sorted_and_has_no_duplicates() {
 // ══ 새 축 — 정본에 있는데 GUI 가 다르게 하는 것(pytmux-598) ═════════════════════════
 
 /// `CanonDiffers` 중 `Todo`(이슈를 단 못 맞는 줄)의 상한 — ⛔ **올리지 않는다.** 고쳤으면 같은 CL
-/// 에서 줄을 지우고 내린다. 지금 하나: `monitor-bell`(642) — 643 의 둘은 정본에 맞춰 지웠다.
-const CANON_DIFFERS_TODO_CEILING: usize = 1;
+/// 에서 줄을 지우고 내린다. 0 = 허용 부류 밖의 «할 일» 갈림이 없다(642 는 다시 보이게 해 지웠고 643 의 둘은
+/// 정본에 맞춰 지웠다 · 사람이 정해 남긴 갈림은 `Class::Decided` 다).
+const CANON_DIFFERS_TODO_CEILING: usize = 0;
 
 /// 남의 파일이라 아직 `DIVERGE(pytmux-598)`(이 대장 이슈 자신)으로 남은 표식 — 줄 이름으로 바꾸는 것은
 /// 그 파일의 주인 몫이다(2026-11-13 · 두 파일 다 재접속·수명 작업이 쥐고 있다). 상한을 넘거나 낡으면 운다.
@@ -425,8 +439,11 @@ fn every_marker_names_a_row_or_an_issue() {
 #[test]
 fn every_canon_differs_row_has_a_marker_in_the_code() {
     let marked: BTreeSet<String> = markers().into_iter().map(|(_, _, name)| name).collect();
-    let bare: Vec<&str> = divergence::marker_names()
-        .into_iter()
+    // 표식을 **요구하는** 줄(정본과 다른 쪽 + 크롬 표식 · pytmux-659). GuiOnly 의 다른 축은 축마다 전수 census 가 센다.
+    let bare: Vec<&str> = LEDGER
+        .iter()
+        .filter(|row| divergence::needs_marker(row))
+        .map(|row| row.name)
         .filter(|name| !marked.contains(*name))
         .collect();
     assert!(

@@ -667,15 +667,21 @@ fn plugin_settings_and_their_category_show_up() {
     let mut screens = base::Screens::new();
     screens.set_plugins(plugins.clone());
     screens.open(base::Screen::Settings);
-    screens.set_settings_key_rows(base::keymap::key_help_lines(&[]));
+    screens.set_settings_key_rows(base::keymap::settings_key_lines(&[]));
     let want: Vec<&str> = fx.settings_cat_order.iter().map(String::as_str).collect();
     assert_eq!(screens.settings_cats(), want, "설정 사이드바 차례가 정본과 다르다");
-    // «키» 탭의 줄은 `list-keys`(`Screen::Keys`) 와 같은 모델이다 — 두 벌로 갈리지 않는다.
+    // «키» 탭의 줄은 `list-keys` 와 **같은 줄 모음**이되 차례가 다르다 — 정본이 그렇다(pytmux-656: 설정 «키» 탭은
+    // ESC 모드가 먼저 · `list-keys` 는 마우스 제스처가 먼저). 절의 차례는 판 내용 자가 정본과 맞댄다.
     let keys: Vec<&(String, String)> = (0..screens.settings_total())
         .filter_map(|row| screens.settings_key_row(row))
         .collect();
-    let list_keys = base::keymap::key_help_lines(&[]);
-    assert_eq!(keys, list_keys.iter().collect::<Vec<_>>(), "«키» 탭 줄이 list-keys 와 다르다");
+    let settings_keys = base::keymap::settings_key_lines(&[]);
+    assert_eq!(keys, settings_keys.iter().collect::<Vec<_>>(), "«키» 탭 줄이 판에 그대로 안 실렸다");
+    let mut a = base::keymap::list_keys_lines(&[]);
+    let mut b = settings_keys.clone();
+    a.sort();
+    b.sort();
+    assert_eq!(a, b, "«키» 탭과 list-keys 가 다른 줄 모음을 싣는다(차례만 달라야 한다)");
 
     // 줄의 차례도 정본 `settings_order` 그대로다(코어 뒤에 플러그인).
     let ours: Vec<&str> = (0..plugins.settings_len())

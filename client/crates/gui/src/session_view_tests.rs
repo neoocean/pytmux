@@ -4714,10 +4714,16 @@ fn first_hello_carries_the_measured_grid_not_80x24() {
         panic!("첫 프레임이 hello 가 아니다: {sent:?}")
     };
     assert_eq!((hello.cols, hello.rows, hello.ambig), (132, 41, Some("wide")));
-    assert!(
-        !sent.iter().any(|o| matches!(o, Outgoing::Resize(_))),
-        "hello 가 이미 실은 크기를 Resize 로 또 보냈다(또는 80×24 를 보냈다): {sent:?}"
-    );
+    // 80×24 는 어디에도 없다 — 그리고 hello 뒤에 **같은 크기의 resize 하나**가 간다(pytmux-658 ·
+    // 정본 `on_resize` — 서버는 resize 를 조작으로 세어 `window-size latest` 의 주인이 이 클라가 된다).
+    let resizes: Vec<(u16, u16)> = sent
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::Resize(r) => Some((r.cols, r.rows)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(resizes, vec![(132, 41)], "hello 뒤 resize 가 정본과 다르다: {sent:?}");
     assert!(sent.iter().any(|o| matches!(o, Outgoing::Focus { on: true })), "붙든 것을 hello 뒤에 안 보냈다");
     proto::compose::set_ambiguous_wide(false);
 }
@@ -5878,11 +5884,11 @@ fn monitor_badges_sit_in_the_bottom_status_bar_not_the_tab_bar() {
         bell_at > canvas_at,
         "[활동감시] 가 캔버스보다 먼저(=탭바에) 그려졌다 — 하단 상태줄이 자리다: {painted:?}"
     );
-    // ★ 그리고 **벨 감시는 켜져 있어도 안 그려진다**(§10-21ⓜ) — 같은 프레임에서 잰다.
-    assert!(
-        !painted.iter().any(|t| t.contains("[벨감시]")),
-        "감춘 표식이 그려졌다: {painted:?}"
-    );
+    // ★ 그리고 **벨 감시도 이제 그려진다**(pytmux-642 · 사람 결정 2026-11-13 — 정본처럼 보인다). 같은 프레임에서
+    //   같은 자리(하단 상태줄)에 선다.
+    let ring_at = painted.iter().position(|t| t.contains("[벨감시]"));
+    assert!(ring_at.is_some(), "켜진 벨 감시 표식이 안 그려졌다: {painted:?}");
+    assert!(ring_at > canvas_at, "[벨감시] 가 하단 상태줄이 아닌 자리에 그려졌다: {painted:?}");
 }
 
 #[test]
@@ -14352,7 +14358,7 @@ fn the_settings_panel_draws_a_keys_tab_at_the_end() {
     view.handle_key(Key::BackTab, Mods::NONE);
     assert!(view.screens.is_key_row(view.screens.selected()), "Shift+Tab 이 «키» 탭에 안 닿았다");
     let text = panel_text(&view, Screen::Settings);
-    let first = &base::keymap::key_help_lines(&view.config.binds)[0].0;
+    let first = &base::keymap::settings_key_lines(&view.config.binds)[0].0;
     assert!(text.contains(first.as_str()), "«키» 탭 첫 줄({first})이 판에 없다");
     // 키 줄에서 Enter·→ 는 아무것도 안 낸다(정본 `keyref`).
     let before = view.config.clone();
@@ -14738,4 +14744,32 @@ fn mouse_debug_logs_navigation_keys_like_the_canon_and_nothing_else() {
     assert_eq!(lines.len(), 1, "내비게이션 키 하나 = 한 줄: {text:?}");
     assert!(lines[0].ends_with(" key up mode=normal"), "정본 `_log_key` 모양이 아니다: {text:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 탭 스위처의 패널 하위행은 `└` 를 **한 번만** 싣는다(pytmux-599 5차 대조).
+///
+/// 줄 글(`pane_row_label`)이 이미 `└ ` 로 시작하는데 그리는 쪽이 또 붙여 `└ └ [local] zsh`
+/// 가 찍혔다 — 정본 `TabSwitcherScreen.add_panes` 는 `└ [local] zsh` 다. 라벨을 재는 자
+/// (`tree_switcher_conformance`)는 라벨까지만 봐서 이 겹침을 못 잡았다.
+#[test]
+fn a_switcher_pane_row_carries_the_tree_glyph_once() {
+    let pane = proto::message::TreePane {
+        id: 7,
+        title: String::new(),
+        cmd: "zsh".into(),
+        remote: false,
+    };
+    let row = proto::session::TreeRow {
+        depth: 1,
+        label: proto::session::pane_row_label(&pane, true),
+        window: Some(0),
+        pane: Some(7),
+        active: false,
+    };
+    let text = SessionView::switcher_row_text(&row);
+    assert_eq!(text.matches('└').count(), 1, "└ 가 겹쳤다: {text:?}");
+    assert!(text.ends_with("└ [local] zsh"), "정본 줄 모양이 아니다: {text:?}");
+    // 탭 줄(대조군)은 들여쓰기도 └ 도 없다.
+    let tab = proto::session::TreeRow { depth: 0, label: "1:zsh".into(), window: Some(0), pane: None, active: true };
+    assert_eq!(SessionView::switcher_row_text(&tab), "• 1:zsh");
 }

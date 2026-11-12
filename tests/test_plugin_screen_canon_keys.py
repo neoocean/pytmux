@@ -185,6 +185,47 @@ async def test_the_gui_spec_carries_no_key_the_canon_does_not_have():
     assert not extra, "\n".join(extra)
 
 
+def _closes_on_any_other_key(stmts) -> bool:
+    """`on_key` 의 **마지막 갈래**가 무조건 `dismiss` 인가(«그 밖은 닫힘»)."""
+    if not stmts:
+        return False
+    last = stmts[-1]
+    if isinstance(last, ast.Expr) and "dismiss" in ast.unparse(last):
+        return True
+    if isinstance(last, ast.If):
+        tail = last.orelse
+        while len(tail) == 1 and isinstance(tail[0], ast.If):
+            tail = tail[0].orelse
+        return _closes_on_any_other_key(tail)
+    return False
+
+
+def test_no_canon_plugin_screen_closes_on_a_key_it_does_not_know():
+    """pytmux-650 · 사람 결정(2026-11-13 «둘 다 닫지 않는다»): 정본 플러그인 판은 표에 없는 키를
+    **무시**한다 — GUI 의 플러그인 판(`PluginView`)이 표에 없는 키를 삼키는 것과 같다(pytmux-181·273 ·
+    Rust `interaction` 의 stray 칸이 잰다). 종전에는 토큰 로그 판(`TokenLogScreen`)이 «그 외 키는
+    닫는다» 폴백이라 오타 하나로 판이 닫혔다. 닫는 키(`escape` 등)를 **고른 갈래**는 괜찮다 — 무조건
+    닫는 **마지막 갈래**만 센다. 모집단 = `plugins/*/screen(s).py` 의 `on_key` 전부."""
+    import glob
+
+    seen, wrong = 0, []
+    paths = glob.glob(os.path.join(PLUG, "*", "screen.py")) + glob.glob(os.path.join(PLUG, "*", "screens.py"))
+    for path in sorted(paths):
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        for klass in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+            for fn in klass.body:
+                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name == "on_key":
+                    seen += 1
+                    if _closes_on_any_other_key(fn.body):
+                        wrong.append(f"{os.path.relpath(path, ROOT)}:{fn.lineno} {klass.name}")
+    assert seen >= 10, f"on_key 를 {seen} 개만 찾았다 — 훑기가 헛돈다"
+    assert not wrong, "표에 없는 키에 판을 닫는 정본 플러그인 판:\n  " + "\n  ".join(wrong)
+    # 판정이 무는지(대조군): 무조건 닫는 꼬리는 걸린다.
+    probe = ast.parse("def on_key(self, e):\n    if e.key == 'a':\n        return\n    self.dismiss(None)\n")
+    assert _closes_on_any_other_key(probe.body[0].body)
+
+
 def test_the_reader_is_not_vacuous():
     """자가 실제로 읽는지 — 정본 mdir 의 알려진 손 몇이 읽힌 키에 들어 있다."""
     keys, chars, typeahead, _sel = _canon("mdir", "screen.py", "_MdirView")

@@ -1937,9 +1937,11 @@ class TokenLogScreen(ModalScreen):
             event.stop()
             self.dismiss(None)
             return
-        # 그 외 키는 닫는다(기존 동작).
+        # ★ 그 외 키는 **무시한다**(pytmux-650 · 사람 결정 2026-11-13 «둘 다 닫지 않는다»).
+        #   종전에는 「그 외 키=닫기」 폴백이었고, 그 탓에 흔한 글자 오타 하나로 판이 닫혔다
+        #   (위 예약 글자 `h/d/w/m/o/r` 를 따로 막아 둔 것이 그 흔적이다). GUI 는 플러그인 판이
+        #   표에 없는 키를 삼킨다(pytmux-181·273) — 이제 두 클라가 같다. 닫는 키는 `Esc` 다.
         event.stop()
-        self.dismiss(None)
 
     async def on_data_table_row_selected(self, event):
         """행 선택(Enter·마우스 클릭) → 계층 트리/경고 트리에선 그 행을 펼치/접는다.

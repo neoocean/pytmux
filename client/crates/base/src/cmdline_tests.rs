@@ -85,13 +85,13 @@ fn setw_dispatches_on_its_argument() {
 
 #[test]
 fn the_hidden_monitor_bell_is_taken_when_typed() {
-    // 팔레트에서는 감췄지만(`HIDDEN_SURFACES`) 치면 먹는다(pytmux-576).
+    // 치면 먹는다(pytmux-576). 팔레트·설정 판에도 다시 보인다(pytmux-642 · 사람 결정 2026-11-13).
     assert_eq!(run_line("monitor-bell", &none()), Some(Run::Act(Action::ToggleMonitorBell)));
     assert_eq!(
         run_line("monitor-bell off", &none()),
         Some(Run::Act(Action::SetMonitor { bell: true, on: false }))
     );
-    assert!(crate::keymap::is_hidden("monitor-bell"), "감춤은 그대로다");
+    assert!(!crate::keymap::is_hidden("monitor-bell"), "이제 감추지 않는다(pytmux-642)");
 }
 
 #[test]

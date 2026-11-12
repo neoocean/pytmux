@@ -47,7 +47,8 @@ fn record_lang(loc: &str) -> &'static str {
 }
 
 /// 정본 `SETTINGS` 에 있는데 GUI 설정 판에 줄이 없는 것 — (키, 이슈).
-const NOT_IN_OUR_SETTINGS: &[(&str, &str)] = &[("monitor-bell", "pytmux-642")];
+/// 비었다 — `monitor-bell` 이 다시 보인다(pytmux-642 · 사람 결정 2026-11-13).
+const NOT_IN_OUR_SETTINGS: &[(&str, &str)] = &[];
 
 fn screen_rows(n: usize) -> ServerMessage {
     let rows: Vec<Value> = (0..n)
@@ -479,6 +480,7 @@ fn values_with(view: &SessionView, key: &str, current: &str) -> base::config::Se
         "coalesce-repaints" => v.coalesce_repaints = on,
         "nest-auto-attach" => v.nest_auto_attach = on,
         "exit-empty" => v.exit_empty = Some(on),
+        "monitor-bell" => v.monitor_bell = on,
         "win-mouse-motion" => v.win_mouse_motion = on,
         "vt-parser" => v.vt_parser = current.to_owned(),
         "window-size" => v.window_size = current.to_owned(),

@@ -313,7 +313,7 @@ fn measure(screen: &str, rows: &Value, inputs: &Value) -> Result<(), String> {
                 .iter()
                 .filter_map(|(k, v)| base::Config::parse(&format!("bind {k} {}", v.as_str().unwrap())).binds.into_iter().next())
                 .collect();
-            let ours: Vec<String> = base::keymap::key_help_lines(&binds)
+            let ours: Vec<String> = base::keymap::list_keys_lines(&binds)
                 .into_iter()
                 .flat_map(|(k, w)| [format!("{k} — {w}"), format!("{k} → {w}")])
                 .collect();
@@ -402,4 +402,45 @@ fn the_rows_of_the_list_screens_match_the_canon() {
     assert!(stale.is_empty(), "낡은 예외:\n  {}", stale.join("\n  "));
     assert!(ROW_DIVERGENT.len() <= ROW_DIVERGENT_CEILING, "상한을 넘었다(올리지 않는다)");
     assert_eq!(ROW_DIVERGENT.len(), ROW_DIVERGENT_CEILING, "줄었다 — 상한을 내릴 것");
+}
+
+/// 키 도움말 두 판의 **절 차례**(pytmux-656) — `list-keys` 판(`Screen::Keys`)과 설정 판 «키» 탭.
+///
+/// 정본: `list-keys` = 마우스 제스처 → 사용자 바인딩 · «키» 탭 = ESC 모드 → prefix → 사용자 바인딩. GUI 는 정본 절이
+/// **그 차례 그대로 먼저** 오고, GUI 가 더 싣는 절(키 표·스크롤·블록 등)은 뒤에만 선다(더하기만).
+#[test]
+fn the_key_panels_order_their_sections_like_the_canon() {
+    let fx = fixture();
+    let binds: Vec<base::config::Bind> = base::Config::parse("bind x split-window -h").binds;
+    let sections = |lines: &[(String, String)]| -> Vec<String> {
+        // 절 머리줄 → 절 이름(같은 줄이 `key_help_sections` 의 그 절 첫 줄이다).
+        let heads: Vec<(String, &str)> = base::keymap::key_help_sections(&binds)
+            .into_iter()
+            .map(|(s, rows)| (rows[0].0.clone(), s.name()))
+            .collect();
+        lines
+            .iter()
+            .filter_map(|(k, w)| w.is_empty().then(|| heads.iter().find(|(h, _)| h == k).map(|(_, n)| n.to_string())).flatten())
+            .collect()
+    };
+    for loc in ["ko", "en"] {
+        let rows = &fx["rows"][loc];
+        let (ours_list, ours_settings) = i18n::with_locale(loc, || {
+            (
+                sections(&base::keymap::list_keys_lines(&binds)),
+                sections(&base::keymap::settings_key_lines(&binds)),
+            )
+        });
+        for (what, canon, ours) in [
+            ("list-keys", strs(&rows["keys_sections"]), ours_list),
+            ("설정 «키» 탭", strs(&rows["settings_key_sections"]), ours_settings),
+        ] {
+            assert!(canon.len() >= 2, "[{loc}] {what}: 정본 절이 {canon:?} — 생성기를 의심할 것");
+            assert_eq!(
+                &ours[..canon.len().min(ours.len())],
+                canon.as_slice(),
+                "[{loc}] {what}: 정본 절 차례 {canon:?} 가 앞서야 한다 · 우리 {ours:?}"
+            );
+        }
+    }
 }

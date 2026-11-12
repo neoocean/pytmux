@@ -286,14 +286,11 @@ fn what_we_still_cannot_take_is_named_with_a_reason() {
     let (_, left) = expected();
     let want: BTreeSet<String> = [
         // 이름으로 다시 가르는 갈래 — 접으면 다른 일을 한다.
-        //   · `monitor-bell` — 정본은 `"bell" in c` 로 다시 가른다. 우리 팔레트는 이
-        //     이름을 **사용자 결정으로 감췄다**(`base::HIDDEN_SURFACES` · §10-21ⓜ) —
-        //     받으려면 「감춘 줄」을 팔레트 밖에서 찾는 길이 따로 있어야 한다.
         //   · `setw` — 이름이 아니라 **인자**로 가른다(`setw monitor-bell on`). 이름
         //     하나를 이름 하나로 옮기는 이 표로는 못 받는다.
-        // ★ 둘 다 **이 표 밖에서** 받는다 — 명령 줄 실행기(`base::cmdline` · pytmux-572/576).
+        // ★ **이 표 밖에서** 받는다 — 명령 줄 실행기(`base::cmdline` · pytmux-572/576).
         //   아래 `the_two_left_by_the_table_are_taken_by_the_executor` 가 액션으로 단언한다.
-        "monitor-bell",
+        //   (`monitor-bell` 은 팔레트에 다시 서서 이 목록을 나갔다 — pytmux-642 · 사람 결정 2026-11-13.)
         "setw",
     ]
     .iter()
@@ -323,8 +320,8 @@ fn the_two_left_by_the_table_are_taken_by_the_executor() {
         let bind = base::config::Bind::parse(&format!("bind x {line}")).expect("bind 줄");
         assert_eq!(bind.action(), Some(want), "`bind x {line}`");
     }
-    // 감춤은 그대로다 — 목록에는 안 뜬다(§10-21ⓜ 사용자 결정).
-    assert!(base::palette_matches("monitor-bell").iter().all(|i| base::PALETTE[*i].name != "monitor-bell"));
+    // 이제 목록에도 뜬다(pytmux-642 · 사람 결정 2026-11-13 — 정본처럼 보인다).
+    assert!(base::palette_matches("monitor-bell").iter().any(|i| base::PALETTE[*i].name == "monitor-bell"));
     assert!(base::cmdline::knows("setw") && base::cmdline::knows("monitor-bell"));
 }
 

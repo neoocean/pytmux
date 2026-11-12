@@ -77,6 +77,8 @@ pub enum Axis {
     Lifecycle,
     /// 명령줄 인자·환경 변수·경로 해석.
     Cli,
+    /// 크롬(상태줄 칩·패널 장식)의 **표식** — 모드 칩 · 스크롤 막대(pytmux-659). 코드 옆 표식을 요구한다.
+    Chrome,
 }
 
 impl Axis {
@@ -93,10 +95,11 @@ impl Axis {
             Axis::ScreenItems => "판의 항목",
             Axis::Lifecycle => "수명",
             Axis::Cli => "명령줄",
+            Axis::Chrome => "크롬 표식",
         }
     }
 
-    pub const ALL: [Axis; 11] = [
+    pub const ALL: [Axis; 12] = [
         Axis::Palette,
         Axis::Setting,
         Axis::Screen,
@@ -108,6 +111,7 @@ impl Axis {
         Axis::ScreenItems,
         Axis::Lifecycle,
         Axis::Cli,
+        Axis::Chrome,
     ];
 }
 
@@ -125,6 +129,9 @@ pub enum Class {
     SameFeature(&'static str),
     /// ⓧ 결함 — 정본에도 낼 수 있는데 없다 · 정본의 것을 뺀다. 값은 그 일을 든 이슈.
     Todo(&'static str),
+    /// ⓔ **사람 결정으로 둔 갈림** — 허용 부류 셋(ⓐⓑⓒ)에 안 드는데 사람이 «지금대로 둔다» 고 정했다
+    /// (예: 보안 판단). 값은 **그 결정이 적힌 이슈**다 — 게이트가 번호를 요구한다. `loses` 를 정직하게 적는다.
+    Decided(&'static str),
 }
 
 /// 대장 한 줄.
@@ -412,6 +419,27 @@ pub static LEDGER: &[Row] = &[
         "서버 없이 데모 화면을 띄운다(스크린샷·개발 손잡이)",
         "없음 — 하네스다",
     ),
+    // ── 크롬 표식 (pytmux-659 — 종전에는 코드 주석에만 선언돼 있었다) ─────────────────
+    //
+    // `base::chrome::Badge` 의 칩 일곱(알림·서버·시계·달력·플러그인·권한·메시지)은 전부 정본 상태줄의 같은
+    // 자리다. 모드 칩은 넷 중 셋이 정본 문구와 같다(`ui.cmd_mode_badge` · `ui.prefix_mode_badge` · blocks
+    // `ui.block_mode_badge`). 정본에 없는 것은 아래 둘뿐이다(2026-11-13 훑음).
+    r(
+        Axis::Chrome,
+        "[scroll]",
+        Class::Pixels,
+        "스크롤 모드 칩 — 정본은 `prefix [` 에 `mode = \"scroll\"` 만 세우고 상태줄에 아무 표식도 없다. GUI 는 크롬을 \
+         스스로 그리므로 모드를 칩으로 보인다(`base::keys::InputMode::badge`). 정본에도 낼 수 있다(ⓖ3 ⑷ 후보)",
+        "없음 — 더하기만 한다(정본 사용자가 얻던 정보·반응은 그대로)",
+    ),
+    r(
+        Axis::Chrome,
+        "pane-scrollbar",
+        Class::Pixels,
+        "패널 오른쪽 테두리에 얹는 스크롤 막대(썸·트랙 — `base::scrollbar` · pytmux-25·521). 정본 패널에는 막대가 없다 \
+         (스크롤 위치는 단말의 그림 밖이다)",
+        "없음 — 더하기만 한다(막대가 없는 패널의 같은 열은 종전대로 테두리)",
+    ),
     // ══ CanonDiffers ══════════════════════════════════════════════════════════
     // ── 설정 ──────────────────────────────────────────────────────────────────
     d(
@@ -423,14 +451,7 @@ pub static LEDGER: &[Row] = &[
          효과 없음» 을 단다(`SETTING_NOTES` · 사람 결정 2026-11-12)",
         "없음 — 그 설정이 고치던 문제(단말이 휠을 화살표로 바꿈)가 GUI 에는 없다",
     ),
-    d(
-        Axis::Setting,
-        "monitor-bell",
-        Class::Todo("pytmux-642"),
-        "§10-21ⓜ 의 예전 결정으로 GUI 설정 판·팔레트에서 감췄다(`base::keymap::HIDDEN_SURFACES`). \
-         명령 줄·`bind` 로는 먹는다. 원칙 2(«빼지 않는다»)와 부딪쳐 사람 결정 대기",
-        "설정 판의 `monitor-bell` 줄과 팔레트 입구",
-    ),
+    // `monitor-bell` 은 사람 결정(2026-11-13 · pytmux-642)으로 다시 보인다 — 갈림이 아니게 돼 줄을 지웠다.
     // ── 창 조합키 (`key_grid::INTERCEPTS` 의 자리 — pytmux-628) ───────────────────
     d(
         Axis::WindowChord,
@@ -541,11 +562,26 @@ pub static LEDGER: &[Row] = &[
         "없음 — 차례만 다르고 결과(새 클라 하나 · 서버 하나)는 같다",
     ),
     // (명령줄의 `pytmux-config-write`·`tilde-user` 두 줄은 pytmux-643 이 정본에 맞춰 지웠다.)
+    // ── 명령줄 ────────────────────────────────────────────────────────────────
+    d(
+        Axis::Cli,
+        "nonloopback-tcp",
+        Class::Decided("pytmux-651"),
+        "비루프백 `tcp:` 엔드포인트 — 정본은 hello 에 이 상자의 토큰을 실어 평문 TCP 로 보낸다. GUI 는 **연결 전에** \
+         거절한다(`proto::client::Connection::connect_endpoint` · 검수 pytmux-34 #7 · `PYTMUX_ALLOW_REMOTE_TOKEN=1` 로만 \
+         연다). 원격의 정식 길은 ssh(`remote-attach`/`stdio-proxy`)다. 사람 결정(2026-11-13): 보안 판단으로 지금대로 둔다",
+        "비루프백 평문 TCP 직접 붙기(그 서버에는 GUI 가 못 붙는다 — ssh 경유는 된다)",
+    ),
 ];
 
 /// 표식(`DIVERGE(<이름>)`)이 가리킬 수 있는 줄 이름 — `CanonDiffers` 줄 전부.
 pub fn marker_names() -> Vec<&'static str> {
-    LEDGER.iter().filter(|row| row.dir == Dir::CanonDiffers).map(|row| row.name).collect()
+    LEDGER.iter().filter(|row| needs_marker(row) || row.dir == Dir::GuiOnly).map(|row| row.name).collect()
+}
+
+/// 코드 옆 표식을 **요구하는** 줄 — 정본과 다른 쪽 전부 + 크롬 표식(주석에만 선언되던 부류 · pytmux-659).
+pub fn needs_marker(row: &Row) -> bool {
+    row.dir == Dir::CanonDiffers || row.axis == Axis::Chrome
 }
 
 /// 한 축의 `CanonDiffers` 이름(예: 창 조합키 — gui 격자 자가 읽는다).
