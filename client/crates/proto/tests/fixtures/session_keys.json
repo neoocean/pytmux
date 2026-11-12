@@ -1,0 +1,96 @@
+{
+  "_comment": "python3 scripts/gen_session_keys_fixture.py 로 생성. 출처 = pytmuxlib/clientio.py(on_key·_handle_prefix·_enter_display·모드 핸들러) + client.py(_ESC_DEBOUNCE) + clientutil.py(_JAMO·MAC_OPT_NUMBER_ROW).",
+  "normal_key_modes": {
+    "alt+<digit>": "select_tab",
+    "char:`": "esc",
+    "ctrl+v": "paste",
+    "escape": "esc",
+    "f10": "menu",
+    "f12": "command_prompt",
+    "grave_accent": "esc",
+    "shift+escape": "close_overlay_else_pane",
+    "super+v": "paste"
+  },
+  "normal_alt_digit": true,
+  "root_bindings_after": [
+    "escape",
+    "grave_accent",
+    "char:`",
+    "alt+<digit>",
+    "f10",
+    "f12",
+    "ctrl+v",
+    "super+v",
+    "shift+escape"
+  ],
+  "prefix_order": [
+    "prefix_twice",
+    "user_bindings",
+    "f12_toggle"
+  ],
+  "display_secs": 1.5,
+  "esc_debounce_secs": 0.06,
+  "mode_normalize": {
+    "esc": {
+      "jamo": true,
+      "mac_opt": true
+    },
+    "prefix": {
+      "jamo": true,
+      "mac_opt": false
+    },
+    "scroll": {
+      "jamo": true,
+      "mac_opt": false
+    }
+  },
+  "jamo": {
+    "ㄱ": "r",
+    "ㄲ": "R",
+    "ㄴ": "s",
+    "ㄷ": "e",
+    "ㄸ": "E",
+    "ㄹ": "f",
+    "ㅁ": "a",
+    "ㅂ": "q",
+    "ㅃ": "Q",
+    "ㅅ": "t",
+    "ㅆ": "T",
+    "ㅇ": "d",
+    "ㅈ": "w",
+    "ㅉ": "W",
+    "ㅊ": "c",
+    "ㅋ": "z",
+    "ㅌ": "x",
+    "ㅍ": "v",
+    "ㅎ": "g",
+    "ㅏ": "k",
+    "ㅐ": "o",
+    "ㅑ": "i",
+    "ㅒ": "O",
+    "ㅓ": "j",
+    "ㅔ": "p",
+    "ㅕ": "u",
+    "ㅖ": "P",
+    "ㅗ": "h",
+    "ㅛ": "y",
+    "ㅜ": "n",
+    "ㅠ": "b",
+    "ㅡ": "m",
+    "ㅣ": "l"
+  },
+  "mac_opt_number_row": {
+    "¡": "1",
+    "¢": "4",
+    "£": "3",
+    "§": "6",
+    "ª": "9",
+    "¶": "7",
+    "º": "0",
+    "–": "-",
+    "•": "8",
+    "™": "2",
+    "∞": "5",
+    "≠": "="
+  }
+}

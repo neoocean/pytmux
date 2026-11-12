@@ -33,12 +33,26 @@ struct Case {
     key: String,
     line: String,
     effects: Vec<Value>,
+    /// `remote` = 활성 탭이 원격인 판(정본 스텁 `RemoteRec` — 호스트 `box1` · 병합 index 3).
+    #[serde(default)]
+    ctx: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MenuCase {
+    key: String,
+    effects: Vec<Value>,
 }
 
 #[derive(Deserialize)]
 struct Fx {
     cases: Vec<Case>,
+    menu: Vec<MenuCase>,
 }
+
+/// 정본 스텁(`gen_command_line_fixture.py`)의 원격 판 — 호스트와 활성 탭의 병합 index.
+const REMOTE_HOST: &str = "box1";
+const REMOTE_ACTIVE: usize = 3;
 
 fn fixture() -> Fx {
     serde_json::from_str(include_str!("fixtures/command_lines.json"))
@@ -46,83 +60,53 @@ fn fixture() -> Fx {
 }
 
 /// 못 맞는 줄 — (픽스처 칸의 열쇠, 이슈, 사유). 열쇠로 찾는다.
-const DIVERGENT: &[(&str, &str, &str)] = &[
-    (
-        "select-tab -1",
-        "pytmux-572",
-        "음수 번호(끝에서 센다) — 실행기는 탭 수를 모르고 `Action::SelectTab` 은 양수 번호만 든다",
-    ),
-    (
-        "resize-pane -D 5",
-        "pytmux-572",
-        "칸 수 인자 — `Action::ResizePane` 이 칸 수를 안 든다(우리는 서버 기본 걸음)",
-    ),
-    (
-        "rotate-window -D",
-        "pytmux-572",
-        "역방향 회전 — `Action::RotatePanes` 는 정방향뿐이다",
-    ),
-    ("swap-pane -t", "pytmux-572", "번호로 고르는 교환(`-s`/`-t`) — 액션이 없다"),
-    (
-        "select-layout preset",
-        "pytmux-572",
-        "프리셋 이름 인자 — 우리는 순환(`cycle_layout`)만 보낸다",
-    ),
-    ("join-pane -h", "pytmux-572", "정본은 `orient` 만 보내고 우리는 원본 패널 번호를 묻는다"),
-    ("detach -a", "pytmux-572", "`detach_others` — 액션이 없다"),
-    ("paste-buffer 2", "pytmux-572", "버퍼 번호 인자 — `Action::PasteBuffer` 는 번호를 안 든다"),
-    ("move-tab 2", "pytmux-572", "정본은 1-based 번호를 0-based 로 접고 우리는 그대로 보낸다"),
-    ("swap-tab 3", "pytmux-572", "`move-tab 2` 와 같다(1-based → 0-based)"),
-    (
-        "inactive-dim off",
-        "pytmux-572",
-        "정본은 이번 판만 바꾸고(설정 파일에 안 쓴다) 우리는 설정 파일에 쓴다",
-    ),
-    ("strip-box-drawing on", "pytmux-572", "`inactive-dim off` 와 같다(우리는 설정 파일에 쓴다)"),
-    ("inactive-dim-ratio", "pytmux-572", "`inactive-dim off` 와 같다(우리는 설정 파일에 쓴다)"),
-    ("send-keys -l", "pytmux-572", "글자 그대로(`-l`) — 우리 `parse_send_keys` 는 이름 키를 늘 접는다"),
-    ("window-size", "pytmux-572", "맨이름 = 순환(값 없이 보낸다) — 우리 폼에는 순환 선택지가 없다"),
-    (
-        "pin",
-        "pytmux-572",
-        "정본은 활성 탭의 병합 index 를 싣는다 — `action_to_command_with_tabs` 가 `TogglePin` 에만 \
-         싣고 `SetPinned` 에는 안 싣는다(원격 탭이 활성이면 엉뚱한 로컬 탭이 고정될 수 있다)",
-    ),
-    ("unpin", "pytmux-572", "`pin` 과 같다(`SetPinned(false)` 에 index 가 없다)"),
-    (
-        "pane-border-status on",
-        "pytmux-572",
-        "값을 정해 보내는 액션이 없다 — `ToggleBorderStatus` 는 늘 토글이다",
-    ),
-    ("setw pane-border-status off", "pytmux-572", "`pane-border-status on` 과 같다"),
-    (
-        "layout-list",
-        "pytmux-572",
-        "정본은 저장된 배치 목록을 물어(`list_layouts`) 고르게 하고 우리는 이름을 묻는다",
-    ),
-    (
-        "run-shell words",
-        "pytmux-572",
-        "따옴표 없이 친 여러 낱말 — 정본은 첫 낱말만 셸에 넘기고(`_run_shell(args[0])`) 우리는 줄의 \
-         나머지 전부를 넘긴다(종전 GUI 동작 · 맞출지는 사람 결정)",
-    ),
-];
+///
+/// 2026-11-13(CL 84389): 스물하나를 전부 고쳐 비었다(pytmux-572 잔여 · 624). 새 줄은 사유와
+/// 이슈가 있어야만 선다.
+const DIVERGENT: &[(&str, &str, &str)] = &[];
 
 /// [`DIVERGENT`] 의 상한 — ⛔ **올리지 않는다.** 줄을 고쳤으면 같은 CL 에서 내린다.
-const DIVERGENT_CEILING: usize = 21;
+const DIVERGENT_CEILING: usize = 0;
 
-/// 이 자가 쓰는 탭바 — 정본 생성기의 스텁(`status.windows` 다섯 · 첫째가 활성)과 같은 모양.
-fn tabs() -> proto::tabs::TabBar {
+/// 이 자가 쓰는 탭바 — 정본 생성기의 스텁(`status.windows` 다섯 · `active` 째가 활성)과 같은 모양.
+fn tabs(active: usize) -> proto::tabs::TabBar {
     proto::tabs::TabBar {
         tabs: (0..5)
             .map(|i| proto::tabs::Tab {
                 index: i,
                 name: format!("w{i}"),
-                active: i == 0,
+                active: i == active,
                 ..Default::default()
             })
             .collect(),
         ..Default::default()
+    }
+}
+
+/// 정본 스텁의 판 — 탭바 · 패널(`layout = {"active": 11, "panes": [11, 12, 13]}`) · 원격.
+struct Ctx {
+    tabs: proto::tabs::TabBar,
+    remote: Option<(&'static str, usize)>,
+}
+
+const PANES: &[i64] = &[11, 12, 13];
+
+impl Ctx {
+    fn of(case_ctx: Option<&str>) -> Self {
+        match case_ctx {
+            Some("remote") => Ctx { tabs: tabs(REMOTE_ACTIVE), remote: Some((REMOTE_HOST, REMOTE_ACTIVE)) },
+            Some(other) => panic!("픽스처의 모르는 ctx `{other}` — 이 자에 그 판을 더할 것"),
+            None => Ctx { tabs: tabs(0), remote: None },
+        }
+    }
+
+    fn line(&self) -> proto::command::LineCtx<'_> {
+        proto::command::LineCtx {
+            tabs: &self.tabs,
+            panes: PANES,
+            active_pane: Some(PANES[0]),
+            remote: self.remote,
+        }
     }
 }
 
@@ -141,11 +125,20 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// 우리 실행기의 결과가 **뷰에서 내보내는 것**. `local` 은 클라 안에서 끝나는 일이다.
-fn our_effects(run: &base::cmdline::Run) -> Vec<Value> {
+fn our_effects(run: &base::cmdline::Run, ctx: &Ctx) -> Vec<Value> {
     use base::cmdline::Run;
     use base::{Action, Prompt};
     let local = || vec![json!({ "local": true })];
     match run {
+        // 확인 판을 세우는 액션(`session_view::apply_action` — 표는 `base::cmdline::confirm_gate`
+        // 한 곳 · 뷰가 그 표를 따르는지는 `session_view_tests` 가 잰다). 판만 뜨고 아무것도 안 나간다.
+        Run::Act(action) if base::cmdline::confirm_gate(*action) => vec![json!({ "local": "confirm" })],
+        Run::Line(line) => match proto::command::line_command(line, &ctx.line()) {
+            proto::command::LineOut::Send(cmd) => vec![wire(cmd)],
+            proto::command::LineOut::Input(bytes) => vec![json!({ "input": hex(&bytes) })],
+            proto::command::LineOut::Nothing => vec![],
+            proto::command::LineOut::Local | proto::command::LineOut::BadTab(_) => local(),
+        },
         // GUI 세션 뷰가 직접 패널에 쓰는 둘(`session_view::apply_action`).
         Run::Act(Action::SendEscape) => vec![json!({ "input": "1b" })],
         Run::Act(Action::SendBacktick) => vec![json!({ "input": "60" })],
@@ -156,7 +149,7 @@ fn our_effects(run: &base::cmdline::Run) -> Vec<Value> {
         Run::Act(Action::RestartServer | Action::RestartAll) => {
             vec![wire(proto::command::Command::RequestRestartCheck)]
         }
-        Run::Act(action) => match proto::command::action_to_command_with_tabs(*action, &tabs()) {
+        Run::Act(action) => match proto::command::action_to_command_with_tabs(*action, &ctx.tabs) {
             Some(cmd) => vec![wire(proto::command::with_config_paths(cmd, "current", "claude"))],
             None => local(),
         },
@@ -205,19 +198,38 @@ fn align_path(canon: &[Value], ours: &mut [Value]) {
     }
 }
 
+/// 확인 판을 세웠나 — 정본은 `confirm_*` · `prompt:confirm` 으로, 우리는 `confirm` 으로 남는다.
+fn confirms(effects: &[Value]) -> bool {
+    effects.iter().any(|e| {
+        e.get("local")
+            .and_then(Value::as_str)
+            .is_some_and(|s| s.starts_with("confirm") || s == "prompt:confirm")
+    })
+}
+
+/// 같은 일인가 — **나가는 것**이 같고, 확인 판을 세우는지도 같아야 한다(pytmux-624: 확인 판
+/// 뒤의 kill 은 판만 뜨고 아무것도 안 나가므로 나가는 것만 보면 «안 나감 = 안 나감» 으로 통과할
+/// 수 있다).
+fn same(canon_all: &[Value], ours_all: &[Value]) -> Result<(), String> {
+    let canon = outgoing(canon_all);
+    let mut ours = outgoing(ours_all);
+    align_path(&canon, &mut ours);
+    if canon != ours {
+        return Err(format!("정본 {canon:?} · 우리 {ours:?}"));
+    }
+    if confirms(canon_all) != confirms(ours_all) {
+        return Err(format!("확인 판이 갈린다 — 정본 {canon_all:?} · 우리 {ours_all:?}"));
+    }
+    Ok(())
+}
+
 fn verdict(case: &Case) -> Result<(), String> {
     let run = base::cmdline::run_line(&case.line, &base::cmdline::Aliases::default());
-    let canon = outgoing(&case.effects);
     let Some(run) = run else {
         return Err(format!("우리 실행기가 그 줄을 모른다(정본 효과 {:?})", case.effects));
     };
-    let mut ours = outgoing(&our_effects(&run));
-    align_path(&canon, &mut ours);
-    if canon == ours {
-        Ok(())
-    } else {
-        Err(format!("정본 {canon:?} · 우리 {ours:?} (실행기 {run:?})"))
-    }
+    let ctx = Ctx::of(case.ctx.as_deref());
+    same(&case.effects, &our_effects(&run, &ctx)).map_err(|why| format!("{why} (실행기 {run:?})"))
 }
 
 fn divergent(key: &str) -> Option<&'static (&'static str, &'static str, &'static str)> {
@@ -282,7 +294,12 @@ fn the_ruler_bites_when_the_executor_drops_arguments() {
     let mut bitten = 0;
     for case in fx.cases.iter().filter(|c| c.line.contains(' ') && divergent(&c.key).is_none()) {
         let head = case.line.split_whitespace().next().unwrap_or_default();
-        let blind = Case { key: case.key.clone(), line: head.to_owned(), effects: case.effects.clone() };
+        let blind = Case {
+            key: case.key.clone(),
+            line: head.to_owned(),
+            effects: case.effects.clone(),
+            ctx: case.ctx.clone(),
+        };
         if verdict(&blind).is_err() {
             bitten += 1;
         }
@@ -296,4 +313,67 @@ fn the_ruler_bites_when_the_executor_knows_nothing() {
     let fx = fixture();
     let loud = fx.cases.iter().filter(|c| !outgoing(&c.effects).is_empty()).count();
     assert!(loud >= 60, "정본이 무엇이든 내보내는 줄이 {loud} 뿐이다 — 대표 줄이 빈약하다");
+}
+
+#[test]
+fn every_menu_row_goes_through_the_same_gate_as_canon() {
+    // pytmux-624 — 메뉴의 «확인을 거치나 / 바로 나가나» 를 정본 `_run_menu_action` 과 줄마다 견준다.
+    // 메뉴 줄 → 액션은 우리 메뉴 표(`base::menu_entry`), 그 액션이 지나는 길은
+    // `base::cmdline::menu_run` — 세션 뷰의 메뉴 선택이 부르는 그 함수다.
+    let fx = fixture();
+    assert!(fx.menu.len() >= 4, "메뉴 칸이 빈약하다 — 생성기의 MENU_KEYS 를 볼 것");
+    let ctx = Ctx::of(None);
+    let mut wrong = Vec::new();
+    for row in &fx.menu {
+        let Some(entry) = base::menu_entry(&row.key) else {
+            wrong.push(format!("`{}` — 우리 메뉴 표에 없다", row.key));
+            continue;
+        };
+        let run = base::cmdline::menu_run(&row.key, entry.action);
+        if let Err(why) = same(&row.effects, &our_effects(&run, &ctx)) {
+            wrong.push(format!("`{}` — {why}", row.key));
+        }
+    }
+    assert!(wrong.is_empty(), "메뉴 줄이 정본과 갈린다:\n  {}", wrong.join("\n  "));
+}
+
+#[test]
+fn typed_kills_skip_the_confirm_board_and_keys_keep_it() {
+    // pytmux-624 의 표 — 정본 픽스처에서 **친 명령** 칸을 뽑아 그 성격(바로 / 확인)이 우리와
+    // 같은지 본다. 표의 명령이 픽스처에서 빠지면 운다(전수).
+    let fx = fixture();
+    let table = [
+        ("kill-tab", false),
+        ("killw", false),
+        ("kill-tab remote", false),
+        ("killw remote", false),
+        ("kill-pane", false),
+        ("killp", false),
+        ("kill-server", true),
+        ("detach", false),
+        ("detach -a", false),
+    ];
+    for (key, confirm) in table {
+        let case = fx.cases.iter().find(|c| c.key == key).unwrap_or_else(|| panic!("픽스처에 `{key}` 가 없다"));
+        assert_eq!(confirms(&case.effects), confirm, "정본 `{key}` 의 성격이 표와 다르다 — 표를 정본에 맞출 것");
+        assert!(verdict(case).is_ok(), "`{key}` 가 정본과 갈린다: {:?}", verdict(case));
+    }
+    // 키·클릭 입구(`[x]` · `esc x` · `prefix &` · `prefix x` · 팔레트에서 고른 줄)는 액션이고,
+    // 그 셋은 확인 판을 세운다 — 정본 `confirm_kill_tab` · `kill-pane? (y/N)` · `confirm_kill_server`.
+    for action in [base::Action::KillTab, base::Action::KillPane, base::Action::KillServer] {
+        assert!(base::cmdline::confirm_gate(action), "{action:?} 가 확인 판을 안 세운다");
+    }
+}
+
+#[test]
+fn the_ruler_bites_when_typed_kills_go_through_the_confirm_board() {
+    // 변이 — 종전 모양(친 `kill-tab` 이 `Action::KillTab` 으로 가서 확인 판을 세운다)을 흉내 낸다.
+    let fx = fixture();
+    let ctx = Ctx::of(None);
+    for key in ["kill-tab", "kill-pane"] {
+        let case = fx.cases.iter().find(|c| c.key == key).expect("픽스처에 칸이 있다");
+        let action = if key == "kill-tab" { base::Action::KillTab } else { base::Action::KillPane };
+        let old = base::cmdline::Run::Act(action);
+        assert!(same(&case.effects, &our_effects(&old, &ctx)).is_err(), "`{key}` 를 확인 판으로 보내도 자가 안 운다");
+    }
 }

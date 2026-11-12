@@ -262,3 +262,361 @@ fn the_fixture_says_something_about_both_modes() {
     assert!(fx.esc_key_modes.len() > 10, "esc 표가 너무 작다 — 뽑기가 깨졌다");
     assert!(fx.prefix_key_modes.len() > 20, "prefix 표가 너무 작다 — 뽑기가 깨졌다");
 }
+
+// ── 평소 모드 · 바인딩 차례 · 시간 규칙 · 정규화 (pytmux-606 · 607 · 610 · 583) ─────────────
+//
+// 위 자는 esc·prefix **모드 안**만 쟀다. 평소 모드에서 정본이 패널 앞에서 가로채는 키는
+// 어느 자도 안 쟀고, GUI 는 그 키를 전부 패널로 흘렸다(백틱·F10·F12·Alt+숫자). 그리고
+// prefix F12 는 「모드가 풀리나」만 재서 초록이었다 — **무엇이 일어나나**는 안 봤다.
+// 아래는 `scripts/gen_session_keys_fixture.py` 가 정본 `on_key`·`_handle_prefix` 에서 뽑은
+// `session_keys.json` 과 맞댄다.
+
+use base::keys::{EscDebounce, Routed};
+
+#[derive(Deserialize)]
+struct Norm {
+    jamo: bool,
+    mac_opt: bool,
+}
+
+#[derive(Deserialize)]
+struct SessionKeys {
+    normal_key_modes: BTreeMap<String, String>,
+    normal_alt_digit: bool,
+    root_bindings_after: Vec<String>,
+    prefix_order: Vec<String>,
+    display_secs: f64,
+    esc_debounce_secs: f64,
+    mode_normalize: BTreeMap<String, Norm>,
+    jamo: BTreeMap<String, String>,
+    mac_opt_number_row: BTreeMap<String, String>,
+}
+
+fn session_keys() -> SessionKeys {
+    serde_json::from_str(include_str!("fixtures/session_keys.json"))
+        .expect("픽스처를 읽을 수 없다 — scripts/gen_session_keys_fixture.py 로 다시 뽑을 것")
+}
+
+/// 정본 평소 갈래 중 **뷰가 base 앞에서** 가로채는 키와 그 자리. base 한 층으로는 못 잰다 —
+/// 이유 없는 예외는 빠뜨린 것이다(`a_normal_key_the_view_owns_is_named` 가 지킨다).
+static VIEW_OWNED: &[(&str, &str)] = &[
+    ("ctrl+v", "붙여넣기 — `gui::session_view::keydown_action` 의 `is_paste_chord` 가 base 앞에서 받는다(pytmux-364)"),
+    ("super+v", "같은 자리(`Cmd`/`Super`+V)"),
+];
+
+/// 정본 낱말(`does`) → 평소 모드에서 우리가 내야 하는 결과.
+fn normal_want(does: &str) -> Option<KeyOutcome> {
+    Some(match does {
+        "esc" => KeyOutcome::ModeChanged(InputMode::Command),
+        "menu" => KeyOutcome::Action(base::Action::ShowMenu),
+        "command_prompt" => KeyOutcome::Action(base::Action::ShowCommands),
+        // 오버레이가 없으면 패널에 ESC — 오버레이 닫기는 뷰가 그 사실을 안다.
+        "close_overlay_else_pane" => KeyOutcome::ToPane(vec![0x1b]),
+        "paste" | "select_tab" => return None,
+        other => panic!("픽스처가 모르는 낱말을 말한다: {other} — 이 표에 줄을 더할 것"),
+    })
+}
+
+fn normal_name(name: &str) -> Option<(Key, Mods)> {
+    match name.strip_prefix("char:") {
+        Some(ch) => {
+            let mut it = ch.chars();
+            match (it.next(), it.next()) {
+                (Some(c), None) => Some((Key::Char(c), Mods::NONE)),
+                _ => None,
+            }
+        }
+        None => key_of(name),
+    }
+}
+
+#[test]
+fn the_normal_mode_chrome_keys_do_what_canon_does() {
+    // 관문(pytmux-606): 다섯 키 각각 「패널 바이트 0 + 그 액션·모드」.
+    let fx = session_keys();
+    let mut wrong = Vec::new();
+    let mut pressed = 0;
+    for (name, does) in &fx.normal_key_modes {
+        if VIEW_OWNED.iter().any(|(n, _)| n == name) || name == "alt+<digit>" {
+            continue;
+        }
+        let Some((key, mods)) = normal_name(name) else {
+            wrong.push(format!("{name:?}: 우리 키로 못 읽는다"));
+            continue;
+        };
+        let Some(want) = normal_want(does) else { continue };
+        let mut state = ModeState::default();
+        let got = state.press(key, mods);
+        pressed += 1;
+        if got != want {
+            wrong.push(format!("평소 {name:?}({does}): 정본은 {want:?} 인데 우리는 {got:?}"));
+        }
+    }
+    assert!(pressed >= 5, "누른 키가 {pressed} 뿐이다 — 대조가 샜다");
+    assert!(wrong.is_empty(), "평소 모드에서 정본과 다르게 구는 키:\n  {}", wrong.join("\n  "));
+}
+
+#[test]
+fn alt_digit_switches_tabs_and_never_reaches_the_pane() {
+    let fx = session_keys();
+    assert!(fx.normal_alt_digit, "정본 `_alt_digit` 규칙이 사라졌다 — 이 시험의 전제");
+    assert_eq!(fx.normal_key_modes.get("alt+<digit>").map(String::as_str), Some("select_tab"));
+    for d in '1'..='9' {
+        let mut state = ModeState::default();
+        let got = state.press(Key::Char(d), Mods::ALT);
+        assert_eq!(
+            got,
+            KeyOutcome::Action(base::Action::SelectTab(d.to_digit(10).unwrap() as u8)),
+            "Alt+{d}: 패널로 `ESC {d}` 가 아니라 그 번호 탭이어야 한다"
+        );
+        assert_eq!(state.mode(), InputMode::Normal);
+    }
+}
+
+#[test]
+fn mac_option_glyphs_in_normal_mode_switch_tabs_or_are_swallowed() {
+    // 정본: ⌥1=¡ … 는 탭 전환, 탭 번호가 없는 -/= 자리는 **삼킨다**(패널에 안 찍힌다).
+    let fx = session_keys();
+    for (glyph, phys) in &fx.mac_opt_number_row {
+        let c = glyph.chars().next().unwrap();
+        let p = phys.chars().next().unwrap();
+        let mut state = ModeState::default();
+        let got = state.press(Key::Char(c), Mods::NONE);
+        let want = match p.to_digit(10) {
+            Some(n) => KeyOutcome::Action(base::Action::SelectTab(n as u8)),
+            None => KeyOutcome::Ignored,
+        };
+        assert_eq!(got, want, "평소 {glyph:?}(⌥{phys})");
+        assert_eq!(sent(&got), None, "{glyph:?} 가 패널로 샜다");
+    }
+}
+
+#[test]
+fn an_unknown_normal_key_still_goes_to_the_pane() {
+    // 「모르는 키 = 패널」 — 크롬 키를 넓히다가 타이핑을 삼키면 그게 더 큰 결함이다.
+    let mut state = ModeState::default();
+    let got = state.press(UNKNOWN.0, UNKNOWN.1);
+    assert_eq!(got, KeyOutcome::ToPane(b"i".to_vec()));
+}
+
+#[test]
+fn a_normal_key_the_view_owns_is_named() {
+    let fx = session_keys();
+    for (name, why) in VIEW_OWNED {
+        assert!(!why.is_empty(), "{name}: 이유 없는 예외");
+        assert!(fx.normal_key_modes.contains_key(*name), "정본에 없는 예외가 남았다: {name}");
+    }
+}
+
+/// 늘 걸리는 바인딩 — 「이 자리에서 바인딩을 보나」만 묻는다.
+fn always(_after_prefix: bool, _key: Key, _mods: Mods) -> Option<&'static str> {
+    Some("bound")
+}
+
+#[test]
+fn builtin_chrome_keys_win_over_root_bindings_like_canon() {
+    // 관문(pytmux-607): `bind -n Escape`·`bind -n F12`·root 에 prefix 키 → 내장이 이긴다.
+    let fx = session_keys();
+    let mut wrong = Vec::new();
+    for name in &fx.root_bindings_after {
+        if VIEW_OWNED.iter().any(|(n, _)| n == name) {
+            continue;
+        }
+        // `Shift+ESC` 는 오버레이를 닫을 때만 먹는다 — 없으면 root 표를 지나 패널로 간다.
+        let shift_esc = fx.normal_key_modes.get(name).map(String::as_str)
+            == Some("close_overlay_else_pane");
+        let keys: Vec<(Key, Mods)> = if name == "alt+<digit>" {
+            vec![(Key::Char('1'), Mods::ALT)]
+        } else {
+            match normal_name(name) {
+                Some(k) => vec![k],
+                None => {
+                    wrong.push(format!("{name:?}: 우리 키로 못 읽는다"));
+                    continue;
+                }
+            }
+        };
+        for (key, mods) in keys {
+            let mut state = ModeState::default();
+            let got = state.press_routed("", key, mods, always);
+            let bound = matches!(got, Routed::Bound(_));
+            if bound != shift_esc {
+                wrong.push(format!("{name:?}: 바인딩이 {}", if bound { "내장을 덮었다" } else { "안 걸렸다" }));
+            }
+        }
+    }
+    // prefix 키 자체(정본 `self.prefix_key` — 이름이 아니라 설정값이라 픽스처에 글자로 안 실린다).
+    let mut state = ModeState::default();
+    assert!(
+        matches!(state.press_routed("", Key::Char('b'), Mods::CTRL, always), Routed::Key(_)),
+        "root 에 prefix 키를 걸면 내장(prefix 진입)이 이겨야 한다"
+    );
+    assert_eq!(state.mode(), InputMode::Prefix);
+    // 모르는 키는 root 표가 가져간다(그것이 `bind -n` 의 자리다).
+    let mut state = ModeState::default();
+    assert_eq!(state.press_routed("", UNKNOWN.0, UNKNOWN.1, always), Routed::Bound("bound"));
+    assert!(wrong.is_empty(), "root 바인딩 차례가 정본과 다르다:\n  {}", wrong.join("\n  "));
+}
+
+#[test]
+fn root_bindings_do_not_fire_inside_esc_scroll_or_block_modes() {
+    // 정본 root 표는 평소 모드 갈래에만 있다 — 모드 안의 키는 그 모드의 것이다.
+    for (label, enter) in [
+        ("esc", (Key::Escape, Mods::NONE)),
+        ("prefix [ → scroll", (Key::Char('b'), Mods::CTRL)),
+    ] {
+        let mut state = ModeState::default();
+        state.press(enter.0, enter.1);
+        if label.contains("scroll") {
+            state.press(Key::Char('['), Mods::NONE);
+            assert_eq!(state.mode(), InputMode::Scroll);
+        }
+        let mut asked = false;
+        let got = state.press_routed("", Key::Char('k'), Mods::NONE, |_, _, _| {
+            asked = true;
+            Some("bound")
+        });
+        assert!(!asked && matches!(got, Routed::Key(_)), "{label}: 모드 안에서 바인딩을 봤다");
+    }
+    let mut state = ModeState::default();
+    state.enter_block();
+    let got = state.press_routed("", Key::Down, Mods::NONE, always);
+    assert!(matches!(got, Routed::Key(KeyOutcome::Block(_))), "블록 모드에서 바인딩을 봤다");
+}
+
+#[test]
+fn the_prefix_table_sits_between_passthrough_and_builtins_like_canon() {
+    let fx = session_keys();
+    assert_eq!(fx.prefix_order, ["prefix_twice", "user_bindings", "f12_toggle"]);
+    // ① prefix 두 번 = 패스스루 — `bind C-b …` 도 그것을 못 덮는다.
+    let mut state = ModeState::default();
+    state.press(Key::Char('b'), Mods::CTRL);
+    let got = state.press_routed("", Key::Char('b'), Mods::CTRL, always);
+    assert_eq!(got, Routed::Key(KeyOutcome::ToPane(vec![0x02])), "prefix 두 번을 바인딩이 덮었다");
+    // ② 사용자 표가 내장보다 먼저 — `bind F12 …` 는 중첩 토글을 덮는다. 모드는 한 키만.
+    let mut state = ModeState::default();
+    state.press(Key::Char('b'), Mods::CTRL);
+    assert_eq!(state.press_routed("", Key::Function(12), Mods::NONE, always), Routed::Bound("bound"));
+    assert_eq!(state.mode(), InputMode::Normal);
+    assert!(state.prefix_on(), "바인딩이 가져갔는데 토글이 같이 돌았다");
+}
+
+#[test]
+fn prefix_f12_toggles_the_outer_prefix_not_just_the_mode() {
+    // 관문(pytmux-606): 모드만이 아니라 **액션까지**. 종전에는 표에 없어 모드만 풀렸고,
+    // 위 `check` 는 모드만 재서 그것을 초록으로 셌다.
+    let mut state = ModeState::default();
+    state.press(Key::Char('b'), Mods::CTRL);
+    assert_eq!(state.press(Key::Function(12), Mods::NONE), KeyOutcome::PrefixToggled(false));
+    assert_eq!(state.mode(), InputMode::Normal);
+    assert!(!state.prefix_on());
+    // 꺼진 동안 prefix 키는 **패널로** 간다(안쪽 멀티플렉서가 받는다 — 그것이 토글의 쓰임).
+    assert_eq!(state.press(Key::Char('b'), Mods::CTRL), KeyOutcome::ToPane(vec![0x02]));
+    assert_eq!(state.mode(), InputMode::Normal);
+}
+
+#[test]
+fn the_time_rules_are_the_canon_values() {
+    // pytmux-610 — 둘 다 정본 소스에서 뽑은 값이다(손으로 적은 상수가 조용히 낡지 않게).
+    let fx = session_keys();
+    assert_eq!(base::keys::PANE_NUMBERS_FOR.as_secs_f64(), fx.display_secs);
+    assert!((base::keys::ESC_DEBOUNCE.as_secs_f64() - fx.esc_debounce_secs).abs() < 1e-9);
+}
+
+#[test]
+fn ten_repeated_escapes_change_the_mode_once() {
+    // 관문(pytmux-610): 쥐고 있는 ESC(반복 이벤트 열 개) → 모드가 한 번만 바뀐다.
+    let mut debounce = EscDebounce::default();
+    let mut state = ModeState::default();
+    let t0 = std::time::Instant::now();
+    let mut changes = 0;
+    for i in 0..10u64 {
+        let now = t0 + std::time::Duration::from_millis(33 * i); // OS 반복 간격 ≈ 33ms
+        if debounce.drops(Key::Escape, now) {
+            continue;
+        }
+        let before = state.mode();
+        state.press(Key::Escape, Mods::NONE);
+        changes += usize::from(state.mode() != before);
+    }
+    assert_eq!(changes, 1, "반복 ESC 가 모드를 {changes} 번 뒤집었다");
+    // 의도적 더블탭(100ms+)은 산다 — esc 진입 후 해제.
+    let mut debounce = EscDebounce::default();
+    assert!(!debounce.drops(Key::Escape, t0));
+    assert!(!debounce.drops(Key::Escape, t0 + std::time::Duration::from_millis(120)));
+    assert!(!debounce.drops(Key::Char('q'), t0), "ESC 가 아닌 키를 버렸다");
+}
+
+#[test]
+fn the_normalization_tables_are_the_canon_tables() {
+    let fx = session_keys();
+    let jamo: BTreeMap<String, String> = base::keys::JAMO_QWERTY
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+    assert_eq!(jamo, fx.jamo, "자모 표가 정본 `_JAMO` 와 다르다");
+    let opt: BTreeMap<String, String> = base::keys::MAC_OPT_NUMBER_ROW
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+    assert_eq!(opt, fx.mac_opt_number_row, "Option 표가 정본 `MAC_OPT_NUMBER_ROW` 와 다르다");
+}
+
+/// 그 모드에 들어가서 키 하나 — `(모드, 결과)`.
+fn press_from(mode: InputMode, key: Key, mods: Mods) -> (InputMode, KeyOutcome) {
+    let mut state = ModeState::default();
+    match mode {
+        InputMode::Command => {
+            state.press(Key::Escape, Mods::NONE);
+        }
+        InputMode::Prefix => {
+            state.press(Key::Char('b'), Mods::CTRL);
+        }
+        InputMode::Scroll => state.enter_scroll(),
+        other => panic!("{other:?}"),
+    }
+    let out = state.press(key, mods);
+    (state.mode(), out)
+}
+
+#[test]
+fn hangul_and_option_glyphs_resolve_in_modes_like_canon() {
+    // 관문(pytmux-583): 한글 상태에서 `esc` 뒤 `ㅂ` 이 `q` 로 · `⌥1` 이 탭 1 로. 모드마다 정본이
+    // 거는 정규화가 다르다(`mode_normalize`) — 안 거는 모드에서는 **모르는 키**와 같아야 한다.
+    let fx = session_keys();
+    let mut wrong = Vec::new();
+    for (label, mode) in [
+        ("esc", InputMode::Command),
+        ("prefix", InputMode::Prefix),
+        ("scroll", InputMode::Scroll),
+    ] {
+        let norm = &fx.mode_normalize[label];
+        for (src, phys, on) in fx
+            .jamo
+            .iter()
+            .map(|(a, b)| (a, b, norm.jamo))
+            .chain(fx.mac_opt_number_row.iter().map(|(a, b)| (a, b, norm.mac_opt)))
+        {
+            let c = src.chars().next().unwrap();
+            let p = phys.chars().next().unwrap();
+            let got = press_from(mode, Key::Char(c), Mods::NONE);
+            let want = if on {
+                press_from(mode, Key::Char(p), Mods::NONE)
+            } else {
+                press_from(mode, UNKNOWN.0, UNKNOWN.1)
+            };
+            if got != want {
+                wrong.push(format!("{label} {src:?}: 정본은 {want:?} 인데 우리는 {got:?}"));
+            }
+        }
+    }
+    // 이 GUI 의 맥 백엔드가 ⌥1 을 주는 모양(`1` + Alt) — esc 모드에서 숫자와 같아야 한다.
+    for d in '1'..='9' {
+        let got = press_from(InputMode::Command, Key::Char(d), Mods::ALT);
+        let want = press_from(InputMode::Command, Key::Char(d), Mods::NONE);
+        if got != want {
+            wrong.push(format!("esc Alt+{d}: {want:?} 이어야 하는데 {got:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "모드 안 정규화가 정본과 다르다:\n  {}", wrong.join("\n  "));
+}

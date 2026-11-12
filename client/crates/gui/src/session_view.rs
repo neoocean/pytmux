@@ -664,6 +664,13 @@ pub struct SessionView {
     /// (목록이 상한에서 잘려 앞이 밀리면 어긋나는데, 그때는 강조가 한 칸 밀릴 뿐
     /// 범위 계산은 그 자리의 블록으로 다시 한다).
     block_pick: Option<(i64, usize)>,
+    /// ESC 오토리핏 디바운스(pytmux-610 · 정본 `_ESC_DEBOUNCE`).
+    esc_debounce: base::keys::EscDebounce,
+    /// `prefix q` 패널 번호를 띄운 때 — 1.5초 뒤 저절로 닫는다(pytmux-610).
+    pane_numbers_at: Option<Instant>,
+    /// 시험이 세우는 키 시계(`key_clock`).
+    #[cfg(test)]
+    key_clock_for_test: Option<Instant>,
     /// 지금 **앱에게 넘기는 중인** 드래그(패널 id, 버튼). Shift+드래그로만 선다.
     ///
     /// 시작한 패널을 붙잡아 두는 이유는 선택과 같다 — 포인터가 이웃 패널로 넘어가도
@@ -745,6 +752,16 @@ pub struct SessionView {
     /// 회신이든 아니든) 끈다 — 뒤늦거나 남의 요청의 회신을 결과 판으로 착각해
     /// 열지 않기 위해서다.
     awaiting_search_all: bool,
+    /// 저장된 탭 배치 목록을 기다리나 — `Some(새 탭으로?)`(정본 `_want_layouts`). `list_layouts`
+    /// 를 보낼 때 세우고 `layouts` 회신이 오면 거두어 고르는 물음을 연다.
+    want_layouts: Option<bool>,
+    /// 런타임 `set` 만 받는 옵션(pytmux-575) — 다줄 상태줄 · `mouse-debug`. 설정 파일 밖이다.
+    runtime: base::config::RuntimeOpts,
+    /// 마우스 진단 로그 자리(정본 `<state_base>.mouse.log`).
+    mouse_log_path: std::path::PathBuf,
+    /// 마지막으로 잰 상태줄 한 줄의 높이 — 상태줄을 숨겨(`set status 0`) 자리표가 없는 프레임에도
+    /// 메시지 줄 몫을 셀 수 있게 남긴다.
+    footer_line_px: std::cell::Cell<f32>,
 }
 
 /// 팔레트 한 줄의 정체 — 코어 표의 자리이거나 플러그인이 기여한 자리다(설계 Tier A).
@@ -829,7 +846,23 @@ impl SessionView {
                 &[("name", &want)],
             ));
         }
+        if let Some(line) = Self::bind_warning_line(&view.config.bind_warnings) {
+            view.state.note_notice(line);
+        }
         view
+    }
+
+    /// 설정 파일 `bind` 경고를 기동 직후 한 줄로(pytmux-607 ⑧ · 정본 `client.py` 의 mount —
+    /// 앞 셋을 ` / ` 로 잇고 나머지는 「외 N건」). 경고가 없으면 `None`.
+    fn bind_warning_line(warnings: &[String]) -> Option<String> {
+        if warnings.is_empty() {
+            return None;
+        }
+        let mut line = warnings.iter().take(3).cloned().collect::<Vec<_>>().join(" / ");
+        if warnings.len() > 3 {
+            line.push_str(&base::i18n::tf(" 외 {n}건", &[("n", &(warnings.len() - 3).to_string())]));
+        }
+        Some(line)
     }
 
     /// 창 문맥 **없이** 세운다 — 글꼴만 밖에서 받는다.
@@ -862,6 +895,7 @@ impl SessionView {
         // ⛔ 이 한 줄이 없으면 같은 번호가 **두 벌** 뜬다(합성기 글자 + 우리 배지).
         state.draw_pane_numbers_natively();
         let arghist = proto::arghist::ArgHist::for_socket(link.socket());
+        let mouse_log_path = proto::endpoint::parse(link.socket()).mouse_log_file();
         Self {
             state,
             link,
@@ -926,6 +960,10 @@ impl SessionView {
             press: None,
             selection: None,
             block_pick: None,
+            esc_debounce: Default::default(),
+            pane_numbers_at: None,
+            #[cfg(test)]
+            key_clock_for_test: None,
             mouse_fwd: None,
             flash: None,
             alt_tab: false,
@@ -950,6 +988,10 @@ impl SessionView {
             // 이유가 없다.
             last_look: Instant::now() - CLAUDE_POLL,
             awaiting_search_all: false,
+            want_layouts: None,
+            runtime: base::config::RuntimeOpts::default(),
+            mouse_log_path,
+            footer_line_px: std::cell::Cell::new(0.),
         }
     }
 
@@ -1302,40 +1344,33 @@ impl SessionView {
         // 화면 뒤 패널로 키가 새고, 사용자는 자기가 무엇을 조작하는지 알 수 없다.
         // 어느 화면에서 고른 것인지는 **누르기 전에** 알아 둬야 한다 — 확정과 동시에
         // 화면이 닫히므로 그 뒤에 물으면 이미 없다.
-        // ★ 패널 번호(`prefix q`)가 떠 있으면 **이 키가 그것을 지운다**(파이썬도 모드라
-        // 그렇다). 숫자면 그 패널로 가고 거기서 끝, 아니면 지우기만 하고 평소 경로다 —
-        // 번호를 띄운 채로 다른 일을 하려던 사람의 키를 삼키지 않는다.
-        if self.state.pane_numbers() {
+        // ★ ESC 오토리핏 디바운스(pytmux-610 · 정본 `on_key` 의 `_ESC_DEBOUNCE`) — 자리도
+        //   정본과 같다: 판이 떠 있으면 그 판의 것이라 안 보고, 모드 갈래보다는 **앞**이다.
+        //   쥐고 있는 ESC 가 반복마다 평소↔esc 를 뒤집지 않게 한다(창 이벤트에 반복 표식이
+        //   없어 시간 창으로 가른다 — `base::keys::EscDebounce` 머리말).
+        if self.screens.top().is_none() && self.esc_debounce_live() {
+            let now = self.key_clock();
+            if self.esc_debounce.drops(key, now) {
+                return false;
+            }
+        }
+        // ★ 패널 번호(`prefix q`)가 떠 있으면 **이 키가 그것을 닫고, 키는 삼킨다**(pytmux-610 ·
+        //   정본 `_handle_display_key` — display 모드라 prefix 키까지 「아무 키」다). 숫자면 그
+        //   패널로 간다. 종전에는 숫자가 아닌 키를 평소 경로로 흘려 **그 키가 패널로 갔다**.
+        if self.state.pane_numbers() && self.screens.top().is_none() {
             self.state.clear_pane_numbers();
-            if let Key::Char(c) = key
-                && let Some(n) = c.to_digit(10)
-                && let Some(id) = self.state.pane_by_number(n as usize)
+            self.pane_numbers_at = None;
+            if let Some(n) = base::keys::pane_number_key(key, mods)
+                && let Some(id) = self.state.pane_by_number(n)
             {
                 self.pending.push(Outgoing::Command(Command::SelectPaneId { id }));
-                return true;
             }
+            return true;
         }
-        // ★ 사용자가 건 키(`bind`)가 **표보다 먼저**다 — 안 그러면 내장 키와 겹칠 때
-        // 사용자가 적은 것이 영영 안 먹고, 그건 "설정했는데 안 먹는다"의 한 가지다.
-        if !self.config.binds.is_empty() {
-            let after_prefix = self.mode.mode() == InputMode::Prefix;
-            // 걸린 명령 줄은 명령 줄 실행기를 지난다(pytmux-572) — `bind x send-keys C-c` 같은
-            // 인자 있는 줄도 정본 `_run_command` 처럼 돈다.
-            if let Some(run) = base::config::user_action(
-                &self.config.binds,
-                &self.config.aliases,
-                after_prefix,
-                key,
-                mods,
-            ) {
-                // prefix 모드는 **키 하나만** 붙잡는다(tmux 와 같다).
-                if after_prefix {
-                    self.mode.reset();
-                }
-                self.run_command_run(run);
-                return true;
-            }
-        }
+        // ⛔ 사용자 바인딩(`bind`)은 **여기서 안 본다**(pytmux-607). 종전에는 이 자리에서 판·
+        //   팝업·모드보다 먼저 봐서, 판 안·esc 안에서도 `bind -n` 이 발화하고 내장 키를 덮었다.
+        //   정본 차례(prefix 두 번 → prefix 표 → 내장 · 크롬 키 → root 표 → 패널)는
+        //   `base::keys::ModeState::press_routed` 한 곳이 쥐고, 아래 모드 전이 자리에서 부른다.
         // ★ 팝업이 떠 있으면 **키는 팝업의 것**이다(파이썬과 같다). 팝업은 트리 밖이라
         // 활성 패널이 될 수 없어서, id 를 실어 보내야 그 PTY 에 닿는다.
         //
@@ -1458,7 +1493,7 @@ impl SessionView {
                 ScreenKey::Chosen(row) if screen_before == Some(Screen::Layouts) => {
                     if let Some((_, preset)) = base::LAYOUT_PRESETS.get(row) {
                         self.pending.push(Outgoing::Command(Command::SelectLayout {
-                            preset,
+                            preset: (*preset).to_owned(),
                         }));
                     }
                 }
@@ -1483,8 +1518,10 @@ impl SessionView {
                     // ★ 메뉴에서 고른 것도 **키로 누른 것과 같은 길**을 탄다 — 그래야
                     // `패널 삭제` 를 골라도 확인 화면이 뜬다(팔레트와 같은 규칙).
                     match menu_rows_before.get(row) {
+                        // ★ 정본 메뉴의 `kill_pane` 만은 묻지 않고 보낸다(`_run_menu_action` ·
+                        //   pytmux-624) — 그 갈림의 표는 `base::cmdline::menu_run` 한 곳이다.
                         Some(base::MenuRow::Item(entry)) => {
-                            self.apply_action(entry.action);
+                            self.run_command_run(base::cmdline::menu_run(entry.key, entry.action));
                         }
                         // 플러그인 줄은 **그 플러그인의 명령 이름**이다(정본 계약).
                         // 우리가 네이티브로 든 이름이면 그 액션을 타고(시계·달력),
@@ -1545,8 +1582,11 @@ impl SessionView {
                             Some(pick) if !arg_before.is_empty() => {
                                 self.run_with_arg(pick, &arg_before);
                             }
+                            // 팔레트(우리의 `:` 줄)에서 고른 줄은 **친 명령**이다 — 정본은 친
+                            // `kill-tab`·`kill-pane` 을 확인 없이 보낸다(pytmux-624 ·
+                            // `base::cmdline::palette_run`). 확인 판은 키·클릭의 몫이다.
                             Some(PalettePick::Action(action)) => {
-                                self.apply_action(action);
+                                self.run_command_run(base::cmdline::palette_run(action));
                             }
                             // ★ 플러그인 명령은 **아직 화면이 없다**(설계 P4).
                             //   조용히 버리지 않는다 — 목록에 보이는데 눌러도 아무 일이
@@ -1679,6 +1719,20 @@ impl SessionView {
         {
             return handled;
         }
+        // ★ 활성 패널에 시계·달력 오버레이가 떠 있으면 ESC·백틱·Shift+ESC 가 **먼저 그것을
+        //   닫는다**(pytmux-606 ④ · 정본 `on_key` 평소 갈래의 `_close_active_overlay()` 셋과
+        //   `_handle_esc_mode` 의 Shift+ESC). 닫았으면 그 키는 거기서 끝난다 — esc 모드에
+        //   안 들어가고 패널에 ESC 도 안 간다.
+        if self.screens.top().is_none()
+            && self.overlay_closer(key, mods)
+            && let Some(pane) = self.state.active_pane()
+            && let Some((name, t)) = self.state.close_overlay_on_pane(pane)
+        {
+            self.push_overlay(&name, Some(t));
+            self.mode.reset();
+            self.chrome.reset();
+            return true;
+        }
         // ★ 오버레이가 **스펙으로 가져간 키**(달력의 ←/→/Home)는 패널로 안 보낸다.
         //   활성 패널이 이미 달력에 덮여 있으니 셸 입력을 가리지 않는다(정본
         //   `client_overlay_key` 와 같은 규칙이고, 어느 키인지도 그 표 한 벌이 정한다).
@@ -1696,7 +1750,22 @@ impl SessionView {
             return true;
         }
         // 모드 전이는 core 의 상태기계가 끝낸다. 여기서는 결과를 프레임으로 옮기기만 한다.
-        let outcome = self.mode.press_in(&self.config.mode_keys, key, mods);
+        // 사용자 바인딩도 그 상태기계가 **정본 차례에** 끼운다(pytmux-607 — `press_routed`).
+        // 걸린 명령 줄은 명령 줄 실행기를 지난다(pytmux-572).
+        let routed = {
+            let (binds, aliases) = (&self.config.binds, &self.config.aliases);
+            self.mode.press_routed(&self.config.mode_keys, key, mods, |after_prefix, k, m| {
+                base::config::user_action(binds, aliases, after_prefix, k, m)
+            })
+        };
+        let outcome = match routed {
+            base::keys::Routed::Bound(run) => {
+                self.drop_block_pick_unless_selecting();
+                self.run_command_run(run);
+                return true;
+            }
+            base::keys::Routed::Key(outcome) => outcome,
+        };
         // 블록 모드를 벗어나면 고른 것도 **같이** 버린다 — 안 버리면 강조가 화면에 남아
         // "아직 고르는 중"이라고 말하는데 키는 이미 패널로 간다(esc 모드에서 크롬
         // 포커스를 같이 푸는 것과 같은 규율. 자리도 나란히 둔다).
@@ -1718,8 +1787,83 @@ impl SessionView {
             KeyOutcome::Block(what) => self.block_key(what),
             KeyOutcome::ModeChanged(_) => true,
             KeyOutcome::Action(action) => self.apply_action(action),
+            // `prefix F12`(pytmux-606) — 정본과 같은 알림 한 줄. 상태줄 `NEST` 칩은 그리는
+            // 자리가 `mode.prefix_on()` 을 읽는다.
+            KeyOutcome::PrefixToggled(on) => {
+                self.state.note_notice(format!(
+                    "outer prefix {}",
+                    if on { "ON" } else { "OFF (중첩)" }
+                ));
+                true
+            }
             KeyOutcome::Ignored => false,
         }
+    }
+
+    /// 이 키가 오버레이를 **먼저 닫는** 키인가(pytmux-606 ④). 평소 모드는 ESC·백틱·Shift+ESC,
+    /// esc 모드는 Shift+ESC 뿐이다(정본 `_handle_esc_mode` — 거기서 ESC·백틱은 다른 뜻이다).
+    fn overlay_closer(&self, key: Key, mods: Mods) -> bool {
+        match self.mode.mode() {
+            InputMode::Normal => {
+                key == Key::ShiftEscape
+                    || (mods == Mods::NONE && matches!(key, Key::Escape | Key::Char('`')))
+            }
+            InputMode::Command => key == Key::ShiftEscape,
+            _ => false,
+        }
+    }
+
+    /// 키 시간 규칙(ESC 디바운스·패널 번호)이 읽는 «지금». 시험은 시계를 밀어 넣는다 —
+    /// 진짜로 기다리는 시험은 부하에 진다(`tick_cursor_blink_for_test` 와 같은 규율).
+    fn key_clock(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(now) = self.key_clock_for_test {
+            return now;
+        }
+        Instant::now()
+    }
+
+    /// ESC 디바운스를 재나. 프로덕션은 늘 잰다.
+    ///
+    /// 시험은 **시계를 세운 시험만** 잰다 — 나머지 시험은 키를 «사람이 하나씩 누른 것»으로
+    /// 먹이는데, 그 사이가 벽시계로 수 μs 라 둘째 ESC 가 전부 반복으로 버려진다(실측: esc 를
+    /// 두 번 거치는 기존 시험 다섯이 그것으로 떨어졌다). 시각이 뜻을 갖는 시험은 시계를 민다.
+    fn esc_debounce_live(&self) -> bool {
+        #[cfg(test)]
+        {
+            self.key_clock_for_test.is_some()
+        }
+        #[cfg(not(test))]
+        {
+            true
+        }
+    }
+
+    /// 시험이 키 시계를 세운다(pytmux-610).
+    #[cfg(test)]
+    pub(crate) fn set_key_clock_for_test(&mut self, now: Option<Instant>) {
+        self.key_clock_for_test = now;
+    }
+
+    /// `prefix q` 패널 번호를 [`base::keys::PANE_NUMBERS_FOR`] 뒤에 닫는다(pytmux-610 · 정본
+    /// `_auto_exit_display`). 화면이 달라지면 `true`.
+    fn tick_pane_numbers(&mut self) -> bool {
+        let Some(at) = self.pane_numbers_at else { return false };
+        if !self.state.pane_numbers() {
+            self.pane_numbers_at = None;
+            return false;
+        }
+        if self.key_clock().saturating_duration_since(at) < base::keys::PANE_NUMBERS_FOR {
+            return false;
+        }
+        self.pane_numbers_at = None;
+        self.state.clear_pane_numbers()
+    }
+
+    /// 시계 한 틱의 패널 번호 몫(시험 — 시계는 `set_key_clock_for_test` 로 민다).
+    #[cfg(test)]
+    pub(crate) fn tick_pane_numbers_for_test(&mut self) -> bool {
+        self.tick_pane_numbers()
     }
 
     /// 지금 상태에서 크롬이 알아야 하는 사실들. 판정은 core 가 한다(TUI 와 같은 함수).
@@ -2029,8 +2173,13 @@ impl SessionView {
                 self.screens.ask(Prompt::RenamePane, &now);
                 return true;
             }
+            // 정본 `_enter_display` — 늘 **띄우고** 1.5초 시계를 새로 건다(타이머는 하나만 산다 ·
+            // pytmux-610). 뒤집기가 아니다: 떠 있는 동안의 키는 위 `handle_key` 가 삼키고 닫는다.
             Action::ShowPaneNumbers => {
-                self.state.toggle_pane_numbers();
+                if !self.state.pane_numbers() {
+                    self.state.toggle_pane_numbers();
+                }
+                self.pane_numbers_at = Some(self.key_clock());
                 return true;
             }
             // 목표 자리는 탭 목록을 봐야 안다 — 이미 끝이면 아무 일도 안 한다(같은
@@ -2140,11 +2289,10 @@ impl SessionView {
                 self.screens.ask(Prompt::SaveTabLayout, "");
                 return true;
             }
+            // 정본은 **저장된 이름을 먼저 묻는다**(`request_layouts` → `list_layouts`) — 회신이
+            // 오면 그 이름들을 후보로 단 물음이 열린다(`ServerMessage::Layouts`).
             Action::LoadTabLayout(new) => {
-                self.screens.ask(
-                    if new { Prompt::LoadTabLayoutNew } else { Prompt::LoadTabLayout },
-                    "",
-                );
+                self.request_layouts(new);
                 return true;
             }
             // §10-21ⓓ — 화면에서 뺀 요약 구역의 새 입구.
@@ -2576,15 +2724,24 @@ impl SessionView {
     /// 포커스가 **다른 패널로 옮겨간 것**도 벗어난 것으로 친다. 블록 목록은 패널마다
     /// 따로라, 그때 모드를 붙잡고 있으면 `↑`/`↓` 가 지금 보고 있지 않은 패널의 블록을
     /// 옮긴다 — 화면에는 아무 반응이 없고 `Ctrl+C` 만 엉뚱한 글을 담는다.
+    ///
+    /// ★ **목록이 비어도 나간다**(pytmux-605 · 정본 `_clamp_pick`) — 스크롤백 회전·
+    ///   `clear-history` 로 서버가 빈 `blocks` 를 보내면 고를 것이 없다. 그래서 키 입구만이
+    ///   아니라 **서버 메시지를 받은 뒤**에도 이 함수를 부른다(`pump_messages`). 종전에는
+    ///   포커스만 봐서 빈 목록에서도 `[block]` 에 남아 키를 삼켰다. 접기 규칙은 base 한 곳이다
+    ///   ([`base::block::fold_block_pick`]).
     fn drop_block_pick_unless_selecting(&mut self) {
-        let stale = self
-            .block_pick
-            .is_some_and(|(pane, _)| self.state.active_pane() != Some(pane));
-        if stale {
-            self.mode.reset();
-        }
         if self.mode.mode() != InputMode::Block {
             self.block_pick = None;
+            return;
+        }
+        let count = self
+            .block_pick
+            .map_or(0, |(pane, _)| self.state.blocks(pane).len());
+        self.block_pick =
+            base::block::fold_block_pick(self.block_pick, self.state.active_pane(), count);
+        if self.block_pick.is_none() {
+            self.mode.reset();
         }
     }
 
@@ -2909,6 +3066,9 @@ impl SessionView {
         //   앱 전달(less·htop)도 우리 스크롤백도 둘 다 안 나간다.
         //   ⚠ 위의 **팝업 목록** 굴리기는 그대로 둔다 — 정본도 그 관문은 캔버스(PaneView)
         //   에만 있고, 팝업 화면의 목록은 Textual 위젯이 제 휠로 굴린다.
+        // 진단 로그는 마우스 관문보다 **먼저**(정본 `on_mouse_scroll_*` — 「이벤트가 도달했나」를 본다).
+        let (lx, ly) = at.map_or((-1, -1), |(x, y)| (i64::from(x), i64::from(y)));
+        self.log_mouse(if up { base::config::mouse_log::SCROLL_UP } else { base::config::mouse_log::SCROLL_DOWN }, lx, ly, 0, "");
         if !self.config.mouse {
             return false;
         }
@@ -3056,8 +3216,39 @@ impl SessionView {
         let Some(data) = mouse::encode(target.mode, target.rect, x, y, kind, button) else {
             return false;
         };
+        // 진단(정본 `send_mouse` 의 `pass` 줄) — 앱에게 넘긴 바이트를 그 패널 id 와 함께 남긴다.
+        if self.runtime.mouse_debug {
+            let note = format!("pane={} mode={:?} bytes={}", target.id, target.mode, base::config::py_bytes_repr(&data));
+            self.log_mouse(base::config::mouse_log::PASS, 0, 0, 0, &note);
+        }
         self.pending.push(Outgoing::Mouse { pane: target.id, data });
         true
+    }
+
+    /// 마우스 진단 로그 한 줄(`set mouse-debug on` 일 때만 · pytmux-575). 모양·자리는 정본
+    /// `_log_mouse` 와 같다(`base::config::mouse_log_line` · `<state_base>.mouse.log`). 쓰기 실패는
+    /// 조용히 넘긴다(정본 `except OSError: pass` — 진단이 앱을 멈추면 안 된다).
+    fn log_mouse(&self, kind: &str, x: i64, y: i64, button: u8, note: &str) {
+        if !self.runtime.mouse_debug {
+            return;
+        }
+        let mode = match self.mode.mode() {
+            InputMode::Normal => "normal",
+            InputMode::Command => "esc",
+            InputMode::Scroll => "scroll",
+            InputMode::Prefix => "prefix",
+            _ => "block",
+        };
+        let line = base::config::mouse_log_line(&proto::clock::now_text(), kind, x, y, button, mode, note);
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.mouse_log_path) {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_mouse_log_path_for_test(&mut self, path: std::path::PathBuf) {
+        self.mouse_log_path = path;
     }
 
     /// 절대 행 좌표로. 화면을 아직 못 받은 패널이면 `None`.
@@ -3077,6 +3268,8 @@ impl SessionView {
     /// 쓴다 — 파이썬 클라·TUI 와 같은 배정이다. 이게 없으면 마우스 1급 앱 안에서는
     /// **드래그를 아예 못 한다**.
     pub fn handle_mouse_down(&mut self, at: (u16, u16), shift: bool) -> bool {
+        // 진단 로그는 관문보다 먼저다(정본 `PaneView.on_mouse_down` 의 첫 줄 · 버튼 1 = 왼쪽).
+        self.log_mouse(base::config::mouse_log::DOWN, i64::from(at.0), i64::from(at.1), 1, "");
         // ★ `set mouse off` 는 **클라가 마우스를 아예 안 보는 것**이다(파이썬과 같다).
         if !self.config.mouse {
             return false;
@@ -3842,9 +4035,11 @@ impl SessionView {
         // 아래 구역이 **자기 높이만큼** 캔버스를 밀어낸다. 창 바닥까지의 거리를 빼면
         // 그 아래 빈 자리도 크롬으로 세어, 캔버스가 프레임마다 한 줄씩 줄어든다
         // (실측 2026-07-28 — 175x10 → 175x3 으로 접혔다).
-        let footer_px = ctx
-            .element_position_by_id(Self::FOOTER_PROBE)
-            .map_or(0., |f| f.height() * self.footer_lines() as f32);
+        // 상태줄을 숨기면(`set status 0`) 자리표가 없다 — 마지막으로 잰 한 줄 높이로 센다.
+        if let Some(f) = ctx.element_position_by_id(Self::FOOTER_PROBE) {
+            self.footer_line_px.set(f.height());
+        }
+        let footer_px = self.footer_line_px.get() * self.footer_lines() as f32;
         // 판을 캔버스 안 어느 칸에 세울지 아는 데 필요하다(pytmux-370). 같은 자리표에서
         // 함께 뽑는다 — 두 번 재면 두 값이 갈린다.
         self.canvas_px.set(Some(CanvasBox {
@@ -3891,8 +4086,13 @@ impl SessionView {
     /// 세션의 다른 클라에게도 간다(실측 2026-07-28: 47→46→47 로 떨렸다). 예산은 고정이라
     /// (`footer::ROWS`) 한 번 잡아 두면 흔들리지 않는다.
     fn footer_lines(&self) -> usize {
-        // 배지 줄은 **늘 있다** — `e_down` 이 갈 곳이라 접히면 안 된다.
-        let badges = 1;
+        // 배지 줄(= 상태줄)은 **설정한 줄 수만큼** 있다 — 기본 한 줄(`e_down` 이 갈 곳),
+        // `set status N` 이면 N 줄, `off` 면 0 줄(pytmux-575 · 정본 `_content_size` 의
+        // `size.height - status.lines`).
+        // ⚠ 상태줄이 **위**(`status-position top`)면 그 줄들은 캔버스 자리표 위에 있어 이미 빠져
+        //   있다 — 종전 셈(한 줄)은 그대로 두고 그 이상은 세지 않는다(두 번 빼면 캔버스가 준다).
+        let lines = self.runtime.status.lines() as usize;
+        let badges = if self.status_on_top() { lines.min(1) } else { lines };
         // 메시지 줄(`render_message`)도 **늘 세어 둔다**. 있을 때만 세면 끊기는 순간
         // 캔버스가 한 줄 줄고 붙는 순간 다시 늘어 — 예산을 고정으로 두는 바로 그 이유의
         // 재발이다. 안 세면 더 나쁘다: 라이브에서 그 줄이 **창 밖으로 밀려 안 보였다**
@@ -3984,6 +4184,7 @@ impl SessionView {
         // 지금 화면 갱신과 같은 길이라 클라에 따로 시계를 둘 이유가 없다.
         dirty |= self.tick_flash();
         dirty |= self.tick_cursor_blink();
+        dirty |= self.tick_pane_numbers();
         dirty | self.tick_status()
     }
 
@@ -4211,6 +4412,15 @@ impl SessionView {
                         self.server_stats = Some(stats);
                         dirty = true;
                     }
+                    // 저장된 배치 이름들(정본 `_want_layouts` 게이트 — 묻지 않은 회신은 판을 안 연다).
+                    // 고르는 판은 이름을 후보로 단 물음이다(↑↓ 고르기 · Tab 채우기 · Enter 불러오기).
+                    ServerMessage::Layouts { names } => {
+                        if let Some(new) = self.want_layouts.take() {
+                            let prompt = if new { Prompt::LoadTabLayoutNew } else { Prompt::LoadTabLayout };
+                            self.screens.ask_with_history(prompt, "", names);
+                            dirty = true;
+                        }
+                    }
                     // pong 은 시계를 든 쪽의 일이다(G9u — TUI 와 같은 규칙). 다시 그릴
                     // 일은 정보 팝업이 떠 있을 때뿐이다.
                     ServerMessage::Pong { ts } => {
@@ -4266,6 +4476,10 @@ impl SessionView {
                         let was_search_results =
                             matches!(other, ServerMessage::SearchResults(_));
                         let changed = self.state.apply(other);
+                        // 블록 고르기 자리를 **받은 것에 맞춰** 접는다(pytmux-605 · 정본
+                        // `handle_message`/`forget_panes` → `_clamp_pick`) — 빈 `blocks` 나
+                        // 사라진 패널이면 `[block]` 모드째 나간다.
+                        self.drop_block_pick_unless_selecting();
                         // 패널 앱이 `OSC 52` 로 넣어 달라 한 글을 **여기서** OS 클립보드에
                         // 넣는다(pytmux-420 ①). `apply` 안에서 안 하는 이유는 그쪽이 순수한
                         // 상태 접기라서다 — 시험·재생이 같은 프레임을 여러 번 먹이면 그
@@ -4741,18 +4955,40 @@ impl SessionView {
     /// 쓴다. 둘 다 「지금 모달이다」인데 한 색이면 배지가 어느 모드인지 못 말하기
     /// 때문이고, 그 판단이 두 클라에서 같다.
     ///
-    /// 남은 `[block]` 은 정본에 짝이 없어 종전 반전 칩 그대로다. **갈림을 색으로 남기는
-    /// 것**이기도 하다: 정본과 맞춘 자리와 우리가 지은 자리가 화면에서 구별된다.
+    /// `[block]` 도 이제 정본에 짝이 있다(pytmux-605) — 정본 blocks 플러그인의
+    /// `client_statusbar_badges` 가 `ui.block_mode_badge` 를 **`success` 바탕·검은 굵은 글자**로
+    /// 단다(esc·prefix 와 다른 색이라야 배지가 어느 모드인지 말한다). 종전 이 자리의
+    /// 「정본에 짝이 없다」는 그 배지가 생기기 전의 사실이었다. 색도 정본과 맞춘다.
     fn mode_chip(&self, mode: InputMode, badge: &'static str) -> Box<dyn Element> {
-        if mode != InputMode::Command {
-            return self.chip_on(t(badge));
-        }
+        let bg = match mode {
+            InputMode::Command => CLAUDE_DONE_AMBER,
+            InputMode::Block => match proto::session::theme::resolve("success") {
+                proto::session::theme::Resolution::Color(c) => to_gui_color(&c),
+                _ => return self.chip_on(t(badge)),
+            },
+            _ => return self.chip_on(t(badge)),
+        };
         Container::new(self.ui_text_weighted(t(badge), 11., palette::BLACK, true))
             .with_horizontal_padding(8.)
             .with_vertical_padding(2.)
-            .with_background_color(CLAUDE_DONE_AMBER)
+            .with_background_color(bg)
             .with_corner_radius(theme::PILL_RADIUS)
             .finish()
+    }
+
+    /// `NEST` 칩 — 정본 `secondary` 바탕·흰 굵은 글자(pytmux-606). 색을 못 풀면 반전 칩.
+    fn nest_chip(&self) -> Box<dyn Element> {
+        match proto::session::theme::resolve("secondary") {
+            proto::session::theme::Resolution::Color(c) => {
+                Container::new(self.ui_text_weighted("NEST", 11., palette::FG, true))
+                    .with_horizontal_padding(8.)
+                    .with_vertical_padding(2.)
+                    .with_background_color(to_gui_color(&c))
+                    .with_corner_radius(theme::PILL_RADIUS)
+                    .finish()
+            }
+            _ => self.chip_on("NEST"),
+        }
     }
 
     /// 네이티브 토글 그림(N5) — 켜짐이면 손잡이가 오른쪽·ACTIVE 바탕, 꺼짐이면
@@ -6178,6 +6414,11 @@ impl SessionView {
     }
 
     fn render_status(&self) -> Box<dyn Element> {
+        // `set status off`(= 0 줄 · pytmux-575) — 정본은 상태줄 위젯을 아예 숨긴다. 그만큼
+        // 패널 격자가 늘고(`footer_lines`) 그 크기가 서버에 보고된다(`report_size`).
+        if self.runtime.status.lines() == 0 {
+            return Empty::new().finish();
+        }
         let tabs = self.chrome_tabs();
         let badges = self.state.badges();
         let ctx = self.chrome_ctx(&tabs, &badges);
@@ -6212,6 +6453,11 @@ impl SessionView {
         //   이유로 먼저 내려온 곳이다. 반전 칩이라 종전(노란 글자)보다 눈에 띈다.
         if let Some(badge) = self.mode.mode().badge() {
             left = left.with_child(self.mode_chip(self.mode.mode(), badge));
+        }
+        // `prefix F12` 로 바깥 prefix 를 끈 동안의 표식(pytmux-606 · 정본 `NEST ` 세그먼트 —
+        // `secondary` 바탕·흰 굵은 글자). 안 달면 prefix 가 왜 안 먹는지 화면이 말하지 않는다.
+        if !self.mode.prefix_on() {
+            left = left.with_child(self.nest_chip());
         }
         for badge in &badges {
             // ★ **알림은 오른쪽 무리의 머리로 간다**(pytmux-367 · 정본 `_render_main`
@@ -6358,7 +6604,28 @@ impl SessionView {
         // 탭바와 같은 띠로 읽히게 한다(종전 "안 정하면 투명"에서 의도적으로 바꿈).
         let bg = status::color(&self.config.status_bg)
             .map_or(theme::SURFACE, |c| to_gui_color(&c));
-        Container::new(bar)
+        // ★ 다줄 상태줄(`set status N` · pytmux-575) — 맨 아래가 주 상태이고 그 위가 보조 줄이다
+        //   (줄 1 = 바닥 바로 위 · tmux `status-format[i]`). 보조 줄은 `status-format` 의 포맷을
+        //   주 상태와 **같은 펼치기**(`proto::status::expand`)로 편 한 줄이다. 줄 차례는
+        //   `base::chrome::StatusLines::rows` 한 곳이 정한다.
+        let rows = self.runtime.status.rows();
+        let body = if rows.len() <= 1 {
+            bar
+        } else {
+            let mut bar = Some(bar);
+            let mut column = Flex::column().with_main_axis_size(MainAxisSize::Min);
+            for row in rows {
+                column = match row {
+                    Some(fmt) => column.with_child(self.ui_text(status::expand(fmt, &sctx), 12., fg)),
+                    None => match bar.take() {
+                        Some(bar) => column.with_child(bar),
+                        None => column,
+                    },
+                };
+            }
+            column.finish()
+        };
+        Container::new(body)
             .with_background_color(bg)
             .with_horizontal_padding(6.)
             .with_vertical_padding(3.)
@@ -8576,31 +8843,24 @@ impl SessionView {
     }
 
 
-    /// `bind-key`/`unbind-key` 한 줄을 반영한다(패리티 G8j). 두 뷰가 같은 표다.
+    /// `bind-key`/`unbind-key` 한 줄을 반영한다(패리티 G8j) — **세션 안 표만** 바꾼다.
     ///
-    /// 파일에 쓰고 **다시 읽는다** — `set` 과 같은 이유로 파싱 규칙을 한 곳에 둔다.
+    /// ⛔ 종전에는 사용자 설정 파일에 써 넣고 다시 읽었다(`write_bind`/`erase_bind`). 정본
+    ///    `clientcmd` 는 세션 dict 만 바꾸고 파일을 안 건드린다 — 결정(pytmux-607 ④ · 2026-11-13):
+    ///    **정본을 따른다**. 영속은 설정 파일에 `bind` 줄을 적는 길 하나다(두 클라가 같다).
+    ///    규칙·문구는 `base::config::{bind_in_session, unbind_in_session}` 한 곳이다.
     fn apply_bind_line(&mut self, spec: &str, bind: bool) {
         let spec = spec.trim();
         if spec.is_empty() {
             return;
         }
-        let written = if bind {
-            base::config::write_bind(&format!("bind {spec}"))
+        let said = if bind {
+            base::config::bind_in_session(&mut self.config.binds, spec)
         } else {
-            base::config::erase_bind(spec)
+            base::config::unbind_in_session(&mut self.config.binds, spec)
         };
-        match written {
-            Ok(_) => {
-                self.config = base::Config::load();
-                self.state.note_notice(if bind {
-                    format!("bind {spec}")
-                } else {
-                    format!("unbind {spec}")
-                });
-            }
-            Err(err) => self
-                .state
-                .note_error(tf("바인딩을 저장하지 못했다: {err}", &[("err", &err.to_string())])),
+        if let Some(line) = said {
+            self.state.note_notice(line);
         }
     }
     /// `set <옵션> <값>` 한 줄을 반영한다(패리티 G8i). 두 뷰가 같은 표다.
@@ -8615,6 +8875,17 @@ impl SessionView {
             return;
         };
         let value = value.trim();
+        // ★ 런타임 전용 셋(`status` · `status-format` · `mouse-debug`)은 **설정 파일에 안 쓴다**
+        //   (pytmux-575 · 정본 `apply_option` 만 받는다). 줄 수가 바뀌면 다음 프레임의
+        //   `report_size` 가 줄어든 격자를 서버에 알린다(정본 `set_status_lines` 의 resize).
+        if let Some(change) = base::config::runtime_set(&mut self.runtime, option, value) {
+            if change == base::config::RuntimeSet::MouseDebug(true) {
+                let path = self.mouse_log_path.display().to_string();
+                self.state
+                    .note_notice(tf("마우스 진단 로그: {path}", &[("path", &path)]));
+            }
+            return;
+        }
         // 파일에 쓰고 **다시 읽는다** — 파싱 규칙이 한 곳(Config::parse)에만 있어야
         // "파일로 적은 것"과 "여기서 적은 것"이 갈리지 않는다.
         match base::Config::write_option(option, value) {
@@ -9725,7 +9996,90 @@ impl SessionView {
             Run::Flip(key) => self.flip_config(key),
             Run::IfShell { cond, then, otherwise } => self.spawn_shell(cond, Some(then), otherwise),
             Run::SourceFile(path) => self.reload_config(path.as_deref()),
+            Run::Line(line) => self.run_line(line),
         }
+    }
+
+    /// 명령 줄만의 일(pytmux-572 · 624). 나가는 것은 `proto::command::line_command` 한 곳이
+    /// 정하고(적합성 자가 같은 함수를 정본 픽스처와 잰다), 여기는 그것을 내보내고 **이번 판**의
+    /// 일(설정 파일에 안 쓰는 켜고끄기 · 알림)을 한다.
+    fn run_line(&mut self, line: base::cmdline::Line) {
+        use base::cmdline::Line;
+        use proto::command::{LineCtx, LineOut};
+        let panes: Vec<i64> = self.state.panes().iter().map(|p| p.id).collect();
+        let remote = self.active_remote_target();
+        let out = proto::command::line_command(
+            &line,
+            &LineCtx {
+                tabs: self.state.tabs(),
+                panes: &panes,
+                active_pane: self.state.active_pane(),
+                remote: remote.as_ref().map(|(h, i)| (h.as_str(), *i)),
+            },
+        );
+        match out {
+            LineOut::Send(command) => {
+                if let Line::ListLayouts { new } = line {
+                    self.want_layouts = Some(new);
+                }
+                self.pending.push(Outgoing::Command(command));
+            }
+            LineOut::Input(bytes) => self.pending.push(Outgoing::Input(bytes)),
+            LineOut::Nothing => {}
+            LineOut::BadTab(v) => self
+                .state
+                .note_error(tf("탭 번호 범위 초과: {v}", &[("v", &v.to_string())])),
+            LineOut::Local => self.run_line_local(line),
+        }
+    }
+
+    /// 이번 판만 바꾸는 셋(정본 `inactive-dim`·`strip-box-drawing`·`inactive-dim-ratio`) —
+    /// **설정 파일에 안 쓴다**(정본도 `self.inactive_dim` 만 고친다 · 영속 기본값은 설정 파일).
+    fn run_line_local(&mut self, line: base::cmdline::Line) {
+        use base::cmdline::Line;
+        let on_off = |on: bool| if on { "ON" } else { "OFF" };
+        match line {
+            Line::InactiveDim(value) => {
+                self.config.inactive_dim = value.unwrap_or(!self.config.inactive_dim);
+                self.state
+                    .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
+                self.state.note_notice(tf(
+                    "비활성 패널 흐리게 {state}",
+                    &[("state", on_off(self.config.inactive_dim))],
+                ));
+            }
+            Line::StripBoxDrawing(value) => {
+                self.config.strip_box_drawing = value.unwrap_or(!self.config.strip_box_drawing);
+                self.state.note_notice(tf(
+                    "붙여넣기 시 테두리 제거 {state}",
+                    &[("state", on_off(self.config.strip_box_drawing))],
+                ));
+            }
+            Line::InactiveDimRatio(arg) => {
+                if let Some(arg) = arg {
+                    let Some(ratio) = base::cmdline::dim_ratio(&arg) else {
+                        self.state.note_error(t("세기는 0~0.8 사이 숫자여야 합니다"));
+                        return;
+                    };
+                    self.config.inactive_dim_ratio = ratio;
+                    self.state
+                        .set_inactive_dim(self.config.inactive_dim, self.config.inactive_dim_ratio);
+                }
+                self.state.note_notice(tf(
+                    "비활성 패널 흐리게 세기 {ratio}",
+                    &[("ratio", &format!("{:.2}", self.config.inactive_dim_ratio))],
+                ));
+            }
+            Line::WindowSizeUsage => self
+                .state
+                .note_error(t("사용법: window-size [smallest|latest|largest]")),
+            _ => {}
+        }
+    }
+
+    /// 저장된 탭 배치 목록을 묻는다(정본 `request_layouts`). 회신은 `ServerMessage::Layouts`.
+    fn request_layouts(&mut self, new: bool) {
+        self.run_line(base::cmdline::Line::ListLayouts { new });
     }
 
     /// 물음에 나온 대답이 뜻하는 명령(패리티 G4).

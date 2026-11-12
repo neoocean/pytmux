@@ -365,3 +365,42 @@ fn a_drag_decides_like_the_python_mouse_up() {
     assert_eq!(drag_drop(&tabs, 1, DragTarget::Other), Some(DragDrop::Select(1)));
     assert_eq!(drag_drop(&tabs, 9, DragTarget::Other), None);
 }
+
+// ── 다줄 상태줄(pytmux-575 · 정본 `apply_option("status")`·`status-format`·`render_line`) ──
+
+#[test]
+fn status_lines_follow_canon_set_status() {
+    let mut s = StatusLines::default();
+    assert_eq!(s.lines(), 1, "정본 기본은 한 줄이다");
+    assert!(s.set_status("2"));
+    assert_eq!(s.lines(), 2);
+    assert!(!s.set_status("2"), "같은 값은 바뀐 것이 아니다(크기 보고를 안 한다)");
+    assert!(s.set_status("off"));
+    assert_eq!(s.lines(), 0, "`off` = 0 줄 = 상태줄을 안 그린다");
+    assert!(s.set_status("on"));
+    assert_eq!(s.lines(), 1, "`on` = 한 줄(종전 뜻)");
+    s.set_status("9");
+    assert_eq!(s.lines(), STATUS_MAX_LINES, "0~5 로 접는다");
+    s.set_status("-3");
+    assert_eq!(s.lines(), 0);
+    assert!(!s.set_status("two"), "정수가 아니면 무시한다");
+    assert_eq!(s.lines(), 0);
+}
+
+#[test]
+fn status_rows_put_the_main_line_at_the_bottom_and_line_one_just_above() {
+    let mut s = StatusLines::default();
+    s.set_status("3");
+    assert!(s.set_format("1 #S extra"));
+    assert!(s.set_format("2   %H"));
+    assert!(!s.set_format("0 nope"), "보조 줄은 1 부터다");
+    assert!(!s.set_format("x nope"));
+    // 위에서 아래로: 보조 2 · 보조 1 · 주 상태.
+    assert_eq!(s.rows(), vec![Some("%H"), Some("#S extra"), None]);
+    s.set_status("2");
+    assert_eq!(s.rows(), vec![Some("#S extra"), None]);
+    s.set_status("1");
+    assert_eq!(s.rows(), vec![None], "한 줄이면 주 상태뿐이다(종전 그림)");
+    s.set_status("0");
+    assert!(s.rows().is_empty());
+}

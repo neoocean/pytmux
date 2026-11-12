@@ -158,7 +158,26 @@ CASES = [
     ("if-shell", "if-shell 'test -f x' 'display-message yes' 'display-message no'"),
     ("if-shell then", "if-shell true 'send-keys foo'"),
     ("version alias", "about"),
+    ("killp", "killp"),
+    ("killw", "killw"),
+    ("detach-client", "detach-client"),
 ]
+
+# 활성 탭이 **원격**인 판(pytmux-624 · 572 의 pin) — `_active_remote_host()` = "box1",
+# 활성 탭 = 병합 전역 index 3. 열쇠는 위 표와 안 겹친다.
+REMOTE = {"host": "box1", "active": 3}
+REMOTE_CASES = [
+    ("kill-tab remote", "kill-tab"),
+    ("killw remote", "killw"),
+    ("pin remote", "pin"),
+    ("unpin remote", "unpin"),
+    ("pin-toggle remote", "pin-toggle"),
+]
+
+# 메뉴(`prefix Enter` · 우클릭)에서 고른 줄 — 정본 `PytmuxApp._run_menu_action(key)` 을 그대로
+# 부른다(pytmux-624: «확인을 거치는 입구 / 바로 나가는 입구»의 메뉴 칸). 확인 판은
+# `confirm_kill_tab`·`confirm_kill_server`·`open_prompt("confirm", …)` 으로 남는다.
+MENU_KEYS = ["kill_pane", "kill_window", "kill_server", "detach"]
 
 # 효과로 따로 싣는 메서드(나머지는 `local`). 값은 효과를 짓는 함수.
 _FIXED = 0
@@ -228,6 +247,11 @@ def main() -> int:
 
         class _Status:
             windows = [{"index": i, "name": f"w{i}", "active": i == 0} for i in range(5)]
+            bg = fg = ""
+
+        class _RemoteStatus:
+            windows = [{"index": i, "name": f"w{i}", "active": i == REMOTE["active"]}
+                       for i in range(5)]
             bg = fg = ""
 
         class _Tabbar:
@@ -308,19 +332,49 @@ def main() -> int:
                     log.append({"local": name})
                 return _rec
 
-        cases = []
-        for key, line in CASES:
+        class RemoteRec(Rec):
+            status = _RemoteStatus()
+
+            def _active_remote_host(self):
+                return REMOTE["host"]
+
+            def _active_tab_index(self):
+                return REMOTE["active"]
+
+        def fresh(cls):
             log.clear()
-            app = Rec()
+            app = cls()
             app.aliases = {}
             app.hooks = {}
             app.bindings = {}
             app.root_bindings = {}
+            return app
+
+        cases = []
+        for ctx, cls, table in ((None, Rec, CASES), ("remote", RemoteRec, REMOTE_CASES)):
+            for key, line in table:
+                app = fresh(cls)
+                try:
+                    app._run_command(line)
+                except Exception as e:  # noqa: BLE001
+                    sys.exit(f"{line!r} 를 정본이 돌리다 넘어졌다 — 스텁을 고칠 것: {e!r}")
+                case = {"key": key, "line": line, "effects": list(log)}
+                if ctx:
+                    case["ctx"] = ctx
+                cases.append(case)
+
+        # 메뉴 칸 — 정본 앱 클래스의 `_run_menu_action` 몸통을 스텁 위에서 부른다.
+        from pytmuxlib.client import build_client_app  # noqa: E402
+        app_cls = type(build_client_app(os.path.join(tmp, "menu.sock")))
+        menu = []
+        for key in MENU_KEYS:
+            app = fresh(Rec)
+            app.open_prompt = lambda kind, *a, **k: log.append({"local": f"prompt:{kind}"})
             try:
-                app._run_command(line)
+                app_cls._run_menu_action(app, key)
             except Exception as e:  # noqa: BLE001
-                sys.exit(f"{line!r} 를 정본이 돌리다 넘어졌다 — 스텁을 고칠 것: {e!r}")
-            cases.append({"key": key, "line": line, "effects": list(log)})
+                sys.exit(f"메뉴 {key!r} 를 정본이 돌리다 넘어졌다 — 스텁을 고칠 것: {e!r}")
+            menu.append({"key": key, "effects": list(log)})
 
     # 모집단 — 정본 갈래마다 대표 줄이 있어야 한다.
     heads = {line.split()[0] for _, line in CASES}
@@ -330,7 +384,7 @@ def main() -> int:
     missing = sorted(sorted(g)[0] for g in groups if not (g & heads))
     if missing:
         sys.exit(f"정본 갈래 {missing} 에 대표 줄이 없다 — CASES 에 더할 것")
-    keys = [k for k, _ in CASES]
+    keys = [k for k, _ in CASES + REMOTE_CASES]
     if len(set(keys)) != len(keys):
         sys.exit("CASES 에 같은 열쇠가 두 번 섰다")
 
@@ -342,6 +396,7 @@ def main() -> int:
                         "출처 = pytmuxlib/clientcmd.py::_CommandMixin._run_command(호출). "
                         "pytmux-572.",
             "cases": cases,
+            "menu": menu,
         }, f, ensure_ascii=False, indent=2)
         f.write("\n")
     print(f"명령 줄 {len(cases)} · 정본 갈래 {len(groups)} → {out}")

@@ -2353,7 +2353,9 @@ impl Screens {
                 // `→` 가 항목 위에서 눌렸거나 표가 비었다 — 아무 일도 안 한다.
                 _ => ScreenKey::Consumed,
             },
-            Key::Escape => {
+            // `F10` 도 닫는다 — 정본 `MenuScreen.on_key` 가 F10 을 Esc 처럼 받는다(메뉴바 토글 ·
+            // pytmux-606). 평소 모드의 F10 이 메뉴를 여니, 같은 키가 한 번 더 닫아야 짝이 맞는다.
+            Key::Escape | Key::Function(10) => {
                 self.close_top();
                 ScreenKey::Closed
             }

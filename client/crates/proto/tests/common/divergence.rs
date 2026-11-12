@@ -338,6 +338,13 @@ pub fn key_of(name: &str) -> Option<(Key, Mods)> {
         "left_square_bracket" => plain(Key::Char('[')),
         "right_square_bracket" => plain(Key::Char(']')),
         _ => {
+            // `f1`~`f12` — 종전에는 `f12` 하나만 읽어 정본 메뉴 판의 `f10`(닫기)을 **조용히
+            // 빼고** 대조했다(pytmux-606 코멘트). 이름을 모르면 `None` 이라 그 키는 아무도 안 잰다.
+            if let Some(n) = name.strip_prefix('f').and_then(|d| d.parse::<u8>().ok())
+                && (1..=12).contains(&n)
+            {
+                return plain(Key::Function(n));
+            }
             let mut chars = name.chars();
             match (chars.next(), chars.next()) {
                 (Some(c), None) if !c.is_control() => plain(Key::Char(c)),

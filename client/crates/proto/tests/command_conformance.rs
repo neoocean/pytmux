@@ -143,6 +143,8 @@ fn only_the_two_known_commands_skip_the_full_resync() {
             // 잰 숫자를 요청 클라에게만 돌려주고 세션 상태는 안 바꾼다(`search_all` 과
             // 같은 결) — 재동기할 캔버스가 없다.
             ("debug_stats", "handled"),
+            // 다른 클라에게 `bye` 를 보낼 뿐 이 클라의 화면은 그대로다(`detach -a` · pytmux-572).
+            ("detach_others", "handled"),
             // 패널을 실제로 죽였을 때만 broadcast 에 맡기고 HANDLED 를 반환한다.
             // 죽일 패널이 없으면 no-op 이라 FULL 로 떨어진다.
             ("kill_pane", "dynamic"),
@@ -152,6 +154,9 @@ fn only_the_two_known_commands_skip_the_full_resync() {
             // 오는 종료 경로가 한다(클라가 "서버 종료됨"으로 닫힌다).
             ("kill_server", "handled"),
             ("kill_window", "handled"),
+            // 회신이 **목록**이다(`{"t":"layouts"}` — `layout-list` · pytmux-572). 그 이름들로
+            // 고르는 물음이 열리고, 고르면 `load_tab_layout` 이 자기 손으로 full 을 보낸다.
+            ("list_layouts", "handled"),
             // 핸들러가 **자기 손으로** full 을 보낸다(`_cmd_load_tab_layout` ·
             // `_cmd_restore_layout`) — 표의 FULL 을 안 쓸 뿐이지 전체 재동기는 온다.
             ("load_tab_layout", "handled"),

@@ -46,6 +46,102 @@ pub enum Run {
     IfShell { cond: String, then: String, otherwise: Option<String> },
     /// `source-file [경로]` — 경로가 없으면 기본 탐색 경로를 다시 읽는다.
     SourceFile(Option<String>),
+    /// **친 명령만의 일** — 팔레트 액션 하나로는 인자가 안 실리거나, 키·클릭과 뜻이 다른
+    /// 줄(정본 `_run_command` 의 갈래 그대로). 무엇이 나가는지는 `proto::command::line_command`
+    /// 한 곳이 정한다(뷰와 적합성 자가 같은 함수를 부른다).
+    Line(Line),
+}
+
+/// 탭 번호를 받는 세 명령(정본 `_tab_target_index` 를 지나는 갈래).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabVerb {
+    Select,
+    Move,
+    Swap,
+}
+
+/// 명령 줄로만 오는 일([`Run::Line`]).
+///
+/// ★ 키·클릭과 **입구가 다른** 것이 여기 선다(pytmux-624): 정본은 친 `kill-tab`·`kill-pane`
+///   을 확인 없이 바로 보내고, 확인 판은 `[x]`·`esc x`·`prefix &`·`prefix x` 의 몫이다. 그래서
+///   친 줄은 [`Action::KillTab`](확인을 세운다)이 아니라 [`Line::KillTab`] 이다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Line {
+    /// 친 번호 그대로 — 양수는 1-based, 음수는 끝에서(정본 `_tab_target_index`).
+    Tab(TabVerb, i64),
+    /// `resize-pane -L|-R|-U|-D [N]` — 칸 수(기본 3 · 정본 `_first_int(args) or 3`).
+    ResizePane { dir: crate::Dir, cells: u16 },
+    /// `rotate-window [-D]`.
+    Rotate { forward: bool },
+    /// `swap-pane -s A -t B` — 패널 번호(0-based, display-panes 번호). 숫자가 아니면 `None`
+    /// (정본 `_pane_id_by_index` 가 비숫자를 `None` 으로 접는다 → 활성 패널).
+    SwapPaneTo { src: Option<usize>, dst: Option<usize> },
+    /// `select-layout <프리셋>` — 이름은 정본처럼 **그대로** 보낸다.
+    SelectLayout(String),
+    /// `join-pane [-h]` — 정본은 `orient` 만 보낸다(대상 = 서버가 정하는 직전 탭).
+    JoinPane { horizontal: bool },
+    /// `detach -a` — 같은 세션의 다른 클라를 뗀다.
+    DetachOthers,
+    /// `paste-buffer [N]`.
+    PasteBuffer(usize),
+    /// 저장된 탭 배치 목록을 묻는다(`layout-list` · 맨이름 `layout-load`) — 회신이 오면 고른다.
+    ListLayouts { new: bool },
+    /// `pane-border-status [on|top|off]` — `None` 은 뒤집기.
+    BorderStatus(Option<bool>),
+    /// 패널로 바로 보낼 바이트(`send-keys -l` — 글자 그대로).
+    Input(Vec<u8>),
+    /// `window-size` 맨이름 = 순환(값 없이 보낸다).
+    WindowSizeCycle,
+    /// `window-size <모르는 값>` — 정본은 사용법만 알린다.
+    WindowSizeUsage,
+    /// 친 `kill-tab` — 확인 없이(로컬 = `kill_window` · 활성 원격 탭 = 그 탭만 떼기).
+    KillTab,
+    /// 친 `kill-pane` — 확인 없이.
+    KillPane,
+    /// `inactive-dim [on|off]` — **이번 판만**(설정 파일에 안 쓴다). `None` 은 뒤집기.
+    InactiveDim(Option<bool>),
+    /// `strip-box-drawing [on|off]` — 이번 판만. `None` 은 뒤집기.
+    StripBoxDrawing(Option<bool>),
+    /// `inactive-dim-ratio [값]` — 이번 판만. `None` 은 지금 값을 알리기만.
+    InactiveDimRatio(Option<String>),
+}
+
+/// `inactive-dim-ratio` 의 값 — 정본 `max(0.0, min(0.8, float(arg)))`. 숫자가 아니면 `None`.
+pub fn dim_ratio(arg: &str) -> Option<f32> {
+    arg.trim().parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 0.8))
+}
+
+/// 이 액션을 뷰가 **확인 판 뒤에** 세우나 — 키·클릭·메뉴가 지나는 입구(pytmux-624).
+///
+/// 정본에서 확인을 거치는 것은 `confirm_kill_tab`(탭 닫기 · `[x]`·`esc x`·`prefix &`) ·
+/// `prefix x` 의 `kill-pane? (y/N)` · `confirm_kill_server` 셋이다. 세션 뷰의
+/// `apply_action` 이 이 표대로 확인 판을 세운다(`session_view_tests` 가 이 표를 전수로 잰다).
+pub fn confirm_gate(action: Action) -> bool {
+    matches!(action, Action::KillTab | Action::KillPane | Action::KillServer)
+}
+
+/// 팔레트(명령 판)에서 **고른** 줄이 하는 일 — 키 입구와 갈리는 것은 kill 둘뿐이다(pytmux-624).
+pub fn palette_run(action: Action) -> Run {
+    // 정본의 명령 입구 둘(`:` 줄 · 명령 목록 판)은 고른 이름을 결국 `_run_command` 로 돌린다 —
+    // 목록 판은 인자 없는 명령이 아니면 `kill-tab ` 을 프롬프트에 채워 Enter 를 기다린다.
+    // 그래서 팔레트(우리의 `:` 줄)에서 고른 `kill-tab`·`kill-pane` 은 **친 명령**이다(확인 없이).
+    match action {
+        Action::KillTab => Run::Line(Line::KillTab),
+        Action::KillPane => Run::Line(Line::KillPane),
+        other => Run::Act(other),
+    }
+}
+
+/// 메뉴(`prefix Enter` · 우클릭)에서 고른 줄이 하는 일 — 정본 `_run_menu_action` 의 갈래.
+///
+/// 대부분은 키로 누른 것과 같은 길(액션)이지만, 정본 메뉴의 `kill_pane` 은 **확인 없이**
+/// `kill_pane` 을 보낸다(같은 일을 `prefix x` 는 묻는다). 그 갈림을 여기 한 곳이 든다 —
+/// 표는 `gen_command_line_fixture.py` 가 정본을 불러 뽑은 `menu` 칸과 견준다.
+pub fn menu_run(key: &str, action: Action) -> Run {
+    match key {
+        "kill_pane" => Run::Line(Line::KillPane),
+        _ => Run::Act(action),
+    }
 }
 
 /// 사용자 명령 별칭 — 설정 파일의 `alias <이름> <명령…>`.
@@ -319,27 +415,63 @@ fn with_args(name: &str, rest: &str, words: &[String]) -> Option<Option<Run>> {
     Some(match name {
         // `select-tab N` — 화면에 보이는 번호(1-based)다. 액션도 같은 번호를 든다
         // (`proto::command::action_to_command_with_tabs` 가 시각 순서로 푼다).
-        "select-tab" if !rest.is_empty() => {
-            first_positive(words).and_then(|n| u8::try_from(n).ok()).map(|n| Run::Act(Action::SelectTab(n)))
+        //   음수(끝에서)·0·큰 번호는 탭 수를 알아야 풀린다 — [`Line::Tab`] 으로 넘긴다.
+        "select-tab" if !rest.is_empty() => tab_target(words).map(|n| {
+            match u8::try_from(n).ok().filter(|n| *n > 0) {
+                Some(n) => Run::Act(Action::SelectTab(n)),
+                None => Run::Line(Line::Tab(TabVerb::Select, n)),
+            }
+        }),
+        // 정본은 1-based 번호를 0-based 자리로 접어 보낸다(`_tab_target_index`) — 그 셈은 탭
+        // 수를 아는 쪽(`proto::command::line_command`)이 한다. 번호가 없으면 정본도 무동작이다.
+        "move-tab" if !rest.is_empty() => tab_target(words).map(|n| Run::Line(Line::Tab(TabVerb::Move, n))),
+        "swap-tab" if !rest.is_empty() => tab_target(words).map(|n| Run::Line(Line::Tab(TabVerb::Swap, n))),
+        // 친 `kill-tab`·`kill-pane` 은 **확인 없이** 나간다(정본 `_run_command` · pytmux-624).
+        // 확인 판은 키·클릭(`Action::KillTab`·`Action::KillPane`)의 몫이다.
+        "kill-tab" => Some(Run::Line(Line::KillTab)),
+        "kill-pane" => Some(Run::Line(Line::KillPane)),
+        "rotate-window" if !rest.is_empty() => Some(Run::Line(Line::Rotate { forward: !has("-D") })),
+        "select-layout" if !rest.is_empty() => {
+            words.first().map(|preset| Run::Line(Line::SelectLayout(preset.clone())))
+        }
+        // 맨이름도 같다 — 정본은 `orient` 만 싣는다(물음을 띄우지 않는다).
+        "join-pane" => Some(Run::Line(Line::JoinPane { horizontal: has("-h") })),
+        "detach-client" if has("-a") => Some(Run::Line(Line::DetachOthers)),
+        "paste-buffer" if !rest.is_empty() => {
+            Some(Run::Line(Line::PasteBuffer(first_unsigned(words).unwrap_or(0))))
+        }
+        "layout-list" => Some(Run::Line(Line::ListLayouts { new: false })),
+        "layout-load" if positional.is_empty() => Some(Run::Line(Line::ListLayouts { new: has("-n") })),
+        "layout-load-new" if positional.is_empty() => Some(Run::Line(Line::ListLayouts { new: true })),
+        // 정본: `on`/`top` = 켜기 · `off` = 끄기 · 그 밖 = 뒤집기(값 없이).
+        "pane-border-status" => Some(Run::Line(Line::BorderStatus(if has("on") || has("top") {
+            Some(true)
+        } else if has("off") {
+            Some(false)
+        } else {
+            None
+        }))),
+        // 세 켜고끄기는 정본에서 **이번 판만** 바꾼다(설정 파일의 값은 기본값일 뿐이다).
+        "inactive-dim" => Some(Run::Line(Line::InactiveDim(on_off(words)))),
+        "strip-box-drawing" => Some(Run::Line(Line::StripBoxDrawing(on_off(words)))),
+        "inactive-dim-ratio" => Some(Run::Line(Line::InactiveDimRatio(words.first().cloned()))),
+        "window-size" if rest.is_empty() => Some(Run::Line(Line::WindowSizeCycle)),
+        "window-size" => {
+            let value = words[0].to_lowercase();
+            if ["smallest", "latest", "largest"].contains(&value.as_str()) {
+                return None;
+            }
+            Some(Run::Line(Line::WindowSizeUsage))
         }
         // tmux 의 `-b`(백그라운드) 깃발은 늘 그렇다 — 명령으로 읽지 않는다.
         //
-        // ⚠ 정본은 그 뒤 **첫 낱말**만 셸에 넘긴다(`_run_shell(args[0])`) — 따옴표로 감싼
-        //   명령(`run-shell 'echo hi'`)은 두 클라가 같다. 따옴표 **없이** 친 여러 낱말
-        //   (`run-shell echo hi there`)은 우리가 줄의 나머지 전부를 넘긴다(종전 GUI 동작 ·
-        //   반토막 셸 명령을 안 만든다). 그 한 칸은 `command_line_conformance` 의 갈림
-        //   대장에 사유와 함께 선다 — 맞출지는 사람이 정한다.
-        "run-shell" if !rest.is_empty() => {
-            let cmd: Vec<&String> = words.iter().filter(|w| *w != "-b").collect();
-            match cmd.as_slice() {
-                [] => None,
-                [one] => Some(Run::Answer(Prompt::RunShell, (*one).clone())),
-                _ => {
-                    let raw = rest.strip_prefix("-b").map_or(rest, str::trim_start);
-                    Some(Run::Answer(Prompt::RunShell, raw.to_owned()))
-                }
-            }
-        }
+        // 정본은 그 뒤 **첫 낱말**만 셸에 넘긴다(`_run_shell(args[0])`) — 따옴표 없이 친 여러
+        //   낱말(`run-shell echo hi there`)은 `echo` 만 돈다. 사람 결정(2026-11-13): 정본을
+        //   따른다. 여러 낱말 명령은 따옴표로 감싼다(`run-shell 'echo hi there'`).
+        "run-shell" if !rest.is_empty() => words
+            .iter()
+            .find(|w| *w != "-b")
+            .map(|cmd| Run::Answer(Prompt::RunShell, cmd.clone())),
         "if-shell" if !rest.is_empty() => (words.len() >= 2).then(|| Run::IfShell {
             cond: words[0].clone(),
             then: words[1].clone(),
@@ -351,6 +483,12 @@ fn with_args(name: &str, rest: &str, words: &[String]) -> Option<Option<Run>> {
         }
         "send-keys" if !rest.is_empty() && !has("-l") => {
             Some(Run::Answer(Prompt::SendKeys, positional.join(" ")))
+        }
+        // `-l` = 글자 그대로 — 이름 키(`Enter`·`C-c`)를 접지 않고 낱말을 **이어 붙여** 보낸다
+        // (정본 `_send_keys` 의 `literal` 갈래 · 낱말 사이에 공백을 안 넣는 것도 정본 그대로).
+        "send-keys" => {
+            let bytes: Vec<u8> = positional.iter().flat_map(|w| w.bytes()).collect();
+            (!bytes.is_empty()).then(|| Run::Line(Line::Input(bytes)))
         }
         "set" if !rest.is_empty() => {
             (positional.len() >= 2).then(|| Run::Answer(Prompt::SetOption, positional.join(" ")))
@@ -378,7 +516,14 @@ fn with_args(name: &str, rest: &str, words: &[String]) -> Option<Option<Run>> {
             if has("-Z") {
                 Some(Run::Act(Action::Zoom))
             } else {
-                words.iter().find_map(|w| flag_dir(w)).map(|d| Run::Act(Action::ResizePane(d)))
+                let cells = first_unsigned(words)
+                    .and_then(|n| u16::try_from(n).ok())
+                    .filter(|n| *n > 0)
+                    .unwrap_or(3);
+                words
+                    .iter()
+                    .find_map(|w| flag_dir(w))
+                    .map(|dir| Run::Line(Line::ResizePane { dir, cells }))
             }
         }
         "select-pane" if !rest.is_empty() => {
@@ -394,19 +539,17 @@ fn with_args(name: &str, rest: &str, words: &[String]) -> Option<Option<Run>> {
         "swap-pane" if !rest.is_empty() && !has("-s") && !has("-t") => {
             Some(Run::Act(Action::SwapPane { forward: !has("-U") }))
         }
+        // `-s`/`-t` <번호> — display-panes 의 0-based 번호(정본 `_pane_id_by_index`).
+        "swap-pane" => {
+            let pane = |flag: &str| opt_value(words, flag).and_then(|w| ascii_digits(w));
+            Some(Run::Line(Line::SwapPaneTo { src: pane("-s"), dst: pane("-t") }))
+        }
         "capture-pane" => Some(Run::Act(Action::CapturePane(has("-S") || has("-a")))),
         // 맨이름은 **순환**이다(정본 `cycle_layout`). 팔레트에서 이 줄을 고르면 프리셋 판이
         // 뜨지만(그건 팔레트의 손), 명령 줄로 오면 정본과 같이 돈다.
         "select-layout" if rest.is_empty() => Some(Run::Act(Action::CycleLayout)),
         // 맨이름은 **전부 떼기**다(정본 `remote_detach` 에 host 없이) — 물음을 띄우지 않는다.
         "remote-detach" if rest.is_empty() => Some(Run::Answer(Prompt::RemoteDetach, String::new())),
-        "inactive-dim-ratio" if !rest.is_empty() => {
-            let value = words.first()?;
-            value
-                .parse::<f32>()
-                .ok()
-                .map(|_| Run::Answer(Prompt::SetOption, format!("inactive-dim-ratio {value}")))
-        }
         _ => return None,
     })
 }
@@ -421,18 +564,50 @@ fn flag_dir(word: &str) -> Option<crate::Dir> {
     })
 }
 
-fn first_positive(words: &[String]) -> Option<usize> {
-    // `-t N` 이 먼저, 없으면 첫 정수 낱말(정본 `_tab_target_index`).
-    if let Some(i) = words.iter().position(|w| w == "-t")
-        && let Some(n) = words.get(i + 1).and_then(|w| w.parse::<usize>().ok())
-    {
-        return (n > 0).then_some(n);
+/// 정본 `_opt_value` — 깃발 바로 뒤 낱말.
+fn opt_value<'a>(words: &'a [String], flag: &str) -> Option<&'a str> {
+    let i = words.iter().position(|w| w == flag)?;
+    words.get(i + 1).map(String::as_str)
+}
+
+/// ASCII 숫자만으로 된 낱말(정본 `isascii() and isdigit()`).
+fn ascii_digits(word: &str) -> Option<usize> {
+    if !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit()) {
+        word.parse().ok()
+    } else {
+        None
     }
-    words
-        .iter()
-        .filter(|w| !w.starts_with('-'))
-        .find_map(|w| w.parse::<usize>().ok())
-        .filter(|n| *n > 0)
+}
+
+/// 정본 `_signed_int` — 앞의 `-` 하나를 허용하는 정수 낱말.
+fn signed_int(word: &str) -> Option<i64> {
+    let body = word.strip_prefix('-').unwrap_or(word);
+    ascii_digits(body)?;
+    word.parse().ok()
+}
+
+/// 정본 `_first_int` — 깃발·음수를 건너뛴 첫 양의 정수(칸 수·버퍼 번호).
+fn first_unsigned(words: &[String]) -> Option<usize> {
+    words.iter().filter(|w| !w.starts_with('-')).find_map(|w| ascii_digits(w))
+}
+
+/// 정본 `_tab_target_index` 의 앞 절반 — `-t N` 이 먼저, 없으면 첫 정수 낱말(음수 포함).
+/// 범위 셈(탭 수)은 [`Line::Tab`] 을 푸는 쪽이 한다.
+fn tab_target(words: &[String]) -> Option<i64> {
+    opt_value(words, "-t")
+        .and_then(signed_int)
+        .or_else(|| words.iter().find_map(|w| signed_int(w)))
+}
+
+/// `on`/`off` 낱말 — 없으면 `None`(뒤집기 · 정본 `"on" in args` 가 먼저다).
+fn on_off(words: &[String]) -> Option<bool> {
+    if words.iter().any(|w| w == "on") {
+        Some(true)
+    } else if words.iter().any(|w| w == "off") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

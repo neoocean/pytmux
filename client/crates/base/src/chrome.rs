@@ -490,6 +490,93 @@ pub fn drag_drop(tabs: &[DragTab], src: usize, target: DragTarget) -> Option<Dra
     })
 }
 
+/// 상태줄 **줄 수와 보조 줄 포맷**(pytmux-575 · 정본 `StatusBar.lines`·`extra`).
+///
+/// - 줄 수는 0~5(기본 1). 0 이면 상태줄을 안 그린다(`set status off`).
+/// - **맨 아래 줄**이 주 상태(배지·시계·`status-left`/`right`)이고, 그 위 줄들이 보조 줄이다.
+///   보조 줄 번호는 tmux `status-format[i]` 와 같다 — **1 이 바닥 바로 위**다.
+/// - 포맷 토큰은 주 상태와 같은 집합이다(`#S`·`#h`·`#H`·`#I`·`#W`·`#{pane_title}`·`%` 코드 —
+///   펼치는 것은 `proto::status::expand` 한 곳).
+///
+/// ⚠ 이것은 **런타임 값**이다 — 정본은 이 둘을 설정 파일 파서(`load_config`)가 아니라 런타임
+///   `set`(`apply_option`)으로만 받고, 설정 파일을 다시 읽어도 안 건드린다. 그래서 [`crate::Config`]
+///   밖에 산다(설정을 다시 읽을 때 지워지지 않게).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusLines {
+    lines: u8,
+    extra: std::collections::BTreeMap<u8, String>,
+}
+
+impl Default for StatusLines {
+    fn default() -> Self {
+        Self { lines: 1, extra: Default::default() }
+    }
+}
+
+/// 상태줄 줄 수의 상한(정본 `set_status_lines` 의 `max(0, min(5, n))`).
+pub const STATUS_MAX_LINES: u8 = 5;
+
+impl StatusLines {
+    /// 지금 줄 수(0~5).
+    pub fn lines(&self) -> u8 {
+        self.lines
+    }
+
+    /// `set status <on|off|N>` — 정본 `apply_option("status")` 그대로: `on`/`true`/`yes` = 1 ·
+    /// `off`/`false`/`no` = 0 · 정수는 0~5 로 접고 · 그 밖은 무시. 줄 수가 **바뀌었으면** 참
+    /// (그때 패널 격자가 줄거나 늘고 그 크기가 서버에 보고된다).
+    pub fn set_status(&mut self, value: &str) -> bool {
+        let v = value.trim().to_lowercase();
+        let n = match v.as_str() {
+            "on" | "true" | "yes" => 1,
+            "off" | "false" | "no" => 0,
+            // 정본 `int(v)` — 부호 있는 정수만(`2.5` 는 ValueError 로 무시된다).
+            other => match other.parse::<i64>() {
+                Ok(n) => n.clamp(0, STATUS_MAX_LINES as i64) as u8,
+                Err(_) => return false,
+            },
+        };
+        let changed = n != self.lines;
+        self.lines = n;
+        changed
+    }
+
+    /// `set status-format <줄> <포맷…>` — 보조 줄(줄 ≥ 1)의 포맷. 포맷이 없으면 빈 줄이다.
+    /// 줄 번호가 정수가 아니거나 1 보다 작으면 무시(정본 `idx >= 1`). 받았으면 참.
+    pub fn set_format(&mut self, value: &str) -> bool {
+        let value = value.trim_start();
+        let (head, fmt) = match value.split_once(char::is_whitespace) {
+            Some((h, f)) => (h, f.trim_start()),
+            None => (value, ""),
+        };
+        match head.parse::<i64>() {
+            Ok(idx) if idx >= 1 => {
+                // 줄 수 상한 밖 번호도 정본은 받아 둔다(나중에 줄 수를 늘리면 보인다).
+                let idx = idx.min(u8::MAX as i64) as u8;
+                self.extra.insert(idx, fmt.to_owned());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 위에서 아래로 그릴 줄들 — 보조 줄은 `Some(포맷)`(없으면 빈 포맷), 맨 아래 주 상태는 `None`.
+    /// 줄 수가 0 이면 빈 목록이다.
+    pub fn rows(&self) -> Vec<Option<&str>> {
+        let h = self.lines as usize;
+        (0..h)
+            .map(|y| {
+                if y + 1 == h {
+                    None
+                } else {
+                    let idx = (h - 1 - y) as u8;
+                    Some(self.extra.get(&idx).map_or("", String::as_str))
+                }
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "chrome_tests.rs"]
 mod tests;

@@ -1348,6 +1348,142 @@
           }
         }
       ]
+    },
+    {
+      "key": "killp",
+      "line": "killp",
+      "effects": [
+        {
+          "wire": {
+            "action": "kill_pane"
+          }
+        }
+      ]
+    },
+    {
+      "key": "killw",
+      "line": "killw",
+      "effects": [
+        {
+          "wire": {
+            "action": "kill_window"
+          }
+        }
+      ]
+    },
+    {
+      "key": "detach-client",
+      "line": "detach-client",
+      "effects": [
+        {
+          "local": "exit"
+        }
+      ]
+    },
+    {
+      "key": "kill-tab remote",
+      "line": "kill-tab",
+      "effects": [
+        {
+          "wire": {
+            "action": "remote_detach",
+            "host": "box1",
+            "index": 3
+          }
+        }
+      ],
+      "ctx": "remote"
+    },
+    {
+      "key": "killw remote",
+      "line": "killw",
+      "effects": [
+        {
+          "wire": {
+            "action": "remote_detach",
+            "host": "box1",
+            "index": 3
+          }
+        }
+      ],
+      "ctx": "remote"
+    },
+    {
+      "key": "pin remote",
+      "line": "pin",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_pinned",
+            "value": true,
+            "index": 3
+          }
+        }
+      ],
+      "ctx": "remote"
+    },
+    {
+      "key": "unpin remote",
+      "line": "unpin",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_pinned",
+            "value": false,
+            "index": 3
+          }
+        }
+      ],
+      "ctx": "remote"
+    },
+    {
+      "key": "pin-toggle remote",
+      "line": "pin-toggle",
+      "effects": [
+        {
+          "wire": {
+            "action": "set_pinned",
+            "index": 3
+          }
+        }
+      ],
+      "ctx": "remote"
+    }
+  ],
+  "menu": [
+    {
+      "key": "kill_pane",
+      "effects": [
+        {
+          "wire": {
+            "action": "kill_pane"
+          }
+        }
+      ]
+    },
+    {
+      "key": "kill_window",
+      "effects": [
+        {
+          "local": "confirm_kill_tab"
+        }
+      ]
+    },
+    {
+      "key": "kill_server",
+      "effects": [
+        {
+          "local": "confirm_kill_server"
+        }
+      ]
+    },
+    {
+      "key": "detach",
+      "effects": [
+        {
+          "local": "exit"
+        }
+      ]
     }
   ]
 }

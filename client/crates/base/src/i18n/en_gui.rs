@@ -174,4 +174,14 @@ pub static EN: &[(&str, &str)] = &[
         "글꼴 «{name}» 이 이 상자에 없다 — 기본 글꼴로 그린다",
         "font «{name}» is not on this box — drawing with the default",
     ),
+    // ── session_view.rs · 설정 파일 bind 경고가 셋을 넘을 때(pytmux-607 · 정본 `msg.config_warn_more`) ──
+    (" 외 {n}건", " +{n} more"),
+    // ── 명령 줄의 이번 판 켜고끄기·탭 번호(pytmux-572 · 정본 `msg.*` 카탈로그와 같은 글) ──
+    ("비활성 패널 흐리게 {state}", "Inactive-pane dim {state}"),
+    ("비활성 패널 흐리게 세기 {ratio}", "Inactive-pane dim strength {ratio}"),
+    ("세기는 0~0.8 사이 숫자여야 합니다", "Strength must be a number between 0 and 0.8"),
+    ("붙여넣기 시 테두리 제거 {state}", "Strip pane borders on paste {state}"),
+    ("탭 번호 범위 초과: {v}", "Tab number out of range: {v}"),
+    ("사용법: window-size [smallest|latest|largest]", "Usage: window-size [smallest|latest|largest]"),
+    ("마우스 진단 로그: {path}", "Mouse debug log: {path}"),
 ];

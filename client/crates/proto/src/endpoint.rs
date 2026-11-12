@@ -101,6 +101,20 @@ impl Endpoint {
         }
     }
 
+    /// 마우스 진단 로그(`set mouse-debug on` · pytmux-575) — 정본 `_mouse_log_path`
+    /// (`state_base(sock_path) + ".mouse.log"`)와 **같은 자리**다. 규칙은 [`Self::lang_file`] 과
+    /// 같다: Unix 는 소켓 경로 + `.mouse.log`, TCP 는 포트파일의 형제 `default.mouse.log`.
+    pub fn mouse_log_file(&self) -> PathBuf {
+        match self {
+            Endpoint::Unix { path, .. } => {
+                let mut file = path.clone().into_os_string();
+                file.push(".mouse.log");
+                PathBuf::from(file)
+            }
+            Endpoint::Tcp { portfile, .. } => portfile.with_extension("mouse.log"),
+        }
+    }
+
     /// 실제로 붙을 포트. TCP 이고 포트가 0 이면 포트파일에서 읽는다.
     pub fn resolve_port(&self) -> Option<u16> {
         match self {

@@ -319,6 +319,29 @@ impl BlockList {
     }
 }
 
+/// 세션 뷰의 블록 고르기(`[block]` 모드 · pytmux-18) 자리를 **지금 목록 안으로** 접는다.
+///
+/// 정본 `plugins/blocks/clientside.py` `_clamp_pick` 과 같은 규칙이다(pytmux-605):
+///
+/// - 고른 패널에서 포커스가 떠났다 → `None`(모드째 나간다)
+/// - 그 패널의 목록이 비었다(스크롤백 회전·`clear-history`) → `None`
+/// - 자리가 목록 끝을 넘었다 → **마지막 블록**으로 접는다
+///
+/// 정본은 이 접기를 키를 받을 때만이 아니라 **서버의 `blocks` 를 받을 때마다** 돌린다 —
+/// 종전 GUI 는 키 입구에서만 포커스를 봐서, 목록이 비어도 `[block]` 에 남아 키를 삼켰다.
+/// `count` 는 고른 패널의 블록 수다(호출부가 그 패널로 센다).
+pub fn fold_block_pick(
+    pick: Option<(i64, usize)>,
+    active: Option<i64>,
+    count: usize,
+) -> Option<(i64, usize)> {
+    let (pane, index) = pick?;
+    if active != Some(pane) || count == 0 {
+        return None;
+    }
+    Some((pane, index.min(count - 1)))
+}
+
 #[cfg(test)]
 #[path = "block_tests.rs"]
 mod tests;

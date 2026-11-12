@@ -130,8 +130,12 @@ pub struct Config {
     pub ambiguous_width: String,
     /// 스크롤 모드의 손버릇(`vi`/`emacs`). 파이썬 기본값은 `vi` 다.
     pub mode_keys: String,
-    /// 사용자가 `bind` 로 건 키들(패리티 G8j).
+    /// 사용자가 `bind` 로 건 키들(패리티 G8j). **같은 표·같은 키는 한 줄**이다 — 뒤 줄이
+    /// 앞 줄을 갈아 끼운다(정본 `keymap.load_config` 가 dict 에 담는 것과 같다 · pytmux-607).
     pub binds: Vec<Bind>,
+    /// 설정 파일의 `bind` 줄이 낸 경고(정본 `cfg["warnings"]` · 같은 문구). 뷰가 기동 직후
+    /// 한 번 띄운다 — 오타 키가 조용히 안 걸리는 바인딩으로 묻히지 않게(pytmux-607 ⑧).
+    pub bind_warnings: Vec<String>,
     /// 붙여넣을 때 패널 테두리(박스드로잉) 글자를 뺄까(기본 켜짐).
     ///
     /// OS 네이티브 선택으로 긁으면 테두리 세로줄(`│`)이 같이 딸려 온다 — 그대로 붙이면
@@ -427,6 +431,7 @@ impl Default for Config {
             set_titles: false,
             set_titles_string: "#S:#I:#W".to_owned(),
             binds: Vec::new(),
+            bind_warnings: Vec::new(),
             mode_keys: "vi".to_owned(),
             status_left: " ".to_owned(),
             status_right: " #{pane_title}#h %H:%M %Y-%m-%d ".to_owned(),
@@ -585,7 +590,15 @@ impl Config {
             // `bind <키> <명령>` · `bind -n <키> <명령>`(prefix 없이 바로).
             if word == "bind" {
                 if let Some(bind) = Bind::parse(line) {
-                    config.binds.push(bind);
+                    // 정본 경고와 같은 문구(`config bind: …` · `config bind -n: …`).
+                    let mut words = line.split_whitespace().skip(1);
+                    let first = words.next().unwrap_or_default();
+                    let raw = if first == "-n" { words.next().unwrap_or_default() } else { first };
+                    if let Some(warn) = bind_key_warning(raw) {
+                        let table = if bind.after_prefix { "config bind" } else { "config bind -n" };
+                        config.bind_warnings.push(format!("{table}: {warn}"));
+                    }
+                    put_bind(&mut config.binds, bind);
                 }
                 continue;
             }
@@ -1803,6 +1816,85 @@ fn theme_or(name: &str) -> String {
     }
 }
 
+/// **런타임 `set` 만 받는 옵션**(pytmux-575) — 정본 `apply_option` 은 받고 설정 파일 파서
+/// (`load_config`)는 안 받는 셋: `status` · `status-format` · `mouse-debug`(별칭 `mouse-log`).
+///
+/// 그래서 설정 파일에 **안 쓰고**(정본도 안 남긴다) [`Config`] 밖에 둔다 — `source-file` 이나
+/// 다른 `set` 이 설정을 다시 읽어도 지워지지 않는다(정본 `reload_config` 도 안 건드린다).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeOpts {
+    pub status: crate::chrome::StatusLines,
+    /// 받은 마우스 이벤트(와 내비게이션 키)를 `<상태 자리>.mouse.log` 에 남기나.
+    pub mouse_debug: bool,
+}
+
+/// [`runtime_set`] 이 바꾼 것 — 뷰가 할 일(알림 · 격자 다시 재기)을 고른다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeSet {
+    /// 상태줄 줄 수가 바뀌었다(패널 격자 높이가 바뀐다 → 서버에 크기 보고).
+    StatusLines,
+    /// 보조 줄 포맷이 바뀌었거나, 줄 수가 그대로인 `set status`.
+    StatusQuiet,
+    /// `mouse-debug` 를 그 값으로 놓았다.
+    MouseDebug(bool),
+}
+
+/// 런타임 전용 옵션이면 그 값을 놓고 무엇이 바뀌었나를 돌려준다. 이 셋이 아니면 `None` —
+/// 뷰는 종전대로 설정 파일에 쓴다.
+pub fn runtime_set(opts: &mut RuntimeOpts, option: &str, value: &str) -> Option<RuntimeSet> {
+    match option {
+        "status" => Some(if opts.status.set_status(value) {
+            RuntimeSet::StatusLines
+        } else {
+            RuntimeSet::StatusQuiet
+        }),
+        "status-format" => {
+            opts.status.set_format(value);
+            Some(RuntimeSet::StatusQuiet)
+        }
+        // 정본 `val.lower() in ("on", "true", "1", "yes")` — 그 밖은 전부 끄기다.
+        "mouse-debug" | "mouse-log" => {
+            let on = matches!(value.trim().to_lowercase().as_str(), "on" | "true" | "1" | "yes");
+            opts.mouse_debug = on;
+            Some(RuntimeSet::MouseDebug(on))
+        }
+        _ => None,
+    }
+}
+
+/// 마우스 진단 로그의 종류 낱말 — 정본 `_log_mouse(kind, …)` 의 첫 인자 그대로(뷰는 이 이름을
+/// 직접 적지 않는다 — `down` 같은 낱말이 키 이름으로 읽혀 계층 게이트가 막는다).
+pub mod mouse_log {
+    pub const DOWN: &str = "down";
+    pub const SCROLL_UP: &str = "scroll_up";
+    pub const SCROLL_DOWN: &str = "scroll_down";
+    pub const PASS: &str = "pass";
+}
+
+/// 마우스 진단 로그 한 줄 — 정본 `_log_mouse` 와 같은 모양
+/// (`HH:MM:SS <종류> x=<x> y=<y> b=<버튼> mode=<모드> <메모>`). 시각은 부르는 쪽이 준다.
+pub fn mouse_log_line(clock: &str, kind: &str, x: i64, y: i64, button: u8, mode: &str, note: &str) -> String {
+    format!("{clock} {kind} x={x} y={y} b={button} mode={mode} {note}\n")
+}
+
+/// 파이썬 `repr(bytes)` 꼴(`b'\x1b[<0;1;1M'`) — 정본 `pass` 줄의 `bytes={data!r}` 와 같은 표기.
+pub fn py_bytes_repr(data: &[u8]) -> String {
+    let mut out = String::from("b'");
+    for &b in data {
+        match b {
+            b'\\' => out.push_str("\\\\"),
+            b'\'' => out.push_str("\\'"),
+            b'\t' => out.push_str("\\t"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            0x20..=0x7e => out.push(b as char),
+            _ => out.push_str(&format!("\\x{b:02x}")),
+        }
+    }
+    out.push('\'');
+    out
+}
+
 /// 설정 파일의 옵션 하나를 **주어진 값으로** 놓는다(`flip_config` 의 값 버전).
 pub fn set_config(
     key: &str,
@@ -2237,10 +2329,97 @@ pub fn user_action(
     mods: Mods,
 ) -> Option<crate::cmdline::Run> {
     let name = crate::keys::binding_name_with(key, mods)?;
+    // 뒤 줄이 이긴다(정본은 dict — 같은 키를 다시 적으면 덮어쓴다 · pytmux-607 ⑤). 읽을 때
+    // [`put_bind`] 가 이미 한 줄로 접지만, 손으로 쌓은 목록도 같은 답을 내게 뒤에서 찾는다.
     binds
         .iter()
+        .rev()
         .filter(|b| b.after_prefix == after_prefix && b.key == name)
         .find_map(|b| b.run(aliases))
+}
+
+/// 바인딩 하나를 표에 넣는다 — 같은 표·같은 키가 있으면 **갈아 끼운다**(정본 dict 대입).
+pub fn put_bind(binds: &mut Vec<Bind>, bind: Bind) {
+    binds.retain(|b| !(b.after_prefix == bind.after_prefix && b.key == bind.key));
+    binds.push(bind);
+}
+
+/// `bind` 키 표기의 경고 — 정본 `keymap.normalize_binding_key` 의 두 번째 값과 **같은 문구**
+/// (pytmux-607 ⑧). 정상이면 `None`.
+///
+/// 정본은 모르는 여러 글자 표기(오타 `Ennter` · `bind -r` 의 `-r`)를 **그대로 바인딩하되**
+/// 이 경고를 낸다. 두 클라 다 `-r`(반복) 플래그가 없어 그것을 키로 읽는다 — 같은 일을 하고,
+/// 정본은 그 사실을 말하는데 GUI 는 조용했다.
+pub fn bind_key_warning(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Some("빈 키 — 바인딩할 키가 없음".to_owned());
+    }
+    if raw.chars().count() <= 1 || raw.contains('+') {
+        return None;
+    }
+    // 수정키 접두를 걷어 낸 나머지가 아는 키면 정상이다(`C-x` · `M-1` · `S-Tab`).
+    let mut rest = raw;
+    let mut had_mod = false;
+    'strip: loop {
+        let low = rest.to_ascii_lowercase();
+        for (pre, _) in MOD_PREFIXES {
+            if low.starts_with(pre) && rest.len() > pre.len() {
+                rest = &rest[pre.len()..];
+                had_mod = true;
+                continue 'strip;
+            }
+        }
+        break;
+    }
+    let known = if had_mod {
+        normalize_base_key(rest).is_some()
+    } else {
+        let low = raw.to_ascii_lowercase();
+        NAMED_KEYS.iter().any(|(k, _)| *k == low)
+            || (low.len() >= 2
+                && low.strip_prefix('f').is_some_and(|d| d.bytes().all(|b| b.is_ascii_digit())))
+    };
+    (!known).then(|| format!("알 수 없는 키 표기 '{raw}' (오타 확인 — 그대로 바인딩)"))
+}
+
+/// 런타임 `bind-key [-n] <키> <명령…>` — **세션 안 표만** 바꾼다(정본 `clientcmd` 와 같다 ·
+/// pytmux-607 ④ 결정 2026-11-13: 정본을 따른다). 돌려주는 것은 상태줄에 띄울 한 줄(정본과
+/// 같은 문구)이고, 인자가 모자라면 정본처럼 아무 일도 안 하고 `None`.
+///
+/// ⛔ 종전 GUI 는 이 줄을 **사용자 설정 파일에 써 넣었다**(`write_bind`) — 정본은 파일을
+/// 안 건드리므로, 한 번 실험 삼아 건 키가 다음 기동에도 살아 있는 것은 GUI 만의 일이었다.
+pub fn bind_in_session(binds: &mut Vec<Bind>, spec: &str) -> Option<String> {
+    let words: Vec<&str> = spec.split_whitespace().collect();
+    let root = words.first() == Some(&"-n");
+    let rest = if root { &words[1..] } else { &words[..] };
+    if rest.len() < 2 {
+        return None;
+    }
+    let key = normalize_bind_key(rest[0]);
+    let warn = bind_key_warning(rest[0]);
+    let message = warn.unwrap_or_else(|| {
+        if root { format!("bound (root) {key}") } else { format!("bound {key}") }
+    });
+    put_bind(binds, Bind { after_prefix: !root, key, command: rest[1..].join(" ") });
+    Some(message)
+}
+
+/// 런타임 `unbind-key <키> | -n <키> | -a` — 정본 `clientcmd` 와 같은 규칙·문구(pytmux-607 ⑥).
+///
+/// `-a` 는 **두 표를 다** 비운다. 종전 GUI 는 `-a` 를 키 이름으로 찾아 아무 일도 안 했다.
+pub fn unbind_in_session(binds: &mut Vec<Bind>, spec: &str) -> Option<String> {
+    let words: Vec<&str> = spec.split_whitespace().collect();
+    if words.contains(&"-a") {
+        let n = binds.len();
+        binds.clear();
+        return Some(format!("unbound all ({n})"));
+    }
+    let root = words.first() == Some(&"-n");
+    let key = normalize_bind_key(words.iter().find(|w| !w.starts_with('-'))?);
+    let before = binds.len();
+    binds.retain(|b| !(b.after_prefix == !root && b.key == key));
+    Some(if binds.len() < before { format!("unbound {key}") } else { format!("no binding: {key}") })
 }
 
 /// `on`/`true`/`1`/`yes` 를 참으로(파이썬 `load_config` 와 같은 목록).

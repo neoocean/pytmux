@@ -161,8 +161,9 @@ impl InputMode {
     /// `i18n.py` 의 `ui.prefix_mode_badge`). 그 전에는 정본 상태줄에 그 표식이 아예
     /// 없었고, 여기 있던 *"정본에 대응하는 문구가 없다"* 는 그때의 사실이다.
     ///
-    /// 남은 둘(`[block]`·`[scroll]`)은 아직 정본에 대응하는 문구가 없어 종전 표기를
-    /// 그대로 둔다 — 지어낸 문구를 정본 문구인 척 둘 수는 없다.
+    /// `[block]` 은 정본 blocks 플러그인의 `ui.block_mode_badge`(`"[block] "`)와 같은 낱말이다
+    /// (pytmux-605 — 꼬리 공백은 칩 패딩이 낸다). 남은 `[scroll]` 은 아직 정본에 대응하는
+    /// 문구가 없어 종전 표기를 그대로 둔다 — 지어낸 문구를 정본 문구인 척 둘 수는 없다.
     pub fn badge(self) -> Option<&'static str> {
         match self {
             InputMode::Normal => None,
@@ -232,6 +233,176 @@ pub enum KeyOutcome {
     Block(BlockKey),
     /// 아무 뜻도 없는 키 — 조용히 버린다(자식에게 쓰레기를 보내지 않는다).
     Ignored,
+    /// `prefix F12` — 중첩 prefix 가로채기를 뒤집었다(pytmux-606 · 정본 `_handle_prefix`
+    /// 의 `prefix_enabled = not prefix_enabled`). 값은 **뒤집은 뒤** 켜져 있나다.
+    ///
+    /// 꺼져 있으면 평소 모드의 prefix 키가 크롬 키가 아니라 패널로 간다 — 안쪽 pytmux/tmux
+    /// 에게 prefix 를 넘기려는 것이 이 토글의 쓰임이다. 뷰는 그 사실을 상태줄에 단다
+    /// (정본 `NEST` 배지 · `outer prefix ON|OFF (중첩)` 알림).
+    PrefixToggled(bool),
+}
+
+/// 정본 `clientutil._JAMO` — 두벌식 자모 → QWERTY(pytmux-583). 모드 안의 키를 IME 와 무관하게
+/// 읽으려고 정본이 거는 표다. 손으로 옮긴 표라 `proto/tests/mode_transition_conformance.rs` 가
+/// 정본 픽스처(`session_keys.json` `jamo`)와 전수로 맞댄다.
+pub static JAMO_QWERTY: &[(char, char)] = &[
+    ('ㅂ', 'q'), ('ㅈ', 'w'), ('ㄷ', 'e'), ('ㄱ', 'r'), ('ㅅ', 't'), ('ㅛ', 'y'), ('ㅕ', 'u'),
+    ('ㅑ', 'i'), ('ㅐ', 'o'), ('ㅔ', 'p'), ('ㅁ', 'a'), ('ㄴ', 's'), ('ㅇ', 'd'), ('ㄹ', 'f'),
+    ('ㅎ', 'g'), ('ㅗ', 'h'), ('ㅓ', 'j'), ('ㅏ', 'k'), ('ㅣ', 'l'), ('ㅋ', 'z'), ('ㅌ', 'x'),
+    ('ㅊ', 'c'), ('ㅍ', 'v'), ('ㅠ', 'b'), ('ㅜ', 'n'), ('ㅡ', 'm'),
+    ('ㅃ', 'Q'), ('ㅉ', 'W'), ('ㄸ', 'E'), ('ㄲ', 'R'), ('ㅆ', 'T'), ('ㅒ', 'O'), ('ㅖ', 'P'),
+];
+
+/// 정본 `clientutil.MAC_OPT_NUMBER_ROW` — 맥 Option+숫자열이 낸 **레이아웃 글자** → 물리 키
+/// (pytmux-583). 같은 픽스처가 전수로 맞댄다.
+pub static MAC_OPT_NUMBER_ROW: &[(char, char)] = &[
+    ('¡', '1'), ('™', '2'), ('£', '3'), ('¢', '4'), ('∞', '5'), ('§', '6'),
+    ('¶', '7'), ('•', '8'), ('ª', '9'), ('º', '0'), ('–', '-'), ('≠', '='),
+];
+
+fn table(tab: &[(char, char)], c: char) -> Option<char> {
+    tab.iter().find(|(from, _)| *from == c).map(|(_, to)| *to)
+}
+
+/// 모드 안에서 키를 **물리 키로** 되돌린다(pytmux-583 · 정본 모드 핸들러들의 정규화).
+///
+/// 정본이 모드마다 거는 것이 다르다 — 그 차이를 그대로 옮긴다(`session_keys.json`
+/// `mode_normalize`):
+///
+/// | 모드 | 자모 → QWERTY | Option 글자 → 숫자 |
+/// | --- | --- | --- |
+/// | esc(`Command`) | ✓ (`hangul_to_qwerty`) | ✓ (`MAC_OPT_NUMBER_ROW`) |
+/// | prefix · 스크롤 | ✓ (`_JAMO`) | ✗ |
+///
+/// ★ esc 모드의 `Alt+숫자` 도 숫자로 접는다. 이 GUI 의 맥 백엔드는 `⌥1` 을 글자 `¡` 가
+/// 아니라 **`1` + Alt** 로 준다(`warpui` 맥 `event.rs` 의 `charactersIgnoringModifiers` —
+/// Option 을 무시한 글자). 정본이 `¡ → 1` 로 되돌리는 손동작이 이 클라에서는 그 모양으로
+/// 온다 — 같은 손동작에 같은 일이 일어나야 하므로 여기서 같은 자리로 접는다.
+///
+/// 평소·블록 모드는 손대지 않는다(평소 모드는 패널에 **원래 글자**를 보낸다 — 정본도
+/// 패스스루 앞에서는 바인딩 토큰만 정규화한다).
+pub fn normalize_mode_key(mode: InputMode, key: Key, mods: Mods) -> (Key, Mods) {
+    let Key::Char(c) = key else { return (key, mods) };
+    if mods.ctrl {
+        return (key, mods);
+    }
+    let (jamo, opt) = match mode {
+        InputMode::Command => (true, true),
+        InputMode::Prefix | InputMode::Scroll => (true, false),
+        InputMode::Normal | InputMode::Block => (false, false),
+    };
+    if opt && mods == Mods::ALT && (c.is_ascii_digit() || c == '-' || c == '=') {
+        return (Key::Char(c), Mods::NONE);
+    }
+    if mods != Mods::NONE {
+        return (key, mods);
+    }
+    if jamo && let Some(q) = table(JAMO_QWERTY, c) {
+        return (Key::Char(q), Mods::NONE);
+    }
+    if opt && let Some(q) = table(MAC_OPT_NUMBER_ROW, c) {
+        return (Key::Char(q), Mods::NONE);
+    }
+    (key, mods)
+}
+
+/// 평소 모드에서 **패널로 안 보내고 클라가 쓰는** 키(pytmux-606 · 정본 `on_key` 의 평소
+/// 갈래 — `session_keys.json` `normal_key_modes`). 아니면 `None`(= 패스스루 후보).
+///
+/// 차례도 정본 그대로다: ESC → 백틱 → `Alt+숫자`·Option 글자 → F10 → F12 → prefix.
+/// `Shift+ESC` 는 여기 없다 — 정본은 오버레이를 닫을 때만 먹고(그것은 뷰가 안다), 아니면
+/// 사용자 바인딩을 지나 패널로 ESC 를 보낸다.
+fn normal_chrome(key: Key, mods: Mods, prefix: (Key, Mods), prefix_on: bool) -> Option<KeyOutcome> {
+    if key == Key::Escape && mods == Mods::NONE {
+        return Some(KeyOutcome::ModeChanged(InputMode::Command));
+    }
+    // 백틱 — ESC 와 더불어 esc 모드 입구(정본 2026-06-12). 리터럴 백틱은 esc 모드에서 한 번
+    // 더(`e_bt`).
+    if key == Key::Char('`') && mods == Mods::NONE {
+        return Some(KeyOutcome::ModeChanged(InputMode::Command));
+    }
+    if let Key::Char(c) = key {
+        // `Alt+숫자` = 그 번호 탭(ESC 다음 숫자가 한 시퀀스로 붙어 온 것 · 정본 `_alt_digit`).
+        if mods == Mods::ALT && c.is_ascii_digit() {
+            return crate::keymap::prefix_number(c).map(KeyOutcome::Action);
+        }
+        // 맥 기본 단말이 같은 손동작을 **글자**로 준 경우. 탭 번호가 없는 `-`/`=` 자리는
+        // 패널로 흘리지 않고 삼킨다(정본: "이 글자들은 절대 타이핑되지 않아야 한다").
+        if mods == Mods::NONE && let Some(q) = table(MAC_OPT_NUMBER_ROW, c) {
+            return Some(match crate::keymap::prefix_number(q) {
+                Some(action) => KeyOutcome::Action(action),
+                None => KeyOutcome::Ignored,
+            });
+        }
+    }
+    if mods == Mods::NONE {
+        match key {
+            Key::Function(10) => return Some(KeyOutcome::Action(crate::Action::ShowMenu)),
+            // 정본 `open_prompt("command")` — 이 클라의 명령 줄은 팔레트다(`prefix :` 와 같은 길).
+            Key::Function(12) => return Some(KeyOutcome::Action(crate::Action::ShowCommands)),
+            _ => {}
+        }
+    }
+    if prefix_on && (key, mods) == prefix {
+        return Some(KeyOutcome::ModeChanged(InputMode::Prefix));
+    }
+    None
+}
+
+/// 사용자 바인딩까지 지난 키 하나의 결과(pytmux-607). `T` 는 걸린 명령 줄(뷰가 실행한다).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Routed<T> {
+    /// 사용자 바인딩이 이 키를 가져갔다. 모드는 이미 정리됐다(prefix 는 한 키만 붙잡는다).
+    Bound(T),
+    /// 내장 차례대로 처리됐다.
+    Key(KeyOutcome),
+}
+
+/// ESC 오토리핏 디바운스(pytmux-610 · 정본 `on_key` 의 `_ESC_DEBOUNCE`).
+///
+/// 직전 ESC/Shift+ESC **도착** 뒤 [`ESC_DEBOUNCE`] 안에 온 ESC 는 반복으로 보고 버린다.
+/// 버리든 받든 도착 시각을 **매번** 새로 적는다(슬라이딩 창) — 쥐고 있는 동안의 빠른
+/// 반복이 전부 버려진다.
+///
+/// # 왜 창 이벤트의 반복 표식을 안 쓰나
+///
+/// 상류가 그 표식을 안 실어 준다(실측 2026-11-13): 맥 `warpui/src/platform/mac/event.rs` 는
+/// `NSEvent.isARepeat` 를 안 읽고, winit 쪽 `key_events.rs` 는 `KeyEvent::repeat` 를
+/// `Event::KeyDown` 에 옮기지 않는다. 그래서 정본과 같은 시간 창을 둔다 — 결과(빠른 더블탭은
+/// 살고, 쥐고 있는 반복은 버려진다)가 정본과 같다.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EscDebounce {
+    last: Option<std::time::Instant>,
+}
+
+/// 정본 `client.py` 의 `self._ESC_DEBOUNCE = 0.06`(픽스처 `esc_debounce_secs` 가 맞댄다).
+pub const ESC_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(60);
+
+/// 정본 `_enter_display` 의 `set_timer(1.5, …)` — `prefix q` 패널 번호가 저절로 닫히는 때
+/// (pytmux-610 · 픽스처 `display_secs` 가 맞댄다).
+pub const PANE_NUMBERS_FOR: std::time::Duration = std::time::Duration::from_millis(1500);
+
+impl EscDebounce {
+    /// 이 키가 반복이라 **버릴 것**이면 `true`. ESC·Shift+ESC 가 아니면 늘 `false`.
+    pub fn drops(&mut self, key: Key, now: std::time::Instant) -> bool {
+        if !matches!(key, Key::Escape | Key::ShiftEscape) {
+            return false;
+        }
+        let prev = self.last.replace(now);
+        prev.is_some_and(|p| now.saturating_duration_since(p) < ESC_DEBOUNCE)
+    }
+}
+
+/// `prefix q` 패널 번호가 떠 있는 동안의 키 하나(pytmux-610 · 정본 `_handle_display_key`).
+///
+/// 숫자면 그 번호(0부터), 아니면 `None` — 어느 쪽이든 번호는 닫히고 키는 **삼킨다**
+/// (정본은 display 모드라 prefix 키까지 「아무 키」다). 숫자의 범위 판정은 레이아웃을 쥔
+/// 뷰가 한다.
+pub fn pane_number_key(key: Key, mods: Mods) -> Option<usize> {
+    match (key, mods) {
+        (Key::Char(c), Mods::NONE) => c.to_digit(10).map(|n| n as usize),
+        _ => None,
+    }
 }
 
 /// 하네스·스크립트가 쓰는 **키 토큰** 하나를 읽는다(`--frame-keys` 등).
@@ -308,19 +479,33 @@ pub fn interpret_full(
     prefix: (Key, Mods),
     mode_keys: &str,
 ) -> KeyOutcome {
+    interpret_core(mode, key, mods, prefix, mode_keys, true)
+}
+
+/// [`interpret_full`] + 중첩 토글(`prefix F12`)이 prefix 를 껐는지(pytmux-606).
+fn interpret_core(
+    mode: InputMode,
+    key: Key,
+    mods: Mods,
+    prefix: (Key, Mods),
+    mode_keys: &str,
+    prefix_on: bool,
+) -> KeyOutcome {
     let is_prefix = (key, mods) == prefix;
+    // 모드 안의 키는 물리 키로 되돌려 읽는다(pytmux-583). prefix 두 번(패스스루)은 원래 키로
+    // 본다 — 정본도 `k == self.prefix_key` 를 정규화 **앞**의 이름으로 견준다.
+    let (key, mods) = normalize_mode_key(mode, key, mods);
     match mode {
         InputMode::Normal => {
+            // ★ 정본이 패널 앞에서 가로채는 크롬 키(pytmux-606) — ESC·백틱·`Alt+숫자`·F10·
+            //   F12·prefix. 종전에는 ESC·prefix 둘뿐이라 나머지가 **패널로 샜다**.
+            if let Some(outcome) = normal_chrome(key, mods, prefix, prefix_on) {
+                return outcome;
+            }
             // ★ `Shift+ESC` 는 **모드에 안 들어가고** 패널에 ESC 를 준다(파이썬 `e_sesc`).
             // 이게 없으면 vim 안에서 ESC 를 칠 때마다 모드에 들어갔다 나와야 한다.
             if key == Key::ShiftEscape {
                 return KeyOutcome::ToPane(vec![0x1b]);
-            }
-            if key == Key::Escape && mods == Mods::NONE {
-                return KeyOutcome::ModeChanged(InputMode::Command);
-            }
-            if is_prefix {
-                return KeyOutcome::ModeChanged(InputMode::Prefix);
             }
             match encode(key, mods) {
                 Some(bytes) => KeyOutcome::ToPane(bytes),
@@ -429,6 +614,12 @@ pub fn interpret_full(
                     None => KeyOutcome::Ignored,
                 };
             }
+            // `prefix F12` — 중첩 prefix 가로채기 토글(정본 `_handle_prefix` · pytmux-606).
+            // 종전에는 표에 없어 **모드만 풀고 아무 일도 안 했다** — 모드만 재던 자가 그것을
+            // 초록으로 셌다.
+            if key == Key::Function(12) && mods == Mods::NONE {
+                return KeyOutcome::PrefixToggled(!prefix_on);
+            }
             match prefix_action(key, mods) {
                 Some(crate::Action::EnterScroll) => KeyOutcome::ModeChanged(InputMode::Scroll),
                 Some(action) => KeyOutcome::Action(action),
@@ -506,6 +697,9 @@ pub struct ModeState {
     mode: InputMode,
     /// prefix 키. 설정(`set prefix C-a`)이 있으면 그 값이다(패리티 G5).
     prefix: (Key, Mods),
+    /// 평소 모드에서 prefix 키를 가로채나(`prefix F12` 가 뒤집는다 · pytmux-606). 정본
+    /// `prefix_enabled` 와 같은 뜻 — 끄면 prefix 키가 패널(안쪽 멀티플렉서)로 간다.
+    prefix_on: bool,
 }
 
 impl Default for ModeState {
@@ -513,6 +707,7 @@ impl Default for ModeState {
         Self {
             mode: InputMode::default(),
             prefix: (Key::Char('b'), Mods::CTRL),
+            prefix_on: true,
         }
     }
 }
@@ -523,7 +718,13 @@ impl ModeState {
         Self {
             mode: InputMode::default(),
             prefix,
+            prefix_on: true,
         }
+    }
+
+    /// 평소 모드가 prefix 키를 가로채나(`prefix F12` 로 끈 동안 `false` — 상태줄 `NEST`).
+    pub fn prefix_on(self) -> bool {
+        self.prefix_on
     }
 
     /// 지금 prefix 키(도움말·상태 표시에 쓴다).
@@ -582,8 +783,12 @@ impl ModeState {
 
     /// `mode-keys` 설정을 아는 판(패리티 G8l).
     pub fn press_in(&mut self, mode_keys: &str, key: Key, mods: Mods) -> KeyOutcome {
-        let outcome = interpret_full(self.mode, key, mods, self.prefix, mode_keys);
+        let outcome = interpret_core(self.mode, key, mods, self.prefix, mode_keys, self.prefix_on);
         match &outcome {
+            KeyOutcome::PrefixToggled(on) => {
+                self.prefix_on = *on;
+                self.mode = InputMode::Normal;
+            }
             KeyOutcome::ToPane(_) => self.mode = InputMode::Normal,
             KeyOutcome::ModeChanged(next) => self.mode = *next,
             // ★ 프롬프트 점프만은 평소 모드로 안 돌아간다 — **스크롤 모드로 들어간다**
@@ -630,6 +835,58 @@ impl ModeState {
             }
         }
         outcome
+    }
+
+    /// 사용자 바인딩을 **정본과 같은 차례**에 끼워 키 하나를 처리한다(pytmux-607).
+    ///
+    /// `bound(after_prefix, key, mods)` 는 그 표에 걸린 줄을 찾는다(뷰가 `config::user_action`
+    /// 으로 준다). 키는 정본처럼 **자모를 QWERTY 로 되돌린 것**이 간다(`bind -n q` 가 한글
+    /// 상태에서도 걸린다 — 정본 `_JAMO.get(ch)`).
+    ///
+    /// | 모드 | 정본 차례 |
+    /// | --- | --- |
+    /// | prefix | prefix 두 번(패스스루) → **prefix 표** → 내장(F12 토글 포함) |
+    /// | 평소 | 내장 크롬 키(ESC·백틱·`Alt+숫자`·F10·F12·prefix) → **root 표**(`bind -n`) → 패널 |
+    /// | esc·스크롤·블록 | 바인딩을 **안 본다**(정본 root 표는 평소 모드 갈래에만 있다) |
+    ///
+    /// 판·팝업이 떠 있을 때 안 부르는 것은 호출부 몫이다(정본 `len(screen_stack) > 1` 이면
+    /// `on_key` 가 아예 안 돈다).
+    ///
+    /// ⛔ 종전 GUI 는 바인딩을 **판·모드보다 먼저** 봤다 — 판 안·esc 안에서도 `bind -n` 이
+    /// 발화했고 `bind -n Escape`·`bind C-b`(prefix 와 같은 키)가 내장을 덮었다.
+    pub fn press_routed<T>(
+        &mut self,
+        mode_keys: &str,
+        key: Key,
+        mods: Mods,
+        bound: impl FnOnce(bool, Key, Mods) -> Option<T>,
+    ) -> Routed<T> {
+        let jamo = |key: Key, mods: Mods| match key {
+            Key::Char(c) if !mods.ctrl => {
+                (table(JAMO_QWERTY, c).map_or(key, Key::Char), mods)
+            }
+            _ => (key, mods),
+        };
+        match self.mode {
+            InputMode::Prefix if (key, mods) != self.prefix => {
+                let (k, m) = jamo(key, mods);
+                if let Some(run) = bound(true, k, m) {
+                    // prefix 모드는 **키 하나만** 붙잡는다(tmux · 정본과 같다).
+                    self.mode = InputMode::Normal;
+                    return Routed::Bound(run);
+                }
+            }
+            InputMode::Normal
+                if normal_chrome(key, mods, self.prefix, self.prefix_on).is_none() =>
+            {
+                let (k, m) = jamo(key, mods);
+                if let Some(run) = bound(false, k, m) {
+                    return Routed::Bound(run);
+                }
+            }
+            _ => {}
+        }
+        Routed::Key(self.press_in(mode_keys, key, mods))
     }
 }
 

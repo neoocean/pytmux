@@ -146,13 +146,18 @@ fn an_argument_skips_the_question_and_answers_it() {
         resolve("rename-tab 빌드"),
         Some(HookRun::Answer(Prompt::RenameTab, String::from("빌드")))
     );
-    // 인자는 **줄의 나머지 전부**다 — 공백에서 자르면 셸 명령이 반토막 난다.
+    // 셸 명령은 **첫 낱말**이다(정본 `_run_shell(args[0])` · 사람 결정 2026-11-13: 정본을
+    // 따른다) — 여러 낱말 명령은 따옴표로 감싸야 통째로 간다.
     assert_eq!(
-        resolve("run-shell echo hi there"),
+        resolve("run-shell 'echo hi there'"),
         Some(HookRun::Answer(
             Prompt::RunShell,
             String::from("echo hi there")
         ))
+    );
+    assert_eq!(
+        resolve("run-shell echo hi there"),
+        Some(HookRun::Answer(Prompt::RunShell, String::from("echo")))
     );
 }
 
@@ -164,7 +169,7 @@ fn the_canon_aliases_resolve_too() {
         Some(HookRun::Answer(Prompt::RenameTab, String::from("H")))
     );
     assert_eq!(
-        resolve("run echo hi"),
+        resolve("run 'echo hi'"),
         Some(HookRun::Answer(Prompt::RunShell, String::from("echo hi")))
     );
 }

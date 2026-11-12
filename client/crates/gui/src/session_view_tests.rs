@@ -2243,6 +2243,59 @@ fn the_pane_numbers_are_drawn_by_us_not_by_the_compositor() {
     assert!(drawn > 1, "배지가 알약도 숫자도 안 그린다({drawn})");
 }
 
+#[test]
+fn pane_numbers_close_after_the_canon_delay_and_swallow_a_non_digit() {
+    // pytmux-610 관문 ①② — 정본 `_enter_display`(1.5초 타이머) · `_handle_display_key`(삼킴).
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    let t0 = std::time::Instant::now();
+    view.set_key_clock_for_test(Some(t0));
+    view.handle_key(Key::Char('b'), Mods::CTRL);
+    view.handle_key(Key::Char('q'), Mods::NONE);
+    assert!(view.state.pane_numbers(), "prefix q 가 번호를 안 띄웠다");
+    view.set_key_clock_for_test(Some(t0 + std::time::Duration::from_millis(1400)));
+    assert!(!view.tick_pane_numbers_for_test(), "1.5초 전에 닫혔다");
+    view.set_key_clock_for_test(Some(t0 + std::time::Duration::from_millis(1500)));
+    assert!(view.tick_pane_numbers_for_test(), "1.5초가 지났는데 안 닫혔다");
+    assert!(!view.state.pane_numbers());
+    // 다시 띄우고 글자 키 → 닫히고 **패널로 0 바이트**.
+    view.handle_key(Key::Char('b'), Mods::CTRL);
+    view.handle_key(Key::Char('q'), Mods::NONE);
+    sent.lock().unwrap().clear();
+    assert!(view.handle_key(Key::Char('x'), Mods::NONE));
+    view.pump_headless();
+    assert!(!view.state.pane_numbers(), "아무 키가 번호를 안 닫았다");
+    assert!(pane_bytes(&sent).is_empty(), "번호가 뜬 동안의 글자가 패널로 샜다");
+    // prefix 키도 「아무 키」다 — 닫고 삼킨다(prefix 모드로 안 간다).
+    view.handle_key(Key::Char('b'), Mods::CTRL);
+    view.handle_key(Key::Char('q'), Mods::NONE);
+    view.handle_key(Key::Char('b'), Mods::CTRL);
+    assert_eq!(view.mode.mode(), InputMode::Normal, "번호 위 prefix 가 prefix 모드를 열었다");
+}
+
+#[test]
+fn held_escape_repeats_inside_the_debounce_window_are_dropped() {
+    // pytmux-610 관문 ③(뷰 배선) — 60ms 안의 ESC 는 버리고, 그 밖의 더블탭은 산다.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    let t0 = std::time::Instant::now();
+    let mut flips = 0;
+    for i in 0..10u64 {
+        view.set_key_clock_for_test(Some(t0 + std::time::Duration::from_millis(33 * i)));
+        let before = view.mode.mode();
+        view.handle_key(Key::Escape, Mods::NONE);
+        flips += usize::from(view.mode.mode() != before);
+    }
+    assert_eq!(flips, 1, "쥔 ESC 가 모드를 {flips} 번 뒤집었다");
+    view.set_key_clock_for_test(Some(t0 + std::time::Duration::from_secs(2)));
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.mode.mode(), InputMode::Normal, "의도한 둘째 ESC 가 버려졌다");
+    view.pump_headless();
+    assert!(pane_bytes(&sent).is_empty());
+}
+
 // ── 네이티브 시계(pytmux-458 장치 · 459 그림) ────────────────────────────────
 //
 // ⛔ 여기서 재는 것은 **그림이 실제로 서나**다. 「상태를 받았다」로 초록을 만들면 그리기
@@ -4259,6 +4312,151 @@ fn a_bound_key_with_arguments_runs_the_whole_command_line() {
     }
 }
 
+/// 이 뷰가 지금까지 패널로 보낸 바이트(키 입력 길 — `Outgoing::Input`).
+fn pane_bytes(sent: &Sent) -> Vec<u8> {
+    sent.lock()
+        .unwrap()
+        .iter()
+        .filter_map(|o| match o {
+            Outgoing::Input(b) => Some(b.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+fn two_tabs_status() -> ServerMessage {
+    serde_json::from_value(serde_json::json!({
+        "t": "status",
+        "windows": [{"index": 0, "name": "a", "active": true},
+                    {"index": 1, "name": "b", "active": false}],
+        "active_pane": 1,
+    }))
+    .unwrap()
+}
+
+#[test]
+fn normal_mode_chrome_keys_open_their_surface_and_send_nothing_to_the_pane() {
+    // pytmux-606 관문 ② — 다섯 키 각각 「패널 바이트 0 + 해당 액션·모드」(뷰 배선까지).
+    let (mut view, tx, sent) = harness();
+    for msg in [layout_one_pane(), two_tabs_status()] {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    sent.lock().unwrap().clear();
+    // 백틱 → esc 모드.
+    view.handle_key(Key::Char('`'), Mods::NONE);
+    assert_eq!(view.mode.mode(), InputMode::Command, "백틱이 esc 모드를 안 열었다");
+    view.mode.reset();
+    // F10 → 메뉴, 다시 F10 → 닫힘(정본 메뉴바 토글).
+    view.handle_key(Key::Function(10), Mods::NONE);
+    assert_eq!(view.screens.top(), Some(Screen::Menu), "F10 이 메뉴를 안 열었다");
+    view.handle_key(Key::Function(10), Mods::NONE);
+    assert_eq!(view.screens.top(), None, "메뉴 위 F10 이 안 닫았다");
+    // F12 → 명령 줄(팔레트).
+    view.handle_key(Key::Function(12), Mods::NONE);
+    assert_eq!(view.screens.top(), Some(Screen::Commands), "F12 가 명령 줄을 안 열었다");
+    view.handle_key(Key::Escape, Mods::NONE);
+    // Alt+2 → 그 번호 탭.
+    view.handle_key(Key::Char('2'), Mods::ALT);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::SelectWindow { index: 1, .. }))),
+        "Alt+2 가 둘째 탭으로 안 갔다: {out:?}"
+    );
+    assert!(pane_bytes(&sent).is_empty(), "크롬 키가 패널로 샜다: {:?}", pane_bytes(&sent));
+}
+
+#[test]
+fn prefix_f12_turns_the_outer_prefix_off_and_says_so() {
+    // pytmux-606 관문 ③ — 모드만이 아니라 액션(토글·알림)까지.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.handle_key(Key::Char('b'), Mods::CTRL);
+    view.handle_key(Key::Function(12), Mods::NONE);
+    assert!(!view.mode.prefix_on(), "prefix F12 가 바깥 prefix 를 안 껐다");
+    let said: Vec<String> = view.state_for_test().notices().map(|n| n.text.clone()).collect();
+    assert!(said.iter().any(|s| s == "outer prefix OFF (중첩)"), "알림이 없다: {said:?}");
+    sent.lock().unwrap().clear();
+    view.handle_key(Key::Char('b'), Mods::CTRL);
+    view.pump_headless();
+    assert_eq!(pane_bytes(&sent), vec![0x02], "끈 뒤의 prefix 키가 안쪽으로 안 갔다");
+    assert_eq!(view.mode.mode(), InputMode::Normal);
+}
+
+#[test]
+fn escape_closes_an_overlay_first_instead_of_entering_esc_mode() {
+    // pytmux-606 ④ — 정본 `on_key` 의 `_close_active_overlay()`.
+    for key in [Key::Escape, Key::Char('`'), Key::ShiftEscape] {
+        let (mut view, tx, sent) = harness();
+        tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+        view.pump_headless();
+        view.state.set_overlay("clock", true).expect("오버레이를 못 켰다");
+        sent.lock().unwrap().clear();
+        view.handle_key(key, Mods::NONE);
+        view.pump_headless();
+        assert_eq!(view.mode.mode(), InputMode::Normal, "{key:?}: 닫는 대신 모드에 들어갔다");
+        assert!(view.state.overlay_on_pane(1).is_none(), "{key:?}: 오버레이가 안 닫혔다");
+        let out = sent.lock().unwrap().clone();
+        assert!(
+            out.iter().any(|o| matches!(o, Outgoing::Command(Command::PluginOverlay { on: false, .. }))),
+            "{key:?}: 서버에 끔을 안 올렸다: {out:?}"
+        );
+        assert!(pane_bytes(&sent).is_empty(), "{key:?}: 패널로 ESC 가 샜다");
+    }
+}
+
+#[test]
+fn a_root_binding_does_not_fire_over_a_board_or_inside_esc_mode() {
+    // pytmux-607 관문 ① — 판이 떠 있으면 판의 것, esc 모드면 그 모드의 것.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.config = base::Config::parse("bind -n q send-keys BOUND\nbind -n Escape send-keys BOUND\n");
+    // 팔레트 위의 `q` 는 필터로 간다.
+    view.handle_key(Key::Function(12), Mods::NONE);
+    view.handle_key(Key::Char('q'), Mods::NONE);
+    assert_eq!(view.screens.typed_filter(), "q", "판 위에서 바인딩이 글자를 가져갔다");
+    view.handle_key(Key::Escape, Mods::NONE);
+    // `bind -n Escape` 는 내장(esc 진입)을 못 덮는다.
+    view.handle_key(Key::Escape, Mods::NONE);
+    assert_eq!(view.mode.mode(), InputMode::Command, "bind -n Escape 가 내장을 덮었다");
+    // esc 모드 안의 `q` 는 그 모드의 것(모르는 키 = 모드 해제)이다.
+    view.handle_key(Key::Char('q'), Mods::NONE);
+    view.pump_headless();
+    assert!(
+        !pane_bytes(&sent).windows(5).any(|w| w == b"BOUND"),
+        "판·esc 안에서 바인딩이 발화했다"
+    );
+    // 평소 모드의 `q` 는 바인딩이 가져간다(그것이 `bind -n` 의 자리다).
+    assert_eq!(view.mode.mode(), InputMode::Normal);
+    view.handle_key(Key::Char('q'), Mods::NONE);
+    view.pump_headless();
+    assert!(pane_bytes(&sent).windows(5).any(|w| w == b"BOUND"), "평소 모드에서 안 걸렸다");
+}
+
+#[test]
+fn a_runtime_bind_lives_in_the_session_not_in_the_config_file() {
+    // pytmux-607 ④ 결정(정본을 따른다) — 런타임 `bind-key` 는 세션 표만, 파일은 그대로.
+    let (mut view, tx, sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    let before = base::Config::path().and_then(|p| std::fs::read_to_string(p).ok());
+    assert!(view.run_command_line("bind-key -n F7 send-keys HIT"));
+    assert_eq!(
+        base::Config::path().and_then(|p| std::fs::read_to_string(p).ok()),
+        before,
+        "런타임 bind 가 설정 파일을 고쳤다"
+    );
+    view.handle_key(Key::Function(7), Mods::NONE);
+    view.pump_headless();
+    assert_eq!(pane_bytes(&sent), b"HIT".to_vec(), "건 키가 이번 세션에 안 먹는다");
+    assert!(view.run_command_line("unbind-key -a"));
+    assert!(view.config.binds.is_empty(), "unbind -a 가 안 비웠다");
+}
+
 #[test]
 fn if_shell_then_runs_a_command_line_with_arguments() {
     // pytmux-572 관문 ② — then 이 인자 있는 명령이다(종전에는 「모르는 명령이다」).
@@ -5281,6 +5479,78 @@ fn monitor_badges_sit_in_the_bottom_status_bar_not_the_tab_bar() {
         !painted.iter().any(|t| t.contains("[벨감시]")),
         "감춘 표식이 그려졌다: {painted:?}"
     );
+}
+
+#[test]
+fn set_status_two_draws_the_format_line_just_above_the_main_status() {
+    // pytmux-575 관문 ① — `set status 2` + `set status-format 1 "…"` → 상태줄이 두 줄이고 위 줄이
+    // 그 포맷이다(정본 `render_line`: 줄 1 = 바닥 바로 위). 자리는 그리기 순서로 잰다.
+    let screen: ServerMessage = serde_json::from_value(serde_json::json!({
+        "t": "screen", "pane": 1,
+        "rows": [[["HELLO-ORACLE", {}]]], "cursor": [0, 0], "wrap": [], "top": 0
+    }))
+    .unwrap();
+    let paint = |lines: &'static str| {
+        painted_after_setup(vec![layout_one_pane(), screen.clone()], &[], move |v| {
+            v.config.status_left = "MAIN-ORACLE".to_owned();
+            v.apply_set_line(&format!("status {lines}"));
+            v.apply_set_line("status-format 1 EXTRA-ORACLE");
+        })
+    };
+    let two = paint("2");
+    let at = |p: &[String], s: &str| p.iter().position(|t| t.contains(s));
+    let (canvas, extra, main) = (at(&two, "HELLO-ORACLE"), at(&two, "EXTRA-ORACLE"), at(&two, "MAIN-ORACLE"));
+    assert!(extra.is_some() && main.is_some() && canvas.is_some(), "두 줄이 다 안 그려졌다: {two:?}");
+    assert!(canvas < extra && extra < main, "줄 1 은 캔버스 아래 · 주 상태 위다: {two:?}");
+    // 한 줄이면 보조 줄은 없다(종전 그림) · `off` 면 상태줄 자체가 없다.
+    let one = paint("1");
+    assert!(at(&one, "EXTRA-ORACLE").is_none() && at(&one, "MAIN-ORACLE").is_some(), "{one:?}");
+    let off = paint("off");
+    assert!(at(&off, "MAIN-ORACLE").is_none() && at(&off, "HELLO-ORACLE").is_some(), "{off:?}");
+}
+
+#[test]
+fn the_status_line_count_is_what_the_grid_gives_up() {
+    // pytmux-575 — 줄 수만큼 캔버스 아래 몫이 늘고 준다(정본 `_content_size` 의 `- status.lines`).
+    // 그 몫이 `report_size` 의 `footer_px` 이고, 격자가 바뀌면 그 크기가 서버에 보고된다.
+    let (mut view, _tx, _sent) = harness();
+    assert_eq!(view.footer_lines(), 2, "기본 = 상태줄 한 줄 + 메시지 줄");
+    view.apply_set_line("status 3");
+    assert_eq!(view.footer_lines(), 4);
+    view.apply_set_line("status off");
+    assert_eq!(view.footer_lines(), 1, "`off` 면 상태줄 몫이 없다");
+    // 런타임 값이라 설정 파일을 안 고친다(정본도 안 남긴다).
+    assert!(
+        !base::Config::path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .is_some_and(|t| t.lines().any(|l| l.starts_with("set status "))),
+        "`set status` 가 설정 파일에 남았다"
+    );
+}
+
+#[test]
+fn mouse_debug_writes_one_canon_shaped_line_per_click() {
+    // pytmux-575 관문 ③ — `set mouse-debug on` 뒤 클릭 하나가 로그 한 줄을 남긴다.
+    let dir = std::env::temp_dir().join(format!("pytmux-gui-mouselog-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("default.sock.mouse.log");
+    let _ = std::fs::remove_file(&path);
+    let (mut view, tx, _sent) = harness();
+    tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+    view.pump_headless();
+    view.set_mouse_log_path_for_test(path.clone());
+    view.handle_mouse_down((3, 2), false);
+    assert!(!path.exists(), "꺼져 있는데 로그를 썼다");
+    view.apply_set_line("mouse-debug on");
+    view.handle_mouse_down((3, 2), false);
+    let text = std::fs::read_to_string(&path).expect("로그가 없다");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "클릭 하나 = 한 줄: {text:?}");
+    assert!(lines[0].ends_with(" down x=3 y=2 b=1 mode=normal "), "정본 `_log_mouse` 모양이 아니다: {text:?}");
+    view.apply_set_line("mouse-log off");
+    view.handle_mouse_down((3, 2), false);
+    assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 1, "끈 뒤에도 썼다");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -9199,25 +9469,15 @@ fn closing_a_remote_tab_detaches_that_one_tab_on_every_road() {
     // 활성 탭이 원격이면 `kill_window`(서버가 «원격 탭에서는 사용할 수 없는 명령입니다» 로
     // 거절한다) 대신 `remote_detach(host, index=<병합 전역 index>)` 로 **그 탭 하나만** 뗀다.
     //
-    // 길 셋을 모두 잰다 — `[x]` 클릭 · 팔레트 `kill-tab` · 키(`Action::KillTab` = prefix `&`·
-    // 탭바 `x`). 셋 다 같은 확인 판을 거쳐 같은 명령이 나가야 한다.
+    // 확인 판을 거치는 길 둘을 잰다 — `[x]` 클릭 · 키(`Action::KillTab` = prefix `&`·탭바 `x`).
+    // 둘 다 같은 확인 판을 거쳐 같은 명령이 나가야 한다. **친** `kill-tab`(팔레트 · 명령 줄)은
+    // 정본처럼 확인 없이 나간다 — 바로 아래 시험이 잰다(pytmux-624).
     use base::chrome::ClickTarget;
     use base::TabSpot;
     type Road = fn(&mut SessionView);
-    let roads: [(&str, Road); 3] = [
+    let roads: [(&str, Road); 2] = [
         ("[x] 클릭", |v| {
             v.chrome_click(ClickTarget::Spot(TabSpot::Close));
-        }),
-        ("팔레트 kill-tab", |v| {
-            v.handle_key(Key::Escape, Mods::NONE);
-            v.pump_headless();
-            v.handle_key(Key::Char(':'), Mods::NONE);
-            v.pump_headless();
-            for c in "kill-tab".chars() {
-                v.handle_key(Key::Char(c), Mods::NONE);
-                v.pump_headless();
-            }
-            v.handle_key(Key::Enter, Mods::NONE);
         }),
         ("키(KillTab)", |v| {
             v.apply_action_for_test(base::Action::KillTab);
@@ -9271,6 +9531,90 @@ fn closing_a_remote_tab_detaches_that_one_tab_on_every_road() {
             !out.iter().any(|o| matches!(o, Outgoing::Command(Command::KillWindow))),
             "{name}: 원격 탭에 kill_window 가 나갔다(서버가 거절한다): {out:?}"
         );
+    }
+}
+
+#[test]
+fn a_typed_kill_tab_goes_out_without_the_confirm_board_on_every_typed_road() {
+    // pytmux-624 — 정본 `_run_command` 의 `kill-tab` 갈래는 묻지 않는다(확인 판은 `[x]`·`esc x`
+    // 의 몫이다). 친 길 셋(팔레트 · 명령 줄 실행기 · `bind`)과 판의 둘(로컬 · 활성 원격)을 잰다.
+    type Road = fn(&mut SessionView);
+    let roads: [(&str, Road); 3] = [
+        ("팔레트 kill-tab", |v| {
+            v.handle_key(Key::Escape, Mods::NONE);
+            v.pump_headless();
+            v.handle_key(Key::Char(':'), Mods::NONE);
+            v.pump_headless();
+            for c in "kill-tab".chars() {
+                v.handle_key(Key::Char(c), Mods::NONE);
+                v.pump_headless();
+            }
+            v.handle_key(Key::Enter, Mods::NONE);
+        }),
+        ("명령 줄 killw", |v| {
+            assert!(v.run_command_line("killw"));
+        }),
+        ("bind F8 kill-tab", |v| {
+            v.config.binds = base::Config::parse("bind -n F8 kill-tab").binds;
+            v.handle_key(Key::Function(8), Mods::NONE);
+        }),
+    ];
+    let local: Vec<ServerMessage> = vec![
+        layout_one_pane(),
+        serde_json::from_value(serde_json::json!({
+            "t": "status",
+            "windows": [{"index": 0, "name": "하나", "active": true}, {"index": 1, "name": "둘"}]
+        }))
+        .unwrap(),
+    ];
+    for (name, road) in roads {
+        for (board, messages, want) in [
+            ("로컬", local.clone(), Command::KillWindow),
+            ("원격", remote_tab_active(), Command::RemoteDetach { host: "box".into(), index: Some(2) }),
+        ] {
+            let (mut view, tx, sent) = harness();
+            for msg in messages {
+                tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+            }
+            view.pump_headless();
+            road(&mut view);
+            view.pump_headless();
+            assert_eq!(view.screens.confirm_title(), None, "{name}·{board}: 확인 판이 떴다");
+            let kills: Vec<Command> = sent
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|o| match o {
+                    Outgoing::Command(c @ (Command::KillWindow | Command::RemoteDetach { .. })) => Some(c.clone()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(kills, vec![want], "{name}·{board}: 나간 것이 정본과 다르다");
+        }
+    }
+}
+
+#[test]
+fn the_confirm_board_stands_exactly_where_the_core_gate_says() {
+    // pytmux-624 — 키·클릭 입구의 확인 판은 `base::cmdline::confirm_gate` 한 표다(적합성 자가 그 표로
+    // 정본과 견준다). 뷰의 `apply_action` 이 그 표대로 구는지 액션 전수로 잰다.
+    for action in base::keymap::all_actions() {
+        let (mut view, tx, sent) = harness();
+        tx.send(LinkEvent::Message(Box::new(layout_one_pane()))).unwrap();
+        view.pump_headless();
+        view.apply_action_for_test(action);
+        let confirmed = view.screens.top() == Some(Screen::Confirm);
+        assert_eq!(confirmed, base::cmdline::confirm_gate(action), "{action:?}: 확인 판이 표와 다르다");
+        if confirmed {
+            view.pump_headless();
+            assert!(
+                !sent.lock().unwrap().iter().any(|o| matches!(
+                    o,
+                    Outgoing::Command(Command::KillWindow | Command::KillPane | Command::KillServer)
+                )),
+                "{action:?}: 확인 전에 나갔다"
+            );
+        }
     }
 }
 
@@ -11135,6 +11479,42 @@ fn leaving_the_mode_drops_the_pick() {
     assert_eq!(view.mode.mode(), InputMode::Normal);
     assert_eq!(view.block_pick, None);
     assert!(view.block_mark().is_none(), "강조가 화면에 남았다");
+}
+
+#[test]
+fn an_empty_blocks_message_leaves_the_mode_like_canon() {
+    // pytmux-605 — 정본 `handle_message` → `_clamp_pick` 은 빈 `blocks` 가 오면 모드째 나간다.
+    // 종전 GUI 는 키 입구에서만 포커스를 봐 `[block]` 에 남아 키를 삼켰다.
+    let (mut view, tx, sent) = view_with_blocks_tx(&[(0, Some(2)), (2, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert_eq!(view.mode.mode(), InputMode::Block);
+    tx.send(LinkEvent::Message(Box::new(blocks_at(&[])))).unwrap();
+    view.pump_headless();
+    assert_eq!(view.mode.mode(), InputMode::Normal, "빈 목록인데 [block] 에 남았다");
+    assert_eq!(view.block_pick, None);
+    assert!(view.mode.mode().badge().is_none(), "[block] 배지가 남았다");
+    // 모드가 풀렸으니 글자는 다시 패널로 간다(삼키지 않는다).
+    sent.lock().unwrap().clear();
+    view.handle_key(Key::Char('z'), Mods::NONE);
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Input(b) if b == b"z")),
+        "모드가 풀렸는데 키가 패널로 안 갔다: {out:?}"
+    );
+}
+
+#[test]
+fn a_shrunk_blocks_message_folds_the_pick_to_the_last_block() {
+    // pytmux-605 관문 ② — `index >= count` 면 마지막 블록으로(정본과 같은 값).
+    let (mut view, tx, _sent) =
+        view_with_blocks_tx(&[(0, Some(2)), (2, Some(4)), (4, None)], 0);
+    view.apply_action_for_test(base::Action::SelectBlocks);
+    assert_eq!(view.block_pick, Some((1, 2)));
+    tx.send(LinkEvent::Message(Box::new(blocks_at(&[(0, None)])))).unwrap();
+    view.pump_headless();
+    assert_eq!(view.mode.mode(), InputMode::Block);
+    assert_eq!(view.block_pick, Some((1, 0)), "줄어든 목록의 마지막으로 안 접혔다");
 }
 
 #[test]

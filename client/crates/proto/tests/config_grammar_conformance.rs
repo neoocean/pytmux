@@ -80,27 +80,13 @@ fn canon_commands() -> BTreeSet<String> {
 }
 
 /// GUI 가 **못 받는** 줄 — (픽스처 칸의 열쇠, 이슈, 사유). 열쇠로 찾는다(줄 번호가 아니다).
-const DIVERGENT: &[(&str, &str, &str)] = &[
-    (
-        "set mouse-debug",
-        "pytmux-575",
-        "런타임 `set` 만 받는 옵션 — GUI 에 없다",
-    ),
-    ("set mouse-log", "pytmux-575", "`mouse-debug` 의 별칭 — GUI 에 없다"),
-    (
-        "set status",
-        "pytmux-575",
-        "다줄 상태줄(`set status N`) — GUI 에 없다",
-    ),
-    (
-        "set status-format",
-        "pytmux-575",
-        "보조 상태줄 포맷 — GUI 에 없다",
-    ),
-];
+///
+/// 2026-11-13(CL 84389): 넷(`status` · `status-format` · `mouse-debug` · `mouse-log`)을 받아
+/// 비었다(pytmux-575 — `base::config::runtime_set`).
+const DIVERGENT: &[(&str, &str, &str)] = &[];
 
 /// [`DIVERGENT`] 의 상한 — ⛔ **올리지 않는다.** 줄을 고쳤으면 같은 CL 에서 내린다.
-const DIVERGENT_CEILING: usize = 4;
+const DIVERGENT_CEILING: usize = 0;
 
 /// tmux 표기(`C-a`·`M-x`)를 정본이 들고 있는 Textual 표기(`ctrl+a`·`alt+x`)로.
 fn textual(tmux: &str) -> String {
@@ -265,11 +251,31 @@ fn bound_command_runs(case: &Case, config: &base::Config) -> Option<Result<(), S
     )
 }
 
+/// 런타임 전용 옵션을 받는 함수의 모양([`base::config::runtime_set`]) — 변이가 갈아 끼운다.
+type RuntimeSetFn = fn(&mut base::config::RuntimeOpts, &str, &str) -> Option<base::config::RuntimeSet>;
+
 /// 한 칸의 판정 — 맞으면 `Ok`, 갈리면 무엇이 갈렸나.
 fn verdict(case: &Case, parsed: &base::Config) -> Result<(), String> {
+    verdict_with(case, parsed, base::config::runtime_set)
+}
+
+fn verdict_with(case: &Case, parsed: &base::Config, runtime_set: RuntimeSetFn) -> Result<(), String> {
     let blank = base::Config::parse("");
     if case.runtime {
         // 정본 런타임 `set` 이 받는 옵션 — 우리 쪽은 그 줄로 무엇이든 바뀌어야 받은 것이다.
+        // 런타임 전용 셋(`base::config::runtime_set` — 설정 파일에 안 쓴다)은 그 값 묶음이,
+        // 나머지는 설정 파일을 거쳐 다시 읽은 설정이 바뀌어야 한다(`session_view::apply_set_line`).
+        if let Some(rest) = case.line.trim().strip_prefix("set ") {
+            let (option, value) = rest.trim().split_once(' ').unwrap_or((rest.trim(), ""));
+            let mut rt = base::config::RuntimeOpts::default();
+            if runtime_set(&mut rt, option, value.trim()).is_some() {
+                return if rt != base::config::RuntimeOpts::default() {
+                    Ok(())
+                } else {
+                    Err("런타임 값이 그 줄로 안 바뀐다(정본 `apply_option` 은 바꾼다)".into())
+                };
+            }
+        }
         return if *parsed != blank {
             Ok(())
         } else {
@@ -512,8 +518,10 @@ fn the_ruler_bites_when_a_line_is_skipped() {
     let fx = fixture();
     let skipped = base::Config::parse("");
     let mut toothless = Vec::new();
+    // 런타임 전용 셋도 같다 — 그 줄을 **안 받는** 실행기(`None`)면 운다.
+    let deaf: RuntimeSetFn = |_, _, _| None;
     for case in &fx.cases {
-        if verdict(case, &skipped).is_ok() {
+        if verdict_with(case, &skipped, deaf).is_ok() {
             toothless.push(case.key.clone());
         }
     }

@@ -487,6 +487,34 @@ fn the_drag_copy_row_offers_three_words_not_a_toggle() {
 }
 
 #[test]
+fn runtime_only_options_are_taken_without_touching_the_config_file() {
+    // pytmux-575 — 정본 `apply_option` 만 받는 셋. 설정 파일 파서는 안 받는다(정본과 같다).
+    let mut rt = RuntimeOpts::default();
+    assert_eq!(runtime_set(&mut rt, "status", "2"), Some(RuntimeSet::StatusLines));
+    assert_eq!(rt.status.lines(), 2);
+    assert_eq!(runtime_set(&mut rt, "status", "2"), Some(RuntimeSet::StatusQuiet));
+    assert_eq!(runtime_set(&mut rt, "status-format", "1 #S extra"), Some(RuntimeSet::StatusQuiet));
+    assert_eq!(rt.status.rows(), vec![Some("#S extra"), None]);
+    assert_eq!(runtime_set(&mut rt, "mouse-debug", "on"), Some(RuntimeSet::MouseDebug(true)));
+    assert!(rt.mouse_debug);
+    assert_eq!(runtime_set(&mut rt, "mouse-log", "nope"), Some(RuntimeSet::MouseDebug(false)));
+    assert!(!rt.mouse_debug, "on/true/1/yes 밖은 끄기다(정본)");
+    assert_eq!(runtime_set(&mut rt, "status-bg", "red"), None, "파일 옵션은 종전 길이다");
+    // 파일 파서는 이 셋을 모른다 — 정본 `load_config` 와 같다.
+    assert_eq!(Config::parse("set status 2\nset mouse-debug on\n"), Config::parse(""));
+}
+
+#[test]
+fn the_mouse_log_line_has_canon_shape() {
+    assert_eq!(
+        mouse_log_line("12:34:56", "down", 3, 4, 1, "normal", ""),
+        "12:34:56 down x=3 y=4 b=1 mode=normal \n"
+    );
+    // `pass` 줄의 바이트 표기 = 파이썬 `repr(b"\x1b[<0;1;1M")`.
+    assert_eq!(py_bytes_repr(b"\x1b[<0;1;1M"), "b'\\x1b[<0;1;1M'");
+}
+
+#[test]
 fn a_bad_tab_bar_value_keeps_the_default() {
     // ★ 오타 하나 때문에 탭바가 사라지면 무엇이 잘못됐는지 알 수 없다.
     assert!(Config::parse("set tab-bar 아무거나").tab_bar_always);
@@ -672,6 +700,52 @@ fn a_modifier_binding_matches_the_pressed_key() {
         None,
         "수정키 없이도 먹으면 그 글자를 못 친다"
     );
+}
+
+#[test]
+fn the_later_line_wins_for_the_same_key_like_canon() {
+    // pytmux-607 ⑤ — 정본은 dict 라 같은 키 두 줄이면 뒤 줄이다. 종전 GUI 는 앞 줄이었다.
+    let c = Config::parse("bind -n q redraw\nbind -n q zoom\nbind q redraw\n");
+    assert_eq!(c.binds.len(), 2, "같은 표·같은 키가 두 줄로 남았다");
+    assert_eq!(
+        crate::config::user_action(&c.binds, &c.aliases, false, Key::Char('q'), Mods::NONE),
+        Some(crate::cmdline::Run::Act(crate::Action::Zoom)),
+        "앞 줄이 이겼다"
+    );
+}
+
+#[test]
+fn runtime_bind_and_unbind_stay_in_the_session_like_canon() {
+    // pytmux-607 ④⑥ — 정본 `clientcmd` 와 같은 규칙·문구. 파일을 안 쓴다(이 함수들은 경로를
+    // 모른다 — 쓸 길이 없다는 것이 곧 단언이다).
+    use crate::config::{bind_in_session, unbind_in_session};
+    let mut binds = Config::parse("bind -n q redraw\n").binds;
+    assert_eq!(bind_in_session(&mut binds, "r source-file").as_deref(), Some("bound r"));
+    assert_eq!(bind_in_session(&mut binds, "-n q zoom").as_deref(), Some("bound (root) q"));
+    assert_eq!(binds.len(), 2, "같은 키를 다시 걸면 갈아 끼워야 한다");
+    assert_eq!(bind_in_session(&mut binds, "x").as_deref(), None, "인자가 모자라면 아무 일도 안 한다");
+    assert_eq!(unbind_in_session(&mut binds, "-n q").as_deref(), Some("unbound q"));
+    assert_eq!(unbind_in_session(&mut binds, "-n q").as_deref(), Some("no binding: q"));
+    bind_in_session(&mut binds, "-n z zoom");
+    assert_eq!(unbind_in_session(&mut binds, "-a").as_deref(), Some("unbound all (2)"));
+    assert!(binds.is_empty(), "`unbind -a` 가 두 표를 다 안 비웠다");
+}
+
+#[test]
+fn a_dash_r_bind_warns_with_the_canon_words() {
+    // pytmux-607 ⑧ — 두 클라 다 `-r` 을 키로 읽는다(같다). 정본은 경고를 내고 GUI 는 조용했다.
+    let c = Config::parse("bind -r H resize-pane -L\nbind -n Ennter redraw\nbind C-x zoom\n");
+    assert_eq!(
+        c.bind_warnings,
+        [
+            "config bind: 알 수 없는 키 표기 '-r' (오타 확인 — 그대로 바인딩)",
+            "config bind -n: 알 수 없는 키 표기 'Ennter' (오타 확인 — 그대로 바인딩)",
+        ]
+    );
+    for ok in ["C-x", "ctrl-x", "F5", "PPage", "q", "Q", "M-1", "S-Tab"] {
+        assert_eq!(crate::config::bind_key_warning(ok), None, "{ok}: 정본은 경고하지 않는다");
+    }
+    assert!(crate::config::bind_key_warning("C-Foo").is_some(), "정본은 `C-Foo` 를 경고한다");
 }
 
 #[test]

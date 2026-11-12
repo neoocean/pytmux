@@ -295,8 +295,20 @@ pub enum Command {
     RequestRestartCheck,
     /// 값이 정해진 서버 옵션 하나를 그 값으로 놓는다(`vt-parser`·`window-size`).
     SetEnum { action: &'static str, value: &'static str },
-    /// 레이아웃 프리셋을 적용한다(`select-layout`).
-    SelectLayout { preset: &'static str },
+    /// 레이아웃 프리셋을 적용한다(`select-layout`). 이름은 **친 그대로** 싣는다 — 정본
+    /// `send_cmd("select_layout", preset=args[0])` 가 그렇다(모르는 이름은 서버가 거른다).
+    SelectLayout { preset: String },
+    /// 같은 세션의 **다른** 클라를 뗀다(`detach -a` · 회신 없음).
+    DetachOthers,
+    /// 저장된 탭 배치 이름 목록을 묻는다(`layout-list` · 회신 = `{"t":"layouts"}`).
+    ListLayouts,
+    /// 패널 제목 줄을 그 값으로 놓는다(`pane-border-status on|off`). 뒤집기는
+    /// [`Command::ToggleBorderStatus`] 다(값 없이 보낸다).
+    SetBorderStatus { value: bool },
+    /// 공유 격자 크기 규칙을 **순환**한다(`window-size` 맨이름 — 값 없이 보낸다).
+    CycleWindowSize,
+    /// 원본을 안 정한 `join-pane [-h]` — 정본은 `orient` 만 싣고 원본은 서버가 정한다(직전 탭).
+    JoinPreviousTab { horizontal: bool },
     /// 현재 탭의 배치를 이름으로 저장한다(`layout-save`).
     SaveTabLayout { name: String },
     /// 저장한 배치를 불러온다. `new` 면 **새 탭에**, 아니면 현재 탭을 덮어쓴다.
@@ -523,6 +535,11 @@ impl Command {
             Command::RequestRestartCheck => "request_restart_check",
             Command::SetEnum { action, .. } => action,
             Command::SelectLayout { .. } => "select_layout",
+            Command::DetachOthers => "detach_others",
+            Command::ListLayouts => "list_layouts",
+            Command::SetBorderStatus { .. } => "set_border_status",
+            Command::CycleWindowSize => "set_window_size",
+            Command::JoinPreviousTab { .. } => "join_pane",
             Command::SaveTabLayout { .. } => "save_tab_layout",
             Command::LoadTabLayout { .. } => "load_tab_layout",
             Command::SaveLayout => "save_layout",
@@ -713,6 +730,11 @@ impl Command {
             }
             Command::SetEnum { value, .. } => json!({ "value": value }),
             Command::SelectLayout { preset } => json!({ "preset": preset }),
+            Command::DetachOthers | Command::ListLayouts | Command::CycleWindowSize => json!({}),
+            Command::SetBorderStatus { value } => json!({ "value": value }),
+            Command::JoinPreviousTab { horizontal } => {
+                json!({ "orient": if *horizontal { "lr" } else { "tb" } })
+            }
             Command::SaveTabLayout { name } => json!({ "name": name }),
             Command::LoadTabLayout { name, new } => json!({ "name": name, "new": new }),
             // ★ `value` 를 실으면 **그 값으로 정해지고**, 안 실으면 서버가 뒤집는다
@@ -846,7 +868,12 @@ impl Command {
             Command::RequestVersion,
             Command::RequestRestartCheck,
             Command::SetEnum { action: "set_vt_parser", value: "pyte" },
-            Command::SelectLayout { preset: "tiled" },
+            Command::SelectLayout { preset: "tiled".into() },
+            Command::DetachOthers,
+            Command::ListLayouts,
+            Command::SetBorderStatus { value: true },
+            Command::CycleWindowSize,
+            Command::JoinPreviousTab { horizontal: true },
             Command::SaveTabLayout { name: "dev".into() },
             Command::LoadTabLayout { name: "dev".into(), new: false },
             Command::SaveLayout,
@@ -1358,11 +1385,16 @@ mod tests {
             Command::PluginToggle { .. } => 65,
             Command::PluginDo { .. } => 66,
             Command::RenameSession { .. } => 70,
+            Command::DetachOthers => 75,
+            Command::ListLayouts => 76,
+            Command::SetBorderStatus { .. } => 77,
+            Command::CycleWindowSize => 78,
+            Command::JoinPreviousTab { .. } => 79,
         }
     }
 
     /// `variant_index` 가 돌려주는 값의 가짓수. 변형을 늘리면 여기도 늘려야 한다.
-    const VARIANT_COUNT: usize = 75;
+    const VARIANT_COUNT: usize = 80;
 
     #[test]
     fn all_covers_every_variant() {
@@ -1797,7 +1829,99 @@ pub fn action_to_command_with_tabs(
         Action::TogglePin => Some(Command::TogglePin {
             index: tabs.active().map(|t| t.index),
         }),
+        // 고정·풀기도 같다(pytmux-572) — 정본 `pin`/`unpin` 은 활성 탭의 병합 index 를
+        // 싣는다. 종전에는 토글만 실어서 원격 탭이 활성일 때 엉뚱한 로컬 탭이 고정됐다.
+        Action::SetPinned(on) => Some(Command::SetPinned {
+            index: tabs.active().map(|t| t.index),
+            on,
+        }),
         other => action_to_command(other),
+    }
+}
+
+/// [`line_command`] 가 볼 세션 사실 — 뷰가 지금 상태에서 채운다(적합성 자는 정본 스텁과 같은
+/// 모양으로 채운다).
+#[derive(Debug, Clone, Copy)]
+pub struct LineCtx<'a> {
+    pub tabs: &'a crate::tabs::TabBar,
+    /// 활성 탭의 패널 id — 서버 `layout.panes` 의 차례(display-panes 번호가 이 자리다).
+    pub panes: &'a [i64],
+    pub active_pane: Option<i64>,
+    /// 활성 탭이 원격이면 그 `(호스트, 병합 전역 index)` — 정본 `_active_remote_host` ·
+    /// `_active_tab_index`.
+    pub remote: Option<(&'a str, usize)>,
+}
+
+/// 명령 줄만의 일([`base::cmdline::Line`])이 **무엇을 내보내나**.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LineOut {
+    /// 서버 명령 프레임.
+    Send(Command),
+    /// 활성 패널로 바로 쓸 바이트.
+    Input(Vec<u8>),
+    /// 클라 안에서 끝나는 일(이번 판 설정·알림) — 뷰가 한다.
+    Local,
+    /// 정본도 아무것도 안 하는 자리(조용한 무동작 — 예: 같은 패널끼리 교환).
+    Nothing,
+    /// 탭 번호가 범위 밖이다 — 정본 `msg.bad_tab_index`(친 값 그대로 알린다).
+    BadTab(i64),
+}
+
+/// 명령 줄만의 일을 와이어로 — GUI 세션 뷰와 `command_line_conformance` 가 **같이**
+/// 부르는 한 곳이다(pytmux-572 · 624). 셈은 정본 `_run_command` 의 갈래 그대로다.
+pub fn line_command(line: &base::cmdline::Line, ctx: &LineCtx<'_>) -> LineOut {
+    use base::cmdline::{Line, TabVerb};
+    let send = LineOut::Send;
+    match line {
+        Line::Tab(verb, n) => {
+            // 정본 `_tab_target_index`: 양수 = 1-based · 음수 = 끝에서 · 0 과 범위 밖 = 알림.
+            let count = ctx.tabs.tabs.len() as i64;
+            let i = if *n > 0 { n - 1 } else if *n < 0 { count + n } else { -1 };
+            if !(0..count).contains(&i) {
+                return LineOut::BadTab(*n);
+            }
+            let i = i as usize;
+            match verb {
+                // 고르기는 **보이는 번호**로 찾는다(`select-tab N` 의 양수 길과 같다 —
+                // `action_to_command_with_tabs` · 고정 탭이 오른쪽 구역으로 밀리는 것까지).
+                TabVerb::Select => match ctx.tabs.by_number(i + 1) {
+                    Some(t) => send(Command::SelectWindow { index: t.index, wid: t.wid }),
+                    None => LineOut::BadTab(*n),
+                },
+                TabVerb::Move => send(Command::MoveWindow { index: i }),
+                TabVerb::Swap => send(Command::SwapTab { index: i }),
+            }
+        }
+        Line::ResizePane { dir, cells } => send(Command::ResizeDir { dir: (*dir).into(), cells: *cells }),
+        Line::Rotate { forward } => send(Command::Rotate { forward: *forward }),
+        Line::SwapPaneTo { src, dst } => {
+            let pane = |i: &Option<usize>| i.and_then(|i| ctx.panes.get(i).copied()).or(ctx.active_pane);
+            match (pane(src), pane(dst)) {
+                (Some(id), Some(to_id)) if id != to_id => send(Command::SwapPaneTo { id, to_id }),
+                // 범위 밖·비숫자는 조용히 무시 — 인접 교환으로 떨어지지 않는다(정본 주석).
+                _ => LineOut::Nothing,
+            }
+        }
+        Line::SelectLayout(preset) => send(Command::SelectLayout { preset: preset.clone() }),
+        Line::JoinPane { horizontal } => send(Command::JoinPreviousTab { horizontal: *horizontal }),
+        Line::DetachOthers => send(Command::DetachOthers),
+        Line::PasteBuffer(index) => send(Command::PasteBuffer { index: *index }),
+        Line::ListLayouts { .. } => send(Command::ListLayouts),
+        Line::BorderStatus(Some(value)) => send(Command::SetBorderStatus { value: *value }),
+        Line::BorderStatus(None) => send(Command::ToggleBorderStatus),
+        Line::Input(bytes) => LineOut::Input(bytes.clone()),
+        Line::WindowSizeCycle => send(Command::CycleWindowSize),
+        // 친 `kill-tab` — 정본 `_run_command` 의 그 갈래(확인 없이). 원격 탭은 kill_window 를
+        // 서버가 거부하므로(§1.7-c) **그 탭 하나만** 뗀다(`[x]` 와 같은 라우팅).
+        Line::KillTab => match ctx.remote {
+            Some((host, index)) => send(Command::RemoteDetach { host: host.to_owned(), index: Some(index) }),
+            None => send(Command::KillWindow),
+        },
+        Line::KillPane => send(Command::KillPane),
+        Line::WindowSizeUsage
+        | Line::InactiveDim(_)
+        | Line::StripBoxDrawing(_)
+        | Line::InactiveDimRatio(_) => LineOut::Local,
     }
 }
 

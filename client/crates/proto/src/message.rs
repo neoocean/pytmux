@@ -89,6 +89,12 @@ pub enum ServerMessage {
         #[serde(default)]
         items: Vec<BufferItem>,
     },
+    /// `list_layouts` 회신 — 저장된 탭 배치 이름들(정본 `_open_choose_layout` 이 고르게 한다).
+    #[serde(rename = "layouts")]
+    Layouts {
+        #[serde(default)]
+        names: Vec<String>,
+    },
     /// 패널의 블록 목록(§10-13). 서버는 `caps` 로 광고한 클라에게만 보낸다.
     #[serde(rename = "blocks")]
     Blocks {
@@ -272,6 +278,7 @@ impl ServerMessage {
             Self::Status(_) => "status",
             Self::Tree(_) => "tree",
             Self::Buffers { .. } => "buffers",
+            Self::Layouts { .. } => "layouts",
             Self::PluginScreen(_) => "plugin_screen",
             Self::PluginScreenClose { .. } => "plugin_screen_close",
             Self::PluginCells(_) => "plugin_cells",

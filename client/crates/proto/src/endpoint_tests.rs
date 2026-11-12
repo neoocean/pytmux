@@ -257,6 +257,13 @@ fn what_display_prints_is_what_parse_takes_back() {
         parse("tcp:srvA@127.0.0.1:5555").lang_file(),
         dir.join("srvA.lang")
     );
+    // 마우스 진단 로그도 같은 `state_base` 를 쓴다(정본 `state_base + ".mouse.log"` · pytmux-575).
+    for spec in ["tcp:srvA@127.0.0.1:5555", "/tmp/pytmux-x/default.sock"] {
+        let ep = parse(spec);
+        let lang = ep.lang_file().into_os_string().into_string().expect("utf-8");
+        let base = lang.strip_suffix(".lang").expect("lang 은 state_base + .lang 이다");
+        assert_eq!(ep.mouse_log_file(), std::path::PathBuf::from(format!("{base}.mouse.log")));
+    }
 }
 
 #[test]

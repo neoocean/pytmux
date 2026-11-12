@@ -125,3 +125,15 @@ fn sample_covers_every_block_state() {
     assert!(states.iter().any(|s| matches!(s, BlockState::Exited(c) if *c != 0)));
     assert!(states.iter().any(|s| matches!(s, BlockState::Running)));
 }
+
+#[test]
+fn a_block_pick_folds_like_canon_clamp_pick() {
+    // 정본 `_clamp_pick` 의 세 갈래(pytmux-605) — 비면 나간다 · 포커스가 떠나면 나간다 ·
+    // 줄었으면 마지막으로 접힌다.
+    use crate::block::fold_block_pick;
+    assert_eq!(fold_block_pick(Some((7, 3)), Some(7), 0), None, "빈 목록인데 모드에 남았다");
+    assert_eq!(fold_block_pick(Some((7, 3)), Some(8), 5), None, "다른 패널인데 남았다");
+    assert_eq!(fold_block_pick(Some((7, 9)), Some(7), 4), Some((7, 3)), "끝을 넘은 자리");
+    assert_eq!(fold_block_pick(Some((7, 1)), Some(7), 4), Some((7, 1)));
+    assert_eq!(fold_block_pick(None, Some(7), 4), None);
+}
