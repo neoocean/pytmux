@@ -430,3 +430,179 @@ async def test_boot_budget_has_real_headroom():
         % (usageprobe.BOOT_TIMEOUT, slowest_measured))
     assert usageprobe.PANEL_TIMEOUT >= 5.7 * 2, \
         "패널 예산도 같은 규율이어야 한다: %.1fs" % usageprobe.PANEL_TIMEOUT
+
+
+async def test_cancel_stops_the_probe_and_reaps_the_session():
+    """바깥이 자르거나 서버가 끝나면 프로브 스레드도 곧 멈춘다(2026-11-19).
+
+    종전에는 바깥 캡이 울려도 executor 의 숨은 claude 는 예산 끝까지 돌았고, 루프를
+    닫는 쪽이 executor 종료에서 그것을 기다렸다 — 전체 스위트가 그 대기로 절단됐다.
+    ① `query_usage(cancel=)` 가 세워지면 ≤ 몇백 ms 에 None 으로 돌아오고 세션을 거둔다.
+    ② `refresh_usage` 가 바깥 시간 초과 때 그 신호를 실제로 세운다(호출 제거 뮤테이션)."""
+    import threading
+    import importlib
+    hold = []
+    sess = _FakeSession(b"\x1b[2J\x1b[H booting...\r\n", None)   # 부팅 신호 영영 없음
+    _patch(hold, sess)
+    try:
+        cancel = threading.Event()
+        threading.Timer(0.3, cancel.set).start()
+        t0 = time.monotonic()
+        u = usageprobe.query_usage(boot_timeout=30.0, panel_timeout=30.0,
+                                   cancel=cancel)
+        took = time.monotonic() - t0
+    finally:
+        for f in hold:
+            f()
+    assert u is None
+    assert took < 3.0, "cancel 뒤에도 %.1fs 를 더 돌았다" % took
+    assert sess.killed and sess.closed, "cancel 로 나가며 숨은 claude 를 안 거뒀다"
+
+    from harness import patched
+    sm = importlib.import_module("pytmuxlib.plugins.claude-code.servermixin")
+    seen = {}
+
+    def slow(cmd, cwd, timings=None, cancel=None, **kw):
+        seen["cancel"] = cancel
+        cancel.wait(5.0)
+        return None
+
+    class _Srv(sm.ServerClaudeMixin):
+        _usage = None
+        _usage_busy = False
+        _usage_probe_err = False
+
+        def _probe_cwd(self):
+            return None
+
+        def _note_usage_probe(self, timings):
+            pass
+
+        def _log_error(self, where, detail="", exc=True):
+            pass
+
+    with patched(usageprobe, query_usage=slow,
+                 worst_case_seconds=lambda *a, **k: -9.8):     # 캡 = 0.2초
+        s = _Srv()
+        assert await s.refresh_usage() is None
+        ev = seen.get("cancel")
+        assert ev is not None, "refresh_usage 가 cancel 을 안 넘긴다"
+        assert ev.is_set(), "바깥 시간 초과인데 cancel 을 안 세웠다"
+        import harness
+        await harness.wait_for(lambda: not s._usage_busy, timeout=5.0)
+        assert s._usage_busy is False
+
+
+async def test_host_session_close_does_not_wait_for_a_blocked_reader():
+    """☠ `close()` 가 리더 스레드의 막힌 readline 과 같은 버퍼 락을 기다려 멈췄다
+    (2026-11-19 전체 스위트 절단). 쓰기 끝이 살아 있어 EOF 가 안 오는 상황 — 여기서는
+    아무것도 안 찍고 잠자는 자식 — 에서도 close 는 곧 돌아와야 한다."""
+    import subprocess
+    import sys
+    import threading
+    s = object.__new__(usageprobe._WinHostSession)
+    s._proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL)
+    s.pid = s._proc.pid
+    s._buf, s._lock = bytearray(), threading.Lock()
+    s._ready, s._err = threading.Event(), None
+    try:
+        t = threading.Thread(target=s._read_loop, daemon=True)
+        t.start()
+        time.sleep(0.3)                      # 리더가 readline 에 들어가 막히게
+        done = threading.Event()
+        threading.Thread(target=lambda: (s.close(), done.set()),
+                         daemon=True).start()
+        assert done.wait(3.0), "close() 가 막힌 리더를 기다리며 안 돌아온다"
+    finally:
+        s._proc.kill()
+        s._proc.wait(timeout=10)
+
+
+async def test_windows_probe_spawns_conpty_outside_the_server_process():
+    """Windows 기본 세션은 ConPTY 를 **자식 호스트 프로세스**에 띄운다(2026-11-19).
+
+    pywinpty `PtyProcess.spawn` 이 GIL 을 쥐고 8~13초 돌아 서버 이벤트 루프가 통째로
+    멈췄다 — 사용자 입력이 수십 초 밀렸다. 서버 안에서 spawn 하는 `_WinSession` 은
+    `PYTMUX_USAGEPROBE_INPROC=1` 되돌리기 길로만 남는다. 바깥 캡도 spawn 예산을 품어야
+    한다(이제 루프가 살아 있어 spawn 도중에도 캡이 울린다)."""
+    from harness import patched
+
+    class _Host:
+        def __init__(self, *a, **k):
+            pass
+
+    class _InProc(_Host):
+        pass
+
+    with patched(usageprobe, IS_WINDOWS=True, _WinHostSession=_Host,
+                 _WinSession=_InProc):
+        old = os.environ.pop("PYTMUX_USAGEPROBE_INPROC", None)
+        try:
+            s = usageprobe._open_session(["claude"], None, {}, 80, 24)
+            assert type(s) is _Host, "기본이 서버 안 spawn 으로 돌아갔다: %r" % s
+            os.environ["PYTMUX_USAGEPROBE_INPROC"] = "1"
+            s = usageprobe._open_session(["claude"], None, {}, 80, 24)
+            assert type(s) is _InProc, "되돌리기 길이 안 먹는다: %r" % s
+        finally:
+            os.environ.pop("PYTMUX_USAGEPROBE_INPROC", None)
+            if old is not None:
+                os.environ["PYTMUX_USAGEPROBE_INPROC"] = old
+        win = usageprobe.worst_case_seconds()
+    with patched(usageprobe, IS_WINDOWS=False):
+        posix = usageprobe.worst_case_seconds()
+    assert win >= posix + usageprobe.SPAWN_TIMEOUT, (win, posix)
+
+
+async def test_windows_host_session_does_not_freeze_other_threads():
+    """실 ConPTY: 자식 호스트를 여는 동안 같은 프로세스의 다른 스레드가 멎지 않는다.
+
+    대조군(같은 상자 · 같은 날): 서버 안 `PtyProcess.spawn` 은 다른 스레드를 7.1초 +
+    5.8초 멈췄다. 이 시험은 그 회귀를 «하트비트 최대 간격»으로 잰다 — 숫자가 1초를
+    넘으면 spawn 이 다시 서버 프로세스 안으로 들어왔다는 뜻이다. 왕복(입력→출력)과
+    kill 이 호스트를 거두는 것도 함께 본다."""
+    if os.name != "nt":
+        from run import skip
+        skip("Windows ConPTY 전용")
+    try:
+        import winpty  # noqa: F401
+    except Exception:
+        from run import skip
+        skip("pywinpty 없음")
+    import threading
+
+    gaps = []
+    stop = threading.Event()
+
+    def beat():
+        last = time.perf_counter()
+        while not stop.is_set():
+            time.sleep(0.05)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    hb = threading.Thread(target=beat, daemon=True)
+    hb.start()
+    sess = None
+    try:
+        sess = usageprobe._WinHostSession(["cmd.exe"], os.getcwd(),
+                                          dict(os.environ), 80, 24)
+        worst_open = max(gaps) if gaps else 0.0
+        sess.write(b"echo PROBE_HOST_OK\r")
+        buf = b""
+        end = time.monotonic() + 15
+        while time.monotonic() < end and b"PROBE_HOST_OK" not in buf:
+            buf += sess.read(0.2)
+        assert b"PROBE_HOST_OK" in buf, "호스트 왕복이 안 된다: %r" % buf[-200:]
+        assert worst_open < 1.0, (
+            "호스트를 여는 동안 다른 스레드가 %.2fs 멎었다 — spawn 이 GIL 을 쥔 채 "
+            "서버 프로세스 안에서 돌고 있다" % worst_open)
+    finally:
+        stop.set()
+        if sess is not None:
+            sess.kill()
+            sess.close()
+    assert sess._proc.poll() is not None, "kill 뒤에도 호스트가 살아 있다"

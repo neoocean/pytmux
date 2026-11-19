@@ -22,6 +22,7 @@ import os
 import time
 
 import subprocess
+import threading
 
 from pytmuxlib import ipc, proc, pty_backend
 from pytmuxlib.protocol import write_msg   # 세션 종료 시 클라 auto_token_log 푸시
@@ -2247,9 +2248,13 @@ class ServerClaudeMixin:
             # ⚠ 그 합을 손으로 적으면 안쪽 갈래가 늘 때 깨진다(pytmux-34 #10 — 관리 설정
             # 승인이 부팅 대기를 한 번 더 열고 /status 단계가 패널 예산을 한 번 더 써
             # 최악 ≈74초인데 캡은 62초였다). 그래서 안쪽이 스스로 계산한 최악을 쓴다.
+            # 바깥이 자르거나(시간 초과) 이 태스크가 취소되면(서버 종료) 스레드도 곧 멈추게
+            # 하는 신호 — 없으면 숨은 claude 가 예산 끝까지 돌고, 루프 종료가 executor
+            # 종료에서 그것을 기다린다(2026-11-19 실측: 시험 러너가 그 대기로 절단됐다).
+            cancel = threading.Event()
             fut = loop.run_in_executor(
                 None, functools.partial(usageprobe.query_usage, "claude", cwd,
-                                        timings=timings))
+                                        timings=timings, cancel=cancel))
             u = await asyncio.wait_for(asyncio.shield(fut),
                                        timeout=usageprobe.worst_case_seconds() + 10)
         except asyncio.TimeoutError:
@@ -2268,6 +2273,7 @@ class ServerClaudeMixin:
             u = None
         finally:
             if fut is not None and not fut.done():
+                cancel.set()   # 스레드에게 «그만» — 다음 펌프(≤0.3초)에서 숨은 claude 를 거둔다
                 # 바깥이 잘라도 executor 스레드의 숨은 claude 는 아직 돈다 — 그것이
                 # **끝날 때** 바쁨을 푼다(pytmux-34 #10). 여기서 풀면 다음 예약이 두 번째
                 # 숨은 claude 를 겹쳐 띄웠다.

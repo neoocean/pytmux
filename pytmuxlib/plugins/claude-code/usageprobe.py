@@ -181,11 +181,226 @@ class _WinSession:
             pass
 
 
-def _open_session(argv, cwd, env, cols, rows):
+# ☠☠ **`PtyProcess.spawn` 은 GIL 을 쥔 채 돈다 — 서버 안에서 부르면 서버가 언다**
+# (2026-11-19 실측 · pywinpty 3.0.3 · Python 3.12). 그 호출이 이 상자에서 8~13초 걸리는
+# 동안 같은 프로세스의 다른 스레드가 **7.1초 + 5.8초** 멎었다(`read`·`write`·`isalive`
+# 는 GIL 을 놓는다 — 문제는 spawn 하나). 프로브는 executor 스레드에서 돌지만 GIL 은
+# 하나라 **이벤트 루프가 통째로 멈추고**, 그동안 사용자의 키 입력·엔터가 소켓에 쌓였다가
+# 수십 초 뒤 한꺼번에 들어갔다. 라이브 서버의 error.log 에서 「idle client evicted (no msg
+# in 74s·163s·279s …)」가 매번 **같은 초의** `usage_probe` 타임아웃과 짝지어 남은 것이 그
+# 흔적이다(클라는 0.5초마다 ping 을 보내니 퇴거 = 서버 루프 정지).
+# ⇒ Windows 에서는 ConPTY 를 **자식 파이썬 프로세스**가 띄우고, 서버는 그 자식의 파이프만
+#   읽는다(`CreateProcess`·파이프 read 는 GIL 을 놓는다). 끝낼 때는 그 자식의 pid 트리를
+#   `taskkill /T` 로 거둔다 — pywinpty 의 `terminate(force=True)` 는 이 상자에서
+#   `Access is denied` 로 실패해 숨은 claude 를 못 죽이고 있었다(같은 실측).
+#   되돌리기: `PYTMUX_USAGEPROBE_INPROC=1` (종전 `_WinSession` — 서버가 다시 언다).
+#: 자식 호스트가 ConPTY 를 띄우고 READY 를 알릴 때까지의 예산(초). 파이썬 기동(이 상자
+#: 4~8초) + pywinpty spawn(8~13초)에 부하 여유를 얹었다. 부팅 예산과 따로 센다 —
+#: 종전에도 spawn 시간은 부팅 대기 밖이었다.
+SPAWN_TIMEOUT = 45.0
+
+# 자식 호스트 본문(`python -c`). pytmuxlib 를 import 하지 않는다 — 기동을 싸게 두고,
+# 서버 모듈 상태와 무관하게. 프로토콜: 첫 줄 `READY <pid>\n`(또는 `ERR …\n`) 뒤로는
+# ConPTY 출력 바이트(UTF-8) 그대로 stdout 으로, stdin 바이트는 그대로 ConPTY 입력으로.
+# stdin EOF(= 부모가 닫았거나 죽었다)면 자식 claude 를 끝내고 나간다.
+_WIN_HOST_SRC = r'''
+import codecs, json, os, sys, threading
+out = sys.stdout.buffer
+try:
+    from winpty import PtyProcess
+    argv, cwd, cols, rows = json.loads(sys.argv[1])
+    proc = PtyProcess.spawn(argv if len(argv) > 1 else argv[0], cwd=cwd,
+                            env=dict(os.environ), dimensions=(rows, cols))
+except Exception as e:
+    out.write(("ERR %r\n" % (e,)).encode("utf-8", "replace")); out.flush()
+    os._exit(1)
+out.write(("READY %d\n" % proc.pid).encode()); out.flush()
+def _pump_in():
+    dec = codecs.getincrementaldecoder("utf-8")("replace")
+    inp = sys.stdin.buffer
+    while True:
+        b = inp.read1(4096)
+        if not b:
+            break
+        s = dec.decode(b)
+        if s:
+            try:
+                proc.write(s)
+            except Exception:
+                break
+    try:
+        proc.terminate(force=True)
+    except Exception:
+        pass
+    os._exit(0)
+threading.Thread(target=_pump_in, daemon=True).start()
+while True:
+    try:
+        s = proc.read(65536)
+    except Exception:
+        break
+    if s:
+        try:
+            out.write(s.encode("utf-8", "replace")); out.flush()
+        except Exception:
+            break
+    elif not proc.isalive():
+        break
+os._exit(0)
+'''
+
+
+def _host_python() -> str:
+    """자식 호스트를 돌릴 인터프리터. 서버는 대개 `pythonw.exe` 다 — 파이프를 넘기면
+    그것도 되지만, 옆의 `python.exe` 를 `CREATE_NO_WINDOW` 로 띄우는 편이 stdio 가
+    확실하다(창은 안 뜬다)."""
+    import sys
+    exe = sys.executable or "python"
+    base = os.path.basename(exe).lower()
+    if base == "pythonw.exe":
+        cand = os.path.join(os.path.dirname(exe), "python.exe")
+        if os.path.isfile(cand):
+            return cand
+    return exe
+
+
+class _WinHostSession:
+    """Windows: ConPTY 를 자식 파이썬 프로세스(`_WIN_HOST_SRC`)에 띄우는 세션.
+    `_WinSession` 과 같은 표면(read/write/kill/close)이라 `query_usage` 는 모른다.
+    왜 따로 띄우는가 = 위 ☠☠ 주석(spawn 의 GIL 점유가 서버 루프를 얼린다)."""
+
+    def __init__(self, argv, cwd, env, cols, rows,
+                 spawn_timeout: float = SPAWN_TIMEOUT, cancel=None):
+        import json
+        exe = _host_python()
+        self._proc = subprocess.Popen(
+            [exe, "-c", _WIN_HOST_SRC,
+             json.dumps([list(argv), cwd, max(1, cols), max(1, rows)])],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, env=env,
+            # 프로브 cwd(사용자 프로젝트)에서 `-c` 를 돌리면 그 폴더의 .py 가 stdlib
+            # 이름을 가릴 수 있다 — 호스트는 인터프리터 폴더에서 돈다. ConPTY 자식의
+            # cwd 는 argv 와 함께 넘긴 값이다.
+            cwd=os.path.dirname(exe) or None,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.pid = self._proc.pid
+        self._buf = bytearray()
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._err: bytes | None = None
+        self._reader = threading.Thread(
+            target=self._read_loop, name=f"usageprobe-host-{self.pid}",
+            daemon=True)
+        self._reader.start()
+        deadline = time.monotonic() + spawn_timeout
+        why = None
+        while not self._ready.wait(0.2):
+            if cancel is not None and cancel.is_set():
+                why = b"cancelled"
+                break
+            if time.monotonic() >= deadline:
+                why = b"spawn timeout"
+                break
+        if why is None and self._err is not None:
+            why = self._err
+        if why is not None:
+            self.kill()
+            self.close()
+            raise RuntimeError("usageprobe host: %s"
+                               % why.decode("utf-8", "replace").strip())
+
+    def _read_loop(self) -> None:
+        f = self._proc.stdout
+        try:
+            try:
+                line = f.readline()
+            except Exception:
+                line = b""
+            if not line.startswith(b"READY"):
+                self._err = line or b"host exited before READY"
+                self._ready.set()
+                return
+            self._ready.set()
+            while True:
+                try:
+                    b = f.read1(_READ)
+                except Exception:
+                    break
+                if not b:
+                    break
+                with self._lock:
+                    self._buf += b
+        finally:
+            try:
+                f.close()   # stdout 은 리더만 닫는다(close() 의 ☠ 주석)
+            except Exception:
+                pass
+
+    def read(self, timeout: float) -> bytes:
+        end = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                if self._buf:
+                    out = bytes(self._buf)
+                    self._buf.clear()
+                    return out
+            if time.monotonic() >= end:
+                return b""
+            time.sleep(0.02)
+
+    def write(self, data: bytes) -> None:
+        try:
+            self._proc.stdin.write(data)
+            self._proc.stdin.flush()
+        except Exception:
+            pass
+
+    def kill(self) -> None:
+        """자식 호스트와 그 아래(OpenConsole·claude)를 **pid 트리로만** 거둔다 —
+        이름 매칭으로 넓히지 않는다(CLAUDE.md ⛔ 일괄 kill 금지)."""
+        if self._proc.poll() is None:
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(self.pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    timeout=15)
+            except Exception:
+                pass
+        try:
+            self._proc.kill()
+        except Exception:
+            pass
+        try:
+            self._proc.wait(timeout=5)
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        # ☠ stdout 은 **여기서 닫지 않는다** — 리더 스레드가 그 버퍼의 readline/read1 에
+        # 막혀 있으면 close 가 같은 버퍼 락을 기다려 영영 안 돌아온다(2026-11-19 실측: 전체
+        # 스위트가 이 줄에서 절단됐다). 호스트가 죽어도 EOF 가 늦을 수 있다 — Popen 이 자식
+        # 쪽 끝을 상속 가능하게 쥔 짧은 창에 같은 프로세스의 다른 CreateProcess(패널 셸
+        # 등)가 그 끝을 물려받으면, 그 프로세스가 끝날 때까지 쓰기 끝이 산다. stdout 은
+        # 리더(daemon)가 EOF 에서 스스로 닫는다.
+        try:
+            self._proc.stdin.close()
+        except Exception:
+            pass
+
+
+class _ProbeCancelled(Exception):
+    """`query_usage` 의 `cancel` 이 섰다 — 펌프를 빠져나가는 표지."""
+
+
+def _open_session(argv, cwd, env, cols, rows, cancel=None):
     """플랫폼별 `_Session` 을 연다(실패 시 예외 — 호출부가 None 으로 흡수).
-    테스트는 이 함수를 몽키패치해 실 `claude` 없이 캔드 패널을 재생한다."""
+    테스트는 이 함수를 몽키패치해 실 `claude` 없이 캔드 패널을 재생한다.
+    `cancel`(threading.Event) 은 자식 호스트의 READY 대기를 끊는다."""
     if IS_WINDOWS:
-        return _WinSession(argv, cwd, env, cols, rows)
+        if os.environ.get("PYTMUX_USAGEPROBE_INPROC") == "1":
+            return _WinSession(argv, cwd, env, cols, rows)
+        return _WinHostSession(argv, cwd, env, cols, rows, cancel=cancel)
     return _PosixSession(argv, cwd, env, cols, rows)
 
 
@@ -219,7 +434,11 @@ def worst_case_seconds(boot_timeout: float = BOOT_TIMEOUT,
     돈다) 두 번 쓴다. 각 `wait_for` 는 마지막 `pump(0.3)` 하나만큼 넘칠 수 있다.
     손으로 합을 적어 둔 캡(62초)이 이 최악(≈74초)보다 작아, 시간 초과가 바쁨 플래그를
     일찍 풀고 숨은 claude 를 겹쳐 띄웠다."""
-    return (2 * boot_timeout + 2 * panel_timeout + _FIXED_PUMPS
+    # Windows 는 자식 호스트가 READY 를 알릴 때까지(SPAWN_TIMEOUT)도 더한다 — 종전엔
+    # spawn 이 루프를 얼려 바깥 캡이 그 동안 못 울렸지만, 이제 루프가 살아 있어 캡이
+    # spawn 도중에 울릴 수 있다.
+    spawn = SPAWN_TIMEOUT if IS_WINDOWS else 0.0
+    return (spawn + 2 * boot_timeout + 2 * panel_timeout + _FIXED_PUMPS
             + 4 * 0.3 + 0.5)
 
 
@@ -227,7 +446,8 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
                 cols: int = 95, rows: int = 45,
                 boot_timeout: float = BOOT_TIMEOUT,
                 panel_timeout: float = PANEL_TIMEOUT,
-                timings: dict | None = None):
+                timings: dict | None = None,
+                cancel=None):
     """숨은 `claude` 를 띄워 `/usage` 패널을 스크랩·파싱한다. 결과 dict(parse_usage,
     추가로 그림자 세션 계정 `account`: 일치 확인용·없으면 None) 또는 None. 입력 주입은
     `/usage`+Enter (계정 미식별 시에만 Esc+`/status` 1회 추가 — 아래) 뿐이고
@@ -244,7 +464,10 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     토큰이 model NULL('?')로 적재되는 일이 잦다. 그림자 프로브는 부팅 배지·/status
     의 Model 라인에서 활성 모델을 잡아 model 폴백을 제공한다(서버 _scan_claude 가
     라이브 배지 우선·없으면 이 값으로 채움). /usage 패널은 'Sonnet only' 같은 한도
-    카테고리 라벨이 모델로 오인돼 출처에서 제외한다. 못 잡으면 None."""
+    카테고리 라벨이 모델로 오인돼 출처에서 제외한다. 못 잡으면 None.
+
+    `cancel`(threading.Event|None): 서버가 바깥에서 자르거나 종료할 때 세운다 — 다음
+    펌프(≤0.3초)에서 대기를 그만두고 숨은 claude 를 거둔 뒤 None 을 돌려준다."""
     t_start = time.monotonic()
     if timings is not None:
         # ⛔ **먼저 «실패» 로 채운다** — 아래 어느 갈래로 빠져나가도(예외·조기 return)
@@ -291,8 +514,13 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     if IS_WINDOWS:
         import shutil
         argv = [shutil.which(cmd) or cmd]
+    if cancel is not None and cancel.is_set():
+        return None
     try:
-        sess = _open_session(argv, cwd, env, cols, rows)
+        # cancel 은 있을 때만 넘긴다 — 시험이 갈아끼우는 `_open_session` 은 위치 인자
+        # 다섯만 받는다.
+        sess = _open_session(argv, cwd, env, cols, rows,
+                             **({"cancel": cancel} if cancel is not None else {}))
     except Exception:
         return None
 
@@ -305,6 +533,8 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     def pump(sec: float) -> None:
         end = time.monotonic() + sec
         while time.monotonic() < end:
+            if cancel is not None and cancel.is_set():
+                raise _ProbeCancelled()   # 아래 except 가 None 으로, finally 가 kill 로
             data = sess.read(0.15)
             if data:
                 st.feed(data)
