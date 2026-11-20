@@ -546,8 +546,11 @@ pub struct SessionView {
     plugin_tab_click_states: std::cell::RefCell<Vec<MouseStateHandle>>,
     /// 드래그 중인 탭(리스트 위치) — 판정은 core `drag_drop`(G9w · TUI 와 한 벌).
     tab_drag: Option<usize>,
-    /// 드래그 중 가리키는 드롭 대상 탭(강조용).
+    /// 드래그 중 가리키는 드롭 대상 탭(강조용). ★ 놓을 때 hover 가 비어 있으면 이 값으로
+    /// 판정한다(pytmux-661 — 실기 Windows 에서 뗌 시점의 탭 hover 가 비어 있었다).
     tab_drag_over: Option<usize>,
+    /// 패널 헤더를 탭바 쪽으로 끄는 동안 마지막으로 본 놓을 자리(pytmux-661 · 위와 같은 까닭).
+    drag_chrome_seen: Option<PaneDropAt>,
     /// 원격 탭 분리 확인 판을 연 순간의 `(host, 병합 전역 index)`(pytmux-601). 정본은
     /// 판을 열 때 람다가 그 둘을 잡는다 — 판이 떠 있는 동안 상태가 바뀌어도 **물은 탭**을 뗀다.
     remote_detach_target: Option<(String, usize)>,
@@ -994,6 +997,7 @@ impl SessionView {
             session_edit: None,
             tab_drag: None,
             tab_drag_over: None,
+            drag_chrome_seen: None,
             remote_detach_target: None,
             last_status: Instant::now(),
             last_blink: Instant::now(),
@@ -4145,6 +4149,7 @@ impl SessionView {
             d.over = over;
             self.pane_drag = Some(d);
             self.tab_drag_over = tab_over;
+            self.drag_chrome_seen = if at.is_none() { Some(self.chrome_drop_spot()) } else { None };
             return changed;
         }
         if self.tab_drag.is_some() {
@@ -4649,15 +4654,20 @@ impl SessionView {
             return true;
         }
         if let Some(src) = self.tab_drag.take() {
-            self.tab_drag_over = None;
-            self.drop_tab(src, at);
+            let seen = self.tab_drag_over.take();
+            self.drop_tab(src, at, seen);
             return true;
         }
         if let Some(d) = self.pane_drag.take() {
             self.tab_drag_over = None;
+            let seen = self.drag_chrome_seen.take();
             let target = match at {
                 Some((x, y)) => PaneDropAt::Canvas(self.state.pane_at(x, y)),
-                None => self.chrome_drop_spot(),
+                None => {
+                    let live = self.chrome_drop_spot();
+                    log::debug!(target: "drop", "pane drop: live={live:?} seen={seen:?}");
+                    Self::chrome_drop_or_seen(live, seen)
+                }
             };
             let active_tab = self.state.tabs().tabs.iter().find(|t| t.active).map(|t| t.index);
             let commands = Self::pane_drop_commands(d.src, d.moved, target, active_tab);
@@ -6168,9 +6178,18 @@ impl SessionView {
 
     /// 탭 드래그를 놓았다(G9w). 자리는 hover/캔버스 좌표가, 뜻은 core `drag_drop` 이
     /// 정한다 — TUI `drop_tab` 과 같은 표.
-    fn drop_tab(&mut self, src: usize, at: Option<(u16, u16)>) {
+    ///
+    /// `seen` 은 끄는 동안 마지막으로 강조한 탭이다 — 뗀 자리가 캔버스 밖이면 **그것이 먼저**다
+    /// (pytmux-661 · 실기 Windows 실측 `live=Some(0) seen=Some(1)`: 뗌 시점에는 **끌기를 시작한
+    /// 탭**의 hover 상태가 «위에 있음» 으로 남아 `hovered_tab()` 이 그 탭을 돌려준다 — 그래서
+    /// 강조된 탭에 놓았는데 «제자리» 로 판정돼 재정렬이 안 났다). 보이는 강조가 곧 놓을 자리다.
+    /// 끌지 않은 클릭은 강조가 없으므로(`seen == None`) 종전대로 hover 로 판정한다.
+    fn drop_tab(&mut self, src: usize, at: Option<(u16, u16)>, seen: Option<usize>) {
         use base::chrome::{DragDrop, DragTab, DragTarget, drag_drop};
-        let target = if let Some(i) = self.hovered_tab() {
+        let live = self.hovered_tab();
+        log::debug!(target: "drop", "tab drop: live={live:?} seen={seen:?} at={at:?}");
+        let hovered = if at.is_none() { seen.or(live) } else { live };
+        let target = if let Some(i) = hovered {
             DragTarget::Tab(i)
         } else if let Some((pane, horizontal)) =
             at.and_then(|(x, y)| self.state.tab_drop_at(x, y))
@@ -6242,6 +6261,15 @@ impl SessionView {
     }
 
     /// 캔버스 밖에서 놓았을 때 그 자리 — 탭 · `[+]` · 그 밖(hover 로 가른다 · 탭 끌기와 같은 장치).
+    /// 뗌 시점의 탭바 판정이 «그 밖» 이면 끄는 동안 마지막으로 본 자리를 쓴다(pytmux-661 —
+    /// `drop_tab` 의 `seen` 과 같은 까닭). 살아 있는 판정이 무엇이든 있으면 그것이 이긴다.
+    pub(crate) fn chrome_drop_or_seen(live: PaneDropAt, seen: Option<PaneDropAt>) -> PaneDropAt {
+        match (live, seen) {
+            (PaneDropAt::OffCanvas, Some(s @ (PaneDropAt::Tab(_) | PaneDropAt::New))) => s,
+            _ => live,
+        }
+    }
+
     fn chrome_drop_spot(&self) -> PaneDropAt {
         let tabs = &self.state.tabs().tabs;
         if let Some(i) = self.hovered_tab() {
@@ -6298,7 +6326,9 @@ impl SessionView {
         let hint = Container::new(Rect::new().finish())
             .with_background_color(theme::HOVER)
             .with_border(Border::all(2.).with_border_color(theme::FOCUS))
-            .with_corner_radius(theme::PILL_RADIUS)
+            // ⛔ PILL_RADIUS(= 50%)를 쓰지 않는다 — 패널만 한 사각형에 50% 라운드를 주면
+            //   **타원**이 된다(pytmux-661 실기: 대상 패널을 덮는 큰 원으로 그려졌다).
+            .with_corner_radius(theme::TAB_RADIUS)
             .finish();
         let sized = ConstrainedBox::new(hint)
             .with_width(pw as f32 * cw)

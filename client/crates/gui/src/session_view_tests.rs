@@ -5614,6 +5614,43 @@ fn pane_drop_commands_follow_the_canon_table() {
 }
 
 #[test]
+fn a_chrome_drop_with_an_empty_hover_falls_back_to_the_last_highlighted_spot() {
+    // pytmux-661 실기(Windows): 뗌 시점의 탭바 hover 가 비어 «그 밖» 으로 판정돼 탭·[+] 에
+    // 놓아도 아무 일이 없었다. 끄는 동안 본 자리가 탭·[+] 면 그것으로 놓는다.
+    use super::PaneDropAt as At;
+    let f = SessionView::chrome_drop_or_seen;
+    assert_eq!(f(At::OffCanvas, Some(At::Tab(1))), At::Tab(1));
+    assert_eq!(f(At::OffCanvas, Some(At::New)), At::New);
+    assert_eq!(f(At::OffCanvas, Some(At::OffCanvas)), At::OffCanvas);
+    assert_eq!(f(At::OffCanvas, None), At::OffCanvas, "끄는 동안 탭바를 안 지났으면 그대로");
+    assert_eq!(f(At::Tab(0), Some(At::New)), At::Tab(0), "살아 있는 판정이 있으면 그것이 이긴다");
+}
+
+#[test]
+fn a_tab_drop_with_an_empty_hover_reorders_onto_the_highlighted_tab() {
+    // pytmux-661: 탭 끌기 — 강조(`tab_drag_over`)가 선 탭에 놓았는데 뗌 시점 hover 가 비면
+    // 종전에는 `Select(src)` 로 떨어졌다. 이제 강조된 탭으로 재정렬한다.
+    let (mut view, tx, sent) = harness();
+    for msg in three_tabs() {
+        tx.send(LinkEvent::Message(Box::new(msg))).unwrap();
+    }
+    view.pump_headless();
+    view.tab_drag = Some(2);
+    view.tab_drag_over = Some(0);
+    assert!(view.handle_mouse_up(None));
+    view.pump_headless();
+    let out = sent.lock().unwrap().clone();
+    assert!(
+        out.iter().any(|o| matches!(o, Outgoing::Command(Command::MoveTab { index: 2, to: 0 }))),
+        "강조된 탭(0)에 놓았으면 재정렬이 나가야 한다: {out:?}"
+    );
+    assert!(
+        !out.iter().any(|o| matches!(o, Outgoing::Command(Command::SelectWindow { .. }))),
+        "빈 자리로 판정돼 전환으로 샜다: {out:?}"
+    );
+}
+
+#[test]
 fn the_header_hit_is_the_box_top_row_or_the_border_status_title_row() {
     // 정본 `_header_pane_at` — 상자 윗변 한 행 전체 · 상자가 없으면 border-status 제목줄.
     let (view, _sent) = two_boxed_panes(3);
