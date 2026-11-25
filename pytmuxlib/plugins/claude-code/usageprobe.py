@@ -442,6 +442,10 @@ def worst_case_seconds(boot_timeout: float = BOOT_TIMEOUT,
             + 4 * 0.3 + 0.5)
 
 
+# 숨은 세션에 붙이는 인자(pytmux-669 — query_usage 안의 주석 참조).
+PROBE_ARGS = ["--strict-mcp-config"]
+
+
 def query_usage(cmd: str = "claude", cwd: str | None = None,
                 cols: int = 95, rows: int = 45,
                 boot_timeout: float = BOOT_TIMEOUT,
@@ -514,6 +518,12 @@ def query_usage(cmd: str = "claude", cwd: str | None = None,
     if IS_WINDOWS:
         import shutil
         argv = [shutil.which(cmd) or cmd]
+    # pytmux-669: 숨은 세션은 `/usage` 만 읽는다 — **MCP 서버는 필요 없다**. 인자 없이
+    # 띄우면 사용자 범위 MCP 서버를 회차마다 전부 다시 띄운다(실측 2026-11-25: python 2 +
+    # conhost · node · cmd+node). 프로세스 기동이 느린 상자에서는 그 기동이 프로브의 부팅
+    # 예산을 먹고, 사용자가 쓰는 세션들의 기동과 겹쳐 그쪽 입력까지 멈춘다(pytmux-668).
+    # `--mcp-config` 없이 주면 「아무 MCP 서버도 안 쓴다」가 된다.
+    argv += PROBE_ARGS
     if cancel is not None and cancel.is_set():
         return None
     try:

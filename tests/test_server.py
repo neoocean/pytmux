@@ -3657,6 +3657,54 @@ async def test_sync_output_defer_times_out():
         await teardown(srv, task, sock)
 
 
+async def test_sync_output_hold_is_capped_while_bytes_keep_flowing():
+    """pytmux-668: ESU 없이 **바이트가 계속 흘러도** SYNC_OUTPUT_MAX_HOLD 뒤에는 보낸다.
+
+    종전 안전망(바로 위 시험)은 '마지막 바이트 이후 침묵'만 쟀다. 끝 마커를 잃은 채
+    출력(=사용자가 치는 키의 에코)이 이어지면 타이머가 되감겨 화면이 끝없이 묶였다 —
+    치는 동안 글자도 커서도 안 보이고, 멈추고 1초 뒤에야 한꺼번에 나왔다."""
+    import time as _time
+    from pytmuxlib.protocol import write_msg, read_msg, PROTO_VERSION, \
+        SYNC_OUTPUT_MAX_DEFER, SYNC_OUTPUT_MAX_HOLD
+    srv, task, sock = await server_only()
+    try:
+        sess = srv.ensure_default_session(80, 24)
+        p = sess.active_window.active_pane
+        reader, writer = await ipc.open_connection(sock)
+        await write_msg(writer, {"t": "hello", "proto": PROTO_VERSION,
+                                 "cols": 80, "rows": 24, "token": srv.auth_token})
+        await _drain_attach(reader, p)
+
+        def _pane_screen(m):
+            return (m.get("t") in ("screen", "screen-delta")
+                    and m.get("pane") == p.id)
+
+        srv._ingest_slice(p, b"\x1b[?2026h\x1b[Hstuck")
+        assert p.sync_output is True
+        t0 = _time.monotonic()
+        step = SYNC_OUTPUT_MAX_DEFER / 5        # 침묵 안전망이 걸리지 않게 촘촘히 먹인다
+        first = None
+        max_gap, last = 0.0, t0
+        while _time.monotonic() - t0 < SYNC_OUTPUT_MAX_HOLD + 1.0 and first is None:
+            srv._ingest_slice(p, b"k")           # 에코 한 글자(토글 없음)
+            now = _time.monotonic()
+            max_gap, last = max(max_gap, now - last), now
+            try:
+                m = await asyncio.wait_for(read_msg(reader), step)
+            except asyncio.TimeoutError:
+                continue
+            if m is not None and _pane_screen(m):
+                first = _time.monotonic() - t0
+        assert first is not None, \
+            f"바이트가 흐르는 동안 화면이 끝내 안 왔다(상한 {SYNC_OUTPUT_MAX_HOLD}s)"
+        if max_gap < SYNC_OUTPUT_MAX_DEFER:      # 급식이 끊기지 않았을 때만 하한을 본다
+            assert first >= SYNC_OUTPUT_MAX_HOLD - 0.1, \
+                f"총 상한 전에 반쪽 프레임을 보냈다: {first:.2f}s"
+        writer.close()
+    finally:
+        await teardown(srv, task, sock)
+
+
 async def test_sync_output_active_feed_does_not_time_out():
     """무거운 스크롤 회귀: 한 동기화 프레임이 FEED_SLICE(8KB) 여러 조각으로
     SYNC_OUTPUT_MAX_DEFER 보다 오래 걸쳐 들어와도, 바이트가 계속 흐르는 한 _flush_loop

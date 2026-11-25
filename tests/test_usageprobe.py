@@ -83,6 +83,24 @@ async def test_query_usage_parses_real_panel_fixture():
     assert sess.killed and sess.closed
 
 
+async def test_query_usage_launches_the_hidden_session_without_mcp_servers():
+    """pytmux-669: 숨은 세션은 `/usage` 만 읽는다. 인자 없이 띄우면 사용자 범위 MCP
+    서버를 회차마다 전부 다시 띄운다(실측: python 2 + conhost · node · cmd+node) —
+    `--strict-mcp-config` 로 건너뛴다."""
+    boot = b"\x1b[2J\x1b[H Welcome to Claude\r\n ? for shortcuts\r\n"
+    sess = _FakeSession(boot, _panel_bytes())
+    seen = []
+    orig = usageprobe._open_session
+    usageprobe._open_session = lambda argv, *a, **k: (seen.append(list(argv)), sess)[1]
+    try:
+        u = usageprobe.query_usage(cmd="claude", boot_timeout=2.0, panel_timeout=2.0)
+    finally:
+        usageprobe._open_session = orig
+    assert u is not None
+    assert len(seen) == 1 and "--strict-mcp-config" in seen[0][1:], seen
+    assert "--mcp-config" not in seen[0], "MCP 설정을 주면 「아무것도 안 쓴다」가 깨진다"
+
+
 async def test_query_usage_boot_sentinel_new_claude_footer():
     # claude v2.1.x 는 "? for shortcuts" 대신 입력박스 푸터를 띄운다 — 그 신호로도
     # 부팅 준비를 인식해야 한다(센티넬 회귀 방지).

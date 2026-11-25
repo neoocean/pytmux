@@ -3,6 +3,9 @@
 strip_box_drawing 은 OS 네이티브 선택으로 복사된 텍스트의 패널 테두리(박스드로잉)
 오염을 타깃 제거하는 순수 함수다. paste-clipboard(Ctrl+V) 텍스트 경로가 이 필터를
 strip_box_drawing 토글에 따라 적용/생략하는지도 함께 검증한다."""
+import os
+import time
+
 import harness  # noqa: F401  (경로 설정)
 from harness import make_app, server_only, teardown, wait_until
 
@@ -255,6 +258,126 @@ async def test_win_clipboard_utf16_roundtrip_preserves_korean():
     # 빈 stdout(클립보드 비었거나 비-텍스트) → ""
     assert _win_paste_from_stdout(b"") == ""
     assert _win_paste_from_stdout(b"   \r\n") == ""
+
+
+async def test_win_copy_goes_native_and_spawns_no_process():
+    """pytmux-667: 복사마다 PowerShell 을 띄우면 프로세스 기동 시간(무거운 상자에서
+    4~8초, 실측 43초 뒤 실패)이 그대로 복사 지연이 된다. Win32 API 길이 되면
+    **프로세스를 띄우지 않는다**. API 가 실패할 때만 PowerShell 로 내려간다."""
+    from pytmuxlib import clientclip
+    spawned = []
+    _orig = (clientclip._win_copy_native, clientclip._win_paste_native,
+             clientclip.subprocess.run, clientclip.shutil.which)
+    _env = os.environ.pop("PYTMUX_CLIP_BACKEND", None)
+
+    class _R:
+        returncode = 0
+        stdout = b""
+
+    def fake_run(argv, **kw):
+        spawned.append(argv[0])
+        return _R()
+
+    try:
+        clientclip.subprocess.run = fake_run
+        clientclip.shutil.which = lambda name: name
+        # ① 네이티브 성공 → 프로세스 0
+        clientclip._win_copy_native = lambda text: True
+        clientclip._win_paste_native = lambda: "붙여넣을 글"
+        assert clientclip._win_copy("가나다") is True
+        assert clientclip._win_paste() == "붙여넣을 글"
+        assert spawned == [], spawned
+        # ② 네이티브 실패 → PowerShell 폴백(종전 길)
+        clientclip._win_copy_native = lambda text: False
+        clientclip._win_paste_native = lambda: None
+        assert clientclip._win_copy("가나다") is True
+        assert clientclip._win_paste() == ""
+        assert spawned == ["powershell", "powershell"], spawned
+        # ③ 탈출구: PYTMUX_CLIP_BACKEND=powershell 이면 네이티브를 부르지도 않는다
+        del spawned[:]
+        called = []
+        clientclip._win_copy_native = lambda text: called.append(text) or True
+        os.environ["PYTMUX_CLIP_BACKEND"] = "powershell"
+        assert clientclip._win_copy("x") is True
+        assert called == [] and spawned == ["powershell"], (called, spawned)
+    finally:
+        (clientclip._win_copy_native, clientclip._win_paste_native,
+         clientclip.subprocess.run, clientclip.shutil.which) = _orig
+        os.environ.pop("PYTMUX_CLIP_BACKEND", None)
+        if _env is not None:
+            os.environ["PYTMUX_CLIP_BACKEND"] = _env
+
+
+async def test_win_native_clipboard_real_roundtrip_opt_in():
+    """실 OS 클립보드 왕복(한글·여러 줄·이모지·20만 자)과 소요 시간. 사용자의
+    클립보드를 건드리므로 `PYTMUX_TEST_REAL_CLIPBOARD=1` 일 때만 돈다(끝나면 복원)."""
+    from pytmuxlib import clientclip, proc
+    if not proc.IS_WINDOWS or os.environ.get("PYTMUX_TEST_REAL_CLIPBOARD") != "1":
+        return
+    saved = clientclip._win_paste_native()
+    try:
+        for t in ("plain ascii", "그림자 샤미 = KumquatShadow",
+                  "한글\n여러 줄\ttab 混在 emoji😀", "x" * 200_000):
+            t0 = time.perf_counter()
+            assert clientclip._win_copy_native(t) is True
+            assert clientclip._win_paste_native() == t
+            assert time.perf_counter() - t0 < 1.0   # 프로세스 기동이 끼면 초 단위다
+        # NUL 은 CF_UNICODETEXT 종결자 — 잘리지 않게 빼고 넣는다
+        assert clientclip._win_copy_native("a\x00b") is True
+        assert clientclip._win_paste_native() == "ab"
+    finally:
+        if saved:
+            clientclip._win_copy_native(saved)
+
+
+async def test_copy_text_runs_one_at_a_time_and_drops_stale():
+    """pytmux-667: 복사 워커가 겹쳐 돌면 **늦게 끝난 앞의 복사가 새 내용을 덮었다**
+    (연달아 드래그 → 엉뚱한 글이 붙는다). 한 번에 하나씩 돌리고, 차례를 기다리는
+    사이 더 새 복사가 들어온 것은 건너뛴다 — 마지막에 고른 것이 클립보드에 남는다.
+    클립보드 쓰기가 실패하면 알림이 그렇다고 말한다(종전: 접미사만 빠진 「복사됨」)."""
+    import threading
+    from pytmuxlib import clientclip, i18n
+    _orig = clientclip.copy
+
+    async def body(app, pilot, srv):
+        app.send_cmd = lambda action, **kw: None
+        notes = []
+        app.display_message = lambda text, **kw: notes.append(text)
+        gate = threading.Event()
+        calls, running, peak = [], [0], [0]
+
+        def slow_copy(text):
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+            calls.append(text)
+            gate.wait(5)
+            running[0] -= 1
+            return True
+
+        clientclip.copy = slow_copy
+        app.copy_text("A")
+        await wait_until(pilot, lambda: calls == ["A"])
+        app.copy_text("B")          # A 가 도는 동안 들어온 둘 —
+        app.copy_text("C")          # B 는 낡았다, C 만 남아야 한다
+        await pilot.pause(0.1)
+        assert calls == ["A"], calls
+        gate.set()
+        await wait_until(pilot, lambda: len(notes) >= 2)
+        await pilot.pause(0.1)
+        assert calls == ["A", "C"], calls
+        assert peak[0] == 1, peak
+        assert all(n.endswith(i18n.t("msg.clipboard_suffix")) for n in notes), notes
+        # 실패는 실패라고 말한다
+        del notes[:]
+        clientclip.copy = lambda text: False
+        app.copy_text("D")
+        await wait_until(pilot, lambda: notes)
+        assert notes[-1].endswith(i18n.t("msg.clipboard_failed_suffix")), notes
+
+    try:
+        await _with_app(body)
+    finally:
+        clientclip.copy = _orig
 
 
 async def test_paste_clipboard_strips_box_drawing_per_toggle():

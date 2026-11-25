@@ -574,6 +574,7 @@ register({
         "msg.clipboard_empty": "클립보드가 비어있거나 읽을 수 없음",
         "msg.copied_chars": "{n} chars 복사됨",
         "msg.clipboard_suffix": " (클립보드)",
+        "msg.clipboard_failed_suffix": " (pytmux 버퍼만 — OS 클립보드 실패)",
         # 컴포즈 오버레이(블록 선택 작성창 → 활성 패널 bracketed 투입)
         "compose.title": "프롬프트 작성 (블록 선택 편집)",
         "compose.hint": "Enter 전송 · Shift+Enter 줄바꿈 · Esc 메뉴 · Shift+방향키/Ctrl+A 선택",
@@ -629,6 +630,7 @@ register({
         "msg.clipboard_empty": "Clipboard is empty or unreadable",
         "msg.copied_chars": "{n} chars copied",
         "msg.clipboard_suffix": " (clipboard)",
+        "msg.clipboard_failed_suffix": " (pytmux buffer only — OS clipboard failed)",
         "compose.title": "Compose prompt (block-select editing)",
         "compose.hint": "Enter send · Shift+Enter newline · Esc menu · Shift+arrows/Ctrl+A select",
         "compose.hint_esc": "ESC menu — : command (paste-image etc.) · Esc cancel · any key resume",

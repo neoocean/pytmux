@@ -819,6 +819,71 @@ def test_sync_output_tracking():
     assert p.sync_output is False
 
 
+def test_sync_output_marker_split_across_slices():
+    """pytmux-668: ?2026 마커(8바이트)가 슬라이스 경계에 걸치면 종전에는 통째로 놓쳤다
+    — ESU 를 놓치면 동기화가 켜진 채 남아 화면 송신이 묶인다. 꼬리를 이어 읽는다."""
+    from pytmuxlib.model import Pane
+    for cut in range(1, 8):               # 마커 안 모든 자리에서 잘라 본다
+        p = Pane(-1, -1, 40, 6, vt_parser="native")
+        on, off = b"\x1b[?2026h", b"\x1b[?2026l"
+        assert p.update_sync_output(b"text" + on[:cut]) is False
+        assert p.sync_output is False
+        assert p.update_sync_output(on[cut:] + b"body") is True, cut
+        assert p.sync_output is True
+        assert p.update_sync_output(b"more" + off[:cut]) is False
+        assert p.sync_output is True
+        assert p.update_sync_output(off[cut:]) is True, cut
+        assert p.sync_output is False
+    # 끝 글자(h/l)가 아직 안 온 접두(ESC[?2026)만으로 상태를 뒤집지 않는다 — 종전에는
+    # rfind 둘이 다 -1 이라 「꺼짐」으로 읽혔다.
+    p = Pane(-1, -1, 40, 6, vt_parser="native")
+    p.update_sync_output(b"\x1b[?2026h")
+    assert p.update_sync_output(b"frame body \x1b[?2026") is False
+    assert p.sync_output is True
+    # 이미 센 완결 마커를 꼬리 때문에 다시 세지 않는다
+    p = Pane(-1, -1, 40, 6, vt_parser="native")
+    assert p.update_sync_output(b"\x1b[?2026h") is True
+    assert p.update_sync_output(b"\x1b[?2026l") is True
+    assert p.update_sync_output(b"plain") is False and p.sync_output is False
+
+
+def test_sync_output_hold_has_an_absolute_cap():
+    """pytmux-668: 보류 타임아웃은 '마지막 바이트 이후 침묵'만 쟀다. ESU 없이 바이트가
+    계속 흐르면(끝 마커 유실·BSU 만 반복) 송신이 끝없이 미뤄져, 치는 키의 에코가 타이머를
+    되감아 «치는 동안 글자도 커서도 안 보였다»(격리 실측 5.7~7.1초). BSU 이후 총
+    SYNC_OUTPUT_MAX_HOLD 를 넘기면 바이트가 흘러도 보낸다."""
+    import time
+    from pytmuxlib.model import Pane
+    from pytmuxlib.protocol import SYNC_OUTPUT_MAX_DEFER, SYNC_OUTPUT_MAX_HOLD
+    assert SYNC_OUTPUT_MAX_HOLD > SYNC_OUTPUT_MAX_DEFER * 2 + 0.1   # 큰 프레임 여유
+    p = Pane(-1, -1, 40, 6, vt_parser="native")
+    now = time.monotonic()
+    assert p.sync_holding(now) is False                  # 동기화 아님
+    p.update_sync_output(b"\x1b[?2026h")
+    t0 = p._sync_begin
+    assert p.sync_holding(t0 + 0.01) is True
+    # 침묵이 MAX_DEFER 를 넘으면 푼다(종전 안전망 그대로)
+    assert p.sync_holding(t0 + SYNC_OUTPUT_MAX_DEFER + 0.01) is False
+    # 바이트가 계속 흘러 _sync_since 가 되감겨도(에코·BSU 반복) 프레임 시작 시각은 그대로
+    for chunk in (b"e", b"\x1b[?2026h", b"cho", b"\x1b[?2026hmore"):
+        p.update_sync_output(chunk)
+        assert p._sync_begin == t0
+    p._sync_since = t0 + SYNC_OUTPUT_MAX_HOLD - 0.05     # 방금도 바이트가 왔다
+    assert p.sync_holding(t0 + SYNC_OUTPUT_MAX_HOLD - 0.04) is True
+    p._sync_since = t0 + SYNC_OUTPUT_MAX_HOLD + 0.05
+    assert p.sync_holding(t0 + SYNC_OUTPUT_MAX_HOLD + 0.06) is False   # 총 상한
+    # 새 프레임은 시계를 다시 잰다: 닫혔다 열림(둘로 나뉘어 오든 한 슬라이스에 오든)
+    # (Windows 의 monotonic 눈금은 ~16ms 라, 시각이 달라지도록 그보다 길게 쉰다)
+    time.sleep(0.05)
+    p.update_sync_output(b"\x1b[?2026l")
+    p.update_sync_output(b"\x1b[?2026h")
+    assert p._sync_begin > t0
+    t1 = p._sync_begin
+    time.sleep(0.05)
+    p.update_sync_output(b"\x1b[?2026ltail\x1b[?2026hhead")
+    assert p.sync_output is True and p._sync_begin > t1
+
+
 async def test_bg_gap_fill_between_same_bg_runs():
     """배경 갭 메꿈(_fill_flanked_gaps): 같은 명시 배경 런 사이의 짧은 기본-배경
     공백 런은 그 배경으로 채워 내보낸다 — Claude Code 가 트랜스크립트 블록을

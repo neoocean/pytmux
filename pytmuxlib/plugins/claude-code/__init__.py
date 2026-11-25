@@ -1542,7 +1542,7 @@ class _ClaudeCodePlugin:
         후자 덕분에 패널 밖에서 Claude 를 써도 시각별 한도%(5h/주간)가 계속 기록된다."""
         if not server._usage_busy and server._usage_probe_allowed():
             try:
-                await server.refresh_usage()
+                await server.refresh_usage(auto=True)   # 잇단 실패 중이면 쉰다(pytmux-669)
             except Exception:
                 pass
 

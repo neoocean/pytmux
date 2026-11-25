@@ -41,9 +41,161 @@ def _win_paste_from_stdout(out: bytes) -> str:
         return ""
 
 
+# ── Windows 네이티브 클립보드(프로세스를 띄우지 않는다) ─────────────────────────
+# 복사·붙여넣기마다 PowerShell 을 띄우던 길은 **프로세스 기동 시간**이 그대로 지연이
+# 된다. 보안 스택이 무거운 상자에서는 기동 한 번이 4~8초라, 드래그를 놓고 수 초 뒤에야
+# 클립보드가 바뀌었고(그 사이 Ctrl+V 는 옛 내용), 5초 타임아웃을 넘기면 복사가 조용히
+# 실패하거나 clip.exe 폴백(cp949 해석 → 한글 깨짐)으로 갔다(제보 2026-11-25).
+# Win32 클립보드 API 를 ctypes 로 직접 부르면 ms 단위로 끝난다. PowerShell 길은
+# API 가 실패할 때의 폴백으로 남긴다. `PYTMUX_CLIP_BACKEND=powershell` 로 옛 길 강제.
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE = 0x0002
+_win_api_cache = None
+
+
+def _win_api():
+    """(user32, kernel32) — argtypes/restype 를 한 번만 박아 캐시한다. 못 쓰면 None.
+    restype 을 안 박으면 64비트 핸들이 c_int 로 잘려 GlobalLock 이 죽는다."""
+    global _win_api_cache
+    if _win_api_cache is not None:
+        return _win_api_cache or None
+    try:
+        import ctypes
+        from ctypes import wintypes as w
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        u.OpenClipboard.argtypes = [w.HWND]
+        u.OpenClipboard.restype = w.BOOL
+        u.CloseClipboard.argtypes = []
+        u.CloseClipboard.restype = w.BOOL
+        u.EmptyClipboard.argtypes = []
+        u.EmptyClipboard.restype = w.BOOL
+        u.SetClipboardData.argtypes = [w.UINT, w.HANDLE]
+        u.SetClipboardData.restype = w.HANDLE
+        u.GetClipboardData.argtypes = [w.UINT]
+        u.GetClipboardData.restype = w.HANDLE
+        u.IsClipboardFormatAvailable.argtypes = [w.UINT]
+        u.IsClipboardFormatAvailable.restype = w.BOOL
+        u.CreateWindowExW.argtypes = [
+            w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
+        u.CreateWindowExW.restype = w.HWND
+        u.DestroyWindow.argtypes = [w.HWND]
+        u.DestroyWindow.restype = w.BOOL
+        k.GlobalAlloc.argtypes = [w.UINT, ctypes.c_size_t]
+        k.GlobalAlloc.restype = w.HANDLE
+        k.GlobalLock.argtypes = [w.HANDLE]
+        k.GlobalLock.restype = ctypes.c_void_p
+        k.GlobalUnlock.argtypes = [w.HANDLE]
+        k.GlobalUnlock.restype = w.BOOL
+        k.GlobalFree.argtypes = [w.HANDLE]
+        k.GlobalFree.restype = w.HANDLE
+        k.GlobalSize.argtypes = [w.HANDLE]
+        k.GlobalSize.restype = ctypes.c_size_t
+        _win_api_cache = (u, k)
+    except (OSError, AttributeError, ImportError):
+        _win_api_cache = False
+    return _win_api_cache or None
+
+
+def _win_native_enabled() -> bool:
+    return os.environ.get("PYTMUX_CLIP_BACKEND", "").lower() != "powershell"
+
+
+def _win_open_clipboard(u, hwnd, tries: int = 25, gap: float = 0.02) -> bool:
+    """OpenClipboard 는 다른 앱(클립보드 기록·원격 데스크톱 등)이 쥐고 있으면 실패한다
+    — 흔하고 짧은 경합이라 최대 ~0.5초 다시 두드린다."""
+    import time
+    for i in range(tries):
+        if u.OpenClipboard(hwnd):
+            return True
+        if i + 1 < tries:
+            time.sleep(gap)
+    return False
+
+
+def _win_copy_native(text: str) -> bool:
+    """Win32 API 로 CF_UNICODETEXT 를 클립보드에 넣는다. 성공 True, 무엇이든 실패 False
+    (호출부가 PowerShell 폴백으로). 워커 스레드에서 불린다."""
+    api = _win_api()
+    if api is None:
+        return False
+    u, k = api
+    import ctypes
+    # NUL 은 CF_UNICODETEXT 의 종결자라 중간에 있으면 거기서 잘린다 → 뺀다.
+    raw = text.replace("\x00", "").encode("utf-16le", errors="replace") + b"\x00\x00"
+    # 임자 없는(NULL) 클립보드는 EmptyClipboard 뒤 SetClipboardData 가 실패할 수 있다
+    # (MSDN ms649048) — 숨은 STATIC 창을 임자로 세운다. 창을 못 만들면 NULL 로 시도.
+    hwnd = u.CreateWindowExW(0, "STATIC", None, 0, 0, 0, 0, 0,
+                             None, None, None, None)
+    try:
+        if not _win_open_clipboard(u, hwnd):
+            return False
+        try:
+            if not u.EmptyClipboard():
+                return False
+            h = k.GlobalAlloc(_GMEM_MOVEABLE, len(raw))
+            if not h:
+                return False
+            p = k.GlobalLock(h)
+            if not p:
+                k.GlobalFree(h)
+                return False
+            ctypes.memmove(p, raw, len(raw))
+            k.GlobalUnlock(h)
+            if not u.SetClipboardData(_CF_UNICODETEXT, h):
+                k.GlobalFree(h)      # 실패하면 소유권이 안 넘어갔다 — 우리가 푼다
+                return False
+            return True              # 성공하면 메모리는 시스템 것 — 풀지 않는다
+        finally:
+            u.CloseClipboard()
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return False
+    finally:
+        if hwnd:
+            u.DestroyWindow(hwnd)
+
+
+def _win_paste_native():
+    """Win32 API 로 클립보드 텍스트를 읽는다. 문자열(텍스트가 없으면 "") 또는
+    None(API 실패 → 호출부가 PowerShell 폴백으로)."""
+    api = _win_api()
+    if api is None:
+        return None
+    u, k = api
+    import ctypes
+    try:
+        if not _win_open_clipboard(u, None):
+            return None
+        try:
+            if not u.IsClipboardFormatAvailable(_CF_UNICODETEXT):
+                return ""            # 비었거나 텍스트가 아니다(이미지 등)
+            h = u.GetClipboardData(_CF_UNICODETEXT)
+            if not h:
+                return None
+            p = k.GlobalLock(h)
+            if not p:
+                return None
+            try:
+                size = k.GlobalSize(h)
+                data = ctypes.string_at(p, size - (size % 2))
+            finally:
+                k.GlobalUnlock(h)
+        finally:
+            u.CloseClipboard()
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return None
+    s = data.decode("utf-16le", "ignore")
+    cut = s.find("\x00")
+    return s if cut < 0 else s[:cut]
+
+
 def _win_copy(text: str) -> bool:
-    """Windows: PowerShell Set-Clipboard 로 유니코드-안전 복사. 성공 True.
-    PowerShell 이 없거나 실패하면 False → 호출부가 clip.exe 폴백(ASCII 만 정확)."""
+    """Windows: 유니코드-안전 복사. 성공 True. 먼저 Win32 API(프로세스 없음 · ms),
+    실패하면 PowerShell Set-Clipboard. 둘 다 실패하면 False → 호출부가 clip.exe
+    폴백(ASCII 만 정확)."""
+    if _win_native_enabled() and _win_copy_native(text):
+        return True
     if not shutil.which("powershell"):
         return False
     # $b(base64) 를 UTF-16LE 원문으로 되돌려 Set-Clipboard. Set-Clipboard 는 자체적으로
@@ -60,7 +212,8 @@ def _win_copy(text: str) -> bool:
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            input=_win_copy_stdin(text), timeout=5, capture_output=True,
+            # 폴백 길의 상한. 프로세스 기동이 4~8초인 상자에서 5초는 「늘 실패」였다.
+            input=_win_copy_stdin(text), timeout=15, capture_output=True,
             **proc.no_window_kwargs())
         return r.returncode == 0
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -69,7 +222,12 @@ def _win_copy(text: str) -> bool:
 
 def _win_paste():
     """Windows: PowerShell Get-Clipboard 로 유니코드-안전 붙여넣기(_win_copy 의 역).
-    문자열|"" 반환, PowerShell 이 없으면 None(호출부가 폴백 루프로)."""
+    문자열|"" 반환, PowerShell 이 없으면 None(호출부가 폴백 루프로).
+    먼저 Win32 API 로 읽는다(프로세스 없음) — 실패(None)일 때만 PowerShell."""
+    if _win_native_enabled():
+        t = _win_paste_native()
+        if t is not None:
+            return t
     if not shutil.which("powershell"):
         return None
     # -Raw: 여러 줄을 배열로 쪼개지 않고 원문 그대로. base64(ASCII)로 stdout 해 코드페이지
@@ -80,7 +238,7 @@ def _win_paste():
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, timeout=5, **proc.no_window_kwargs())
+            capture_output=True, timeout=15, **proc.no_window_kwargs())
     except (OSError, subprocess.SubprocessError):
         return None
     # 검수 M-3: PowerShell 자체가 실패(returncode≠0)하면 stdout 은 비지만 그건 '클립보드

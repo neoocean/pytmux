@@ -20,7 +20,7 @@ import traceback
 from . import ipc, pty_backend, ptyhostmgr, serverremote, version
 from .model import ClientConn, Pane, Session
 from .protocol import (FLUSH_HZ, HANDSHAKE_MAX_FRAME, HANDSHAKE_TIMEOUT, MAX_H,
-                       MAX_W, MIN_H, MIN_W, PROTO_VERSION, SYNC_OUTPUT_MAX_DEFER,
+                       MAX_W, MIN_H, MIN_W, PROTO_VERSION,
                        clamp_dim, frame_msg, read_msg, write_frames, write_msg)
 from .servercmd import DYNAMIC, FULL, HANDLED, _CMD_TABLE
 from .serverremote import _REMOTE_BLOCK_ACTIONS, _REMOTE_RELAY_ACTIONS
@@ -948,9 +948,9 @@ class ServerIOMixin:
                     # 동기화 출력(DEC 2026): 프레임(?2026h…?2026l) 도중이면 송신을
                     # 미뤄(dirty 유지) 반쪽 화면을 클라에 안 보낸다 — 무작위 글자
                     # 겹침의 근본 해결. 단 ESU 안 오는 먹통 앱이 패널을 영구히 묶지
-                    # 않게 SYNC_OUTPUT_MAX_DEFER 지나면 강제로 보낸다.
-                    if (p.sync_output
-                            and now - p._sync_since < SYNC_OUTPUT_MAX_DEFER):
+                    # 않게 SYNC_OUTPUT_MAX_DEFER 지나면 강제로 보낸다. 바이트가 계속
+                    # 흘러도 SYNC_OUTPUT_MAX_HOLD 를 넘기면 보낸다(Pane.sync_holding).
+                    if p.sync_holding(now):
                         continue
                     rows, cursor = p.render(p is win.active_pane)
                     # 전송 전 플러그인 행 필터(claude-code 가 '/feedback 팁' 줄을 가림).
@@ -985,9 +985,7 @@ class ServerIOMixin:
                 # 프레임 도중이면 일반 패널과 동일하게 송신을 미룬다).
                 pu = sess.popup
                 if (pu and pu.get("pane") is not None and pu["pane"].dirty
-                        and not (pu["pane"].sync_output
-                                 and now - pu["pane"]._sync_since
-                                 < SYNC_OUTPUT_MAX_DEFER)):
+                        and not pu["pane"].sync_holding(now)):
                     pp = pu["pane"]
                     rows, cursor = pp.render(True)
                     rows = self.plugins.server_filter_rows(self, pp, rows)

@@ -216,7 +216,12 @@ class _ClipboardMixin:
         # 복사(기본 on)는 드래그를 놓을 때마다 불려, 이벤트 루프에서 동기로 돌리면
         # 그때마다 UI 가 멈춘다. paste 와 같은 to_thread 패턴으로 오프로드하고 완료
         # 콜백에서 '복사됨' 메시지를 띄운다(검수 M-4).
-        self.run_worker(self._do_copy_text(text), exclusive=False)
+        #
+        # pytmux-667: 워커가 겹쳐 돌면(연달아 드래그) **늦게 끝난 앞의 복사가 새 내용을
+        # 덮었다** — 세대 번호를 매겨 `_do_copy_text` 가 차례로 돌리고 낡은 것은 버린다.
+        self._copy_gen = getattr(self, "_copy_gen", 0) + 1
+        self.run_worker(self._do_copy_text(text, self._copy_gen),
+                        exclusive=False)
 
     def copy_selection_text(self, text, cols=0, first_col=0):
         """**마우스 선택** 텍스트를 클립보드로 — copy_text 앞에 `copy-unwrap` 을 끼운다.
@@ -279,11 +284,22 @@ class _ClipboardMixin:
         self.run_worker(asyncio.to_thread(clientclip.copy, text),
                         exclusive=False)
 
-    async def _do_copy_text(self, text):
-        clip = await asyncio.to_thread(clientclip.copy, text)
+    async def _do_copy_text(self, text, gen=None):
+        # 한 번에 하나씩(pytmux-667). 차례를 기다리는 사이 더 새 복사가 들어왔으면 이
+        # 복사는 하지 않는다 — 클립보드에는 언제나 **마지막에 고른 것**이 남는다.
+        lock = getattr(self, "_copy_lock", None)
+        if lock is None:
+            lock = self._copy_lock = asyncio.Lock()
+        async with lock:
+            if gen is not None and gen != getattr(self, "_copy_gen", gen):
+                return
+            clip = await asyncio.to_thread(clientclip.copy, text)
+        # 클립보드에 못 넣었으면 그렇다고 말한다. 종전에는 접미사만 빠진 「복사됨」이라
+        # 실패가 성공처럼 보였다(붙여넣으면 옛 내용).
         self.display_message(
             i18n.t("msg.copied_chars", n=len(text))
-            + (i18n.t("msg.clipboard_suffix") if clip else ""))
+            + i18n.t("msg.clipboard_suffix" if clip
+                     else "msg.clipboard_failed_suffix"))
 
     def paste_os_clipboard(self):
         """OS 클립보드 내용을 활성 패널에 붙여넣는다(명령 `paste-clipboard`, Ctrl+V).

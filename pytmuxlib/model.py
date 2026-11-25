@@ -9,7 +9,8 @@ from collections import deque
 from functools import lru_cache
 
 from . import plugins, sshwrap, vtconst
-from .protocol import HISTORY, MIN_H, MIN_W, conv_color, set_winsize
+from .protocol import (HISTORY, MIN_H, MIN_W, SYNC_OUTPUT_MAX_DEFER,
+                       SYNC_OUTPUT_MAX_HOLD, conv_color, set_winsize)
 
 # 단말 질의(CPR/DSR/DA) 응답을 자식 stdin 으로 되돌릴지 — **Windows(ConPTY)에서는 끈다**
 # (Pane._reply_to_child 주석 참조). 모듈 상수라 테스트가 monkeypatch 로 양쪽을 다 돈다.
@@ -400,6 +401,8 @@ class Pane:
         # 보내지 않게 하는 게이트(update_sync_output 참조).
         self.sync_output = False
         self._sync_since = 0.0   # sync_output 가 켜진 시각(time.monotonic) — 타임아웃용
+        self._sync_begin = 0.0   # 이 프레임의 BSU(꺼짐→켜짐) 시각 — 총 보류 상한용
+        self._sync_tail = b""    # 슬라이스 경계에 걸친 ?2026 마커를 잇는 꼬리(≤7B)
         # 내부 앱의 마우스 트래킹 모드(DECSET). 클라이언트가 이 패널로 마우스를
         # 패스스루할지/어떻게 인코딩할지 판단하는 데 쓴다(서버가 추적해 전달).
         self._mouse_modes = set()   # 켜진 {1000,1002,1003}
@@ -480,6 +483,8 @@ class Pane:
         self.bracketed = False
         self.sync_output = False
         self._sync_since = 0.0
+        self._sync_begin = 0.0
+        self._sync_tail = b""
         self.reset_mouse_modes()
         self._mouse_sent = (0, False)
 
@@ -741,7 +746,17 @@ class Pane:
         bracketed/mouse 추적과 같은 자리(_ingest_slice)에서 원시 바이트로 호출한다.
         한 슬라이스에 h·l 이 함께 오면 **마지막 토글**(rfind)이 최종 상태다. 상태가
         바뀌면 True 반환(켜짐 전이 때 _sync_since 에 시각 기록)."""
-        if b"\x1b[?2026" not in data:
+        # 마커(8바이트)가 슬라이스 경계에 걸치면 종전에는 **통째로 놓쳤다**(pytmux-668):
+        # ESU 를 놓치면 동기화가 켜진 채 남는다. 직전 슬라이스의 꼬리(≤7B)를 이어 본다.
+        # 꼬리는 마커보다 짧아, 이미 센 완결 마커를 다시 세는 일은 없다.
+        if self._sync_tail:
+            data = self._sync_tail + data
+        tail = data[-7:]
+        esc = tail.rfind(b"\x1b")
+        self._sync_tail = tail[esc:] if esc >= 0 else b""
+        i_on = data.rfind(b"\x1b[?2026h")
+        i_off = data.rfind(b"\x1b[?2026l")
+        if i_on < 0 and i_off < 0:
             # 토글 없는 '프레임 중간' 슬라이스. 큰 프레임은 FEED_SLICE(8KB) 여러 조각에
             # 걸쳐 들어오는데(serverpty._feed_drain), 동기화 중이면 이건 아직 그 프레임을
             # 그리는 중이란 뜻이다. _sync_since 를 갱신해 디퍼 타임아웃이 '프레임 총
@@ -752,15 +767,29 @@ class Pane:
             if self.sync_output:
                 self._sync_since = time.monotonic()
             return False
-        on = data.rfind(b"\x1b[?2026h") > data.rfind(b"\x1b[?2026l")
+        on = i_on > i_off
         if on == self.sync_output:
             if on:   # 동기화 유지 슬라이스(추가 BSU/바이트) — 위와 같은 이유로 리셋
                 self._sync_since = time.monotonic()
+                # 이 슬라이스 안에서 프레임이 **닫혔다가 다시 열렸으면**(…l…h) 새 프레임이다
+                # — 총 보류 시계를 다시 잰다. BSU 만 거듭 오는 것은 같은 프레임으로 센다.
+                if i_off >= 0:
+                    self._sync_begin = self._sync_since
             return False
         self.sync_output = on
         if on:
-            self._sync_since = time.monotonic()
+            self._sync_since = self._sync_begin = time.monotonic()
         return True
+
+    def sync_holding(self, now: float) -> bool:
+        """동기화 프레임 도중이라 **지금은 화면 송신을 미뤄야 하는가**(_flush_loop 가 묻는다).
+
+        미루는 조건 = 동기화 중이고, 마지막 바이트 이후 침묵이 SYNC_OUTPUT_MAX_DEFER
+        안쪽이며, **이 프레임을 묶은 총 시간이 SYNC_OUTPUT_MAX_HOLD 안쪽**이다. 셋째가
+        없던 때는 ESU 없이 바이트가 흐르는 동안 끝없이 미뤘다(pytmux-668)."""
+        return (self.sync_output
+                and now - self._sync_since < SYNC_OUTPUT_MAX_DEFER
+                and now - self._sync_begin < SYNC_OUTPUT_MAX_HOLD)
 
     # 레이아웃 계산용
     def first_pane(self) -> "Pane":

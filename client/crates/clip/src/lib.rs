@@ -1,4 +1,6 @@
 //! OS 클립보드 — **외부 도구를 부른다**(pbcopy/xclip/wl-copy/PowerShell/clip.exe).
+//! ★ Windows 만 예외다: 맨 앞 길이 **Win32 API 직접 호출**이라 프로세스를 띄우지 않는다
+//! (`winclip` · pytmux-667). 도구들은 그 뒤의 폴백이다.
 //!
 //! 파이썬 클라의 `pytmuxlib/clientclip.py` 와 **같은 도구를 같은 순서로** 부른다. 두
 //! 클라가 같은 상자에서 다른 클립보드에 넣으면 안 되기 때문이다 — 사용자는 어느 클라로
@@ -41,8 +43,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// PowerShell 한 번에 주는 시간. cold start 가 길어 다른 도구보다 넉넉하다
-/// (파이썬 클라와 같은 값 — `clientclip._win_copy` 의 `timeout=5`).
-const PS_TIMEOUT: Duration = Duration::from_secs(5);
+/// (파이썬 클라와 같은 값 — `clientclip._win_copy` 의 `timeout=15`). 이제 이 길은
+/// Win32 API 길(`winclip`)이 실패했을 때의 폴백이다. 프로세스 기동이 4~8초인 상자에서
+/// 종전 5초는 「늘 실패」였다(pytmux-667).
+const PS_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// 나머지 도구의 상한(파이썬 클라와 같은 값).
 const TOOL_TIMEOUT: Duration = Duration::from_secs(2);
@@ -228,9 +232,14 @@ pub fn copy(text: &str) -> bool {
     if text.is_empty() {
         return false;
     }
-    // Windows 는 코드페이지 무관 경로를 **먼저** 시도한다(아래 `win_copy` 참조).
+    // Windows 는 **프로세스를 띄우지 않는 길**이 맨 앞이다(pytmux-667 · 아래 `winclip`).
+    // 그것이 실패할 때만 PowerShell(코드페이지 무관) → clip.exe 로 내려간다. 파이썬
+    // 클라(`clientclip._win_copy`)와 같은 차례다.
     #[cfg(windows)]
     {
+        if native_enabled() && winclip::copy(text) {
+            return true;
+        }
         if win_copy(text) {
             return true;
         }
@@ -250,6 +259,203 @@ pub fn copy(text: &str) -> bool {
         }
     }
     false
+}
+
+/// 탈출구: `PYTMUX_CLIP_BACKEND=powershell` 이면 Win32 API 길을 건너뛴다(파이썬 클라와
+/// 같은 이름·같은 뜻 — API 길이 어떤 상자에서 말썽이면 옛 길로 되돌릴 수 있다).
+#[cfg(windows)]
+fn native_enabled() -> bool {
+    !std::env::var("PYTMUX_CLIP_BACKEND").is_ok_and(|v| v.eq_ignore_ascii_case("powershell"))
+}
+
+/// Windows 클립보드를 **Win32 API 로 직접** 쓴다 — 프로세스를 띄우지 않는다(pytmux-667).
+///
+/// # 왜 필요한가
+///
+/// 복사 한 번마다 PowerShell 을 띄우면 **프로세스 기동 시간이 그대로 복사 지연**이다.
+/// 보안 스택이 무거운 상자에서는 기동 한 번이 수 초~수십 초라(실측 2026-11-25: 43초 뒤
+/// 실패), 드래그를 놓고 한참 뒤에야 클립보드가 바뀌거나 [`PS_TIMEOUT`] 을 넘겨 실패했다.
+/// 그 사이 붙여넣으면 **옛 내용**이 나온다. API 호출은 ms 단위다(같은 상자 7~19ms).
+///
+/// # 의존 0개는 그대로다
+///
+/// `user32`·`kernel32` 는 Windows 가 언제나 갖고 있는 시스템 DLL 이고, 선언은 아래
+/// `extern` 여남은 줄뿐이다. 크레이트를 더하지 않으므로 모듈 머리말의 「왜 크레이트
+/// 의존이 아닌가」(Linux 에서 X11/Wayland 를 끌어오지 않는다)도 그대로 선다.
+#[cfg(windows)]
+mod winclip {
+    use std::ffi::c_void;
+
+    type Handle = *mut c_void;
+
+    const CF_UNICODETEXT: u32 = 13;
+    const GMEM_MOVEABLE: u32 = 0x0002;
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn OpenClipboard(hwnd: Handle) -> i32;
+        fn CloseClipboard() -> i32;
+        fn EmptyClipboard() -> i32;
+        fn SetClipboardData(format: u32, mem: Handle) -> Handle;
+        fn CreateWindowExW(
+            ex_style: u32,
+            class: *const u16,
+            name: *const u16,
+            style: u32,
+            x: i32,
+            y: i32,
+            w: i32,
+            h: i32,
+            parent: Handle,
+            menu: Handle,
+            instance: Handle,
+            param: *mut c_void,
+        ) -> Handle;
+        fn DestroyWindow(hwnd: Handle) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GlobalAlloc(flags: u32, bytes: usize) -> Handle;
+        fn GlobalLock(mem: Handle) -> *mut c_void;
+        fn GlobalUnlock(mem: Handle) -> i32;
+        fn GlobalFree(mem: Handle) -> Handle;
+    }
+
+    // 읽는 쪽 선언은 시험에서만 쓴다(아래 `paste`).
+    #[cfg(test)]
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetClipboardData(format: u32) -> Handle;
+        fn IsClipboardFormatAvailable(format: u32) -> i32;
+    }
+
+    #[cfg(test)]
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GlobalSize(mem: Handle) -> usize;
+    }
+
+    /// `OpenClipboard` 는 다른 앱(클립보드 기록·원격 데스크톱)이 쥐고 있으면 실패한다 —
+    /// 흔하고 짧은 경합이라 0.5초까지 다시 두드린다.
+    fn open(hwnd: Handle) -> bool {
+        for attempt in 0..25 {
+            // SAFETY: 인자는 창 핸들(NULL 허용)뿐이고 상태는 OS 가 쥔다.
+            if unsafe { OpenClipboard(hwnd) } != 0 {
+                return true;
+            }
+            if attempt < 24 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        false
+    }
+
+    /// 연 클립보드를 **반드시 닫는다**(안 닫으면 이 상자의 모든 앱이 복사를 못 한다).
+    struct Opened;
+    impl Drop for Opened {
+        fn drop(&mut self) {
+            // SAFETY: 이 값은 `open` 이 성공한 뒤에만 만들어진다.
+            unsafe { CloseClipboard() };
+        }
+    }
+
+    /// 임자 창. 임자가 없는(NULL) 클립보드는 `EmptyClipboard` 뒤 `SetClipboardData` 가
+    /// 실패할 수 있다(MSDN `EmptyClipboard` 비고) — 숨은 STATIC 창 하나를 임자로 세운다.
+    struct Owner(Handle);
+    impl Drop for Owner {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: 우리가 만든 창이고 이 스레드의 것이다.
+                unsafe { DestroyWindow(self.0) };
+            }
+        }
+    }
+
+    pub fn copy(text: &str) -> bool {
+        // NUL 은 CF_UNICODETEXT 의 종결자다 — 중간에 있으면 거기서 잘리므로 뺀다.
+        let mut units: Vec<u16> = text.encode_utf16().filter(|&u| u != 0).collect();
+        units.push(0);
+        let bytes = units.len() * 2;
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        // SAFETY: class 는 NUL 로 끝나는 UTF-16 이고 호출 동안 살아 있다. 나머지는 NULL/0.
+        let owner = Owner(unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                std::ptr::null(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        });
+        if !open(owner.0) {
+            return false;
+        }
+        let _opened = Opened;
+        // SAFETY: 클립보드를 우리가 열어 쥐고 있다. 메모리는 GlobalAlloc 이 준 `bytes`
+        // 크기의 블록이고, 그 크기만큼만 복사한다. SetClipboardData 가 성공하면 소유권이
+        // 시스템으로 넘어가므로 풀지 않고, 실패했을 때만 우리가 푼다.
+        unsafe {
+            if EmptyClipboard() == 0 {
+                return false;
+            }
+            let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+            if mem.is_null() {
+                return false;
+            }
+            let ptr = GlobalLock(mem);
+            if ptr.is_null() {
+                GlobalFree(mem);
+                return false;
+            }
+            std::ptr::copy_nonoverlapping(units.as_ptr().cast::<u8>(), ptr.cast::<u8>(), bytes);
+            GlobalUnlock(mem);
+            if SetClipboardData(CF_UNICODETEXT, mem).is_null() {
+                GlobalFree(mem);
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 클립보드의 글을 읽는다 — **시험 전용**이다(왕복 대조).
+    ///
+    /// 제품의 읽는 쪽은 창 계층이 쥐고 있다(모듈 머리말 「왜 글자 `copy` 뿐인가」). 여기에
+    /// 공개 함수로 두면 같은 것을 읽는 길이 둘이 된다.
+    #[cfg(test)]
+    pub fn paste() -> Option<String> {
+        if !open(std::ptr::null_mut()) {
+            return None;
+        }
+        let _opened = Opened;
+        // SAFETY: 클립보드를 연 동안 핸들은 유효하다. GlobalSize 가 준 크기 안에서만 읽는다.
+        unsafe {
+            if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0 {
+                return Some(String::new());
+            }
+            let mem = GetClipboardData(CF_UNICODETEXT);
+            if mem.is_null() {
+                return None;
+            }
+            let ptr = GlobalLock(mem);
+            if ptr.is_null() {
+                return None;
+            }
+            let len = GlobalSize(mem) / 2;
+            let units = std::slice::from_raw_parts(ptr.cast::<u16>(), len);
+            let end = units.iter().position(|&u| u == 0).unwrap_or(len);
+            let text = String::from_utf16_lossy(&units[..end]);
+            GlobalUnlock(mem);
+            Some(text)
+        }
+    }
 }
 
 /// Windows: PowerShell `Set-Clipboard` 로 **유니코드-안전** 복사.
@@ -465,6 +671,32 @@ mod tests {
         assert_eq!(base64(b"foob"), "Zm9vYg==");
         assert_eq!(base64(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_native_clipboard_round_trips_without_a_process() {
+        // pytmux-667 — 실 OS 클립보드 왕복. **사용자의 클립보드를 건드리므로**
+        // `PYTMUX_TEST_REAL_CLIPBOARD=1` 일 때만 돈다(끝나면 되돌린다 · 파이썬 쪽
+        // `test_win_native_clipboard_real_roundtrip_opt_in` 과 같은 약속).
+        if std::env::var("PYTMUX_TEST_REAL_CLIPBOARD").as_deref() != Ok("1") {
+            return;
+        }
+        let saved = winclip::paste();
+        let long = "x".repeat(200_000);
+        for text in ["plain ascii", "그림자 샤미 = KumquatShadow", "한글\n여러 줄\ttab 混在 emoji😀", &long] {
+            let started = Instant::now();
+            assert!(winclip::copy(text), "복사가 실패했다: {} 자", text.chars().count());
+            assert_eq!(winclip::paste().as_deref(), Some(text));
+            // 프로세스 기동이 끼면 이 상자에서는 초 단위다.
+            assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+        }
+        // NUL 은 종결자다 — 잘리지 않게 빼고 넣는다.
+        assert!(winclip::copy("a\0b"));
+        assert_eq!(winclip::paste().as_deref(), Some("ab"));
+        if let Some(saved) = saved.filter(|s| !s.is_empty()) {
+            assert!(winclip::copy(&saved));
+        }
     }
 
     #[cfg(windows)]

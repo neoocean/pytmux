@@ -205,7 +205,9 @@ async def test_fire_usage_refresh_gates_and_calls_probe():
         sess, win, p = await _claude_pane(srv)
         calls = []
 
-        async def fake_refresh():
+        async def fake_refresh(auto=False):
+            # 예약 발화는 자동 경로다 — 잇단 실패 중에는 물러서야 한다(pytmux-669).
+            assert auto is True, "예약 발화가 자동 경로로 부르지 않았다"
             calls.append(1)
         srv.refresh_usage = fake_refresh
         # Claude 패널 없음 + 최근 활동 없음 → 생략

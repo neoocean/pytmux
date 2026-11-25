@@ -2216,10 +2216,32 @@ class ServerClaudeMixin:
                 return d
         return getattr(self, "cwd", None) or None
 
-    async def refresh_usage(self):
+    # ---- pytmux-669: 잇단 실패에는 물러선다 ----
+    # 프로브가 실패하면 `_usage_ts` 가 안 갱신돼 실측이 **언제나 묵은 상태**다. 그러면
+    # 응답 종료 트리거(_on_token_commit_refresh)가 응답마다 숨은 claude 를 다시 띄운다
+    # (실측 2026-11-25: 기록된 회차 전부 실패 · 몇 분 간격으로 회당 21~54초). 자동 경로는
+    # 실패 뒤 최소 한 주기를 쉬고, 그 뒤 두 배씩 상한까지 늘린다. 성공하면 풀린다.
+    _USAGE_FAIL_HOLD_MIN = 600.0     # 실패 1회 뒤 자동 경로가 쉬는 최소 시간(초)
+    _USAGE_FAIL_HOLD_MAX = 3600.0    # 그 상한(초)
+
+    def _usage_fail_hold(self, fails: int) -> float:
+        """잇단 실패 `fails` 회 뒤 자동 프로브를 쉬게 할 시간(초)."""
+        base = max(self._USAGE_FAIL_HOLD_MIN,
+                   float(getattr(self, "usage_refresh_sec", 0) or 0))
+        return min(self._USAGE_FAIL_HOLD_MAX, base * (2 ** min(max(fails, 1) - 1, 6)))
+
+    def _usage_probe_held(self) -> bool:
+        """자동 프로브가 지금 물러서 있는가(잇단 실패 뒤)."""
+        return time.monotonic() < getattr(self, "_usage_probe_hold_until", 0.0)
+
+    async def refresh_usage(self, auto: bool = False):
         """M19 그림자 /usage 질의: executor 스레드에서 숨은 claude 를 띄워 /usage 패널을
         스크랩(usageprobe.query_usage)해 self._usage 에 저장하고 broadcast 한다. 사용자
         화면 무간섭. 중복 호출은 무시. 결과 dict|None.
+
+        `auto`: 자동 경로(주기 루프 · 응답 종료 · 한도 부근 예약)가 True 로 부른다 —
+        잇단 실패로 물러서 있는 동안에는 숨은 claude 를 띄우지 않는다(pytmux-669).
+        사용자가 직접 부른 갱신(`claude-usage` · 한도 화면의 `u`)은 False 라 막지 않는다.
 
         pytmux-527 S1: statusline 다리가 켜져 있으면 먼저 `sl/` 을 **즉시 다시 읽고**,
         신선한 statusline 값이 있으면 숨은 claude 를 띄우지 않는다(프로브 = 폴백).
@@ -2232,6 +2254,9 @@ class ServerClaudeMixin:
             if ccsl.probe_suppressed(self):
                 self._usage_probe_skipped = getattr(self, "_usage_probe_skipped", 0) + 1
                 return self._usage
+        if auto and self._usage_probe_held():
+            self._usage_probe_held_count = getattr(self, "_usage_probe_held_count", 0) + 1
+            return self._usage
         self._usage_busy = True
         # 계측(c1 관문 ⑥): 실제로 숨은 claude 를 띄운 횟수.
         self._usage_probe_spawns = getattr(self, "_usage_probe_spawns", 0) + 1
@@ -2283,7 +2308,14 @@ class ServerClaudeMixin:
             else:
                 self._usage_busy = False
             self._note_usage_probe(timings)
+        if not u:
+            # 실패(시간 초과 · 파싱 불가 · spawn 불가) — 자동 경로를 쉬게 한다(pytmux-669).
+            self._usage_probe_fails = getattr(self, "_usage_probe_fails", 0) + 1
+            self._usage_probe_hold_until = (
+                time.monotonic() + self._usage_fail_hold(self._usage_probe_fails))
         if u:
+            self._usage_probe_fails = 0               # 성공 — 물러섬을 푼다
+            self._usage_probe_hold_until = 0.0
             self._usage_probe_err = False             # 회복 — 재발 시 다시 1회 기록
             self._usage = u
             self._usage_ts = time.time()              # S6 T3: 신선도(표시·게이트)
@@ -2323,7 +2355,7 @@ class ServerClaudeMixin:
         self._usage_probe_handle = None
         if not self._usage_probe_allowed() or not self.running:
             return
-        self._spawn(self.refresh_usage(), "usage_probe")
+        self._spawn(self.refresh_usage(auto=True), "usage_probe")
 
     def _usage_near_limit(self) -> bool:
         """마지막 실측 사용률이 한도 부근(세션/주간 중 하나라도 _USAGE_NEAR_LIMIT_PCT
@@ -2450,6 +2482,10 @@ class ServerClaudeMixin:
         # 프로브)가 error.log 를 도배하지 않게 '첫 실패만' 기록하는 플래그.
         self._tokens_db_err = False
         self._usage_probe_err = False
+        # pytmux-669: 잇단 프로브 실패 횟수와, 자동 경로가 쉬는 끝 시각(monotonic).
+        self._usage_probe_fails = 0
+        self._usage_probe_hold_until = 0.0
+        self._usage_probe_held_count = 0
         # pytmux-382 계측: 마지막 프로브 회차의 소요시간·성공 여부(메모리 전용) 와,
         # 「느림」 상태 래치(상태가 바뀔 때만 한 줄 남긴다 — _note_usage_probe).
         self._usage_probe_last = {}

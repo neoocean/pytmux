@@ -309,3 +309,78 @@ async def test_usage_probe_timeout_keeps_busy_until_the_thread_ends():
         assert logged == [("usage_probe", "timeout", False)], logged
     finally:
         usageprobe.query_usage, usageprobe.worst_case_seconds = old_q, old_w
+
+
+async def test_failing_usage_probe_backs_off_on_automatic_paths():
+    """pytmux-669: 프로브가 실패하면 실측이 언제나 묵은 상태라, 응답 종료 트리거가 **응답
+    마다** 숨은 claude 를 다시 띄웠다(실측: 기록된 회차 전부 실패 · 몇 분 간격). 자동
+    경로(`auto=True`)는 잇단 실패 뒤 물러선다. 사용자가 부른 갱신은 막지 않고, 성공하면
+    풀린다."""
+    spawned = []
+    result = [None]
+
+    class _Srv(sm.ServerClaudeMixin):
+        _usage = None
+        _usage_busy = False
+        _usage_probe_err = False
+        sessions = {}
+
+        def _probe_cwd(self):
+            return None
+
+        def _note_usage_probe(self, timings):
+            pass
+
+        def _log_error(self, where, detail="", exc=True):
+            pass
+
+        def _record_usage_snapshot(self, u, source):
+            pass
+
+        def _after_usage_probe(self):
+            pass
+
+    old_q = usageprobe.query_usage
+    usageprobe.query_usage = lambda *a, **k: (spawned.append(1), result[0])[1]
+    try:
+        s = _Srv()
+        assert s._usage_probe_held() is False
+        assert await s.refresh_usage(auto=True) is None        # 첫 회차는 띄운다
+        assert len(spawned) == 1 and s._usage_probe_held() is True
+        # 물러선 동안 자동 경로는 안 띄운다 — 몇 번을 불러도
+        for _ in range(5):
+            assert await s.refresh_usage(auto=True) is None
+        assert len(spawned) == 1, "실패 직후 자동 경로가 숨은 claude 를 또 띄웠다"
+        assert s._usage_probe_held_count == 5
+        # 사용자가 직접 부른 갱신은 막지 않는다(그리고 실패하면 더 길게 쉰다)
+        hold1 = s._usage_probe_hold_until
+        assert await s.refresh_usage() is None
+        assert len(spawned) == 2 and s._usage_probe_fails == 2
+        assert s._usage_probe_hold_until > hold1
+        # 쉬는 시간: 최소 한 주기에서 시작해 두 배씩, 상한에서 멈춘다
+        assert s._usage_fail_hold(1) == s._USAGE_FAIL_HOLD_MIN
+        assert s._usage_fail_hold(2) == 2 * s._USAGE_FAIL_HOLD_MIN
+        assert s._usage_fail_hold(50) == s._USAGE_FAIL_HOLD_MAX
+        s.usage_refresh_sec = 1800                             # 주기가 더 길면 그것이 바닥
+        assert s._usage_fail_hold(1) == 1800.0
+        # 성공하면 풀린다 — 다음 자동 회차는 다시 띄운다
+        result[0] = {"session": {"pct": 1}}
+        assert await s.refresh_usage() == result[0]
+        assert s._usage_probe_fails == 0 and s._usage_probe_held() is False
+        n = len(spawned)
+        assert await s.refresh_usage(auto=True) == result[0]
+        assert len(spawned) == n + 1
+    finally:
+        usageprobe.query_usage = old_q
+
+
+async def test_automatic_usage_paths_call_the_probe_as_auto():
+    """pytmux-669: 물러섬은 자동 경로가 `auto=True` 로 불러야 먹는다 — 주기 루프
+    (plugin.server_usage_refresh)와 예약 발화(_fire_usage_refresh) 둘 다."""
+    import inspect
+    plug = importlib.import_module("pytmuxlib.plugins.claude-code")
+    assert "refresh_usage(auto=True)" in inspect.getsource(
+        sm.ServerClaudeMixin._fire_usage_refresh)
+    src = inspect.getsource(plug)
+    i = src.index("async def server_usage_refresh")
+    assert "refresh_usage(auto=True)" in src[i:i + 900]

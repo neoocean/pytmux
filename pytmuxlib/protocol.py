@@ -35,6 +35,14 @@ FLUSH_HZ = 30   # 서버 화면 push 주기
 # 강제 해제된다. 회귀: test_sync_output_defer_times_out / _active_feed_does_not_time_out
 # (둘 다 이 상수를 심볼로 참조 — 값 변경에 무영향).
 SYNC_OUTPUT_MAX_DEFER = 1.0
+# 한 동기화 프레임(BSU 이후)을 묶어 둘 수 있는 **총 시간**의 상한(초) — pytmux-668.
+# 위 MAX_DEFER 는 '마지막 바이트 이후 침묵'만 재므로, ESU 가 안 온 채 바이트가 계속
+# 흐르면(끝 마커를 잃었거나 앱이 BSU 만 반복) **화면 송신이 끝없이 미뤄졌다**. 사용자가
+# 치는 키의 에코 바이트가 그 타이머를 되감아, 치는 동안은 글자도 커서도 안 보였다
+# (격리 실측: 키→화면 중앙값 5.7초·최대 7.1초, 정상 47ms). 이 상한을 넘기면 그 프레임은
+# 깨진 것으로 보고 다음 BSU 전이까지 평소처럼 보낸다. 값은 부하 중의 큰 프레임
+# (test_sync_output_active_feed_does_not_time_out 가 2.1초까지 지킨다)보다 넉넉히 크게.
+SYNC_OUTPUT_MAX_HOLD = 3.0
 HISTORY = 10000 # 패널당 스크롤백 보관 행 수
 # 대량 출력(빌드 로그·cat 등) 시 PTY 한 읽기(최대 64KB)를 이 크기 슬라이스로 쪼개
 # pyte 에 먹이고 슬라이스마다 이벤트 루프에 양보한다(server._feed_drain). pyte feed 는
